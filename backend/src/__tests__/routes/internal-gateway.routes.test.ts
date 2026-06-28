@@ -47,9 +47,24 @@ jest.mock('@/services/gateway-telemetry-log.service', () => ({
 }));
 
 const isBlockingActiveForFacilityMock = jest.fn().mockResolvedValue(false);
+const isProductionInventorySeedArmedMock = jest.fn().mockReturnValue(false);
+const isProductionInventorySeedAllowedMock = jest.fn().mockReturnValue(false);
+const completeProductionInventorySeedMock = jest.fn();
 jest.mock('@/services/gateway/gateway-recovery.service', () => ({
   GatewayRecoveryService: {
     isBlockingActiveForFacility: (...args: unknown[]) => isBlockingActiveForFacilityMock(...args),
+    isProductionInventorySeedArmed: (...args: unknown[]) => isProductionInventorySeedArmedMock(...args),
+    isProductionInventorySeedAllowed: (...args: unknown[]) => isProductionInventorySeedAllowedMock(...args),
+    completeProductionInventorySeed: (...args: unknown[]) => completeProductionInventorySeedMock(...args),
+  },
+}));
+
+const broadcastUnitsUpdateMock = jest.fn().mockResolvedValue(undefined);
+jest.mock('@/services/websocket.service', () => ({
+  WebSocketService: {
+    getInstance: jest.fn().mockReturnValue({
+      broadcastUnitsUpdate: (...args: unknown[]) => broadcastUnitsUpdateMock(...args),
+    }),
   },
 }));
 
@@ -122,6 +137,20 @@ jest.mock('@/services/gateway-device-sync-log.service', () => ({
     getInstance: jest.fn().mockReturnValue({
       recordInventorySync: (...args: unknown[]) => recordInventorySyncMock(...args),
     }),
+  },
+}));
+
+const buildOperationalSyncForGatewayMock = jest.fn().mockResolvedValue([
+  {
+    cloud_device_id: 'lock-uuid-1',
+    kind: 'lock',
+    serial: 'lock-1',
+    denylist: [{ sub: 'tenant-1', exp: 9999999999 }],
+  },
+]);
+jest.mock('@/services/denylist-sync.service', () => ({
+  DenylistSyncService: {
+    buildOperationalSyncForGateway: (...args: unknown[]) => buildOperationalSyncForGatewayMock(...args),
   },
 }));
 
@@ -225,6 +254,7 @@ describe('Internal Gateway Routes', () => {
   describe('POST /api/v1/internal/gateway/devices/inventory', () => {
     beforeEach(() => {
       syncDeviceInventoryMock.mockClear();
+      broadcastUnitsUpdateMock.mockClear();
     });
 
     it('requires authentication', async () => {
@@ -288,6 +318,15 @@ describe('Internal Gateway Routes', () => {
       expect(res.body.message).toBe('Inventory sync completed');
       expect(res.body.data.added).toBe(1);
       expect(res.body.data.unchanged).toBe(2);
+      expect(res.body.data.operational_devices).toEqual([
+        {
+          cloud_device_id: 'lock-uuid-1',
+          kind: 'lock',
+          serial: 'lock-1',
+          denylist: [{ sub: 'tenant-1', exp: 9999999999 }],
+        },
+      ]);
+      expect(buildOperationalSyncForGatewayMock).toHaveBeenCalledWith('gateway-1');
       expect(syncDeviceInventoryMock).toHaveBeenCalledTimes(1);
       expect(recordInventorySyncMock).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -303,10 +342,32 @@ describe('Internal Gateway Routes', () => {
           gateway_id: 'gateway-1',
         }),
       );
+      expect(broadcastUnitsUpdateMock).toHaveBeenCalledTimes(1);
+    });
+
+    it('applies gateway self inventory row to bound gateway record', async () => {
+      applyGatewayInventoryUpdateMock.mockClear();
+
+      const res = await request(app)
+        .post('/api/v1/internal/gateway/devices/inventory')
+        .set('Authorization', `Bearer ${testData.users.facilityAdmin.token}`)
+        .send({
+          facility_id: 'facility-1',
+          devices: [
+            { kind: 'gateway', serial: 'AA:BB:CC:DD:EE:FF', firmware_version: '2.4.1', state: 'healthy' },
+          ],
+        });
+
+      expect(res.status).toBe(200);
+      expect(applyGatewayInventoryUpdateMock).toHaveBeenCalledWith(
+        'gateway-1',
+        expect.objectContaining({ kind: 'gateway', firmware_version: '2.4.1' }),
+      );
     });
 
     it('returns 409 when gateway recovery is blocking inventory sync', async () => {
       isBlockingActiveForFacilityMock.mockResolvedValueOnce(true);
+      isProductionInventorySeedAllowedMock.mockReturnValueOnce(false);
       syncDeviceInventoryMock.mockClear();
 
       const res = await request(app)
@@ -319,6 +380,45 @@ describe('Internal Gateway Routes', () => {
 
       expect(res.status).toBe(409);
       expect(res.body.code).toBe('recovery_in_progress');
+      expect(syncDeviceInventoryMock).not.toHaveBeenCalled();
+    });
+
+    it('allows bound production gateway inventory sync during pre-snapshot seed', async () => {
+      isBlockingActiveForFacilityMock.mockResolvedValueOnce(true);
+      isProductionInventorySeedAllowedMock.mockReturnValueOnce(true);
+      completeProductionInventorySeedMock.mockClear();
+      syncDeviceInventoryMock.mockClear();
+
+      const res = await request(app)
+        .post('/api/v1/internal/gateway/devices/inventory')
+        .set('Authorization', `Bearer ${testData.users.facilityAdmin.token}`)
+        .set('X-Gateway-Session-Role', 'active')
+        .set('X-Gateway-Id', 'gateway-1')
+        .send({
+          facility_id: 'facility-1',
+          devices: [{ kind: 'lock', lock_id: 'sim-lock-1' }],
+        });
+
+      expect(res.status).toBe(200);
+      expect(syncDeviceInventoryMock).toHaveBeenCalledTimes(1);
+      expect(completeProductionInventorySeedMock).toHaveBeenCalledWith('facility-1');
+    });
+
+    it('returns 403 when inventory sync is proxied from a swap candidate session', async () => {
+      syncDeviceInventoryMock.mockClear();
+
+      const res = await request(app)
+        .post('/api/v1/internal/gateway/devices/inventory')
+        .set('Authorization', `Bearer ${testData.users.facilityAdmin.token}`)
+        .set('X-Gateway-Session-Role', 'swap_candidate')
+        .set('X-Gateway-Id', 'gateway-swap')
+        .send({
+          facility_id: 'facility-1',
+          devices: [{ kind: 'lock', lock_id: 'lock-1' }],
+        });
+
+      expect(res.status).toBe(403);
+      expect(res.body.code).toBe('not_bound_gateway');
       expect(syncDeviceInventoryMock).not.toHaveBeenCalled();
     });
 
@@ -458,6 +558,7 @@ describe('Internal Gateway Routes', () => {
   describe('POST /api/v1/internal/gateway/devices/state', () => {
     beforeEach(() => {
       updateDeviceStatesMock.mockClear();
+      broadcastUnitsUpdateMock.mockClear();
     });
 
     it('requires authentication', async () => {
@@ -476,6 +577,41 @@ describe('Internal Gateway Routes', () => {
       expect(res.status).toBe(400);
       expect(res.body.success).toBe(false);
       expect(res.body.message).toContain('facility_id');
+    });
+
+    it('returns 409 when gateway recovery is blocking state sync', async () => {
+      isBlockingActiveForFacilityMock.mockResolvedValueOnce(true);
+      updateDeviceStatesMock.mockClear();
+
+      const res = await request(app)
+        .post('/api/v1/internal/gateway/devices/state')
+        .set('Authorization', `Bearer ${testData.users.facilityAdmin.token}`)
+        .send({
+          facility_id: 'facility-1',
+          updates: [{ kind: 'lock', lock_id: 'lock-1', state: 'CLOSED' }],
+        });
+
+      expect(res.status).toBe(409);
+      expect(res.body.code).toBe('recovery_in_progress');
+      expect(updateDeviceStatesMock).not.toHaveBeenCalled();
+    });
+
+    it('returns 403 when state sync is proxied from a swap candidate session', async () => {
+      updateDeviceStatesMock.mockClear();
+
+      const res = await request(app)
+        .post('/api/v1/internal/gateway/devices/state')
+        .set('Authorization', `Bearer ${testData.users.facilityAdmin.token}`)
+        .set('X-Gateway-Session-Role', 'swap_candidate')
+        .set('X-Gateway-Id', 'gateway-swap')
+        .send({
+          facility_id: 'facility-1',
+          updates: [{ kind: 'lock', lock_id: 'lock-1', state: 'CLOSED' }],
+        });
+
+      expect(res.status).toBe(403);
+      expect(res.body.code).toBe('not_bound_gateway');
+      expect(updateDeviceStatesMock).not.toHaveBeenCalled();
     });
 
     it('validates state enum values', async () => {
@@ -746,6 +882,21 @@ describe('Internal Gateway Routes', () => {
         .send({ facility_id: 'facility-1', tid: 'tx-99', updates: [{ kind: 'lock', lock_id: 'lock-1', online: true }] })
         .expect(200);
       expect(res.body.success).toBe(true);
+    });
+
+    it('broadcasts units_update after state updates for live device lists', async () => {
+      updateDeviceStatesMock.mockResolvedValueOnce({ updated: 1, not_found: [], errors: [] });
+
+      const res = await request(app)
+        .post('/api/v1/internal/gateway/devices/state')
+        .set('Authorization', `Bearer ${testData.users.facilityAdmin.token}`)
+        .send({
+          facility_id: 'facility-1',
+          updates: [{ kind: 'lock', lock_id: 'lock-1', online: false }],
+        });
+
+      expect(res.status).toBe(200);
+      expect(broadcastUnitsUpdateMock).toHaveBeenCalledTimes(1);
     });
   });
 

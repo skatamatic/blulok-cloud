@@ -230,6 +230,24 @@ export class FirmwarePushModel {
   }
 
   /**
+   * Atomically transition a push to verifying if it is still non-terminal.
+   * Prevents executePush from overwriting a terminal status set by a fast
+   * FIRMWARE_UPDATE_STATUS success that arrives before chunk delivery finishes.
+   * @returns true if the transition was applied.
+   */
+  async atomicTransitionToVerifying(id: string): Promise<boolean> {
+    const knex = this.db.connection;
+    const updated = await knex('firmware_pushes')
+      .where('id', id)
+      .whereNotIn('status', TERMINAL_STATUSES)
+      .update({
+        status: 'verifying',
+        updated_at: new Date(),
+      });
+    return updated > 0;
+  }
+
+  /**
    * Atomically mark a push as failed if it is still non-terminal.
    * @returns true if the failure update was applied.
    */

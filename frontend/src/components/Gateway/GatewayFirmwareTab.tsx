@@ -14,7 +14,6 @@ import {
   SignalIcon,
 } from '@heroicons/react/24/outline';
 import { apiService } from '@/services/api.service';
-import { useToast } from '@/contexts/ToastContext';
 import { useWebSocket } from '@/contexts/WebSocketContext';
 import {
   FirmwareTargetType,
@@ -44,6 +43,26 @@ interface GatewayFirmwareTabProps {
 
 const HISTORY_PAGE_SIZE = 10;
 
+type InlineNotice = {
+  tone: 'success' | 'error' | 'warning' | 'info';
+  message: string;
+} | null;
+
+function InlineNoticeBanner({ notice }: { notice: NonNullable<InlineNotice> }) {
+  const styles = {
+    success: 'border-emerald-200 dark:border-emerald-900/50 bg-emerald-50/80 dark:bg-emerald-950/20 text-emerald-800 dark:text-emerald-200',
+    error: 'border-red-200 dark:border-red-900/50 bg-red-50/80 dark:bg-red-950/20 text-red-800 dark:text-red-200',
+    warning: 'border-amber-200 dark:border-amber-900/50 bg-amber-50/80 dark:bg-amber-950/20 text-amber-800 dark:text-amber-200',
+    info: 'border-[#147FD4]/30 bg-[#147FD4]/5 dark:bg-[#147FD4]/10 text-secondary-800 dark:text-secondary-200',
+  }[notice.tone];
+
+  return (
+    <div className={`rounded-lg border px-3 py-2 text-sm ${styles}`} role="status">
+      {notice.message}
+    </div>
+  );
+}
+
 const toReadableLabel = (value: string): string =>
   value
     .split('_')
@@ -67,8 +86,10 @@ export default function GatewayFirmwareTab({
   gatewayModel,
   recoveryBlocking = false,
 }: GatewayFirmwareTabProps) {
-  const { addToast } = useToast();
   const ws = useWebSocket();
+
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [actionNotice, setActionNotice] = useState<InlineNotice>(null);
 
   const [selectedTargetType, setSelectedTargetType] = useState<FirmwareTargetType>('gateway');
   const [firmware, setFirmware] = useState<FirmwareImage[]>([]);
@@ -88,7 +109,10 @@ export default function GatewayFirmwareTab({
 
   const loadData = useCallback(async (opts?: { silent?: boolean }) => {
     try {
-      if (!opts?.silent) setLoading(true);
+      if (!opts?.silent) {
+        setLoading(true);
+        setLoadError(null);
+      }
       const [fwRes, pushStatusRes, pushHistoryRes] = await Promise.all([
         apiService.listFirmware(selectedTargetType),
         // Keep initial load lightweight; live progress arrives via websocket updates.
@@ -129,38 +153,50 @@ export default function GatewayFirmwareTab({
         setLiveError(null);
       }
     } catch {
-      addToast({ type: 'error', title: 'Failed to load firmware data' });
+      if (!opts?.silent) {
+        setLoadError('Failed to load firmware data. Try refreshing the page.');
+      }
     } finally {
       if (!opts?.silent) setLoading(false);
     }
-  }, [gatewayId, selectedTargetType, addToast]);
+  }, [gatewayId, selectedTargetType]);
 
   useEffect(() => {
     loadData();
   }, [loadData]);
 
-  const verifyingPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const activePushPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const trackedPushIdRef = useRef<string | null>(null);
+
   useEffect(() => {
-    const status = liveProgress?.step || activePush?.status;
-    if (status !== 'verifying') {
-      if (verifyingPollRef.current) {
-        clearInterval(verifyingPollRef.current);
-        verifyingPollRef.current = null;
+    trackedPushIdRef.current = activePush?.id ?? liveProgress?.pushId ?? null;
+  }, [activePush?.id, liveProgress?.pushId]);
+
+  useEffect(() => {
+    const pushStatus = activePush?.status;
+    const isActive = !!pushStatus && !TERMINAL_STATUSES.includes(pushStatus);
+    if (!isActive) {
+      if (activePushPollRef.current) {
+        clearInterval(activePushPollRef.current);
+        activePushPollRef.current = null;
       }
       return;
     }
 
-    verifyingPollRef.current = setInterval(() => {
+    const step = liveProgress?.step || pushStatus;
+    const pollMs = step === 'verifying' ? 8000 : 4000;
+    void loadData({ silent: true });
+    activePushPollRef.current = setInterval(() => {
       void loadData({ silent: true });
-    }, 8000);
+    }, pollMs);
 
     return () => {
-      if (verifyingPollRef.current) {
-        clearInterval(verifyingPollRef.current);
-        verifyingPollRef.current = null;
+      if (activePushPollRef.current) {
+        clearInterval(activePushPollRef.current);
+        activePushPollRef.current = null;
       }
     };
-  }, [liveProgress?.step, activePush?.status, loadData]);
+  }, [activePush?.status, activePush?.id, liveProgress?.step, loadData]);
 
   const terminalRefreshTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -168,7 +204,10 @@ export default function GatewayFirmwareTab({
     const subId = ws.subscribe(
       'firmware_push_progress',
       (data: FirmwarePushProgress) => {
-        if (data.gatewayId !== gatewayId) return;
+        const trackedPushId = trackedPushIdRef.current;
+        const matchesPush = !!trackedPushId && data.pushId === trackedPushId;
+        const matchesGateway = data.gatewayId === gatewayId;
+        if (!matchesPush && !matchesGateway) return;
         if (data.targetType && data.targetType !== selectedTargetType) return;
 
         setLiveProgress(data);
@@ -220,21 +259,38 @@ export default function GatewayFirmwareTab({
       if (subId) ws.unsubscribe(subId);
       if (terminalRefreshTimer.current) clearTimeout(terminalRefreshTimer.current);
     };
-  }, [ws, gatewayId, selectedTargetType, loadData]);
+  }, [ws.subscribe, ws.unsubscribe, gatewayId, selectedTargetType, loadData]);
 
   const handlePush = async (firmwareId: string) => {
     setConfirmPushId(null);
+    setActionNotice(null);
     try {
       setPushing(true);
       const res = await apiService.pushFirmware(firmwareId, gatewayId);
       setActivePush(res.data);
-      setLiveProgress({ pushId: res.data.id, firmwareId, gatewayId, facilityId: res.data.facility_id, targetType: selectedTargetType, step: 'pending', percent: 0 });
+      trackedPushIdRef.current = res.data.id;
+      setLiveProgress({
+        pushId: res.data.id,
+        firmwareId,
+        gatewayId: res.data.gateway_id,
+        facilityId: res.data.facility_id,
+        targetType: selectedTargetType,
+        step: res.data.status,
+        percent: res.data.progress_percent ?? 0,
+        chunksTotal: res.data.chunks_total ?? undefined,
+        chunksSent: res.data.chunks_sent,
+      });
       setLiveDevices([]);
       setLiveEvents([]);
       setLiveError(null);
-      addToast({ type: 'success', title: 'Firmware push initiated' });
-    } catch (err: any) {
-      addToast({ type: 'error', title: err?.response?.data?.message || 'Failed to initiate push' });
+      setActionNotice({ tone: 'info', message: 'Firmware push started — progress will update below.' });
+      window.setTimeout(() => {
+        void loadData({ silent: true });
+      }, 1500);
+    } catch (err: unknown) {
+      const message = (err as { response?: { data?: { message?: string } } })?.response?.data?.message
+        || 'Failed to initiate push';
+      setActionNotice({ tone: 'error', message });
     } finally {
       setPushing(false);
     }
@@ -242,11 +298,14 @@ export default function GatewayFirmwareTab({
 
   const handleCancel = async () => {
     if (!activePush) return;
+    setActionNotice(null);
     try {
       await apiService.cancelFirmwarePush(activePush.id);
-      addToast({ type: 'info', title: 'Push cancellation requested' });
-    } catch (err: any) {
-      addToast({ type: 'error', title: err?.response?.data?.message || 'Failed to cancel push' });
+      setActionNotice({ tone: 'info', message: 'Push cancellation requested — waiting for gateway acknowledgement.' });
+    } catch (err: unknown) {
+      const message = (err as { response?: { data?: { message?: string } } })?.response?.data?.message
+        || 'Failed to cancel push';
+      setActionNotice({ tone: 'error', message });
     }
   };
 
@@ -263,13 +322,15 @@ export default function GatewayFirmwareTab({
       setPushHistory((prev) => [...prev, ...more]);
       setHistoryHasMore(more.length >= HISTORY_PAGE_SIZE);
     } catch {
-      addToast({ type: 'error', title: 'Failed to load more history' });
+      setActionNotice({ tone: 'error', message: 'Failed to load more push history.' });
     } finally {
       setHistoryLoading(false);
     }
   };
 
   const isActiveTransfer = activePush && !TERMINAL_STATUSES.includes(activePush.status);
+  const isTerminalPush = activePush && TERMINAL_STATUSES.includes(activePush.status);
+  const showPushPanel = !!activePush;
 
   const getActivePushVersion = (): string | null => {
     if (!activePush) return null;
@@ -314,14 +375,14 @@ export default function GatewayFirmwareTab({
       <div className="space-y-6">
         <div className="flex gap-0 w-fit">
           {[1, 2, 3].map((i) => (
-            <div key={i} className="h-10 w-24 bg-gray-200 dark:bg-gray-700 animate-pulse first:rounded-l-lg last:rounded-r-lg" />
+            <div key={i} className="h-10 w-24 bg-secondary-200 dark:bg-secondary-700 animate-pulse first:rounded-l-lg last:rounded-r-lg" />
           ))}
         </div>
-        <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6">
-          <div className="h-4 w-32 bg-gray-200 dark:bg-gray-700 rounded animate-pulse mb-4" />
+        <div className="rounded-xl border border-secondary-200 dark:border-secondary-700 bg-white dark:bg-secondary-900 p-6">
+          <div className="h-4 w-32 bg-secondary-200 dark:bg-secondary-700 rounded animate-pulse mb-4" />
           <div className="space-y-3">
             {[1, 2, 3].map((i) => (
-              <div key={i} className="h-16 bg-gray-100 dark:bg-gray-700/50 rounded-lg animate-pulse" />
+              <div key={i} className="h-16 bg-secondary-100 dark:bg-secondary-800/50 rounded-lg animate-pulse" />
             ))}
           </div>
         </div>
@@ -329,21 +390,49 @@ export default function GatewayFirmwareTab({
     );
   }
 
+  const terminalPushMessage = (() => {
+    if (!isTerminalPush || !activePush) return null;
+    const version = getActivePushVersion();
+    const versionLabel = version ? ` v${version}` : '';
+    if (activePush.status === 'complete') {
+      return `Firmware update${versionLabel} installed successfully.`;
+    }
+    if (activePush.status === 'failed') {
+      return activePush.error_message || `Firmware push${versionLabel} failed.`;
+    }
+    if (activePush.status === 'cancelled') {
+      return `Firmware push${versionLabel} was cancelled.`;
+    }
+    return null;
+  })();
+
   return (
     <div className="space-y-6">
       {recoveryBlocking && (
         <RecoveryBlockingBanner message="Manual firmware pushes are blocked during gateway swap recovery. Use the Swap / Recovery tab to complete or bypass recovery first." />
       )}
+
+      {loadError && (
+        <div
+          className="rounded-xl border border-red-200 dark:border-red-900/50 bg-red-50/80 dark:bg-red-950/20 px-4 py-3 text-sm text-red-800 dark:text-red-200"
+          role="alert"
+        >
+          {loadError}
+        </div>
+      )}
+
+      {actionNotice && <InlineNoticeBanner notice={actionNotice} />}
+
       {/* Target Type Tabs */}
-      <div className="flex rounded-lg border border-gray-200 dark:border-gray-700 overflow-hidden w-fit">
+      <div className="flex rounded-lg border border-secondary-200 dark:border-secondary-700 overflow-hidden w-fit">
         {(['gateway', 'lock', 'friend_node', 'access_control'] as FirmwareTargetType[]).map((tt) => (
           <button
             key={tt}
             onClick={() => { setSelectedTargetType(tt); setConfirmPushId(null); }}
             className={`px-5 py-2.5 text-sm font-medium transition-colors ${
               selectedTargetType === tt
-                ? 'bg-primary-600 text-white'
-                : 'bg-white dark:bg-gray-800 text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700'
+                ? 'bg-[#147FD4] text-white'
+                : 'bg-white dark:bg-secondary-900 text-secondary-600 dark:text-secondary-300 hover:bg-secondary-50 dark:hover:bg-secondary-800'
             }`}
           >
             {TARGET_TYPE_LABELS[tt]}
@@ -352,59 +441,106 @@ export default function GatewayFirmwareTab({
       </div>
 
       {/* Current Firmware Info */}
-      <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6">
-        <h3 className="text-sm font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide mb-3">
+      <div className="rounded-xl border border-secondary-200 dark:border-secondary-700 bg-white dark:bg-secondary-900 p-5">
+        <h3 className="text-xs font-semibold text-secondary-500 dark:text-secondary-400 uppercase tracking-wide mb-3">
           Current {TARGET_TYPE_LABELS[selectedTargetType]} Firmware
         </h3>
         {selectedTargetType === 'gateway' ? (
           <div className="flex items-center gap-4">
-            <span className="text-2xl font-bold text-gray-900 dark:text-white">
+            <span className="text-2xl font-bold text-secondary-900 dark:text-white">
               {currentFirmwareVersion ? `v${currentFirmwareVersion}` : 'Unknown'}
             </span>
             {gatewayModel && (
-              <span className="px-2 py-1 bg-gray-100 dark:bg-gray-700 rounded text-xs text-gray-600 dark:text-gray-300">
+              <span className="px-2 py-1 bg-secondary-100 dark:bg-secondary-800 rounded text-xs text-secondary-600 dark:text-secondary-300">
                 {gatewayModel}
               </span>
             )}
           </div>
         ) : (
-          <p className="text-sm text-gray-500 dark:text-gray-400">
+          <p className="text-sm text-secondary-500 dark:text-secondary-400">
             {TARGET_TYPE_LABELS[selectedTargetType]} firmware version is reported by the gateway after deployment.
             Push a firmware update below to get started.
           </p>
         )}
       </div>
 
-      {/* Active Push Progress */}
-      {(isActiveTransfer || (liveProgress && !(TERMINAL_STATUSES as readonly string[]).includes(liveProgress.step))) && (
-        <div className="bg-white dark:bg-gray-800 rounded-lg border border-blue-200 dark:border-blue-800 overflow-hidden">
-          {/* Header */}
-          <div className="bg-blue-50 dark:bg-blue-900/20 px-6 py-4 flex items-center justify-between">
-            <div>
-              <h3 className="text-sm font-semibold text-blue-800 dark:text-blue-300 uppercase tracking-wide">
-                Firmware Update In Progress
-              </h3>
-              <div className="flex items-center gap-2 mt-1">
-                {getActivePushVersion() && (
-                  <span className="text-xs font-medium text-blue-700 dark:text-blue-300">v{getActivePushVersion()}</span>
-                )}
-                {activePush?.target_type && (
-                  <span className={`text-xs font-medium ${TARGET_TYPE_COLORS[activePush.target_type]}`}>
-                    {TARGET_TYPE_LABELS[activePush.target_type]}
-                  </span>
-                )}
+      {/* Push progress / result */}
+      {showPushPanel && (
+        <div className={`rounded-xl border bg-white dark:bg-secondary-900 overflow-hidden ${
+          isTerminalPush && activePush?.status === 'complete'
+            ? 'border-emerald-200 dark:border-emerald-900/50'
+            : isTerminalPush && activePush?.status === 'failed'
+              ? 'border-red-200 dark:border-red-900/50'
+              : isTerminalPush && activePush?.status === 'cancelled'
+                ? 'border-amber-200 dark:border-amber-900/50'
+                : 'border-[#147FD4]/40'
+        }`}>
+          <div className={`px-5 py-4 flex items-center justify-between ${
+            isTerminalPush && activePush?.status === 'complete'
+              ? 'bg-emerald-50/80 dark:bg-emerald-950/20'
+              : isTerminalPush && activePush?.status === 'failed'
+                ? 'bg-red-50/80 dark:bg-red-950/20'
+                : isTerminalPush && activePush?.status === 'cancelled'
+                  ? 'bg-amber-50/80 dark:bg-amber-950/20'
+                  : 'bg-[#147FD4]/5 dark:bg-[#147FD4]/10'
+          }`}>
+            <div className="flex items-start gap-3 min-w-0">
+              {isTerminalPush && activePush?.status === 'complete' && (
+                <CheckCircleIcon className="h-5 w-5 text-emerald-600 shrink-0 mt-0.5" />
+              )}
+              {isTerminalPush && activePush?.status === 'failed' && (
+                <XCircleIcon className="h-5 w-5 text-red-600 shrink-0 mt-0.5" />
+              )}
+              {isTerminalPush && activePush?.status === 'cancelled' && (
+                <ExclamationTriangleIcon className="h-5 w-5 text-amber-600 shrink-0 mt-0.5" />
+              )}
+              <div className="min-w-0">
+                <h3 className="text-sm font-semibold text-secondary-900 dark:text-white">
+                  {isActiveTransfer ? 'Firmware update in progress' : 'Firmware push result'}
+                </h3>
+                <div className="flex items-center gap-2 mt-1 flex-wrap">
+                  {getActivePushVersion() && (
+                    <span className="text-xs font-medium text-secondary-600 dark:text-secondary-300">
+                      v{getActivePushVersion()}
+                    </span>
+                  )}
+                  {activePush?.target_type && (
+                    <span className={`text-xs font-medium ${TARGET_TYPE_COLORS[activePush.target_type]}`}>
+                      {TARGET_TYPE_LABELS[activePush.target_type]}
+                    </span>
+                  )}
+                </div>
               </div>
             </div>
-            <button
-              onClick={handleCancel}
-              className="flex items-center gap-1 px-3 py-1.5 bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400 rounded-lg text-xs font-medium hover:bg-red-200 dark:hover:bg-red-900/50 transition-colors"
-            >
-              <StopIcon className="h-3.5 w-3.5" />
-              Cancel
-            </button>
+            {isActiveTransfer && (
+              <button
+                onClick={handleCancel}
+                className="flex items-center gap-1 px-3 py-1.5 border border-red-300 dark:border-red-800 text-red-700 dark:text-red-400 rounded-lg text-xs font-medium hover:bg-red-50 dark:hover:bg-red-950/30 transition-colors shrink-0"
+              >
+                <StopIcon className="h-3.5 w-3.5" />
+                Cancel
+              </button>
+            )}
           </div>
 
-          <div className="px-6 py-5 space-y-5">
+          <div className="px-5 py-5 space-y-5">
+            {isTerminalPush && terminalPushMessage && (
+              <div
+                className={`rounded-lg border px-4 py-3 text-sm ${
+                  activePush?.status === 'complete'
+                    ? 'border-emerald-200 dark:border-emerald-900/50 bg-emerald-50/50 dark:bg-emerald-950/20 text-secondary-800 dark:text-secondary-200'
+                    : activePush?.status === 'failed'
+                      ? 'border-red-200 dark:border-red-900/50 bg-red-50/80 dark:bg-red-950/20 text-red-800 dark:text-red-200'
+                      : 'border-amber-200 dark:border-amber-900/50 bg-amber-50/80 dark:bg-amber-950/20 text-amber-800 dark:text-amber-200'
+                }`}
+                role="status"
+              >
+                {terminalPushMessage}
+              </div>
+            )}
+
+            {isActiveTransfer && (
+              <>
             {/* Live update stream status */}
             {!ws.isConnected && (
               <div className="flex items-center gap-2 p-2.5 rounded-lg border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-900/20 text-amber-700 dark:text-amber-300 text-xs">
@@ -612,17 +748,19 @@ export default function GatewayFirmwareTab({
                 )}
               </div>
             )}
+              </>
+            )}
           </div>
         </div>
       )}
 
       {/* Available Firmware */}
-      <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6">
+      <div className="rounded-xl border border-secondary-200 dark:border-secondary-700 bg-white dark:bg-secondary-900 p-5">
         <div className="flex items-center justify-between mb-4">
-          <h3 className="text-sm font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">Available Firmware</h3>
+          <h3 className="text-xs font-semibold text-secondary-500 dark:text-secondary-400 uppercase tracking-wide">Available Firmware</h3>
           <button
             onClick={() => void loadData()}
-            className="p-1.5 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors"
+            className="p-1.5 text-secondary-400 hover:text-secondary-600 dark:hover:text-secondary-300 transition-colors"
             title="Refresh"
           >
             <ArrowPathIcon className="h-4 w-4" />
@@ -630,7 +768,7 @@ export default function GatewayFirmwareTab({
         </div>
 
         {firmware.length === 0 ? (
-          <p className="text-sm text-gray-500 dark:text-gray-400 text-center py-4">
+          <p className="text-sm text-secondary-500 dark:text-secondary-400 text-center py-4">
             No {TARGET_TYPE_LABELS[selectedTargetType].toLowerCase()} firmware available. Ask a developer to upload firmware via DevTools.
           </p>
         ) : (
@@ -642,20 +780,20 @@ export default function GatewayFirmwareTab({
                   key={fw.id}
                   className={`flex items-center justify-between p-4 rounded-lg border transition-colors ${
                     isCurrent
-                      ? 'border-green-200 dark:border-green-800 bg-green-50 dark:bg-green-900/10'
-                      : 'border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700/50'
+                      ? 'border-emerald-200 dark:border-emerald-800 bg-emerald-50/50 dark:bg-emerald-950/20'
+                      : 'border-secondary-200 dark:border-secondary-700 hover:bg-secondary-50 dark:hover:bg-secondary-800/50'
                   }`}
                 >
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2">
-                      <span className="font-medium text-gray-900 dark:text-white">v{fw.version}</span>
+                      <span className="font-medium text-secondary-900 dark:text-white">v{fw.version}</span>
                       {isCurrent && (
-                        <span className="px-2 py-0.5 bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400 text-xs rounded-full font-medium">
+                        <span className="px-2 py-0.5 bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-400 text-xs rounded-full font-medium">
                           Current
                         </span>
                       )}
                     </div>
-                    <div className="flex items-center gap-3 mt-1 text-xs text-gray-500 dark:text-gray-400">
+                    <div className="flex items-center gap-3 mt-1 text-xs text-secondary-500 dark:text-secondary-400">
                       <span>{formatBytes(fw.size_bytes)}</span>
                       <span>{formatDate(fw.created_at)}</span>
                       {fw.description && <span className="truncate max-w-[200px]">{fw.description}</span>}
@@ -663,7 +801,7 @@ export default function GatewayFirmwareTab({
                     {fw.compatible_models?.length ? (
                       <div className="flex flex-wrap gap-1 mt-1">
                         {fw.compatible_models.map((m) => (
-                          <span key={m} className="px-1.5 py-0.5 bg-gray-100 dark:bg-gray-700 rounded text-xs text-gray-500 dark:text-gray-400">{m}</span>
+                          <span key={m} className="px-1.5 py-0.5 bg-secondary-100 dark:bg-secondary-800 rounded text-xs text-secondary-500 dark:text-secondary-400">{m}</span>
                         ))}
                       </div>
                     ) : null}
@@ -675,13 +813,13 @@ export default function GatewayFirmwareTab({
                         <button
                           onClick={() => handlePush(fw.id)}
                           disabled={pushing || !!isActiveTransfer || recoveryBlocking}
-                          className="px-3 py-1.5 bg-primary-600 text-white rounded-lg text-xs font-medium hover:bg-primary-700 disabled:opacity-50 transition-colors"
+                          className="px-3 py-1.5 bg-[#147FD4] text-white rounded-lg text-xs font-medium hover:bg-[#1269b0] disabled:opacity-50 transition-colors"
                         >
                           Confirm
                         </button>
                         <button
                           onClick={() => setConfirmPushId(null)}
-                          className="px-3 py-1.5 bg-gray-200 dark:bg-gray-600 text-gray-700 dark:text-gray-200 rounded-lg text-xs font-medium hover:bg-gray-300 dark:hover:bg-gray-500 transition-colors"
+                          className="px-3 py-1.5 bg-secondary-200 dark:bg-secondary-700 text-secondary-700 dark:text-secondary-200 rounded-lg text-xs font-medium hover:bg-secondary-300 dark:hover:bg-secondary-600 transition-colors"
                         >
                           Cancel
                         </button>
@@ -690,7 +828,7 @@ export default function GatewayFirmwareTab({
                       <button
                         onClick={() => setConfirmPushId(fw.id)}
                         disabled={isCurrent || !!isActiveTransfer || pushing || recoveryBlocking}
-                        className="flex items-center gap-1.5 px-3 py-1.5 bg-primary-600 text-white rounded-lg text-xs font-medium hover:bg-primary-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                        className="flex items-center gap-1.5 px-3 py-1.5 bg-[#147FD4] text-white rounded-lg text-xs font-medium hover:bg-[#1269b0] disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                       >
                         <ArrowUpTrayIcon className="h-3.5 w-3.5" />
                         Push
@@ -706,8 +844,8 @@ export default function GatewayFirmwareTab({
 
       {/* Push History */}
       {pushHistory.length > 0 && (
-        <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6">
-          <h3 className="text-sm font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide mb-4">Push History</h3>
+        <div className="rounded-xl border border-secondary-200 dark:border-secondary-700 bg-white dark:bg-secondary-900 p-5">
+          <h3 className="text-xs font-semibold text-secondary-500 dark:text-secondary-400 uppercase tracking-wide mb-4">Push History</h3>
           <div className="space-y-2">
             {pushHistory.map((p) => {
               const fw = firmware.find((f) => f.id === p.firmware_id);

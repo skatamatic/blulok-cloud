@@ -62,8 +62,8 @@ describe('StoredgeProvider', () => {
       
       expect(capabilities.supportsTenantSync).toBe(true);
       expect(capabilities.supportsUnitSync).toBe(true);
-      expect(capabilities.supportsWebhooks).toBe(false);
-      expect(capabilities.supportsRealtime).toBe(false);
+      expect(capabilities.supportsWebhooks).toBe(true);
+      expect(capabilities.supportsRealtime).toBe(true);
       expect(capabilities.supportsLeaseManagement).toBe(true);
       expect(capabilities.supportsPaymentIntegration).toBe(false);
       expect(capabilities.supportsBulkOperations).toBe(false);
@@ -486,27 +486,6 @@ describe('StoredgeProvider', () => {
     });
   });
 
-  describe('Webhook Support', () => {
-    it('should return false for webhook validation (not supported)', async () => {
-      const payload: any = { event_type: 'lease.started', data: {} };
-      const signature = 'test-signature';
-
-      const isValid = await provider.validateWebhook(payload, signature);
-
-      expect(isValid).toBe(false);
-    });
-
-    it('should return placeholder webhook payload', async () => {
-      const rawPayload = { event_type: 'tenant.created', data: {} };
-
-      const parsed = await provider.parseWebhookPayload(rawPayload);
-
-      expect(parsed.event_type).toBe('lease.started');
-      expect(parsed.timestamp).toBeDefined();
-      expect(parsed.data).toEqual(rawPayload);
-    });
-  });
-
   describe('OAuth 1.0a Authentication', () => {
     it('should include OAuth Authorization header in all requests', async () => {
       (global.fetch as jest.Mock).mockResolvedValueOnce({
@@ -634,6 +613,77 @@ describe('StoredgeProvider', () => {
         `${baseUrl}/v1/${facilityId}/tenants/tenant-123`,
         expect.any(Object)
       );
+    });
+  });
+
+  describe('Webhook parsing and validation', () => {
+    const webhookSecret = 'test-webhook-secret';
+
+    beforeEach(() => {
+      const config = {
+        providerType: FMSProviderType.STOREDGE,
+        baseUrl,
+        auth: {
+          type: FMSAuthType.OAUTH1,
+          credentials: { consumerKey, consumerSecret },
+        },
+        features: {
+          supportsTenantSync: true,
+          supportsUnitSync: true,
+          supportsWebhooks: true,
+          supportsRealtime: true,
+        },
+        syncSettings: {
+          autoAcceptChanges: false,
+          webhookSecret,
+        },
+        customSettings: { facilityId },
+      };
+      provider = new StoredgeProvider(facilityId, config);
+    });
+
+    it('parses tenant.created CloudEvent envelope', async () => {
+      const envelope = {
+        id: 'evt-1',
+        time: '2024-01-16T19:10:07Z',
+        type: 'com.storedge.tenant.created.v1',
+        body: {
+          facility_id: facilityId,
+          tenant_id: 'tenant-abc',
+          first_name: 'Jane',
+          last_name: 'Doe',
+          email: 'jane@example.com',
+        },
+      };
+
+      const parsed = await provider.parseWebhookPayload(envelope);
+      expect(parsed.externalEventId).toBe('evt-1');
+      expect(parsed.event_type).toBe('tenant.created');
+      expect(parsed.data.tenant_id).toBe('tenant-abc');
+    });
+
+    it('rejects facility_id mismatch', async () => {
+      await expect(
+        provider.parseWebhookPayload({
+          id: 'evt-2',
+          type: 'com.storedge.tenant.created.v1',
+          body: { facility_id: 'other-facility', tenant_id: 't1' },
+        })
+      ).rejects.toThrow('Facility ID mismatch');
+    });
+
+    it('validates HMAC signature on raw body', () => {
+      const crypto = require('crypto');
+      const body = JSON.stringify({
+        id: 'evt-3',
+        type: 'com.storedge.unit.overlock-applied.v1',
+        body: { facility_id: facilityId, unit_id: 'u1' },
+      });
+      const raw = Buffer.from(body);
+      const sig = crypto.createHmac('sha256', webhookSecret).update(raw).digest('hex');
+
+      expect(provider.validateWebhookRawBody(raw, sig)).toBe(true);
+      expect(provider.validateWebhookRawBody(raw, 'bad-signature')).toBe(false);
     });
   });
 });

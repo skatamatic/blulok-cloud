@@ -208,15 +208,13 @@ describe('GatewayFirmwareTab', () => {
       });
     });
 
-    it('shows error toast on API failure', async () => {
+    it('shows inline error when API fails to load', async () => {
       mockApi.listFirmware.mockRejectedValue(new Error('Network'));
       mockApi.getFirmwarePushStatus.mockRejectedValue(new Error('Network'));
       mockApi.getFirmwarePushHistory.mockRejectedValue(new Error('Network'));
       renderTab();
       await waitFor(() => {
-        expect(mockAddToast).toHaveBeenCalledWith(
-          expect.objectContaining({ type: 'error', title: 'Failed to load firmware data' }),
-        );
+        expect(screen.getByText(/Failed to load firmware data/i)).toBeInTheDocument();
       });
     });
   });
@@ -242,9 +240,7 @@ describe('GatewayFirmwareTab', () => {
 
       await waitFor(() => {
         expect(mockApi.pushFirmware).toHaveBeenCalledWith('fw-1', GATEWAY_ID);
-        expect(mockAddToast).toHaveBeenCalledWith(
-          expect.objectContaining({ type: 'success', title: 'Firmware push initiated' }),
-        );
+        expect(screen.getByText(/Firmware push started/i)).toBeInTheDocument();
       });
     });
 
@@ -273,7 +269,7 @@ describe('GatewayFirmwareTab', () => {
       renderTab();
 
       await waitFor(() => {
-        expect(screen.getByText('Firmware Update In Progress')).toBeInTheDocument();
+        expect(screen.getByText(/Firmware update in progress/i)).toBeInTheDocument();
       });
 
       const pushBtn = screen.getByText('Push');
@@ -295,9 +291,7 @@ describe('GatewayFirmwareTab', () => {
       fireEvent.click(screen.getByText('Confirm'));
 
       await waitFor(() => {
-        expect(mockAddToast).toHaveBeenCalledWith(
-          expect.objectContaining({ type: 'error', title: 'Gateway is offline' }),
-        );
+        expect(screen.getByText(/Gateway is offline/i)).toBeInTheDocument();
       });
     });
   });
@@ -313,16 +307,14 @@ describe('GatewayFirmwareTab', () => {
       renderTab();
 
       await waitFor(() => {
-        expect(screen.getByText('Firmware Update In Progress')).toBeInTheDocument();
+        expect(screen.getByText(/Firmware update in progress/i)).toBeInTheDocument();
       });
 
       fireEvent.click(screen.getByText('Cancel'));
 
       await waitFor(() => {
         expect(mockApi.cancelFirmwarePush).toHaveBeenCalledWith('push-1');
-        expect(mockAddToast).toHaveBeenCalledWith(
-          expect.objectContaining({ type: 'info', title: 'Push cancellation requested' }),
-        );
+        expect(screen.getByText(/cancellation requested/i)).toBeInTheDocument();
       });
     });
   });
@@ -356,7 +348,7 @@ describe('GatewayFirmwareTab', () => {
       renderTab();
 
       await waitFor(() => {
-        expect(screen.getByText('Firmware Update In Progress')).toBeInTheDocument();
+        expect(screen.getByText(/Firmware update in progress/i)).toBeInTheDocument();
       });
 
       // Simulate WS progress
@@ -382,7 +374,7 @@ describe('GatewayFirmwareTab', () => {
       renderTab();
 
       await waitFor(() => {
-        expect(screen.getByText('Firmware Update In Progress')).toBeInTheDocument();
+        expect(screen.getByText(/Firmware update in progress/i)).toBeInTheDocument();
       });
 
       act(() => {
@@ -405,7 +397,7 @@ describe('GatewayFirmwareTab', () => {
       renderTab();
 
       await waitFor(() => {
-        expect(screen.getByText('Firmware Update In Progress')).toBeInTheDocument();
+        expect(screen.getByText(/Firmware update in progress/i)).toBeInTheDocument();
       });
 
       // Send a lock progress update while on the gateway tab
@@ -429,7 +421,7 @@ describe('GatewayFirmwareTab', () => {
       renderTab();
 
       await waitFor(() => {
-        expect(screen.getByText('Firmware Update In Progress')).toBeInTheDocument();
+        expect(screen.getByText(/Firmware update in progress/i)).toBeInTheDocument();
       });
 
       // Reset only the API mocks so we can detect the re-fetch
@@ -462,7 +454,7 @@ describe('GatewayFirmwareTab', () => {
       renderTab();
 
       await waitFor(() => {
-        expect(screen.getByText('Firmware Update In Progress')).toBeInTheDocument();
+        expect(screen.getByText(/Firmware update in progress/i)).toBeInTheDocument();
       });
 
       act(() => {
@@ -500,7 +492,7 @@ describe('GatewayFirmwareTab', () => {
       renderTab();
 
       await waitFor(() => {
-        expect(screen.getByText('Firmware Update In Progress')).toBeInTheDocument();
+        expect(screen.getByText('Firmware update in progress')).toBeInTheDocument();
         expect(screen.getByText('50%')).toBeInTheDocument();
         expect(screen.getByText('2/4 chunks')).toBeInTheDocument();
       });
@@ -516,7 +508,7 @@ describe('GatewayFirmwareTab', () => {
         expect(screen.getByText('Available Firmware')).toBeInTheDocument();
       });
 
-      expect(screen.queryByText('Firmware Update In Progress')).not.toBeInTheDocument();
+      expect(screen.queryByText('Firmware update in progress')).not.toBeInTheDocument();
     });
   });
 
@@ -531,7 +523,7 @@ describe('GatewayFirmwareTab', () => {
       renderTab();
 
       await waitFor(() => {
-        expect(screen.getByText('Firmware Update In Progress')).toBeInTheDocument();
+        expect(screen.getByText('Firmware update in progress')).toBeInTheDocument();
         // v2.0.0 appears in both the banner and the firmware list
         const versions = screen.getAllByText('v2.0.0');
         expect(versions.length).toBeGreaterThanOrEqual(2);

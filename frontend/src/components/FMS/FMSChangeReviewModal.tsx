@@ -20,6 +20,7 @@ import {
   ChevronRightIcon,
   ExclamationTriangleIcon,
   ClipboardDocumentCheckIcon,
+  ShieldExclamationIcon,
   MagnifyingGlassIcon,
 } from '@heroicons/react/24/outline';
 import {
@@ -118,6 +119,15 @@ const CHANGE_STYLES: Record<FMSChangeType, ChangeVisualStyle> = {
     iconText: 'text-rose-600 dark:text-rose-400',
     tagBg: 'bg-rose-50 dark:bg-rose-950/30',
     tagText: 'text-rose-700 dark:text-rose-300',
+  },
+  [FMSChangeType.UNIT_OVERLOCK_CHANGED]: {
+    label: 'Unit overlock',
+    icon: ShieldExclamationIcon,
+    accent: 'border-l-amber-500',
+    iconBg: 'bg-amber-50 dark:bg-amber-950/40',
+    iconText: 'text-amber-600 dark:text-amber-400',
+    tagBg: 'bg-amber-50 dark:bg-amber-950/30',
+    tagText: 'text-amber-700 dark:text-amber-300',
   },
 };
 
@@ -275,7 +285,8 @@ export function FMSChangeReviewModal({
       c.is_valid !== false &&
       (c.change_type === FMSChangeType.TENANT_UPDATED ||
         c.change_type === FMSChangeType.UNIT_UPDATED ||
-        c.change_type === FMSChangeType.TENANT_UNIT_CHANGED),
+        c.change_type === FMSChangeType.TENANT_UNIT_CHANGED ||
+        c.change_type === FMSChangeType.UNIT_OVERLOCK_CHANGED),
   ).length;
 
   const removedCount = changes.filter(
@@ -296,7 +307,8 @@ export function FMSChangeReviewModal({
         valid &&
         (change.change_type === FMSChangeType.TENANT_UPDATED ||
           change.change_type === FMSChangeType.UNIT_UPDATED ||
-          change.change_type === FMSChangeType.TENANT_UNIT_CHANGED)
+          change.change_type === FMSChangeType.TENANT_UNIT_CHANGED ||
+          change.change_type === FMSChangeType.UNIT_OVERLOCK_CHANGED)
       );
     }
     if (activeFilter === 'removed') {

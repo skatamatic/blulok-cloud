@@ -191,7 +191,7 @@ export class DevicesService {
       }
 
       await this.deviceModel.unassignDeviceFromUnit(deviceId);
-      await this.deviceGroupModel.syncUnitLinkedMembers(unitId, deviceId);
+      await this.deviceGroupModel.syncUnitLinkedMembers(unitId, unitId);
 
       this.eventService.emitDeviceUnassigned({
         deviceId,
@@ -252,10 +252,10 @@ export class DevicesService {
 
       const shouldPushAccessCodes = await this.willRemoveAccessCodeGroupMembership(trx, deviceId, unitId);
 
-      await trx('device_group_members').where({ device_id: deviceId, device_type: 'blulok' }).del();
+      await this.deviceGroupModel.removeDirectBluLokMembershipsForDevice(deviceId, trx);
 
       if (unitId) {
-        await trx('device_group_members').where({ source_unit_id: unitId, device_type: 'blulok' }).del();
+        await this.deviceGroupModel.syncUnitLinkedMembers(unitId, unitId, trx);
       }
 
       const deleted = await trx('blulok_devices').where('id', deviceId).del();
@@ -307,11 +307,29 @@ export class DevicesService {
     });
 
     if (result.shouldPushAccessCodes && result.facilityId) {
-      try {
+      const pushAccessCodes = async () => {
         const { AccessCodeService } = await import('@/services/access-code.service');
-        await AccessCodeService.getInstance().pushCodesToGateway(result.facilityId);
+        await AccessCodeService.getInstance().pushCodesToGateway(result.facilityId!);
+      };
+      if (options.source === 'gateway_sync') {
+        void pushAccessCodes().catch((err) => {
+          logger.warn('Failed to push access codes after BluLok inventory removal:', err);
+        });
+      } else {
+        try {
+          await pushAccessCodes();
+        } catch (err) {
+          logger.warn('Failed to push access codes after BluLok inventory removal:', err);
+        }
+      }
+    }
+
+    if (result.hadUnit && result.unitId) {
+      try {
+        const { DenylistEntryModel } = await import('@/models/denylist-entry.model');
+        await new DenylistEntryModel().removeByDevice(deviceId);
       } catch (err) {
-        logger.warn('Failed to push access codes after BluLok inventory removal:', err);
+        logger.warn('Failed to prune denylist entries for removed BluLok device:', err);
       }
     }
 
@@ -397,11 +415,20 @@ export class DevicesService {
     });
 
     if (result.shouldPushAccessCodes && result.facilityId) {
-      try {
+      const pushAccessCodes = async () => {
         const { AccessCodeService } = await import('@/services/access-code.service');
-        await AccessCodeService.getInstance().pushCodesToGateway(result.facilityId);
-      } catch (err) {
-        logger.warn('Failed to push access codes after access control inventory removal:', err);
+        await AccessCodeService.getInstance().pushCodesToGateway(result.facilityId!);
+      };
+      if (options.source === 'gateway_sync') {
+        void pushAccessCodes().catch((err) => {
+          logger.warn('Failed to push access codes after access control inventory removal:', err);
+        });
+      } else {
+        try {
+          await pushAccessCodes();
+        } catch (err) {
+          logger.warn('Failed to push access codes after access control inventory removal:', err);
+        }
       }
     }
 
@@ -503,6 +530,7 @@ export class DevicesService {
   ): Promise<boolean> {
     const query = trx('device_group_members as m')
       .join('device_groups as g', 'g.id', 'm.group_id')
+      .andWhere('g.group_type', 'access_code')
       .andWhere('m.device_type', 'blulok')
       .andWhere((builder) => {
         builder.where('m.device_id', deviceId);

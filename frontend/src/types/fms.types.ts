@@ -35,6 +35,7 @@ export enum FMSChangeType {
   UNIT_ADDED = 'unit_added',
   UNIT_REMOVED = 'unit_removed',
   UNIT_UPDATED = 'unit_updated',
+  UNIT_OVERLOCK_CHANGED = 'unit_overlock_changed',
 }
 
 export enum FMSChangeAction {

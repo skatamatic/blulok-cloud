@@ -40,6 +40,7 @@ export interface DiagnosticsData {
 
 export interface IWebSocketService {
   subscribe(subscriptionType: string, filters?: Record<string, unknown>): void;
+  reassertSubscription(subscriptionType: string, filters?: Record<string, unknown>): void;
   unsubscribe(subscriptionType: string, filters?: Record<string, unknown>): void;
   hasSubscription(subscriptionType: string, filters?: Record<string, unknown>): boolean;
   onMessage(subscriptionType: string, handler: (data: unknown) => void): () => void;

@@ -67,8 +67,9 @@ export function normalizeDeviceStatusWsPayload(data: unknown): LockDeviceSnapsho
 }
 
 /**
- * device_status WebSocket payloads (after WebSocketContext unwraps `data`) typically include
- * `updatedDeviceId` and/or a `devices` array. Used to avoid full list refresh on unrelated devices.
+ * Decide whether a device_status WebSocket payload should trigger a full devices list reload.
+ * Prefer refreshing when the payload identifies any device change — including devices not
+ * yet present in the current id index (gateway inventory add, pagination, filters).
  */
 export function shouldRefreshDeviceListForPayload(
   payload: unknown,
@@ -78,6 +79,9 @@ export function shouldRefreshDeviceListForPayload(
   if (!payload || typeof payload !== 'object') return true;
 
   const p = payload as Record<string, unknown>;
+
+  if (p.source === 'units_update') return true;
+
   const updated = p.updatedDeviceId;
   if (typeof updated === 'string' && updated) {
     return relevantIds.has(updated);
@@ -85,12 +89,12 @@ export function shouldRefreshDeviceListForPayload(
 
   const devices = p.devices;
   if (Array.isArray(devices) && devices.length > 0) {
-    return devices.some((d) => {
-      if (!d || typeof d !== 'object') return false;
-      const id = (d as { id?: string }).id;
-      return typeof id === 'string' && relevantIds.has(id);
+    return devices.some((device) => {
+      if (!device || typeof device !== 'object') return false;
+      const id = (device as { id?: unknown }).id;
+      return typeof id === 'string' && id.length > 0 && relevantIds.has(id);
     });
   }
 
-  return true;
+  return relevantIds.size === 0;
 }

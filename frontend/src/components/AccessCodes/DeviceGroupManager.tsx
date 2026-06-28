@@ -23,19 +23,29 @@ import { AccessGroupRowDetailLinks } from '@/components/AccessCodes/AccessGroupR
 import {
   buildGroupSummary,
   buildGroupableAccessControlSearchKeywords,
-  buildGroupableBlulokSearchKeywords,
+  buildGroupableUnitSearchKeywords,
   DEFAULT_GROUP_CONFIG,
   describeGroupAccess,
   filterKeypadDevices,
+  filterBlulokMembersByLockAssignment,
+  filterGroupableUnitsByLockAssignment,
   GroupCardSummary,
+  groupableUnitHasAssignedLock,
+  GroupableUnitFields,
   GroupMemberRef,
   GroupUserAccess,
   pushStatusClasses,
   pushStatusLabel,
+  resolveAccessGroupMemberSubtitle,
   resolveAccessGroupMemberTitle,
-  resolveGroupableDeviceLabel,
+  resolveGroupMemberKey,
+  resolveGroupableUnitLabel,
+  resolveLockDeviceForUnitMember,
+  resolveUnitForMember,
   sortAccessGroups,
+  unitMemberHasAssignedLock,
 } from '@/components/AccessCodes/access-groups.utils';
+import { Unit } from '@/types/facility.types';
 
 interface GroupableDevice {
   id: string;
@@ -53,7 +63,7 @@ interface GroupableDevice {
 }
 
 interface MemberSection {
-  key: 'unit_locks' | 'access_control';
+  key: 'units' | 'access_control';
   title: string;
   members: GroupMemberRef[];
 }
@@ -61,6 +71,7 @@ interface MemberSection {
 interface DeviceGroupManagerProps {
   facilityId: string;
   devices: GroupableDevice[];
+  units?: Unit[];
   accessControlDevices?: AccessControlDevice[];
   groups: DeviceGroup[];
   onGroupsChanged: () => Promise<void>;
@@ -74,6 +85,7 @@ interface DeviceGroupManagerProps {
 export function DeviceGroupManager({
   facilityId,
   devices,
+  units = [],
   accessControlDevices = [],
   groups,
   onGroupsChanged,
@@ -95,6 +107,7 @@ export function DeviceGroupManager({
   } | null>(null);
   const [effectiveCodes, setEffectiveCodes] = useState<EffectiveAccessCode[]>([]);
   const [selectedDeviceId, setSelectedDeviceId] = useState('');
+  const [selectedUnitId, setSelectedUnitId] = useState('');
   const [selectedGroupMembers, setSelectedGroupMembers] = useState<GroupMemberRef[]>([]);
   const [selectedGroupUsers, setSelectedGroupUsers] = useState<GroupUserAccess[]>([]);
   const [groupMemberCounts, setGroupMemberCounts] = useState<Record<string, number>>({});
@@ -108,6 +121,7 @@ export function DeviceGroupManager({
   const [renameDraft, setRenameDraft] = useState('');
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [expandedMemberKey, setExpandedMemberKey] = useState<string | null>(null);
+  const [includeUnitsWithoutLock, setIncludeUnitsWithoutLock] = useState(true);
   const [internalCreateDialogOpen, setInternalCreateDialogOpen] = useState(false);
   const isCreateDialogControlled = createDialogOpen !== undefined;
   const showCreateDialog = isCreateDialogControlled ? createDialogOpen : internalCreateDialogOpen;
@@ -161,51 +175,93 @@ export function DeviceGroupManager({
     setCopyFromGroupId('');
   };
 
+  const groupableUnits = useMemo<GroupableUnitFields[]>(
+    () => units.map((unit) => ({
+      id: unit.id,
+      unit_number: unit.unit_number,
+      status: unit.status,
+      unit_type: unit.unit_type,
+      blulok_device: unit.blulok_device,
+    })),
+    [units],
+  );
   const selectedGroup = groups.find((group) => group.id === selectedGroupId) || null;
+  const visibleGroupableUnits = useMemo(
+    () => filterGroupableUnitsByLockAssignment(groupableUnits, includeUnitsWithoutLock, devices),
+    [groupableUnits, includeUnitsWithoutLock, devices],
+  );
+  const hiddenUnitsWithoutLockCount = useMemo(
+    () => groupableUnits.filter((unit) => !groupableUnitHasAssignedLock(unit, devices)).length,
+    [groupableUnits, devices],
+  );
+  const vacantUnitMemberCount = useMemo(
+    () => selectedGroupMembers.filter((member) => {
+      if (member.device_type !== 'blulok') return false;
+      const unit = resolveUnitForMember(member, groupableUnits);
+      return !unitMemberHasAssignedLock(member, devices, unit);
+    }).length,
+    [selectedGroupMembers, groupableUnits, devices],
+  );
+  const showUnitLockFilter = hiddenUnitsWithoutLockCount > 0 || vacantUnitMemberCount > 0;
   const memberSections = useMemo<MemberSection[]>(() => {
-    const unitLocks = selectedGroupMembers.filter((member) => member.device_type === 'blulok');
+    const unitMembers = filterBlulokMembersByLockAssignment(
+      selectedGroupMembers.filter((member) => member.device_type === 'blulok'),
+      includeUnitsWithoutLock,
+      groupableUnits,
+      devices,
+    );
     const accessControl = selectedGroupMembers.filter((member) => member.device_type === 'access_control');
     const sections: MemberSection[] = [
-      { key: 'unit_locks', title: 'Unit locks', members: unitLocks },
+      { key: 'units', title: 'Units', members: unitMembers },
       { key: 'access_control', title: 'Access control', members: accessControl },
     ];
     return sections.filter((section) => section.members.length > 0);
-  }, [selectedGroupMembers]);
+  }, [selectedGroupMembers, includeUnitsWithoutLock, groupableUnits, devices]);
   const selectedMemberKeys = useMemo(
     () => new Set(selectedGroupMembers.flatMap((member) => {
-      const keys = [`${member.device_type}:${member.device_id}`];
+      const keys = [resolveGroupMemberKey(member)];
       if (member.device_type === 'blulok' && member.source_unit_id) {
         keys.push(`unit:${member.source_unit_id}`);
+      }
+      if (member.device_type === 'blulok') {
+        keys.push(`blulok:${member.device_id}`);
       }
       return keys;
     })),
     [selectedGroupMembers],
   );
-  const groupableDeviceOptions = useMemo(
+  const groupableUnitOptions = useMemo(
+    () => visibleGroupableUnits
+      .filter((unit) => !selectedMemberKeys.has(`unit:${unit.id}`))
+      .map((unit) => {
+        const lockSerial = unit.blulok_device?.device_serial || unit.blulok_device?.serial;
+        return {
+          value: unit.id,
+          label: resolveGroupableUnitLabel(unit),
+          description: lockSerial
+            ? `Lock assigned · ${lockSerial}`
+            : 'No lock assigned',
+          keywords: buildGroupableUnitSearchKeywords(unit),
+        };
+      }),
+    [visibleGroupableUnits, selectedMemberKeys],
+  );
+  const groupableAccessControlOptions = useMemo(
     () => devices
-      .filter((device) => {
-        const deviceType = device.device_category === 'blulok' ? 'blulok' : 'access_control';
-        if (selectedMemberKeys.has(`${deviceType}:${device.id}`)) return false;
-        if (deviceType === 'blulok' && device.unit_id && selectedMemberKeys.has(`unit:${device.unit_id}`)) return false;
-        return true;
-      })
+      .filter((device) => device.device_category === 'access_control')
+      .filter((device) => !selectedMemberKeys.has(`access_control:${device.id}`))
       .map((device) => ({
         value: device.id,
-        label: resolveGroupableDeviceLabel(device),
+        label: device.name?.trim() || device.device_serial || device.id,
         description: [
-          device.device_category === 'blulok' ? 'Unit lock' : 'Access control device',
-          device.device_category === 'blulok' && device.unit_number ? `Unit ${device.unit_number}` : '',
-          device.device_category === 'blulok' && device.device_serial ? `Serial ${device.device_serial}` : '',
-          device.device_category === 'access_control' && device.device_serial ? `Serial ${device.device_serial}` : '',
-          device.device_category === 'access_control' && device.relay_channel != null ? `Relay ${device.relay_channel}` : '',
-          device.device_category === 'access_control' && device.device_type ? device.device_type : '',
-          device.device_category === 'access_control' ? (device.location_description || '') : '',
-          device.device_category === 'access_control' && device.access_methods?.includes('keypad') ? 'keypad-enabled' : '',
-        ].filter(Boolean).join(' • '),
-        keywords:
-          device.device_category === 'blulok'
-            ? buildGroupableBlulokSearchKeywords(device)
-            : buildGroupableAccessControlSearchKeywords(device),
+          'Access control device',
+          device.device_serial ? `Serial ${device.device_serial}` : '',
+          device.relay_channel != null ? `Relay ${device.relay_channel}` : '',
+          device.device_type || '',
+          device.location_description || '',
+          device.access_methods?.includes('keypad') ? 'keypad-enabled' : '',
+        ].filter(Boolean).join(' · '),
+        keywords: buildGroupableAccessControlSearchKeywords(device),
       })),
     [devices, selectedMemberKeys],
   );
@@ -396,6 +452,14 @@ export function DeviceGroupManager({
   }, [selectedGroupId, detailTab]);
 
   useEffect(() => {
+    if (includeUnitsWithoutLock || !selectedUnitId) return;
+    const unit = groupableUnits.find((item) => item.id === selectedUnitId);
+    if (unit && !groupableUnitHasAssignedLock(unit, devices)) {
+      setSelectedUnitId('');
+    }
+  }, [includeUnitsWithoutLock, selectedUnitId, groupableUnits, devices]);
+
+  useEffect(() => {
     if (detailTab !== 'users' || !selectedGroupId) return;
     loadSelectedGroupUsers(selectedGroupId).catch(() => undefined);
   }, [detailTab, selectedGroupId]);
@@ -439,7 +503,7 @@ export function DeviceGroupManager({
   };
 
   const selectedSummary = selectedGroup ? groupSummaries[selectedGroup.id] : null;
-  const hasUnitLocks = selectedGroupMembers.some((member) => member.device_type === 'blulok');
+  const hasUnitMembers = selectedGroupMembers.some((member) => member.device_type === 'blulok');
   const detailTabs = [
     { key: 'members', label: 'Members', count: selectedGroupMembers.length },
     {
@@ -566,22 +630,43 @@ export function DeviceGroupManager({
     }
   };
 
-  const addMember = async () => {
-    if (!selectedGroupId || !selectedGroup) return;
-    const targetDeviceId = selectedDeviceId;
-    if (!targetDeviceId) return;
-    if (selectedGroupMembers.some((member) => member.device_id === targetDeviceId)) {
+  const addUnitMember = async () => {
+    if (!selectedGroupId || !selectedGroup || !selectedUnitId) return;
+    if (selectedMemberKeys.has(`unit:${selectedUnitId}`)) {
+      addToast({ type: 'error', title: 'Unit is already a member of this group' });
+      return;
+    }
+    setSaving(true);
+    try {
+      await apiService.addDeviceGroupMember(selectedGroupId, {
+        unitId: selectedUnitId,
+        deviceType: 'blulok',
+      });
+      setSelectedUnitId('');
+      await onGroupsChanged();
+      await loadSelectedGroupMembers(selectedGroupId);
+      await refreshGroupUsersAfterMemberChange(selectedGroupId);
+      addToast({ type: 'success', title: 'Unit added to access group' });
+    } catch (error: any) {
+      console.error(error);
+      const message = error?.response?.data?.message || 'Failed to add unit to access group';
+      addToast({ type: 'error', title: String(message) });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const addAccessControlMember = async () => {
+    if (!selectedGroupId || !selectedGroup || !selectedDeviceId) return;
+    if (selectedGroupMembers.some((member) => member.device_id === selectedDeviceId)) {
       addToast({ type: 'error', title: 'Device is already a member of this group' });
       return;
     }
     setSaving(true);
     try {
-      const selectedDevice = devices.find((device) => device.id === targetDeviceId);
-      const deviceType = selectedDevice?.device_category === 'blulok' ? 'blulok' : 'access_control';
       await apiService.addDeviceGroupMember(selectedGroupId, {
-        deviceId: targetDeviceId,
-        unitId: deviceType === 'blulok' ? selectedDevice?.unit_id : undefined,
-        deviceType,
+        deviceId: selectedDeviceId,
+        deviceType: 'access_control',
       });
       setSelectedDeviceId('');
       await onGroupsChanged();
@@ -608,11 +693,17 @@ export function DeviceGroupManager({
     }
     setSaving(true);
     try {
-      await apiService.removeDeviceGroupMember(selectedGroupId, member.device_id, member.device_type);
+      const removeId = member.device_type === 'blulok' && member.source_unit_id
+        ? member.source_unit_id
+        : member.device_id;
+      await apiService.removeDeviceGroupMember(selectedGroupId, removeId, member.device_type);
       await onGroupsChanged();
       await loadSelectedGroupMembers(selectedGroupId);
       await refreshGroupUsersAfterMemberChange(selectedGroupId);
-      addToast({ type: 'success', title: 'Device removed from access group' });
+      addToast({
+        type: 'success',
+        title: member.device_type === 'blulok' ? 'Unit removed from access group' : 'Device removed from access group',
+      });
     } catch (error: any) {
       console.error(error);
       const message = error?.response?.data?.message || 'Failed to remove device from access group';
@@ -814,7 +905,7 @@ export function DeviceGroupManager({
                       </p>
                       {selectedGroup.is_default && (
                         <p className="mt-2 text-xs leading-relaxed text-gray-600 dark:text-gray-300">
-                          Devices are added here automatically. Move a device into a specific group to restrict access to a wing or section.
+                          Units and devices are added here automatically when provisioned. Move a unit or device into a specific group to restrict access to a wing or section.
                         </p>
                       )}
                     </div>
@@ -878,27 +969,93 @@ export function DeviceGroupManager({
                 <div className="flex-1 px-5 py-5 sm:px-6">
                   {detailTab === 'members' ? (
                     <>
-                      {!selectedGroup.is_default && (
-                        <div className="mb-4 flex flex-col gap-2 sm:flex-row">
-                          <div className="flex-1">
-                            <SearchableSelect
-                              value={selectedDeviceId}
-                              onChange={setSelectedDeviceId}
-                              options={groupableDeviceOptions}
-                              placeholder="Search by unit, device, serial, location, or ID..."
-                              emptyMessage="No eligible devices found"
-                              className="w-full"
-                            />
+                      {showUnitLockFilter && (
+                        <div className="mb-4 flex items-center justify-between gap-3 rounded-lg border border-gray-200/80 bg-gray-50/80 px-3 py-2.5 dark:border-gray-700 dark:bg-gray-800/50">
+                          <div className="min-w-0">
+                            <p className="text-xs font-medium text-gray-800 dark:text-gray-100">
+                              Units without locks
+                            </p>
+                            <p className="mt-0.5 text-[11px] text-gray-500 dark:text-gray-400">
+                              {includeUnitsWithoutLock
+                                ? 'Showing vacant units in the member list and add picker.'
+                                : 'Vacant units are hidden from the member list and add picker.'}
+                            </p>
                           </div>
                           <button
                             type="button"
-                            onClick={addMember}
-                            disabled={saving || !selectedDeviceId || groupableDeviceOptions.length === 0}
-                            className="inline-flex items-center justify-center gap-1.5 rounded-lg bg-primary-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-primary-700 disabled:opacity-50"
+                            role="switch"
+                            aria-checked={includeUnitsWithoutLock}
+                            aria-label="Include units without locks"
+                            onClick={() => setIncludeUnitsWithoutLock((current) => !current)}
+                            className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors ${
+                              includeUnitsWithoutLock ? 'bg-primary-600' : 'bg-gray-300 dark:bg-gray-600'
+                            }`}
                           >
-                            <PlusIcon className="h-4 w-4" aria-hidden />
-                            Add device
+                            <span
+                              className={`inline-block h-4 w-4 transform rounded-full bg-white shadow-sm transition-transform ${
+                                includeUnitsWithoutLock ? 'translate-x-6' : 'translate-x-1'
+                              }`}
+                            />
                           </button>
+                        </div>
+                      )}
+
+                      {!selectedGroup.is_default && (
+                        <div className="mb-4 space-y-3">
+                          <div className="flex flex-col gap-2 sm:flex-row">
+                            <div className="flex-1">
+                              <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
+                                Add unit
+                              </label>
+                              <SearchableSelect
+                                value={selectedUnitId}
+                                onChange={setSelectedUnitId}
+                                options={groupableUnitOptions}
+                                placeholder="Search by unit number or status..."
+                                emptyMessage="No eligible units found"
+                                className="w-full"
+                              />
+                            </div>
+                            <div className="flex items-end">
+                              <button
+                                type="button"
+                                onClick={addUnitMember}
+                                disabled={saving || !selectedUnitId || groupableUnitOptions.length === 0}
+                                className="inline-flex w-full items-center justify-center gap-1.5 rounded-lg bg-primary-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-primary-700 disabled:opacity-50 sm:w-auto"
+                              >
+                                <PlusIcon className="h-4 w-4" aria-hidden />
+                                Add unit
+                              </button>
+                            </div>
+                          </div>
+                          {groupableAccessControlOptions.length > 0 && (
+                            <div className="flex flex-col gap-2 sm:flex-row">
+                              <div className="flex-1">
+                                <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
+                                  Add access control device
+                                </label>
+                                <SearchableSelect
+                                  value={selectedDeviceId}
+                                  onChange={setSelectedDeviceId}
+                                  options={groupableAccessControlOptions}
+                                  placeholder="Search by name, serial, location, or ID..."
+                                  emptyMessage="No eligible access control devices found"
+                                  className="w-full"
+                                />
+                              </div>
+                              <div className="flex items-end">
+                                <button
+                                  type="button"
+                                  onClick={addAccessControlMember}
+                                  disabled={saving || !selectedDeviceId}
+                                  className="inline-flex w-full items-center justify-center gap-1.5 rounded-lg border border-primary-200 bg-primary-50 px-4 py-2 text-sm font-medium text-primary-700 transition-colors hover:bg-primary-100 disabled:opacity-50 dark:border-primary-900/50 dark:bg-primary-950/30 dark:text-primary-300 dark:hover:bg-primary-950/50 sm:w-auto"
+                                >
+                                  <PlusIcon className="h-4 w-4" aria-hidden />
+                                  Add device
+                                </button>
+                              </div>
+                            </div>
+                          )}
                         </div>
                       )}
 
@@ -920,8 +1077,18 @@ export function DeviceGroupManager({
                           <p className="mt-3 text-sm font-medium text-gray-700 dark:text-gray-200">No members yet</p>
                           <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
                             {selectedGroup.is_default
-                              ? 'Devices will appear here as they are provisioned.'
-                              : 'Search above to add unit locks or access-control devices.'}
+                              ? 'Units and devices will appear here as they are provisioned.'
+                              : 'Add units or access-control devices using the selectors above.'}
+                          </p>
+                        </div>
+                      ) : memberSections.length === 0 ? (
+                        <div className="rounded-xl border border-dashed border-gray-300 px-6 py-10 text-center dark:border-gray-600">
+                          <UsersIcon className="mx-auto h-8 w-8 text-gray-300 dark:text-gray-600" aria-hidden />
+                          <p className="mt-3 text-sm font-medium text-gray-700 dark:text-gray-200">
+                            All members are hidden by filter
+                          </p>
+                          <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                            Turn on &quot;Units without locks&quot; to show vacant unit members.
                           </p>
                         </div>
                       ) : (
@@ -938,25 +1105,47 @@ export function DeviceGroupManager({
                               </div>
                               <div className="overflow-hidden rounded-xl border border-gray-200 dark:border-gray-700">
                                 {section.members.map((member, index) => {
-                                  const device = devices.find((item) => item.id === member.device_id);
                                   const isBlulok = member.device_type === 'blulok';
-                                  const unitLabel = isBlulok && device?.unit_number ? `Unit ${device.unit_number}` : null;
+                                  const unit = isBlulok
+                                    ? resolveUnitForMember(member, groupableUnits)
+                                    : undefined;
+                                  const lockDevice = isBlulok
+                                    ? resolveLockDeviceForUnitMember(member, devices, unit)
+                                    : undefined;
+                                  const accessControlDevice = !isBlulok
+                                    ? devices.find((item) => item.id === member.device_id)
+                                    : undefined;
+                                  const displayDevice = isBlulok ? lockDevice : accessControlDevice;
+                                  const hasAssignedLock = isBlulok
+                                    ? unitMemberHasAssignedLock(member, devices, unit)
+                                    : false;
                                   const showRemove = !selectedGroup.is_default;
-                                  const memberKey = `${member.device_type}:${member.device_id}`;
+                                  const memberKey = resolveGroupMemberKey(member);
                                   const isExpanded = expandedMemberKey === memberKey;
                                   const iconDevice = isBlulok
                                     ? ({ device_category: 'blulok' } as const)
                                     : ({
                                         device_category: 'access_control' as const,
-                                        device_type: device?.device_type,
+                                        device_type: accessControlDevice?.device_type,
                                       } as const);
                                   const iconMeta = getDeviceIconMeta(iconDevice);
+                                  const unitIdForLink = member.source_unit_id || unit?.id;
                                   const detailLinks = [
-                                    { label: 'View device', to: `/devices/${member.device_id}` },
-                                    ...(isBlulok && device?.unit_id
-                                      ? [{ label: 'View unit', to: `/units/${device.unit_id}` }]
+                                    ...(isBlulok && unitIdForLink
+                                      ? [{ label: 'View unit', to: `/units/${unitIdForLink}` }]
+                                      : []),
+                                    ...(hasAssignedLock && lockDevice?.id
+                                      ? [{ label: 'View lock', to: `/devices/${lockDevice.id}` }]
+                                      : []),
+                                    ...(!isBlulok
+                                      ? [{ label: 'View device', to: `/devices/${member.device_id}` }]
                                       : []),
                                   ];
+                                  const subtitle = resolveAccessGroupMemberSubtitle(
+                                    member,
+                                    displayDevice,
+                                    unit,
+                                  );
                                   return (
                                     <div key={memberKey}>
                                       <div
@@ -978,20 +1167,21 @@ export function DeviceGroupManager({
                                           <div className="min-w-0 flex-1">
                                             <div className="flex flex-wrap items-center gap-2">
                                               <span className="truncate font-medium text-gray-900 dark:text-white">
-                                                {resolveAccessGroupMemberTitle(member, device)}
+                                                {resolveAccessGroupMemberTitle(member, displayDevice, unit)}
                                               </span>
+                                              {isBlulok && !hasAssignedLock && (
+                                                <span className="rounded-md bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-800 dark:bg-amber-900/40 dark:text-amber-200">
+                                                  No lock
+                                                </span>
+                                              )}
                                               {selectedGroup.is_default && (
                                                 <span className="rounded-md bg-blue-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-blue-700 dark:bg-blue-900/40 dark:text-blue-300">
                                                   Auto-assigned
                                                 </span>
                                               )}
                                             </div>
-                                            <p className="truncate text-xs text-gray-500 dark:text-gray-400">
-                                              {isBlulok ? 'Unit lock' : 'Access control'}
-                                              {unitLabel ? ` · ${unitLabel}` : ''}
-                                              {device?.device_serial ? ` · ${device.device_serial}` : ''}
-                                              {!isBlulok && device?.device_type ? ` · ${device.device_type}` : ''}
-                                              {!isBlulok && device?.location_description ? ` · ${device.location_description}` : ''}
+                                            <p className={`truncate text-xs ${isBlulok && !hasAssignedLock ? 'text-amber-700 dark:text-amber-300' : 'text-gray-500 dark:text-gray-400'}`}>
+                                              {subtitle}
                                             </p>
                                           </div>
                                           {isExpanded ? (
@@ -1026,7 +1216,7 @@ export function DeviceGroupManager({
                       users={selectedGroupUsers}
                       loading={loadingUsers}
                       loadError={usersLoadError}
-                      hasUnitLocks={hasUnitLocks}
+                      hasUnitLocks={hasUnitMembers}
                     />
                   ) : (
                     <AccessCodeGroupPanel

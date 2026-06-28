@@ -24,7 +24,7 @@ When a facility’s on-site gateway is replaced, the cloud **must not trust inve
 | Facility has a **bound gateway** row (`gateways.facility_id` set) | Defines “production” vs swap candidate |
 | Replacement gateway has a **stable GUID** it sends in `AUTH.gatewayId` | Identity; **the cloud record is auto-created on first connect** — pre-creating it is optional (see §5.1) |
 | Replacement gateway `facility_id` is **null** or matches this facility | Other-facility gateways are rejected as swap candidates |
-| At least one **gateway firmware image** uploaded (`target_type=gateway`) | Recovery phase 1 |
+| At least one **gateway firmware image** uploaded (`target_type=gateway`) matching the production gateway version | Recovery phase 1 (only when **Include firmware matching** is enabled) |
 | Operator JWT with **`facility_admin`** (scoped), **`admin`**, or **`dev_admin`** | WS AUTH (also gates auto-registration) + recovery REST |
 | Backend migration **078** + **079** applied | Recovery tables + one active recovery per facility |
 | Gateway can reach **`wss://<host>/ws/gateway`** and **`https://<host>/api/v1`** | Same URLs as Facility → Gateway → Overview |
@@ -136,7 +136,7 @@ Set on the device (e.g. `CLOUD_WS`, `CLOUD_API` in mesh-manager compose). Use a 
    - Bound gateway ID (production)
    - Swap candidate ID + **connected**
    - Alert: facility operations restricted
-4. Select **firmware image** (default: highest semver gateway firmware).
+4. Optionally enable **Include firmware matching** (default on). When enabled, the cloud matches the **production gateway’s** firmware version and OTA-pushes to the swap candidate only if it differs. When disabled, recovery skips firmware and goes straight to inventory push.
 5. Click **Start swap recovery**.
 6. Monitor the **4-step stepper** and event log until **Complete**.
 7. Verify Overview shows the **new gateway** bound; inventory sync and remote locks work again.
@@ -347,10 +347,10 @@ Auth: `Authorization: Bearer <JWT>`
 |--------|------|---------|
 | GET | `/gateways/facility/:facilityId/recovery/candidates` | Swap candidates + active recovery summary |
 | GET | `/gateways/:gatewayId/recovery/status` | Latest recovery for swap gateway |
-| GET | `/gateways/:gatewayId/recovery/options` | Firmware dropdown |
+| GET | `/gateways/:gatewayId/recovery/options` | Production vs candidate firmware comparison |
 | GET | `/gateways/:gatewayId/recovery/inventory-preview` | Devices that will be in snapshot |
 | GET | `/gateways/:gatewayId/recovery/:recoveryId/events` | Event timeline (`?limit=100`) |
-| POST | `/gateways/:gatewayId/recovery/initiate` | Start recovery `{ firmwareId? }` |
+| POST | `/gateways/:gatewayId/recovery/initiate` | Start recovery `{ includeFirmware?, firmwareId? }` |
 | POST | `/gateways/:gatewayId/recovery/retry` | Retry failed recovery |
 | POST | `/gateways/:gatewayId/recovery/:recoveryId/cancel` | Cancel in-progress recovery |
 | POST | `/gateways/:gatewayId/recovery/bypass` | **Admin only** `{ confirm: true }` |
@@ -360,11 +360,11 @@ Auth: `Authorization: Bearer <JWT>`
 
 ```json
 {
-  "firmwareId": "11111111-1111-4111-8111-111111111111"
+  "includeFirmware": true
 }
 ```
 
-Omit `firmwareId` to use cloud default (highest semver gateway firmware).
+Set `"includeFirmware": false` to skip the firmware phase entirely. When enabled (default), the cloud uses the production gateway’s reported version — no manual firmware selection. An optional `firmwareId` override remains for API/testing use.
 
 ---
 

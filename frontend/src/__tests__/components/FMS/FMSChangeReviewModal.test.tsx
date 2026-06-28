@@ -1,5 +1,6 @@
 import React from 'react';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import '@/__tests__/mocks/websocket-provider-deps';
 import { FMSChangeReviewModal } from '@/components/FMS/FMSChangeReviewModal';
 import { FMSSyncProvider } from '@/contexts/FMSSyncContext';
 import { ThemeProvider } from '@/contexts/ThemeContext';

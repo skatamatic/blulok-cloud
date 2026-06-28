@@ -102,6 +102,8 @@ export interface Unit {
   unit_type: string | null;
   /** Current occupancy/availability status */
   status: 'available' | 'occupied' | 'maintenance' | 'reserved';
+  /** FMS/manual overlock flag — displayed as "overlocked" when unit has tenants */
+  is_overlocked: boolean;
   /** Optional description of the unit */
   description: string | null;
   /** Physical features and amenities (balcony, parking space, etc.) */
@@ -192,14 +194,21 @@ export interface UnitAssignment {
   updated_at: Date;
 }
 
+export type EffectiveUnitStatus = 'available' | 'occupied' | 'overlocked' | 'maintenance' | 'reserved';
+
 /**
- * Effective occupancy status for API responses: any tenant assignment implies occupied;
- * stale `units.status = 'occupied'` with zero assignments is treated as available.
+ * Effective occupancy status for API responses: any tenant assignment implies occupied
+ * (or overlocked when flagged); stale `units.status = 'occupied'` with zero assignments
+ * is treated as available.
  */
 export function deriveEffectiveUnitStatus(
   storedStatus: Unit['status'],
-  assignmentCount: number
-): Unit['status'] {
+  assignmentCount: number,
+  isOverlocked = false
+): EffectiveUnitStatus {
+  if (assignmentCount > 0 && isOverlocked) {
+    return 'overlocked';
+  }
   if (assignmentCount > 0) {
     return 'occupied';
   }
@@ -273,10 +282,30 @@ export class UnitModel {
     if (!unit) {
       return;
     }
-    const next = deriveEffectiveUnitStatus(unit.status, count);
-    if (next !== unit.status) {
-      await knex('units').where('id', unitId).update({ status: next, updated_at: knex.fn.now() });
+    const next = deriveEffectiveUnitStatus(unit.status, count, Boolean(unit.is_overlocked));
+    const updates: Partial<Unit> = {};
+    if (next !== unit.status && next !== 'overlocked') {
+      updates.status = next as Unit['status'];
     }
+    if (count === 0 && unit.is_overlocked) {
+      updates.is_overlocked = false;
+    }
+    if (Object.keys(updates).length > 0) {
+      await knex('units').where('id', unitId).update({ ...updates, updated_at: knex.fn.now() });
+    }
+  }
+
+  async setOverlockStatus(unitId: string, isOverlocked: boolean, trx?: Knex.Transaction): Promise<void> {
+    const knex = trx ?? this.db.connection;
+    await knex('units').where('id', unitId).update({
+      is_overlocked: isOverlocked,
+      updated_at: knex.fn.now(),
+    });
+  }
+
+  async hasBlulokDevice(unitId: string): Promise<boolean> {
+    const row = await this.db.connection('blulok_devices').where('unit_id', unitId).first('id');
+    return Boolean(row);
   }
 
   /**
@@ -663,11 +692,12 @@ export class UnitModel {
       query = query.orderByRaw(
         `FIELD(
           CASE
+            WHEN (SELECT COUNT(*) FROM unit_assignments ua_sort WHERE ua_sort.unit_id = u.id) > 0 AND u.is_overlocked = 1 THEN 'overlocked'
             WHEN (SELECT COUNT(*) FROM unit_assignments ua_sort WHERE ua_sort.unit_id = u.id) > 0 THEN 'occupied'
             WHEN u.status = 'occupied' THEN 'available'
             ELSE u.status
           END,
-          'available', 'reserved', 'maintenance', 'occupied'
+          'available', 'reserved', 'maintenance', 'occupied', 'overlocked'
         ) ${dir}`
       );
       query = query.orderBy('u.id', 'asc');
@@ -722,7 +752,8 @@ export class UnitModel {
         id: row.id,
         unit_number: row.unit_number,
         unit_type: row.unit_type,
-        status: deriveEffectiveUnitStatus(row.status, Number(row.assignment_count ?? 0)),
+        status: deriveEffectiveUnitStatus(row.status, Number(row.assignment_count ?? 0), Boolean(row.is_overlocked)),
+        is_overlocked: Boolean(row.is_overlocked),
         facility_id: row.facility_id,
         facility_name: row.facility_name,
         facility_address: row.facility_address,
@@ -1210,7 +1241,8 @@ export class UnitModel {
         id: result.id,
         unit_number: result.unit_number,
         unit_type: result.unit_type,
-        status: deriveEffectiveUnitStatus(result.status, Number(result.assignment_count ?? 0)),
+        status: deriveEffectiveUnitStatus(result.status, Number(result.assignment_count ?? 0), Boolean(result.is_overlocked)),
+        is_overlocked: Boolean(result.is_overlocked),
         facility_id: result.facility_id,
         facility_name: result.facility_name,
         facility_address: result.facility_address,
@@ -1357,7 +1389,7 @@ export class UnitModel {
       logger.info(`Unit updated: ${unitId} by user ${userId}`);
       return {
         ...updatedUnit,
-        status: deriveEffectiveUnitStatus(updatedUnit.status, assignmentCount),
+        status: deriveEffectiveUnitStatus(updatedUnit.status, assignmentCount, Boolean(updatedUnit.is_overlocked)),
       } as Unit;
     } catch (error) {
       logger.error('Error updating unit:', error);

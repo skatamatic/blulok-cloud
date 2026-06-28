@@ -1,5 +1,6 @@
 import React from 'react';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import '@/__tests__/mocks/websocket-provider-deps';
 import { FMSSyncProgressModal } from '@/components/FMS/FMSSyncProgressModal';
 import { FMSSyncProvider, SyncStep } from '@/contexts/FMSSyncContext';
 import { ThemeProvider } from '@/contexts/ThemeContext';

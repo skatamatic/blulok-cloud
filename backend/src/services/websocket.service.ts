@@ -318,7 +318,7 @@ export class WebSocketService {
 
     const subscriptionId = message.subscriptionId || `${message.subscriptionType}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     client.pendingSubscriptionKeys.add(subscriptionKey);
-    
+
     // Create subscription record
     const subscription: Subscription = {
       id: subscriptionId,

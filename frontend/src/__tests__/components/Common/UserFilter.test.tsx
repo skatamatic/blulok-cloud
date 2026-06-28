@@ -106,6 +106,27 @@ describe('UserFilter', () => {
     });
   });
 
+  it('keeps typed search text after debounced fetch returns', async () => {
+    const user = userEvent.setup();
+    render(<UserFilter value="" onChange={jest.fn()} placeholder="Search users..." />);
+
+    await waitFor(() => {
+      expect(mockGetUsers).toHaveBeenCalled();
+    });
+
+    const input = screen.getByPlaceholderText('Search users...');
+    await user.click(input);
+    await user.type(input, 'tay');
+
+    await waitFor(() => {
+      expect(mockGetUsers).toHaveBeenCalledWith(
+        expect.objectContaining({ search: 'tay' }),
+      );
+    });
+
+    expect(input).toHaveValue('tay');
+  });
+
   it('excludes user ids from results', async () => {
     mockGetUsers.mockResolvedValue({
       success: true,

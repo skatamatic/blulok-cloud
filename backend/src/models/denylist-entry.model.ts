@@ -109,6 +109,28 @@ export class DenylistEntryModel {
   }
 
   /**
+   * Get all active entries for the given devices (not expired).
+   */
+  async findActiveByDeviceIds(deviceIds: string[]): Promise<DeviceDenylistEntry[]> {
+    const uniqueIds = [...new Set(deviceIds.filter(Boolean))];
+    if (uniqueIds.length === 0) {
+      return [];
+    }
+
+    try {
+      return await this.db('device_denylist_entries')
+        .whereIn('device_id', uniqueIds)
+        .where((builder: any) => {
+          builder.whereNull('expires_at').orWhere('expires_at', '>', this.db.raw('UTC_TIMESTAMP()'));
+        })
+        .orderBy('created_at', 'desc');
+    } catch (error) {
+      logger.error('Error finding active denylist entries by device ids:', error);
+      throw error;
+    }
+  }
+
+  /**
    * Get all active entries for a device (not expired)
    */
   async findByDevice(deviceId: string): Promise<DeviceDenylistEntry[]> {

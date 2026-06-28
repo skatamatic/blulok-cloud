@@ -350,6 +350,92 @@ describe('LockCommandService', () => {
     expect(svc.consumeSuppressRevertActivityLog('dev-1')).toBe(false);
   });
 
+  it('does not notify or log activity when timeout fires for a deleted facility', async () => {
+    jest.useFakeTimers();
+    knexInvocation = 0;
+    let facilitiesQueryCount = 0;
+    mockKnex.mockImplementation((table: string) => {
+      knexInvocation += 1;
+      if (table === 'facilities') {
+        facilitiesQueryCount += 1;
+        return {
+          where: jest.fn().mockReturnThis(),
+          select: jest.fn().mockReturnThis(),
+          first: jest.fn().mockImplementation(() => {
+            if (facilitiesQueryCount === 1) {
+              return Promise.resolve({ lock_command_timeout_sec: 10 });
+            }
+            return Promise.resolve(null);
+          }),
+        };
+      }
+      if (knexInvocation === 1 && table === 'blulok_devices') {
+        return buildJoinFirst({
+          id: 'dev-1',
+          lock_status: 'unlocked',
+          supports_remote_lock: true,
+          gateway_id: 'gw-1',
+          facility_id: 'fac-deleted',
+        });
+      }
+      if (table === 'blulok_devices') {
+        return buildTimeoutQuery('unlocking');
+      }
+      return buildJoinFirst(null);
+    });
+    sendLockCommand.mockResolvedValueOnce({ success: true });
+
+    const svc = LockCommandService.getInstance();
+    await svc.issueLockCommand('dev-1', 'unlocked', {
+      userId: 'user-1',
+      userName: 'Admin',
+      role: 'facility_admin',
+    });
+
+    await jest.advanceTimersByTimeAsync(10_000);
+
+    expect(mockNotifyRemoteLockCommandFailed).not.toHaveBeenCalled();
+    expect(mockLogActivity).not.toHaveBeenCalled();
+  });
+
+  it('cancelPendingCommandsForFacility clears in-memory timeouts before facility delete', async () => {
+    jest.useFakeTimers();
+    knexInvocation = 0;
+    mockKnex.mockImplementation((table: string) => {
+      knexInvocation += 1;
+      if (table === 'facilities') {
+        return {
+          where: jest.fn().mockReturnThis(),
+          select: jest.fn().mockReturnThis(),
+          first: jest.fn().mockResolvedValue({ lock_command_timeout_sec: 10 }),
+        };
+      }
+      if (knexInvocation === 1 && table === 'blulok_devices') {
+        return buildJoinFirst({
+          id: 'dev-1',
+          lock_status: 'unlocked',
+          supports_remote_lock: true,
+          gateway_id: 'gw-1',
+          facility_id: 'fac-1',
+        });
+      }
+      return buildJoinFirst(null);
+    });
+    sendLockCommand.mockResolvedValueOnce({ success: true });
+
+    const svc = LockCommandService.getInstance();
+    await svc.issueLockCommand('dev-1', 'unlocked', {
+      userId: 'user-1',
+      userName: 'Admin',
+      role: 'facility_admin',
+    });
+
+    svc.cancelPendingCommandsForFacility('fac-1');
+    await jest.advanceTimersByTimeAsync(10_000);
+
+    expect(mockNotifyRemoteLockCommandFailed).not.toHaveBeenCalled();
+  });
+
   it('does not revert on timeout if lock_status already changed (sync won)', async () => {
     jest.useFakeTimers();
     knexInvocation = 0;
@@ -386,6 +472,13 @@ describe('LockCommandService', () => {
       mockUpdateAccessControlDevice.mockClear();
       sendLockCommand.mockReset();
       mockKnex.mockImplementation((table: string) => {
+        if (table === 'facilities') {
+          return {
+            where: jest.fn().mockReturnThis(),
+            select: jest.fn().mockReturnThis(),
+            first: jest.fn().mockResolvedValue({ id: 'fac-1' }),
+          };
+        }
         if (table === 'access_control_devices') {
           return buildJoinFirst({
             id: 'ac-1',

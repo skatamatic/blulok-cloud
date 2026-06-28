@@ -45,6 +45,9 @@ async function bootstrap(): Promise<void> {
           logger.warn('Failed to ensure dev role test accounts:', devAccountsError);
         }
       }
+
+      const { DeviceGroupService } = await import('@/services/device-group.service');
+      await DeviceGroupService.cleanupUnknownDefaultGroupMembersOnStartup();
       
     } catch (dbError) {
       if (config.nodeEnv === 'test') {
@@ -97,6 +100,9 @@ async function bootstrap(): Promise<void> {
     const { AccessRevocationListenerService } = await import('@/services/access-revocation-listener.service');
     AccessRevocationListenerService.getInstance();
 
+    const { DeviceAccessPropagationService } = await import('@/services/device-access-propagation.service');
+    DeviceAccessPropagationService.getInstance();
+
     // Initialize denylist pruning service (daily cleanup of expired entries)
     const { DenylistPruningService } = await import('@/services/denylist-pruning.service');
     DenylistPruningService.getInstance().start();
@@ -116,9 +122,16 @@ async function bootstrap(): Promise<void> {
     // Legacy command worker removed (key distribution queues deprecated)
 
     // Graceful shutdown
-    const gracefulShutdown = () => {
-      logger.info('Shutting down gracefully');
-      
+    let shutdownStarted = false;
+    const gracefulShutdown = (signal?: NodeJS.Signals) => {
+      if (shutdownStarted) {
+        logger.warn(`Received ${signal ?? 'signal'} during shutdown — forcing exit`);
+        process.exit(1);
+        return;
+      }
+      shutdownStarted = true;
+      logger.info(`Shutting down gracefully${signal ? ` (${signal})` : ''}`);
+
       // Stop pruning services
       const { DenylistPruningService } = require('@/services/denylist-pruning.service');
       DenylistPruningService.getInstance().stop();
@@ -128,22 +141,39 @@ async function bootstrap(): Promise<void> {
       RoutePassPruningService.getInstance().stop();
       const { AccessCodeSchedulerService } = require('@/services/access-code-scheduler.service');
       AccessCodeSchedulerService.getInstance().stop();
-      
+
       // Destroy logger interceptor
       loggerInterceptor.destroy();
-      
-      // Close WebSocket server
+
+      // Close inbound gateway WebSocket transport (keeps HTTP server open if omitted)
+      const { GatewayEventsService } = require('@/services/gateway/gateway-events.service');
+      GatewayEventsService.getInstance().shutdown();
+
+      // Close dashboard WebSocket server
       wsService.destroy();
-      
-      // Close HTTP server
+
+      // Drop keep-alive HTTP connections (e.g. lingering gateway sessions)
+      const httpServer = server as typeof server & { closeAllConnections?: () => void };
+      httpServer.closeAllConnections?.();
+
+      const forceExitTimer = setTimeout(() => {
+        logger.warn('Shutdown timeout — forcing exit');
+        process.exit(1);
+      }, 5_000);
+      forceExitTimer.unref?.();
+
       server.close(() => {
+        clearTimeout(forceExitTimer);
         logger.info('Server closed');
         process.exit(0);
       });
     };
 
-    process.on('SIGTERM', gracefulShutdown);
-    process.on('SIGINT', gracefulShutdown);
+    process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+    process.on('SIGINT', () => gracefulShutdown('SIGINT'));
+    if (process.platform === 'win32') {
+      process.on('SIGBREAK', () => gracefulShutdown('SIGBREAK'));
+    }
 
   } catch (error) {
     logger.error('Failed to start server:', error);

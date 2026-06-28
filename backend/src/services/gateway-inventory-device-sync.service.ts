@@ -273,7 +273,10 @@ export class GatewayInventoryDeviceSyncService {
     const updates: Record<string, unknown> = {};
 
     if (typeof item.firmware_version === 'string') {
-      updates.firmware_version = item.firmware_version;
+      const trimmed = item.firmware_version.trim();
+      if (trimmed) {
+        updates.firmware_version = trimmed;
+      }
     }
 
     if (typeof item.serial === 'string' && item.serial.trim().length > 0) {

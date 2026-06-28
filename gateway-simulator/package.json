@@ -1,0 +1,54 @@
+{
+  "name": "blulok-gateway-simulator",
+  "version": "1.0.0",
+  "description": "Electron gateway simulator for BluLok Cloud e2e testing",
+  "main": "./out/main/index.js",
+  "type": "module",
+  "scripts": {
+    "dev": "electron-vite dev",
+    "build": "electron-vite build",
+    "preview": "electron-vite preview",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "test:live": "node scripts/live-smoke.mjs",
+    "test:live-api": "vitest run __tests__/backend-api.live.test.ts",
+    "lint": "eslint src --ext ts,tsx --report-unused-disable-directives --max-warnings 0"
+  },
+  "dependencies": {
+    "@headlessui/react": "^2.2.0",
+    "@heroicons/react": "^2.2.0",
+    "@radix-ui/react-slider": "^1.4.1",
+    "jose": "^5.9.6",
+    "uuid": "^11.1.0",
+    "ws": "^8.18.1"
+  },
+  "devDependencies": {
+    "@testing-library/jest-dom": "^6.9.1",
+    "@testing-library/react": "^16.3.2",
+    "@testing-library/user-event": "^14.6.1",
+    "@types/node": "^22.13.10",
+    "@types/react": "^18.3.18",
+    "@types/react-dom": "^18.3.5",
+    "@types/uuid": "^10.0.0",
+    "@types/ws": "^8.18.0",
+    "@vitejs/plugin-react": "^4.3.4",
+    "@vitest/coverage-v8": "^3.0.7",
+    "autoprefixer": "^10.4.20",
+    "electron": "^34.2.0",
+    "electron-vite": "^3.0.0",
+    "eslint": "^8.57.1",
+    "eslint-plugin-react-hooks": "^5.1.0",
+    "happy-dom": "^15.11.7",
+    "postcss": "^8.5.3",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "tailwindcss": "^3.4.17",
+    "typescript": "^5.7.3",
+    "vite": "^6.2.0",
+    "vitest": "^3.0.7"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

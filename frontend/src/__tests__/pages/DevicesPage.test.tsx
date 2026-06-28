@@ -35,6 +35,10 @@ jest.mock('@/contexts/WebSocketContext', () => ({
     isConnected: true,
   }),
 }));
+const mockUseLockDeviceRealtime = jest.fn();
+jest.mock('@/hooks/useLockDeviceRealtime', () => ({
+  useLockDeviceRealtime: (params: unknown) => mockUseLockDeviceRealtime(params),
+}));
 jest.mock('@/contexts/GlobalFacilityContext', () => ({
   GlobalFacilityProvider: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
   useGlobalFacility: () => ({
@@ -198,5 +202,45 @@ describe('DevicesPage - Commands Tab', () => {
     const cancelButton = screen.getByText('Cancel');
     fireEvent.click(cancelButton);
     expect(mockApiService.cancelCommand).toHaveBeenCalledWith('cmd-1');
+  });
+});
+
+describe('DevicesPage - live device_status wiring', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    mockUseLockDeviceRealtime.mockClear();
+    mockApiService.getDevices.mockResolvedValue({
+      devices: [],
+      total: 0,
+    });
+    mockApiService.getCommandQueue.mockResolvedValue({
+      items: [],
+      total: 0,
+    });
+  });
+
+  it('registers useLockDeviceRealtime with onDeviceRows and debounced refresh on table tab', async () => {
+    render(
+      <BrowserRouter>
+        <AuthProvider>
+          <GlobalFacilityProvider>
+            <WebSocketProvider>
+              <DevicesPage />
+            </WebSocketProvider>
+          </GlobalFacilityProvider>
+        </AuthProvider>
+      </BrowserRouter>
+    );
+
+    await waitFor(() => {
+      expect(mockUseLockDeviceRealtime).toHaveBeenCalled();
+    });
+
+    const params = mockUseLockDeviceRealtime.mock.calls[0][0];
+    expect(params.enabled).toBe(true);
+    expect(params.onDeviceRows).toEqual(expect.any(Function));
+    expect(params.debouncedRefresh).toEqual(expect.any(Function));
+    expect(params.debounceRefreshFilter).toEqual(expect.any(Function));
+    expect(params.debounceRefreshFilter?.({ updatedDeviceId: 'new-device-id' })).toBe(true);
   });
 });

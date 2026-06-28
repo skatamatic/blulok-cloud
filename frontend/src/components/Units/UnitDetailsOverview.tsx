@@ -9,6 +9,7 @@ import {
   LockOpenIcon,
   PencilIcon,
   PlusIcon,
+  ShieldExclamationIcon,
   SignalIcon,
   UserIcon,
   XMarkIcon,
@@ -51,7 +52,7 @@ import { getUserDisplayName, getUserInitials, shouldShowUserEmail } from '@/util
 import type { UnitAccessGroupRef } from '@/utils/device-group-membership.utils';
 import type { Location } from 'react-router-dom';
 
-type UnitStatus = 'available' | 'occupied' | 'maintenance' | 'reserved';
+type UnitStatus = 'available' | 'occupied' | 'overlocked' | 'maintenance' | 'reserved';
 type LockStatus = 'locked' | 'unlocked' | 'locking' | 'unlocking' | 'error' | 'maintenance' | 'unknown';
 type DeviceStatus = 'online' | 'offline' | 'low_battery' | 'error';
 
@@ -60,6 +61,7 @@ export interface UnitDetailsOverviewData {
   unit_number: string;
   unit_type: string;
   status: UnitStatus;
+  is_overlocked?: boolean;
   facility_id: string;
   facility_name: string;
   description?: string;
@@ -111,6 +113,9 @@ interface UnitDetailsOverviewProps {
   deviceStatusColors: Record<DeviceStatus, string>;
   deviceStatusIcons: Record<DeviceStatus, typeof ExclamationTriangleIcon>;
   canManageUnits: boolean;
+  canManageOverlock?: boolean;
+  overlockSaving?: boolean;
+  onToggleOverlock?: (next: boolean) => void;
   canChangePrimaryTenant: boolean;
   canManageSharedAccess: boolean;
   assigningTenant: boolean;
@@ -152,6 +157,9 @@ export function UnitDetailsOverview({
   deviceStatusColors,
   deviceStatusIcons,
   canManageUnits,
+  canManageOverlock = false,
+  overlockSaving = false,
+  onToggleOverlock,
   canChangePrimaryTenant,
   canManageSharedAccess,
   assigningTenant,
@@ -188,14 +196,38 @@ export function UnitDetailsOverview({
       ? Number(unit.blulok_device.temperature)
       : null;
 
+  const isOverlocked = Boolean(unit.is_overlocked ?? unit.status === 'overlocked');
+  const canShowOverlockToggle =
+    canManageOverlock &&
+    onToggleOverlock &&
+    unit.primary_tenant &&
+    (unit.status === 'occupied' || unit.status === 'overlocked');
+
   const statStrip = (
     <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
       <OverviewStat label="Unit status">
-        <span
-          className={statusBadgeSmClass(statusColors[unit.status])}
-        >
-          {unit.status}
-        </span>
+        <div className="flex flex-wrap items-center gap-2">
+          <span className={statusBadgeSmClass(statusColors[unit.status])}>
+            {unit.status}
+          </span>
+          {canShowOverlockToggle && (
+            <button
+              type="button"
+              disabled={overlockSaving}
+              onClick={() => onToggleOverlock(!isOverlocked)}
+              className={`inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-xs font-medium transition-colors disabled:opacity-50 ${
+                isOverlocked
+                  ? 'border-amber-300 bg-amber-50 text-amber-800 hover:bg-amber-100 dark:border-amber-700 dark:bg-amber-950/40 dark:text-amber-200 dark:hover:bg-amber-950/60'
+                  : 'border-gray-300 bg-white text-gray-700 hover:bg-gray-50 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-200 dark:hover:bg-gray-750'
+              }`}
+            >
+              <ShieldExclamationIcon
+                className={`h-3.5 w-3.5 ${isOverlocked ? 'text-amber-600 dark:text-amber-400' : 'text-gray-500'}`}
+              />
+              {overlockSaving ? 'Saving…' : isOverlocked ? 'Overlocked' : 'Mark overlocked'}
+            </button>
+          )}
+        </div>
       </OverviewStat>
       <OverviewStat label="Lock">
         {unit.blulok_device ? (

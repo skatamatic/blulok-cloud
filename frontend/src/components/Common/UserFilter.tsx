@@ -63,13 +63,13 @@ export const UserFilter: React.FC<UserFilterProps> = ({
 
   const applySelectedUser = useCallback(
     (user: User | null) => {
-      userIsSearchingRef.current = false;
       setSelectedUser(user);
       if (user) {
+        userIsSearchingRef.current = false;
         const label = formatUserLabel(user);
         setSearchTerm(label);
         onDisplayLabelChange?.(label);
-      } else {
+      } else if (!userIsSearchingRef.current) {
         setSearchTerm('');
         onDisplayLabelChange?.('');
       }
@@ -83,7 +83,7 @@ export const UserFilter: React.FC<UserFilterProps> = ({
 
       const params: Record<string, unknown> = {
         search: search || undefined,
-        sortBy: 'firstName',
+        sortBy: 'name',
         sortOrder: 'asc',
       };
 
@@ -134,7 +134,13 @@ export const UserFilter: React.FC<UserFilterProps> = ({
   useEffect(() => {
     if (!value) {
       resolvingValueRef.current = null;
-      applySelectedUser(null);
+      // While the user is typing a search query, don't reset the input when results refresh.
+      if (userIsSearchingRef.current) {
+        return;
+      }
+      if (selectedUser) {
+        applySelectedUser(null);
+      }
       return;
     }
 
@@ -143,7 +149,7 @@ export const UserFilter: React.FC<UserFilterProps> = ({
       resolvingValueRef.current = null;
       applySelectedUser(user);
     }
-  }, [value, users, applySelectedUser]);
+  }, [value, users, applySelectedUser, selectedUser]);
 
   useEffect(() => {
     if (!value) return;

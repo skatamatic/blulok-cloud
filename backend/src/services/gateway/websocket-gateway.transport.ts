@@ -202,6 +202,104 @@ export class WebsocketGatewayTransport implements GatewayTransport {
     return results;
   }
 
+  /** Active production + parked swap-candidate WS sessions for a facility. */
+  public getFacilityGatewaySessions(facilityId: string): Array<{
+    gatewayId: string;
+    sessionRole: 'active' | 'swap_candidate';
+    connected: boolean;
+    lastActivityAt?: number;
+  }> {
+    const results: Array<{
+      gatewayId: string;
+      sessionRole: 'active' | 'swap_candidate';
+      connected: boolean;
+      lastActivityAt?: number;
+    }> = [];
+    const active = this.facilityToClient.get(facilityId);
+    if (active?.gatewayId) {
+      results.push({
+        gatewayId: active.gatewayId,
+        sessionRole: active.sessionRole === 'swap_candidate' ? 'swap_candidate' : 'active',
+        connected: active.ws.readyState === WebSocket.OPEN,
+        lastActivityAt: active.lastActivityAt,
+      });
+    }
+    for (const [key, client] of this.swapCandidates.entries()) {
+      if (!key.startsWith(`${facilityId}:`)) continue;
+      const gatewayId = client.gatewayId || key.split(':').slice(1).join(':');
+      if (results.some((entry) => this.gatewayIdsEqual(entry.gatewayId, gatewayId))) continue;
+      results.push({
+        gatewayId,
+        sessionRole: 'swap_candidate',
+        connected: client.ws.readyState === WebSocket.OPEN,
+        lastActivityAt: client.lastActivityAt,
+      });
+    }
+    return results;
+  }
+
+  /** Whether a specific gateway has an open WS session for this facility (active or swap candidate). */
+  public isGatewayWsConnected(facilityId: string, gatewayId: string): boolean {
+    const active = this.facilityToClient.get(facilityId);
+    if (
+      active?.gatewayId
+      && this.gatewayIdsEqual(active.gatewayId, gatewayId)
+      && active.ws.readyState === WebSocket.OPEN
+    ) {
+      return true;
+    }
+    for (const [key, client] of this.swapCandidates.entries()) {
+      if (!key.startsWith(`${facilityId}:`)) continue;
+      const candidateId = client.gatewayId || key.split(':').slice(1).join(':');
+      if (this.gatewayIdsEqual(candidateId, gatewayId) && client.ws.readyState === WebSocket.OPEN) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /**
+   * Ensures completed-swap production + previous gateways appear in session list with live connectivity.
+   */
+  public enrichSessionsForCompletedRecovery(
+    facilityId: string,
+    sessions: Array<{
+      gatewayId: string;
+      sessionRole: 'active' | 'swap_candidate';
+      connected: boolean;
+      lastActivityAt?: number;
+    }>,
+    productionGatewayId: string | null | undefined,
+    previousGatewayId: string | null | undefined,
+  ): Array<{
+    gatewayId: string;
+    sessionRole: 'active' | 'swap_candidate';
+    connected: boolean;
+    lastActivityAt?: number;
+  }> {
+    const enriched = sessions.map((session) => ({ ...session }));
+    const upsert = (
+      gatewayId: string | null | undefined,
+      sessionRole: 'active' | 'swap_candidate',
+    ) => {
+      if (!gatewayId) return;
+      const connected = this.isGatewayWsConnected(facilityId, gatewayId);
+      const index = enriched.findIndex((entry) => this.gatewayIdsEqual(entry.gatewayId, gatewayId));
+      if (index >= 0) {
+        enriched[index] = { ...enriched[index], sessionRole, connected };
+      } else {
+        enriched.push({ gatewayId, sessionRole, connected });
+      }
+    };
+    upsert(productionGatewayId, 'active');
+    upsert(previousGatewayId, 'swap_candidate');
+    return enriched;
+  }
+
+  private gatewayIdsEqual(a: string, b: string): boolean {
+    return a.trim().toLowerCase() === b.trim().toLowerCase();
+  }
+
   /** Number of distinct swap candidate gateways currently parked for a facility. */
   private countSwapCandidatesForFacility(facilityId: string, excludeGatewayId?: string): number {
     const seen = new Set<string>();
@@ -336,6 +434,7 @@ export class WebsocketGatewayTransport implements GatewayTransport {
       candidate.user.userId,
       getRemoteAddress(candidate.ws),
     );
+    this.sendSessionRoleAuthOk(candidate);
   }
 
   /**
@@ -363,9 +462,27 @@ export class WebsocketGatewayTransport implements GatewayTransport {
         candidate.user.userId,
         getRemoteAddress(candidate.ws),
       );
+      this.sendSessionRoleAuthOk(candidate);
     }
 
     this.recoveryPushGatewayByFacility.delete(facilityId);
+  }
+
+  /** Notify an already-authenticated gateway that its session role changed (e.g. swap complete). */
+  private sendSessionRoleAuthOk(client: AuthedClient): void {
+    void (async () => {
+      let ops_public_key_pem: string | undefined;
+      try { ops_public_key_pem = await Ed25519Service.getOpsPublicKeyPem(); } catch { /* optional */ }
+      safeSend(client.ws, {
+        type: 'AUTH_OK',
+        facilityId: client.facilityId,
+        gatewayId: client.gatewayId,
+        sessionRole: client.sessionRole,
+        ops_public_key: Ed25519Service.getOpsPublicKeyB64(),
+        ops_public_key_jwk: Ed25519Service.getOpsPublicKeyJwk(),
+        ops_public_key_pem,
+      });
+    })();
   }
 
   private closeActiveSessionForFacility(
@@ -720,7 +837,7 @@ export class WebsocketGatewayTransport implements GatewayTransport {
           this.facilityToClient.set(facilityId, authed);
         };
 
-        const parkSwapCandidate = async (gid: string, boundId: string) => {
+        const parkSwapCandidate = async (gid: string, boundId: string): Promise<boolean> => {
           sessionRole = 'swap_candidate';
           resolvedGatewayId = gid;
           const swapKey = `${facilityId}:${gid}`;
@@ -738,6 +855,7 @@ export class WebsocketGatewayTransport implements GatewayTransport {
             logger.warn(`Failed to detect gateway swap facility=${facilityId}`, err);
           }
           logger.info(`Gateway WS swap candidate parked: facility=${facilityId} newGateway=${gid} boundGateway=${boundId}`);
+          return true;
         };
 
         if (gatewayId && gatewayModel) {
@@ -765,7 +883,9 @@ export class WebsocketGatewayTransport implements GatewayTransport {
               if (ensured.created) {
                 autoRegistered = true;
               }
-              await parkSwapCandidate(gatewayId, boundGateway.id);
+              if (!(await parkSwapCandidate(gatewayId, boundGateway.id))) {
+                return;
+              }
             } else {
               // No bound gateway for this facility → first-install auto-bind.
               const existingGateway = await gatewayModel.findById(gatewayId);
@@ -829,7 +949,9 @@ export class WebsocketGatewayTransport implements GatewayTransport {
                 if (ensured.created) {
                   autoRegistered = true;
                 }
-                await parkSwapCandidate(gatewayId, winner.id);
+                if (!(await parkSwapCandidate(gatewayId, winner.id))) {
+                  return;
+                }
               }
             }
           } catch (err) {
@@ -842,8 +964,12 @@ export class WebsocketGatewayTransport implements GatewayTransport {
           setActiveSession(resolvedGatewayId, 'legacy');
         }
 
+        if (!authed) {
+          return;
+        }
+
         if (sessionRole === 'active' || sessionRole === 'legacy') {
-          this.notifyConnectionChange(facilityId, true, 'auth_ok', authed!.lastActivityAt, decoded.userId, remote);
+          this.notifyConnectionChange(facilityId, true, 'auth_ok', authed.lastActivityAt, decoded.userId, remote);
         }
         let ops_public_key_pem: string | undefined;
         try { ops_public_key_pem = await Ed25519Service.getOpsPublicKeyPem(); } catch {}
@@ -862,8 +988,8 @@ export class WebsocketGatewayTransport implements GatewayTransport {
           kind: 'connection_opened',
           facilityId,
           userId: decoded.userId,
-          ts: authed!.lastActivityAt,
-          lastActivityAt: authed!.lastActivityAt,
+          ts: authed.lastActivityAt,
+          lastActivityAt: authed.lastActivityAt,
           remote,
         });
         import('@/services/firmware/firmware.service').then(({ FirmwareService }) => {
@@ -1127,8 +1253,8 @@ export class WebsocketGatewayTransport implements GatewayTransport {
     // Close all WebSocket connections
     for (const client of this.facilityToClient.values()) {
       try {
-        if (client.ws.readyState === WebSocket.OPEN) {
-          client.ws.close();
+        if (client.ws.readyState === WebSocket.OPEN || client.ws.readyState === WebSocket.CONNECTING) {
+          client.ws.terminate();
         }
       } catch {}
     }
@@ -1144,6 +1270,8 @@ export class WebsocketGatewayTransport implements GatewayTransport {
     return apiProxy.proxyRequest({
       user: { userId: authed.user.userId, role: authed.user.role, facilityIds: authed.user.facilityIds, email: authed.user.email },
       connectionFacilityId: authed.facilityId,
+      gatewayId: authed.gatewayId,
+      sessionRole: authed.sessionRole,
       method: req.method,
       path: req.path,
       headers: req.headers,

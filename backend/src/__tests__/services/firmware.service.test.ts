@@ -44,6 +44,7 @@ const mockPushModel = {
   updateChunksTotal: jest.fn().mockResolvedValue(undefined),
   atomicCancel: jest.fn().mockResolvedValue(true),
   atomicFailIfActive: jest.fn().mockResolvedValue(true),
+  atomicTransitionToVerifying: jest.fn().mockResolvedValue(true),
   updateProgressPercent: jest.fn().mockResolvedValue(undefined),
   updateDeviceCounts: jest.fn().mockResolvedValue(undefined),
   findActiveByFacilities: jest.fn().mockResolvedValue([]),
@@ -58,7 +59,7 @@ const mockPushEventModel = {
   countByPushId: jest.fn().mockResolvedValue(0),
 };
 
-const mockGatewayModel = { findById: jest.fn() };
+const mockGatewayModel = { findById: jest.fn(), update: jest.fn().mockResolvedValue(undefined) };
 
 const mockStorageProvider = {
   initialize: jest.fn().mockResolvedValue(undefined),
@@ -433,7 +434,18 @@ describe('FirmwareService', () => {
 
     it('marks push verifying when all chunks ACKed (awaiting gateway confirmation)', async () => {
       await FirmwareService.executePush('push-1');
-      expect(mockPushModel.updateStatus).toHaveBeenCalledWith('push-1', 'verifying');
+      expect(mockPushModel.atomicTransitionToVerifying).toHaveBeenCalledWith('push-1');
+      expect(mockPushModel.updateStatus).not.toHaveBeenCalledWith('push-1', 'verifying');
+    });
+
+    it('does not overwrite complete when gateway success arrives before verifying transition', async () => {
+      mockPushModel.atomicTransitionToVerifying.mockResolvedValueOnce(false);
+      mockPushModel.findById.mockResolvedValue({ ...mockPush, status: 'complete' });
+
+      await FirmwareService.executePush('push-1');
+
+      expect(mockPushModel.atomicTransitionToVerifying).toHaveBeenCalledWith('push-1');
+      expect(mockPushModel.updateStatus).not.toHaveBeenCalledWith('push-1', 'verifying');
     });
 
     it('marks push failed after max ACK retries', async () => {
@@ -531,6 +543,24 @@ describe('FirmwareService', () => {
       expect(resolved).toBe(false);
       _testActivePushes.delete(pushId);
     });
+
+    it('accepts chunk_index snake_case alias', async () => {
+      const pushId = 'push-ack-snake';
+      const nonce = 'test-nonce-snake';
+      const facilityId = 'fac-1';
+      let resolved = false;
+      _testActivePushes.set(pushId, {
+        cancel: false,
+        nonce,
+        facilityId,
+        chunkAckResolvers: new Map([
+          [0, { resolve: () => { resolved = true; }, reject: () => {} }],
+        ]),
+      });
+      await FirmwareService.handleChunkAck(facilityId, { nonce, chunk_index: 0, status: 'ok' });
+      expect(resolved).toBe(true);
+      _testActivePushes.delete(pushId);
+    });
   });
 
   describe('handleUpdateStatus', () => {
@@ -550,8 +580,22 @@ describe('FirmwareService', () => {
 
     it('updates push to complete when gateway reports success', async () => {
       mockPushModel.findById.mockResolvedValue(mkVerifyingPush());
-      await FirmwareService.handleUpdateStatus('fac-1', { push_id: 'push-1', status: 'success', target_type: 'gateway' });
+      await FirmwareService.handleUpdateStatus('fac-1', { push_id: 'push-1', status: 'success', target_type: 'gateway', version: '2.0.0' });
       expect(mockPushModel.updateStatus).toHaveBeenCalledWith('push-1', 'complete');
+      expect(mockGatewayModel.update).toHaveBeenCalledWith('gw-1', { firmware_version: '2.0.0' });
+    });
+
+    it('persists gateway firmware from push image when success omits version', async () => {
+      mockPushModel.findById.mockResolvedValue(mkVerifyingPush());
+      mockFirmwareModel.findById.mockResolvedValue({ id: 'fw-1', version: '2.1.0', target_type: 'gateway' });
+      await FirmwareService.handleUpdateStatus('fac-1', { push_id: 'push-1', status: 'success', target_type: 'gateway' });
+      expect(mockGatewayModel.update).toHaveBeenCalledWith('gw-1', { firmware_version: '2.1.0' });
+    });
+
+    it('does not update gateway firmware for lock-target pushes', async () => {
+      mockPushModel.findById.mockResolvedValue(mkVerifyingPush({ target_type: 'lock' }));
+      await FirmwareService.handleUpdateStatus('fac-1', { push_id: 'push-1', status: 'success', target_type: 'lock', version: '1.1' });
+      expect(mockGatewayModel.update).not.toHaveBeenCalled();
     });
 
     it('processes verifying → applying → success lifecycle (gateway developer contract)', async () => {

@@ -143,12 +143,13 @@ export class SimulatedProvider extends BaseFMSProvider {
   }
 
   async parseWebhookPayload(rawPayload: any): Promise<FMSWebhookPayload> {
+    const { randomUUID } = await import('crypto');
     return {
+      externalEventId: rawPayload.id ?? rawPayload.externalEventId ?? randomUUID(),
       event_type: rawPayload.event_type || 'tenant.updated',
       timestamp: rawPayload.timestamp || new Date().toISOString(),
       facility_external_id: rawPayload.facility_id || this.facilityId,
-      data: rawPayload.data || rawPayload,
-      signature: rawPayload.signature,
+      data: rawPayload.data || rawPayload.body || rawPayload,
     };
   }
 

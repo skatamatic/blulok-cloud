@@ -73,6 +73,10 @@ const unitStatusMeta: Record<string, { label: string; className: string }> = {
     className:
       'bg-[#147FD4]/10 text-[#147FD4] dark:bg-[#147FD4]/20 dark:text-[#5eb3f0]',
   },
+  overlocked: {
+    label: 'Overlocked',
+    className: 'bg-orange-50 text-orange-700 dark:bg-orange-900/25 dark:text-orange-300',
+  },
   available: {
     label: 'Available',
     className: 'bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-400',

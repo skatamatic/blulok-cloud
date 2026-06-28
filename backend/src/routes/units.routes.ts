@@ -45,6 +45,7 @@ import { WebSocketService } from '@/services/websocket.service';
 import {
   createUnitSchema,
   updateUnitSchema,
+  updateUnitOverlockSchema,
   unitIdParamSchema,
   unitIdTenantIdParamSchema,
   assignUnitTenantBodySchema,
@@ -339,6 +340,68 @@ registerPost(
           success: false,
           message: 'Failed to create unit'
         });
+      }
+    }
+  }),
+);
+
+registerPut(
+  router,
+  '/:unitId/overlock',
+  {
+    openApiPath: `${MOUNT}/{unitId}/overlock`,
+    tags: ['Units', 'App'],
+    summary: 'Set or clear unit overlock status',
+    security: 'bearer',
+    params: unitIdParamSchema,
+    body: updateUnitOverlockSchema,
+    legacyValidationErrors: true,
+    responses: {
+      200: unitMutationResponseSchema,
+      400: errorEnvelopeSchema,
+      401: errorEnvelopeSchema,
+      403: errorEnvelopeSchema,
+      404: errorEnvelopeSchema,
+      500: errorEnvelopeSchema,
+    },
+  },
+  requireRoles([UserRole.ADMIN, UserRole.DEV_ADMIN, UserRole.FACILITY_ADMIN]),
+  asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+    const userId = req.user!.userId;
+    const userRole = req.user!.role;
+    const unitId = req.params.unitId;
+
+    if (!userRole) {
+      res.status(401).json({ success: false, message: 'User role not found' });
+      return;
+    }
+
+    try {
+      const unitsService = UnitsService.getInstance();
+      const unit = await unitsService.setUnitOverlock(
+        unitId,
+        Boolean(req.body.is_overlocked),
+        userId,
+        userRole as UserRole
+      );
+
+      const wsService = WebSocketService.getInstance();
+      await wsService.broadcastUnitsUpdate();
+
+      res.json({
+        success: true,
+        message: req.body.is_overlocked ? 'Unit marked as overlocked' : 'Overlock cleared',
+        unit,
+      });
+    } catch (error: any) {
+      if (error.message.includes('Access denied')) {
+        res.status(403).json({ success: false, message: error.message });
+      } else if (error.message.includes('not found')) {
+        res.status(404).json({ success: false, message: error.message });
+      } else if (error.message.includes('Cannot overlock')) {
+        res.status(400).json({ success: false, message: error.message });
+      } else {
+        res.status(500).json({ success: false, message: 'Failed to update overlock status' });
       }
     }
   }),

@@ -36,6 +36,7 @@ export enum FMSChangeType {
   UNIT_ADDED = 'unit_added',
   UNIT_REMOVED = 'unit_removed',
   UNIT_UPDATED = 'unit_updated',
+  UNIT_OVERLOCK_CHANGED = 'unit_overlock_changed',
 }
 
 export enum FMSChangeAction {
@@ -206,17 +207,76 @@ export interface FMSApplyContext {
   performedBy: string;
 }
 
-/**
- * Webhook payload structure for FMS notifications
- */
+/** Storable Edge CloudEvents envelope (https://webhooks.storable.io/event-catalog) */
+export interface StoredgeCloudEventEnvelope {
+  id: string;
+  time: string;
+  type: StoredgeWebhookEventType;
+  attempt_number?: number;
+  sent_at?: string;
+  body: Record<string, unknown>;
+}
+
+export type StoredgeWebhookEventType =
+  | 'com.storedge.tenant.created.v1'
+  | 'com.storedge.tenant.updated.v1'
+  | 'com.storedge.ledger.moved-in.v1'
+  | 'com.storedge.ledger.moved-out.v1'
+  | 'com.storedge.unit.created.v1'
+  | 'com.storedge.unit.deleted.v1'
+  | 'com.storedge.unit.overlock-applied.v1'
+  | 'com.storedge.unit.overlock-removed.v1';
+
+export type FMSWebhookEventType =
+  | 'tenant.created'
+  | 'tenant.updated'
+  | 'ledger.moved-in'
+  | 'ledger.moved-out'
+  | 'unit.created'
+  | 'unit.deleted'
+  | 'unit.overlock-applied'
+  | 'unit.overlock-removed';
+
+/** Normalized webhook payload after provider parsing */
 export interface FMSWebhookPayload {
-  event_type: 'tenant.created' | 'tenant.updated' | 'tenant.deleted' | 
-              'unit.created' | 'unit.updated' | 'unit.deleted' |
-              'lease.started' | 'lease.ended';
+  externalEventId: string;
+  event_type: FMSWebhookEventType;
   timestamp: string;
-  facility_external_id?: string;
-  data: any;
-  signature?: string; // For webhook verification
+  facility_external_id: string;
+  data: Record<string, unknown>;
+}
+
+export interface StoredgeTenantEventBody {
+  company_id: string;
+  facility_id: string;
+  tenant_id: string;
+  first_name?: string;
+  last_name?: string;
+  email?: string;
+  phone?: string;
+  delinquent?: boolean;
+  source_id?: string | null;
+}
+
+export interface StoredgeLedgerEventBody {
+  company_id: string;
+  facility_id: string;
+  ledger_id: string;
+  tenant_id: string;
+  unit_id: string;
+  move_in_date?: string;
+  move_out_event_id?: string;
+  desired_move_out_date?: string;
+  source_id?: string | null;
+}
+
+export interface StoredgeUnitIdEventBody {
+  company_id: string;
+  facility_id: string;
+  unit_id: string;
+  tenant_id?: string;
+  ledger_id?: string;
+  source_id?: string | null;
 }
 
 /**

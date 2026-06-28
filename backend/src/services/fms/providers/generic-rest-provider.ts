@@ -117,14 +117,15 @@ export class GenericRestProvider extends BaseFMSProvider {
   }
 
   async parseWebhookPayload(rawPayload: any): Promise<FMSWebhookPayload> {
+    const { randomUUID } = require('crypto');
     // Parse webhook payload from generic format
     // This would need to be customized per FMS provider
     return {
-      event_type: rawPayload.event || rawPayload.type,
+      externalEventId: rawPayload.id ?? rawPayload.externalEventId ?? randomUUID(),
+      event_type: rawPayload.event || rawPayload.type || rawPayload.event_type,
       timestamp: rawPayload.timestamp || new Date().toISOString(),
-      facility_external_id: rawPayload.facility_id,
-      data: rawPayload.data || rawPayload,
-      signature: rawPayload.signature,
+      facility_external_id: rawPayload.facility_id || this.facilityId,
+      data: rawPayload.data || rawPayload.body || rawPayload,
     };
   }
 

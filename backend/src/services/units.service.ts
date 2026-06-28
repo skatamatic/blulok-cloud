@@ -160,6 +160,34 @@ export class UnitsService {
   }
 
   /**
+   * Set or clear manual/FMS overlock flag on an occupied unit.
+   */
+  async setUnitOverlock(
+    unitId: string,
+    isOverlocked: boolean,
+    userId: string,
+    userRole: UserRole
+  ): Promise<any> {
+    const hasAccess = await this.hasUserAccessToUnit(unitId, userId, userRole);
+    if (!hasAccess) {
+      throw new Error('Access denied: You do not have permission to update this unit');
+    }
+
+    const unit = await this.unitModel.findById(unitId);
+    if (!unit) {
+      throw new Error('Unit not found');
+    }
+
+    const assignments = await this.unitAssignmentModel.findByUnitId(unitId);
+    if (isOverlocked && assignments.length === 0) {
+      throw new Error('Cannot overlock a vacant unit');
+    }
+
+    await this.unitModel.setOverlockStatus(unitId, isOverlocked);
+    return this.unitModel.getUnitDetailsForUser(unitId, userId, userRole);
+  }
+
+  /**
    * Assign a tenant to a unit
    */
   async assignTenant(

@@ -4,9 +4,13 @@ import {
   FMSUnit,
   FMSProviderCapabilities,
   FMSWebhookPayload,
+  FMSWebhookEventType,
   FMSProviderConfig,
+  StoredgeCloudEventEnvelope,
+  StoredgeWebhookEventType,
 } from '@/types/fms.types';
 import { logger } from '@/utils/logger';
+import crypto from 'crypto';
 
 /**
  * StoreDge FMS Provider
@@ -33,9 +37,7 @@ import { logger } from '@/utils/logger';
  * - Lease information → Unit assignments
  * - Contact details → User profiles
  *
- * Limitations:
- * - No webhook support (polling-based only)
- * - No real-time synchronization
+ * - Webhook support for real-time CloudEvents from Storable Edge
  * - No payment integration
  * - No bulk operations support
  *
@@ -86,8 +88,8 @@ export class StoredgeProvider extends BaseFMSProvider {
     return {
       supportsTenantSync: true,
       supportsUnitSync: true,
-      supportsWebhooks: false, // The provided documentation does not mention webhooks
-      supportsRealtime: false,
+      supportsWebhooks: true,
+      supportsRealtime: true,
       supportsLeaseManagement: true,
       supportsPaymentIntegration: false,
       supportsBulkOperations: false,
@@ -230,22 +232,106 @@ export class StoredgeProvider extends BaseFMSProvider {
     }
   }
 
-  async validateWebhook(
-    _payload: FMSWebhookPayload,
-    _signature: string
-  ): Promise<boolean> {
-    // Storedge API docs provided don't mention webhooks, so this is a placeholder
-    logger.warn('Storedge webhook validation not implemented');
+  private static readonly STOREDGE_TYPE_MAP: Record<StoredgeWebhookEventType, FMSWebhookEventType> = {
+    'com.storedge.tenant.created.v1': 'tenant.created',
+    'com.storedge.tenant.updated.v1': 'tenant.updated',
+    'com.storedge.ledger.moved-in.v1': 'ledger.moved-in',
+    'com.storedge.ledger.moved-out.v1': 'ledger.moved-out',
+    'com.storedge.unit.created.v1': 'unit.created',
+    'com.storedge.unit.deleted.v1': 'unit.deleted',
+    'com.storedge.unit.overlock-applied.v1': 'unit.overlock-applied',
+    'com.storedge.unit.overlock-removed.v1': 'unit.overlock-removed',
+  };
+
+  private getWebhookSignatureHeaderName(): string {
+    const custom = this.config.customSettings?.webhookSignatureHeader;
+    return typeof custom === 'string' && custom.trim() ? custom.trim() : 'X-Storable-Signature';
+  }
+
+  validateWebhookRawBody(rawBody: Buffer, signatureHeader: string | undefined): boolean {
+    const secret = this.config.syncSettings.webhookSecret?.trim();
+    if (!secret) {
+      this.logger.warn('Storedge webhook: no webhookSecret configured — rejecting unsigned delivery');
+      return false;
+    }
+    if (!signatureHeader?.trim()) {
+      return false;
+    }
+
+    const expectedHex = crypto.createHmac('sha256', secret).update(rawBody).digest('hex');
+    const expectedPrefixed = `sha256=${expectedHex}`;
+
+    const candidates = [signatureHeader.trim(), signatureHeader.trim().replace(/^sha256=/i, '')];
+    for (const candidate of candidates) {
+      try {
+        const a = Buffer.from(candidate, candidate.length === 64 ? 'hex' : 'utf8');
+        const b = Buffer.from(expectedHex, 'hex');
+        if (a.length === b.length && crypto.timingSafeEqual(a, b)) {
+          return true;
+        }
+        const c = Buffer.from(expectedPrefixed);
+        const d = Buffer.from(signatureHeader.trim());
+        if (c.length === d.length && crypto.timingSafeEqual(c, d)) {
+          return true;
+        }
+      } catch {
+        // continue
+      }
+    }
     return false;
   }
 
-  async parseWebhookPayload(rawPayload: any): Promise<FMSWebhookPayload> {
-    // Storedge API docs provided don't mention webhooks, so this is a placeholder
-    logger.warn('Storedge webhook parsing not implemented');
+  async validateWebhook(_payload: FMSWebhookPayload, signature: string): Promise<boolean> {
+    return Boolean(signature?.trim() && this.config.syncSettings.webhookSecret);
+  }
+
+  async parseWebhookPayload(rawPayload: unknown): Promise<FMSWebhookPayload> {
+    let envelope: StoredgeCloudEventEnvelope;
+    if (Buffer.isBuffer(rawPayload)) {
+      envelope = JSON.parse(rawPayload.toString('utf8')) as StoredgeCloudEventEnvelope;
+    } else if (typeof rawPayload === 'string') {
+      envelope = JSON.parse(rawPayload) as StoredgeCloudEventEnvelope;
+    } else {
+      envelope = rawPayload as StoredgeCloudEventEnvelope;
+    }
+
+    if (!envelope?.type || !envelope?.id || !envelope?.body) {
+      throw new Error('Invalid Storable CloudEvents envelope');
+    }
+
+    const mapped = StoredgeProvider.STOREDGE_TYPE_MAP[envelope.type as StoredgeWebhookEventType];
+    if (!mapped) {
+      throw new Error(`Unsupported Storable webhook event type: ${envelope.type}`);
+    }
+
+    const bodyFacilityId = String(envelope.body.facility_id ?? '');
+    if (!bodyFacilityId) {
+      throw new Error('Webhook body missing facility_id');
+    }
+    if (bodyFacilityId !== this.storedgeFacilityId) {
+      throw new Error(
+        `Facility ID mismatch: event facility ${bodyFacilityId} does not match configured Storable facility ${this.storedgeFacilityId}`
+      );
+    }
+
     return {
-      event_type: 'lease.started',
-      timestamp: new Date().toISOString(),
-      data: rawPayload,
+      externalEventId: envelope.id,
+      event_type: mapped,
+      timestamp: envelope.time ?? envelope.sent_at ?? new Date().toISOString(),
+      facility_external_id: bodyFacilityId,
+      data: envelope.body as Record<string, unknown>,
+    };
+  }
+
+  mapTenantBodyToFMSTenant(body: Record<string, unknown>): FMSTenant {
+    return {
+      externalId: String(body.tenant_id),
+      email: body.email != null ? String(body.email) : null,
+      firstName: body.first_name != null ? String(body.first_name) : null,
+      lastName: body.last_name != null ? String(body.last_name) : null,
+      phone: body.phone != null ? String(body.phone) : undefined,
+      unitIds: [],
+      status: body.delinquent === true ? 'inactive' : 'active',
     };
   }
 

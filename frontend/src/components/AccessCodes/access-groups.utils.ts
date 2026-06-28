@@ -45,19 +45,165 @@ export interface GroupableDeviceFields {
   device_category?: 'access_control' | 'blulok';
   device_settings?: Record<string, unknown> | null;
   device_serial?: string;
+  unit_id?: string;
   unit_number?: string;
 }
 
-/** Same title logic as Device Details header for access-group member rows. */
+export interface GroupableUnitFields {
+  id: string;
+  unit_number: string;
+  status?: string;
+  unit_type?: string;
+  blulok_device?: {
+    id: string;
+    device_serial?: string;
+    serial?: string;
+  } | null;
+}
+
+export function formatUnitLabel(unitNumber: string): string {
+  const trimmed = unitNumber.trim();
+  return trimmed ? `Unit ${trimmed}` : 'Unit';
+}
+
+/** Stable key for member list rows and expansion state. */
+export function resolveGroupMemberKey(member: GroupMemberRef): string {
+  if (member.device_type === 'blulok' && member.source_unit_id) {
+    return `unit:${member.source_unit_id}`;
+  }
+  return `${member.device_type}:${member.device_id}`;
+}
+
+export function resolveUnitForMember(
+  member: GroupMemberRef,
+  units: GroupableUnitFields[],
+): GroupableUnitFields | undefined {
+  const unitId = member.source_unit_id
+    || (member.device_type === 'blulok' ? member.device_id : undefined);
+  if (!unitId) return undefined;
+  return units.find((unit) => unit.id === unitId);
+}
+
+export function resolveLockDeviceForUnitMember(
+  member: GroupMemberRef,
+  devices: GroupableDeviceFields[],
+  unit?: GroupableUnitFields,
+): GroupableDeviceFields | undefined {
+  const unitId = member.source_unit_id || unit?.id;
+  if (unitId) {
+    const byUnit = devices.find(
+      (device) => device.device_category === 'blulok' && device.unit_id === unitId,
+    );
+    if (byUnit) return byUnit;
+  }
+  const byId = devices.find((device) => device.id === member.device_id);
+  if (byId?.device_category === 'blulok') return byId;
+  return undefined;
+}
+
+export function unitMemberHasAssignedLock(
+  member: GroupMemberRef,
+  devices: GroupableDeviceFields[],
+  unit?: GroupableUnitFields,
+): boolean {
+  return Boolean(resolveLockDeviceForUnitMember(member, devices, unit));
+}
+
+export function groupableUnitHasAssignedLock(
+  unit: GroupableUnitFields,
+  devices: GroupableDeviceFields[] = [],
+): boolean {
+  if (unit.blulok_device?.id) return true;
+  return devices.some(
+    (device) => device.device_category === 'blulok' && device.unit_id === unit.id,
+  );
+}
+
+export function filterBlulokMembersByLockAssignment(
+  members: GroupMemberRef[],
+  includeUnitsWithoutLock: boolean,
+  units: GroupableUnitFields[],
+  devices: GroupableDeviceFields[],
+): GroupMemberRef[] {
+  if (includeUnitsWithoutLock) return members;
+  return members.filter((member) => {
+    if (member.device_type !== 'blulok') return true;
+    const unit = resolveUnitForMember(member, units);
+    return unitMemberHasAssignedLock(member, devices, unit);
+  });
+}
+
+export function filterGroupableUnitsByLockAssignment(
+  units: GroupableUnitFields[],
+  includeUnitsWithoutLock: boolean,
+  devices: GroupableDeviceFields[],
+): GroupableUnitFields[] {
+  if (includeUnitsWithoutLock) return units;
+  return units.filter((unit) => groupableUnitHasAssignedLock(unit, devices));
+}
+
+/** Primary card title — unit-centric for BluLok members. */
 export function resolveAccessGroupMemberTitle(
   member: GroupMemberRef,
   device?: GroupableDeviceFields,
+  unit?: GroupableUnitFields,
 ): string {
   if (member.device_type === 'blulok') {
-    return device ? formatBluLokDevicePageTitle(device) : 'Unknown lock';
+    if (unit?.unit_number) {
+      return formatUnitLabel(unit.unit_number);
+    }
+    if (device?.unit_number) {
+      return formatUnitLabel(device.unit_number);
+    }
+    if (member.source_unit_id) {
+      return 'Unit';
+    }
+    return device ? formatBluLokDevicePageTitle(device) : 'Unknown unit';
   }
   const name = typeof device?.name === 'string' ? device.name.trim() : '';
   return name || member.device_id;
+}
+
+/** Secondary line under the member title. */
+export function resolveAccessGroupMemberSubtitle(
+  member: GroupMemberRef,
+  device?: GroupableDeviceFields,
+  unit?: GroupableUnitFields,
+): string {
+  if (member.device_type === 'blulok') {
+    const lockDevice = device?.device_category === 'blulok' ? device : undefined;
+    const lockFromUnit = unit?.blulok_device;
+    const serial = lockDevice?.device_serial
+      || lockFromUnit?.device_serial
+      || lockFromUnit?.serial;
+    if (serial) {
+      return `Lock assigned · ${serial}`;
+    }
+    return 'No lock assigned';
+  }
+  const parts = ['Access control'];
+  if (device?.device_type) parts.push(device.device_type);
+  if (device?.location_description) parts.push(device.location_description);
+  if (device?.device_serial) parts.push(device.device_serial);
+  return parts.join(' · ');
+}
+
+export function resolveGroupableUnitLabel(unit: GroupableUnitFields): string {
+  return formatUnitLabel(unit.unit_number);
+}
+
+export function buildGroupableUnitSearchKeywords(unit: GroupableUnitFields): string[] {
+  const lockSerial = unit.blulok_device?.device_serial || unit.blulok_device?.serial;
+  return [
+    unit.id,
+    unit.unit_number,
+    formatUnitLabel(unit.unit_number),
+    unit.status,
+    unit.unit_type,
+    lockSerial,
+    lockSerial ? `Serial ${lockSerial}` : 'no lock',
+    lockSerial ? '' : 'unassigned',
+  ].filter(Boolean) as string[];
 }
 
 export function resolveGroupableDeviceLabel(device: GroupableDeviceFields): string {
@@ -66,7 +212,7 @@ export function resolveGroupableDeviceLabel(device: GroupableDeviceFields): stri
   }
   const name = typeof device.name === 'string' ? device.name.trim() : '';
   if (name) return name;
-  if (device.unit_number) return `Unit ${device.unit_number}`;
+  if (device.unit_number) return formatUnitLabel(device.unit_number);
   if (typeof device.device_serial === 'string' && device.device_serial.trim()) {
     return device.device_serial.trim();
   }
@@ -129,7 +275,7 @@ export function describeGroupAccess(group: DeviceGroup): string {
   if (group.is_default) {
     return 'All facility tenants — app entry and keypad access';
   }
-  return 'Tenants whose unit lock is in this group — app entry and keypad access';
+  return 'Tenants whose unit is in this group — app entry and keypad access';
 }
 
 export function buildGroupSummary(

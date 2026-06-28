@@ -1,6 +1,7 @@
 import type { Knex } from 'knex';
 import { UserRole } from '@/types/auth.types';
 import { AuthService } from '@/services/auth.service';
+import { applyBlulokZoneLockMatch } from '@/utils/blulok-zone-lock-match.utils';
 
 type ResolveParams = {
   userId: string;
@@ -68,6 +69,40 @@ export class AppEntryAccessService {
     return Array.from(new Set([...assignedRows, ...sharedRows].map((row) => String(row.device_id))));
   }
 
+  private static async getTenantAccessibleUnitIds(
+    db: Knex,
+    userId: string,
+    facilityId?: string,
+  ): Promise<string[]> {
+    const assignedRowsQb = db('unit_assignments as ua')
+      .select('u.id as unit_id')
+      .join('units as u', 'u.id', 'ua.unit_id')
+      .where('ua.tenant_id', userId)
+      .where((qb) => {
+        qb.whereNull('ua.access_expires_at').orWhere('ua.access_expires_at', '>', db.fn.now());
+      });
+
+    if (facilityId) {
+      assignedRowsQb.andWhere('u.facility_id', facilityId);
+    }
+
+    const sharedRowsQb = db('key_sharing as ks')
+      .select('u.id as unit_id')
+      .join('units as u', 'u.id', 'ks.unit_id')
+      .where('ks.shared_with_user_id', userId)
+      .andWhere('ks.is_active', true)
+      .where((qb) => {
+        qb.whereNull('ks.expires_at').orWhere('ks.expires_at', '>', db.fn.now());
+      });
+
+    if (facilityId) {
+      sharedRowsQb.andWhere('u.facility_id', facilityId);
+    }
+
+    const [assignedRows, sharedRows] = await Promise.all([assignedRowsQb, sharedRowsQb]);
+    return Array.from(new Set([...assignedRows, ...sharedRows].map((row) => String(row.unit_id))));
+  }
+
   private static async getTenantFacilityIdsWithAccess(
     db: Knex,
     userId: string,
@@ -125,10 +160,11 @@ export class AppEntryAccessService {
   private static async resolveScopedDeviceIdsForLocks(
     db: Knex,
     accessibleBluLokIds: string[],
+    accessibleUnitIds: string[],
     facilityIds?: string[],
     facilityId?: string,
   ): Promise<string[]> {
-    if (accessibleBluLokIds.length === 0) return [];
+    if (accessibleBluLokIds.length === 0 && accessibleUnitIds.length === 0) return [];
 
     const rowsQb = db('device_group_members as zone_access')
       .distinct('acd.id')
@@ -140,9 +176,13 @@ export class AppEntryAccessService {
       .andWhere('dg.is_default', false)
       .andWhere('zone_access.device_type', 'access_control')
       .andWhere('zone_lock.device_type', 'blulok')
-      .whereIn('zone_lock.device_id', accessibleBluLokIds)
       .whereRaw(`JSON_CONTAINS(COALESCE(acd.access_methods, '["app"]'), '"app"')`)
       .orderBy('acd.id', 'asc');
+
+    applyBlulokZoneLockMatch(rowsQb, 'zone_lock', {
+      unitIds: accessibleUnitIds,
+      bluLokDeviceIds: accessibleBluLokIds,
+    });
 
     this.applyFacilityScope(rowsQb, db, 'dg.facility_id', facilityIds, facilityId);
     const rows = await rowsQb;
@@ -184,10 +224,17 @@ export class AppEntryAccessService {
     }
 
     const accessibleBluLokIds = await this.getTenantAccessibleBluLokDeviceIds(db, userId, facilityId);
+    const accessibleUnitIds = await this.getTenantAccessibleUnitIds(db, userId, facilityId);
     const tenantFacilityIds = await this.getTenantFacilityIdsWithAccess(db, userId, facilityId);
 
     const [scopedIds, globalIds] = await Promise.all([
-      this.resolveScopedDeviceIdsForLocks(db, accessibleBluLokIds, facilityIds, facilityId),
+      this.resolveScopedDeviceIdsForLocks(
+        db,
+        accessibleBluLokIds,
+        accessibleUnitIds,
+        facilityIds,
+        facilityId,
+      ),
       this.resolveGlobalSharedDeviceIds(db, tenantFacilityIds),
     ]);
 

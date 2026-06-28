@@ -125,6 +125,9 @@ export default function DeviceDetailsPage() {
   const [unassigningFromUnit, setUnassigningFromUnit] = useState(false);
   const [showRemoveInventoryConfirm, setShowRemoveInventoryConfirm] = useState(false);
   const [removingFromInventory, setRemovingFromInventory] = useState(false);
+  const [linkedUnitStatus, setLinkedUnitStatus] = useState<string | null>(null);
+  const [linkedUnitOverlocked, setLinkedUnitOverlocked] = useState(false);
+  const [overlockSaving, setOverlockSaving] = useState(false);
 
   const deviceLockStatusRef = useRef<DeviceDetails['lock_status'] | undefined>(undefined);
   const { facilities: globalFacilities, selectedFacility } = useGlobalFacility();
@@ -185,6 +188,49 @@ export default function DeviceDetailsPage() {
 
     loadDeviceGroups().catch(() => undefined);
   }, [device?.facility_id, device?.id, device?.unit_id, deviceCategory]);
+
+  useEffect(() => {
+    const loadLinkedUnit = async () => {
+      if (!device?.unit_id) {
+        setLinkedUnitStatus(null);
+        setLinkedUnitOverlocked(false);
+        return;
+      }
+      try {
+        const response = await apiService.getUnit(device.unit_id);
+        const unit = response?.unit ?? response;
+        setLinkedUnitStatus(unit?.status ?? null);
+        setLinkedUnitOverlocked(Boolean(unit?.is_overlocked));
+      } catch {
+        setLinkedUnitStatus(null);
+        setLinkedUnitOverlocked(false);
+      }
+    };
+    void loadLinkedUnit();
+  }, [device?.unit_id]);
+
+  const handleToggleOverlock = async (next: boolean) => {
+    if (!device?.unit_id) return;
+    setOverlockSaving(true);
+    try {
+      const response = await apiService.setUnitOverlock(device.unit_id, next);
+      const unit = response?.unit ?? response;
+      setLinkedUnitStatus(unit?.status ?? (next ? 'overlocked' : 'occupied'));
+      setLinkedUnitOverlocked(Boolean(unit?.is_overlocked ?? next));
+      addToast({
+        type: 'success',
+        title: next ? 'Unit marked as overlocked' : 'Overlock cleared',
+      });
+    } catch (err: unknown) {
+      const apiErr = err as { response?: { data?: { message?: string } } };
+      addToast({
+        type: 'error',
+        title: apiErr?.response?.data?.message || 'Failed to update overlock status',
+      });
+    } finally {
+      setOverlockSaving(false);
+    }
+  };
 
   useEffect(() => {
     const loadEffectiveCode = async () => {
@@ -605,6 +651,10 @@ export default function DeviceDetailsPage() {
         loadingDenylist={loadingDenylist}
         canManage={canManage}
         isDevAdmin={isDevAdmin}
+        unitStatus={linkedUnitStatus}
+        isOverlocked={linkedUnitOverlocked}
+        overlockSaving={overlockSaving}
+        onToggleOverlock={device?.unit_id ? handleToggleOverlock : undefined}
         onUnassignFromUnit={() => setShowUnassignFromUnitConfirm(true)}
         onRemoveFromInventory={() => setShowRemoveInventoryConfirm(true)}
         onSendDenylistAdd={handleSendDenylistAdd}

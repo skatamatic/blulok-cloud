@@ -2,6 +2,7 @@ import { act, render, screen } from '@testing-library/react';
 import { WebSocketProvider, useWebSocket } from '@/contexts/WebSocketContext';
 
 const mockIsWebSocketConnected = jest.fn();
+const mockReassertSubscription = jest.fn();
 const mockSubscribe = jest.fn();
 const mockUnsubscribe = jest.fn();
 const mockHasSubscription = jest.fn(() => false);
@@ -11,10 +12,23 @@ const mockIsWebSocketReconnecting = jest.fn(() => false);
 const mockOnMessage = jest.fn();
 const mockShowDebugToast = jest.fn();
 
+jest.mock('@/contexts/AuthContext', () => ({
+  useAuth: () => ({
+    authState: {
+      isAuthenticated: true,
+      isLoading: false,
+      user: null,
+      token: 'mock-token',
+    },
+  }),
+}));
+
 jest.mock('@/services/websocket.service', () => ({
   websocketService: {
     isWebSocketConnected: () => mockIsWebSocketConnected(),
     subscribe: (...args: any[]) => mockSubscribe(...args),
+    reassertSubscription: (...args: any[]) => mockReassertSubscription(...args),
+    retryConnectionIfNeeded: jest.fn(),
     unsubscribe: (...args: any[]) => mockUnsubscribe(...args),
     hasSubscription: (...args: any[]) => mockHasSubscription(...args),
     onConnectionChange: (...args: any[]) => mockOnConnectionChange(...args),
@@ -97,8 +111,9 @@ describe('WebSocketContext', () => {
       subB = latestCtx!.subscribe('device_status', onMessageB, undefined, filters);
     });
 
-    expect(mockSubscribe).toHaveBeenCalledTimes(1);
-    expect(mockSubscribe).toHaveBeenCalledWith('device_status', filters);
+    expect(mockSubscribe).not.toHaveBeenCalled();
+    expect(mockReassertSubscription).toHaveBeenCalledTimes(2);
+    expect(mockReassertSubscription).toHaveBeenCalledWith('device_status', filters);
     expect(mockShowDebugToast).toHaveBeenCalledWith(
       'info',
       'WebSocket Sub (reuse)',
@@ -178,16 +193,15 @@ describe('WebSocketContext', () => {
     act(() => {
       latestCtx!.subscribe('activity', jest.fn(), undefined, { facility_id: 'fac-1' });
     });
-    expect(mockSubscribe).toHaveBeenCalledTimes(1);
+    expect(mockReassertSubscription).toHaveBeenCalledTimes(1);
 
-    mockHasSubscription.mockReturnValue(false);
     act(() => {
       connectionHandler?.(false);
       connectionHandler?.(true);
     });
 
-    expect(mockSubscribe).toHaveBeenCalledTimes(2);
-    expect(mockSubscribe).toHaveBeenLastCalledWith('activity', { facility_id: 'fac-1' });
+    expect(mockReassertSubscription).toHaveBeenCalledTimes(2);
+    expect(mockReassertSubscription).toHaveBeenLastCalledWith('activity', { facility_id: 'fac-1' });
   });
 
   it('cleans up connection and message handlers on unmount', () => {

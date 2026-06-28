@@ -2,6 +2,7 @@ import React, { createContext, useContext, useEffect, useState, useCallback, use
 import { websocketService } from '@/services/websocket.service';
 import { websocketDebugService } from '@/services/websocket-debug.service';
 import { makeWebSocketSubscriptionKey } from '@/utils/websocket-subscription.utils';
+import { useAuth } from '@/contexts/AuthContext';
 
 interface WebSocketContextType {
   subscribe: (type: string, onMessage: (data: any) => void, onError?: (error: string) => void, filters?: Record<string, any>) => string;
@@ -32,6 +33,7 @@ interface WebSocketProviderProps {
 }
 
 export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }) => {
+  const { authState } = useAuth();
   const [isConnected, setIsConnected] = useState(websocketService.isWebSocketConnected());
   const [isReconnecting, setIsReconnecting] = useState(websocketService.isWebSocketReconnecting());
   const messageHandlerUnsubscribers = useRef<Map<string, () => void>>(new Map());
@@ -47,20 +49,13 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
 
       if (connected) {
         // After transport reconnect, re-assert server subscriptions for active local subscribers.
-        const activeKeys = new Set(
-          Array.from(subscriptionMeta.current.values()).map((meta) => meta.serverSubKey),
-        );
-        activeKeys.forEach((serverSubKey) => {
-          const meta = Array.from(subscriptionMeta.current.values()).find(
-            (entry) => entry.serverSubKey === serverSubKey,
-          );
-          if (!meta) return;
-
-          if (!websocketService.hasSubscription(meta.type, meta.filters)) {
-            websocketService.subscribe(meta.type, meta.filters);
-          }
-          serverSubscriptions.current.add(serverSubKey);
-        });
+        const seen = new Set<string>();
+        for (const meta of subscriptionMeta.current.values()) {
+          if (seen.has(meta.serverSubKey)) continue;
+          seen.add(meta.serverSubKey);
+          websocketService.reassertSubscription(meta.type, meta.filters);
+          serverSubscriptions.current.add(meta.serverSubKey);
+        }
       }
     };
 
@@ -87,6 +82,12 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
     };
   }, []); // Empty dependency array
 
+  // Ensure dashboard WS connects after auth bootstrap (module singleton may have skipped connect without token).
+  useEffect(() => {
+    if (!authState.isAuthenticated || authState.isLoading) return;
+    websocketService.retryConnectionIfNeeded();
+  }, [authState.isAuthenticated, authState.isLoading]);
+
   const subscribe = useCallback((type: string, onMessage: (data: any) => void, onError?: (error: string) => void, filters?: Record<string, any>) => {
     console.log('🔌 WebSocketContext subscribe:', {
       type,
@@ -106,7 +107,6 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
 
     // Subscribe to the WebSocket service (server-side) if this is the first subscriber to this type+filters
     if (!serverSubscriptions.current.has(serverSubKey)) {
-      websocketService.subscribe(type, filters);
       serverSubscriptions.current.add(serverSubKey);
       console.log('🔌 WebSocketContext: Created server subscription for:', serverSubKey);
     } else {
@@ -114,6 +114,7 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
       websocketDebugService.showDebugToast('info', 'WebSocket Sub (reuse)', `Reusing: ${serverSubKey}`);
       console.log('🔌 WebSocketContext: Reusing existing server subscription for:', serverSubKey);
     }
+    websocketService.reassertSubscription(type, filters);
 
     // Set up message handler and store the unsubscribe function
     const unsubscribeHandler = websocketService.onMessage(type, (data: any) => {

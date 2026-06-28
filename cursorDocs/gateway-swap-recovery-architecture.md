@@ -31,11 +31,13 @@ Transport behavior:
 
 ## Recovery state machine
 
-Statuses: `detected` → `awaiting_config` → `firmware` → `inventory_push` → `complete` (or `failed`, `cancelled`, `bypassed`).
+Statuses: `detected` → `awaiting_config` → (`firmware` optional) → `inventory_push` → `complete` (or `failed`, `cancelled`, `bypassed`).
+
+When **firmware matching** is enabled (default), the cloud resolves the **production gateway’s** firmware version to a catalog image and runs the firmware phase only if the swap candidate is behind that version. When disabled, `firmware_id` is null and recovery goes straight from `awaiting_config` to `inventory_push`.
 
 Phases delegate to existing services:
 
-1. **Firmware** — `FirmwareService.initiatePush` (default: highest semver `target_type=gateway`)
+1. **Firmware** (optional) — `FirmwareService.initiatePush` using production gateway version (via `firmwareModel.findByVersion`); skipped when operator disables matching or candidate already satisfies target version
 2. **Inventory push** — `INVENTORY_SNAPSHOT_*` chunk protocol via `GatewayChunkPushEngine`
 
 Facility provisioning files are managed separately via REST (see [Facility provisioning data](./facility-provisioning-data.md)); they are **not** pushed during swap recovery.
@@ -48,7 +50,8 @@ While recovery is active (not `complete` or `bypassed`):
 
 **Inbound (blocked):**
 
-- `POST /internal/gateway/devices/inventory` → **409** `recovery_in_progress`
+- `POST /internal/gateway/devices/inventory` → **409** `recovery_in_progress` while recovery is active; **403** `not_bound_gateway` when proxied from a `swap_candidate` WebSocket session
+- `POST /internal/gateway/devices/state` → same gating as inventory sync
 
 **Outbound (blocked via `GatewayEventsService.unicastToFacility`):**
 

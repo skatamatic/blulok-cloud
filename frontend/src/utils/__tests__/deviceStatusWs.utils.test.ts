@@ -10,20 +10,24 @@ describe('shouldRefreshDeviceListForPayload', () => {
     expect(shouldRefreshDeviceListForPayload({ updatedDeviceId: 'z' }, new Set())).toBe(true);
   });
 
-  it('matches updatedDeviceId', () => {
+  it('matches updatedDeviceId only when in relevantIds', () => {
     expect(shouldRefreshDeviceListForPayload({ updatedDeviceId: 'a' }, ids)).toBe(true);
     expect(shouldRefreshDeviceListForPayload({ updatedDeviceId: 'z' }, ids)).toBe(false);
   });
 
-  it('matches any id in devices array', () => {
+  it('matches devices array when any id is in relevantIds', () => {
     expect(
       shouldRefreshDeviceListForPayload({ devices: [{ id: 'b' }, { id: 'z' }] }, ids)
     ).toBe(true);
     expect(shouldRefreshDeviceListForPayload({ devices: [{ id: 'z' }] }, ids)).toBe(false);
   });
 
-  it('returns true when payload has no id hints (conservative)', () => {
-    expect(shouldRefreshDeviceListForPayload({}, ids)).toBe(true);
+  it('refreshes on units_update coarse signal', () => {
+    expect(shouldRefreshDeviceListForPayload({ source: 'units_update' }, ids)).toBe(true);
+  });
+
+  it('returns false when payload has no id hints and relevantIds is populated', () => {
+    expect(shouldRefreshDeviceListForPayload({}, ids)).toBe(false);
   });
 });
 

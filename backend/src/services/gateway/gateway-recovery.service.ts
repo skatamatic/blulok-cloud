@@ -16,8 +16,12 @@ import { GatewayChunkPushEngine } from '@/services/provisioning/gateway-chunk-pu
 import { GatewayEventsService } from '@/services/gateway/gateway-events.service';
 import { WebsocketGatewayTransport } from '@/services/gateway/websocket-gateway.transport';
 import { FIRMWARE_CHUNK_SIZE_BYTES } from '@/constants/firmware-chunk.constants';
-import { RECOVERY_PROGRESS_EVENT_PERCENT_STEP } from '@/constants/provisioning.constants';
-import { pickHighestSemver } from '@/utils/semver-compare.utils';
+import {
+  GATEWAY_INVENTORY_SYNC_REQUEST_MESSAGE_TYPE,
+  PRODUCTION_INVENTORY_SEED_TIMEOUT_MS,
+  RECOVERY_PROGRESS_EVENT_PERCENT_STEP,
+} from '@/constants/provisioning.constants';
+import { pickHighestSemver, compareSemver } from '@/utils/semver-compare.utils';
 import { logger } from '@/utils/logger';
 import { DatabaseService } from '@/services/database.service';
 
@@ -32,6 +36,12 @@ const blockingCache = new Map<string, { blocking: boolean; expiresAt: number }>(
 const BLOCKING_CACHE_TTL_MS = 5_000;
 const RECOVERY_PUSH_STATUSES: GatewayRecoveryStatus[] = ['firmware', 'inventory_push'];
 const startupInventoryPushInFlight = new Set<string>();
+const inventoryPhaseTransitionInFlight = new Set<string>();
+const productionInventorySeedArmed = new Set<string>();
+const productionInventorySeedWaiters = new Map<
+  string,
+  { resolve: () => void; timer: ReturnType<typeof setTimeout> }
+>();
 
 export interface GatewayRecoveryProgressPayload {
   recoveryId: string;
@@ -65,7 +75,7 @@ export class GatewayRecoveryService {
 
   static async isBlockingActiveForFacility(facilityId: string): Promise<boolean> {
     try {
-      const active = await this.recoveryModel.findActiveByFacility(facilityId);
+      const active = await this.resolveActiveRecovery(facilityId);
       const blocking = !!active && BLOCKING_RECOVERY_STATUSES.includes(active.status);
       if (blocking) {
         blockingFacilities.add(facilityId);
@@ -86,6 +96,80 @@ export class GatewayRecoveryService {
       });
       return true;
     }
+  }
+
+  static isProductionInventorySeedArmed(facilityId: string): boolean {
+    return productionInventorySeedArmed.has(facilityId);
+  }
+
+  static isProductionInventorySeedAllowed(
+    facilityId: string,
+    sessionRole: string | undefined,
+    requestingGatewayId: string | undefined,
+    boundGatewayId: string,
+  ): boolean {
+    if (!this.isProductionInventorySeedArmed(facilityId)) {
+      return false;
+    }
+    return sessionRole === 'active' && requestingGatewayId === boundGatewayId;
+  }
+
+  static completeProductionInventorySeed(facilityId: string): void {
+    productionInventorySeedArmed.delete(facilityId);
+    const waiter = productionInventorySeedWaiters.get(facilityId);
+    if (!waiter) return;
+    clearTimeout(waiter.timer);
+    productionInventorySeedWaiters.delete(facilityId);
+    waiter.resolve();
+  }
+
+  private static armProductionInventorySeed(facilityId: string): Promise<void> {
+    productionInventorySeedArmed.add(facilityId);
+    return new Promise((resolve) => {
+      const timer = setTimeout(() => {
+        productionInventorySeedWaiters.delete(facilityId);
+        productionInventorySeedArmed.delete(facilityId);
+        logger.warn(`Production inventory seed timed out facility=${facilityId}`);
+        resolve();
+      }, PRODUCTION_INVENTORY_SEED_TIMEOUT_MS);
+      productionInventorySeedWaiters.set(facilityId, { resolve, timer });
+    });
+  }
+
+  private static async seedProductionInventoryBeforeSnapshot(
+    facilityId: string,
+    previousGatewayId: string | null,
+  ): Promise<void> {
+    if (!previousGatewayId) return;
+
+    const bound = await this.gatewayModel.findByFacilityId(facilityId);
+    if (!bound || bound.id !== previousGatewayId) {
+      logger.warn(
+        `Skipping production inventory seed — bound gateway mismatch facility=${facilityId} bound=${bound?.id ?? 'none'} expected=${previousGatewayId}`,
+      );
+      return;
+    }
+
+    let transport: WebsocketGatewayTransport;
+    try {
+      transport = GatewayEventsService.getInstance().getTransport() as WebsocketGatewayTransport;
+    } catch {
+      return;
+    }
+
+    const activeStatus = transport.getActiveConnectionStatusForFacility(facilityId);
+    if (!activeStatus.connected) {
+      logger.warn(`Production gateway offline — snapshot will use cloud DB only facility=${facilityId}`);
+      return;
+    }
+
+    const seedPromise = this.armProductionInventorySeed(facilityId);
+    transport.unicastToFacility(facilityId, {
+      type: GATEWAY_INVENTORY_SYNC_REQUEST_MESSAGE_TYPE,
+      reason: 'pre_snapshot',
+    });
+    await seedPromise;
+    logger.info(`Production inventory seed finished facility=${facilityId}`);
   }
 
   static isBlockingActiveForFacilitySync(facilityId: string): boolean {
@@ -136,11 +220,70 @@ export class GatewayRecoveryService {
     }
   }
 
+  /**
+   * After a completed swap, the demoted production unit may reconnect as a swap candidate.
+   * That must not open a new blocking recovery session.
+   */
+  private static async isDemotedGatewayReconnect(
+    facilityId: string,
+    candidateGatewayId: string,
+    boundGatewayId: string,
+  ): Promise<boolean> {
+    const latest = await this.recoveryModel.findLatestByFacility(facilityId);
+    if (!latest || latest.status !== 'complete') return false;
+    return (
+      latest.gateway_id === boundGatewayId
+      && latest.previous_gateway_id === candidateGatewayId
+    );
+  }
+
+  private static async dismissSpuriousDetection(recovery: GatewayRecovery): Promise<void> {
+    const cancelled = await this.recoveryModel.atomicCancel(recovery.id);
+    if (!cancelled) return;
+    await this.eventModel.append(
+      recovery.id,
+      'cancelled',
+      'Ignored demoted gateway reconnect after completed swap',
+    );
+    await this.refreshBlockingState(recovery.facility_id);
+    logger.info(
+      `Dismissed spurious swap detect recovery=${recovery.id} facility=${recovery.facility_id} gateway=${recovery.gateway_id}`,
+    );
+  }
+
+  private static async resolveActiveRecovery(facilityId: string): Promise<GatewayRecovery | null> {
+    const active = await this.recoveryModel.findActiveByFacility(facilityId);
+    if (!active) return null;
+
+    const bound = await this.gatewayModel.findByFacilityId(facilityId);
+    if (
+      active.status === 'detected'
+      && bound
+      && await this.isDemotedGatewayReconnect(facilityId, active.gateway_id, bound.id)
+    ) {
+      await this.dismissSpuriousDetection(active);
+      return null;
+    }
+
+    return active;
+  }
+
   static async detect(
     facilityId: string,
     newGatewayId: string,
     previousGatewayId: string,
+    options?: { allowDemotedReconnect?: boolean },
   ): Promise<GatewayRecovery | null> {
+    if (
+      !options?.allowDemotedReconnect
+      && await this.isDemotedGatewayReconnect(facilityId, newGatewayId, previousGatewayId)
+    ) {
+      logger.info(
+        `Ignoring swap detect for demoted gateway reconnect facility=${facilityId} gateway=${newGatewayId}`,
+      );
+      return null;
+    }
+
     const creation = await this.recoveryModel.createIfNoActive({
       facility_id: facilityId,
       gateway_id: newGatewayId,
@@ -167,6 +310,9 @@ export class GatewayRecoveryService {
           `Swap candidate updated — now tracking gateway ${newGatewayId}`,
         );
         this.broadcastProgress(updated, 0, 'Swap candidate updated');
+        if (RECOVERY_PUSH_STATUSES.includes(updated.status)) {
+          this.armRecoveryPushTarget(facilityId, newGatewayId);
+        }
       }
     }
     await this.refreshBlockingState(facilityId);
@@ -174,13 +320,39 @@ export class GatewayRecoveryService {
   }
 
   static async getStatusForGateway(gatewayId: string): Promise<GatewayRecovery | null> {
-    return this.recoveryModel.findLatestByGateway(gatewayId);
+    const latest = await this.recoveryModel.findLatestByGateway(gatewayId);
+    if (!latest) return null;
+
+    const active = await this.recoveryModel.findActiveByFacility(latest.facility_id);
+    if (active && (active.gateway_id === gatewayId || active.previous_gateway_id === gatewayId)) {
+      return active;
+    }
+
+    return latest;
   }
 
   static async getStatusForFacility(facilityId: string): Promise<GatewayRecovery | null> {
-    const active = await this.recoveryModel.findActiveByFacility(facilityId);
+    const active = await this.resolveActiveRecovery(facilityId);
     if (active) return active;
     return this.recoveryModel.findLatestByFacility(facilityId);
+  }
+
+  /** Resolve facility scope for an unbound gateway (swap candidate WS or recovery history). */
+  static async resolveFacilityAccessForUnboundGateway(
+    gatewayId: string,
+    allowedFacilityIds: string[],
+  ): Promise<string | null> {
+    for (const facilityId of allowedFacilityIds) {
+      const candidates = this.getSwapCandidates(facilityId);
+      if (candidates.some((c) => c.gatewayId === gatewayId)) {
+        return facilityId;
+      }
+    }
+    const recovery = await this.recoveryModel.findLatestByGateway(gatewayId);
+    if (recovery?.facility_id && allowedFacilityIds.includes(recovery.facility_id)) {
+      return recovery.facility_id;
+    }
+    return null;
   }
 
   static getSwapCandidates(facilityId: string): Array<{ gatewayId: string; connected: boolean; lastActivityAt?: number }> {
@@ -192,6 +364,69 @@ export class GatewayRecoveryService {
     }
   }
 
+  static getFacilityGatewaySessions(facilityId: string): Array<{
+    gatewayId: string;
+    sessionRole: 'active' | 'swap_candidate';
+    connected: boolean;
+    lastActivityAt?: number;
+  }> {
+    try {
+      const transport = GatewayEventsService.getInstance().getTransport() as WebsocketGatewayTransport;
+      return transport.getFacilityGatewaySessions(facilityId);
+    } catch {
+      return [];
+    }
+  }
+
+  static async getRecoveryCandidatesPayload(facilityId: string): Promise<{
+    candidates: Array<{ gatewayId: string; connected: boolean; lastActivityAt?: number }>;
+    recovery: GatewayRecovery | null;
+    sessions: Array<{
+      gatewayId: string;
+      sessionRole: 'active' | 'swap_candidate';
+      connected: boolean;
+      lastActivityAt?: number;
+    }>;
+    demotedPreviousGateway: { gatewayId: string; connected: boolean } | null;
+  }> {
+    const recovery = await this.getStatusForFacility(facilityId);
+    const allCandidates = this.getSwapCandidates(facilityId);
+    let candidates = allCandidates;
+    let demotedPreviousGateway: { gatewayId: string; connected: boolean } | null = null;
+
+    if (recovery?.status === 'complete' && recovery.previous_gateway_id) {
+      const previousId = recovery.previous_gateway_id;
+      const transport = GatewayEventsService.getInstance().getTransport() as WebsocketGatewayTransport;
+      let sessions = transport.getFacilityGatewaySessions(facilityId);
+      sessions = transport.enrichSessionsForCompletedRecovery(
+        facilityId,
+        sessions,
+        recovery.gateway_id,
+        previousId,
+      );
+      demotedPreviousGateway = {
+        gatewayId: previousId,
+        connected: transport.isGatewayWsConnected(facilityId, previousId),
+      };
+      candidates = candidates.filter(
+        (candidate) => candidate.gatewayId.trim().toLowerCase() !== previousId.trim().toLowerCase(),
+      );
+      return {
+        candidates,
+        recovery,
+        sessions,
+        demotedPreviousGateway,
+      };
+    }
+
+    return {
+      candidates,
+      recovery,
+      sessions: this.getFacilityGatewaySessions(facilityId),
+      demotedPreviousGateway,
+    };
+  }
+
   static async resolveDefaultFirmwareId(): Promise<string | null> {
     const images = await this.firmwareModel.findAll(true, 'gateway');
     if (images.length === 0) return null;
@@ -199,20 +434,82 @@ export class GatewayRecoveryService {
     return highest?.id ?? images[0].id;
   }
 
-  static async getRecoveryOptions(gatewayId: string, _facilityId: string): Promise<{
-    firmwareOptions: Array<{ id: string; version: string; label: string }>;
-    defaultFirmwareId: string | null;
+  static async getRecoveryOptions(gatewayId: string, facilityId: string): Promise<{
+    productionFirmwareVersion: string | null;
+    candidateFirmwareVersion: string | null;
+    candidateMatchesProduction: boolean;
+    productionFirmwareImageAvailable: boolean;
   }> {
-    const firmwareImages = await this.firmwareModel.findAll(true, 'gateway');
-    const firmwareOptions = firmwareImages.map((image) => ({
-      id: image.id,
-      version: image.version,
-      label: `${image.version}${image.description ? ` — ${image.description}` : ''}`,
-    }));
+    const candidate = await this.gatewayModel.findById(gatewayId);
+    const candidateFirmwareVersion = candidate?.firmware_version?.trim() || null;
+
+    const productionGateway = await this.gatewayModel.findByFacilityId(facilityId);
+    const productionFirmwareVersion = productionGateway?.firmware_version?.trim() || null;
+    let productionFirmwareImageAvailable = false;
+    if (productionFirmwareVersion) {
+      const image = await this.firmwareModel.findByVersion(productionFirmwareVersion, 'gateway');
+      productionFirmwareImageAvailable = !!image;
+    }
+
+    const candidateMatchesProduction = !!(
+      productionFirmwareVersion
+      && candidateFirmwareVersion
+      && compareSemver(candidateFirmwareVersion, productionFirmwareVersion) >= 0
+    );
 
     return {
-      firmwareOptions,
-      defaultFirmwareId: await this.resolveDefaultFirmwareId(),
+      productionFirmwareVersion,
+      candidateFirmwareVersion,
+      candidateMatchesProduction,
+      productionFirmwareImageAvailable,
+    };
+  }
+
+  /** Resolve the firmware image that matches the current production gateway version. */
+  private static async resolveProductionFirmwareId(
+    facilityId: string,
+    previousGatewayId: string | null,
+  ): Promise<string | null> {
+    const productionGatewayId = previousGatewayId
+      ?? (await this.gatewayModel.findByFacilityId(facilityId))?.id
+      ?? null;
+    if (!productionGatewayId) return null;
+
+    const production = await this.gatewayModel.findById(productionGatewayId);
+    const productionVersion = production?.firmware_version?.trim() || null;
+    if (!productionVersion) return null;
+
+    const image = await this.firmwareModel.findByVersion(productionVersion, 'gateway');
+    if (!image) {
+      logger.warn(
+        `No gateway firmware image for production version ${productionVersion} — skipping firmware phase`,
+      );
+      return null;
+    }
+    return image.id;
+  }
+
+  /** Returns false when the swap candidate already meets the target firmware version. */
+  private static async firmwareUpdateNeeded(
+    gatewayId: string,
+    firmwareId: string,
+  ): Promise<{ needed: boolean; candidateVersion: string | null; targetVersion: string }> {
+    const [gateway, firmware] = await Promise.all([
+      this.gatewayModel.findById(gatewayId),
+      this.firmwareModel.findById(firmwareId),
+    ]);
+    if (!firmware) {
+      return { needed: true, candidateVersion: gateway?.firmware_version?.trim() || null, targetVersion: '' };
+    }
+    const candidateVersion = gateway?.firmware_version?.trim() || null;
+    const targetVersion = firmware.version;
+    if (!candidateVersion) {
+      return { needed: true, candidateVersion: null, targetVersion };
+    }
+    return {
+      needed: compareSemver(candidateVersion, targetVersion) < 0,
+      candidateVersion,
+      targetVersion,
     };
   }
 
@@ -260,7 +557,7 @@ export class GatewayRecoveryService {
       throw new Error('No active recovery for this gateway');
     }
 
-    const detected = await this.detect(facilityId, gatewayId, previousGatewayId);
+    const detected = await this.detect(facilityId, gatewayId, previousGatewayId, { allowDemotedReconnect: true });
     if (!detected || detected.gateway_id !== gatewayId) {
       throw new Error('No active recovery for this gateway');
     }
@@ -271,19 +568,19 @@ export class GatewayRecoveryService {
     gatewayId: string,
     facilityId: string,
     userId: string,
-    options?: { firmwareId?: string },
+    options?: { firmwareId?: string; includeFirmware?: boolean },
   ): Promise<GatewayRecovery> {
     let recovery = await this.recoveryModel.findActiveByFacility(facilityId);
     if (!recovery || recovery.gateway_id !== gatewayId) {
       recovery = await this.ensureActiveRecoveryForGateway(gatewayId, facilityId);
     }
 
-    const firmwareId = options?.firmwareId ?? await this.resolveDefaultFirmwareId();
-
-    await this.validateRecoveryOptionIds(firmwareId);
-
-    if (!firmwareId) {
-      throw new Error('No gateway firmware available for recovery');
+    const includeFirmware = options?.includeFirmware !== false;
+    let firmwareId: string | null = null;
+    if (includeFirmware) {
+      firmwareId = options?.firmwareId
+        ?? await this.resolveProductionFirmwareId(facilityId, recovery.previous_gateway_id);
+      await this.validateRecoveryOptionIds(firmwareId);
     }
 
     await this.recoveryModel.updateFields(recovery.id, {
@@ -292,9 +589,20 @@ export class GatewayRecoveryService {
       initiated_by: userId,
     });
     recovery = (await this.recoveryModel.findById(recovery.id))!;
-    await this.eventModel.append(recovery.id, 'awaiting_config', 'Recovery configured — starting firmware phase');
+
+    const configMessage = includeFirmware && firmwareId
+      ? 'Recovery configured — matching production gateway firmware'
+      : includeFirmware && !firmwareId
+        ? 'Recovery configured — production firmware unknown, skipping to inventory push'
+        : 'Recovery configured — firmware matching disabled, starting inventory push';
+    await this.eventModel.append(recovery.id, 'awaiting_config', configMessage);
     this.broadcastProgress(recovery, 5, 'Recovery initiated');
-    await this.startFirmwarePhase(recovery.id);
+
+    if (includeFirmware && firmwareId) {
+      await this.startFirmwarePhase(recovery.id);
+    } else {
+      await this.startInventoryPushPhase(recovery.id);
+    }
     return (await this.recoveryModel.findById(recovery.id))!;
   }
 
@@ -304,7 +612,11 @@ export class GatewayRecoveryService {
       throw new Error('No active recovery for this gateway');
     }
     if (recovery.status === 'awaiting_config') {
-      await this.startFirmwarePhase(recovery.id);
+      if (recovery.firmware_id) {
+        await this.startFirmwarePhase(recovery.id);
+      } else {
+        await this.startInventoryPushPhase(recovery.id);
+      }
     } else if (recovery.status === 'firmware') {
       await this.startInventoryPushPhase(recovery.id);
     } else {
@@ -368,6 +680,9 @@ export class GatewayRecoveryService {
   private static async resolveRetryPhase(
     recovery: GatewayRecovery,
   ): Promise<'firmware' | 'inventory_push'> {
+    if (!recovery.firmware_id) {
+      return 'inventory_push';
+    }
     if (recovery.firmware_push_id) {
       const push = await this.pushModel.findById(recovery.firmware_push_id);
       if (push?.status === 'complete') {
@@ -407,10 +722,38 @@ export class GatewayRecoveryService {
     if (cancelledRecoveries.has(recoveryId)) return;
 
     await this.recoveryModel.updateStatus(recoveryId, 'firmware');
-    await this.eventModel.append(recoveryId, 'firmware', 'Starting firmware update phase', 10);
-    this.broadcastProgress(recovery, 10, 'Firmware update starting');
     this.armRecoveryPushTarget(recovery.facility_id, recovery.gateway_id);
     await this.refreshBlockingState(recovery.facility_id);
+
+    const firmwareCheck = await this.firmwareUpdateNeeded(recovery.gateway_id, recovery.firmware_id);
+    if (!firmwareCheck.needed) {
+      const skipMessage = firmwareCheck.candidateVersion
+        ? `Swap candidate already on firmware ${firmwareCheck.candidateVersion} (target ${firmwareCheck.targetVersion}) — skipping OTA`
+        : `Target firmware ${firmwareCheck.targetVersion} already satisfied — skipping OTA`;
+      await this.eventModel.append(recoveryId, 'firmware', skipMessage, 35);
+      const latest = (await this.recoveryModel.findById(recoveryId))!;
+      this.broadcastProgress(
+        latest,
+        35,
+        `Firmware up to date (${firmwareCheck.targetVersion}) — skipping to inventory push`,
+      );
+      try {
+        await this.startInventoryPushPhase(recoveryId);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : 'Inventory snapshot preparation failed';
+        logger.error(`Recovery inventory phase failed after firmware skip recoveryId=${recoveryId}:`, err);
+        await this.recoveryModel.updateStatus(recoveryId, 'failed', message);
+        await this.eventModel.append(recoveryId, 'failed', message);
+        const failed = (await this.recoveryModel.findById(recoveryId))!;
+        this.broadcastProgress(failed, 0, message, 'failed');
+        this.clearRecoveryPushTarget(recovery.facility_id);
+        await this.refreshBlockingState(recovery.facility_id);
+      }
+      return;
+    }
+
+    await this.eventModel.append(recoveryId, 'firmware', 'Starting firmware update phase', 10);
+    this.broadcastProgress(recovery, 10, 'Firmware update starting');
 
     try {
       const push = await FirmwareService.initiatePush(
@@ -438,27 +781,68 @@ export class GatewayRecoveryService {
     if (!recovery) return;
     if (cancelledRecoveries.has(recoveryId)) return;
 
-    const stored = await InventorySnapshotService.buildAndStoreForFacility(
-      recovery.facility_id,
-      recovery.gateway_id,
-    );
-    const nonce = uuidv4();
-    await this.recoveryModel.updateFields(recoveryId, {
-      status: 'inventory_push',
-      inventory_snapshot_id: stored.snapshotId,
-      inventory_nonce: nonce,
-      inventory_chunks_sent: 0,
-      inventory_chunks_total: null,
-    });
-    await this.eventModel.append(recoveryId, 'inventory_push', 'Starting inventory snapshot push', 40);
-    const latest = (await this.recoveryModel.findById(recoveryId))!;
-    this.broadcastProgress(latest, 40, 'Inventory snapshot push starting');
-    this.armRecoveryPushTarget(recovery.facility_id, recovery.gateway_id);
-    await this.refreshBlockingState(recovery.facility_id);
-    this.executeInventoryPush(recoveryId).catch((err) => {
-      logger.error(`Inventory push failed recoveryId=${recoveryId}:`, err);
-    });
-    this.startWatch(recoveryId);
+    if (recovery.status === 'inventory_push') {
+      if (recovery.inventory_snapshot_id) {
+        this.armRecoveryPushTarget(recovery.facility_id, recovery.gateway_id);
+        if (!resumeInFlightRecoveries.has(`${recovery.facility_id}:push`)) {
+          resumeInFlightRecoveries.add(`${recovery.facility_id}:push`);
+          this.executeInventoryPush(recoveryId).finally(() => {
+            resumeInFlightRecoveries.delete(`${recovery.facility_id}:push`);
+          });
+        }
+        this.startWatch(recoveryId);
+      }
+      return;
+    }
+
+    if (recovery.status !== 'firmware' && recovery.status !== 'awaiting_config') {
+      return;
+    }
+
+    if (inventoryPhaseTransitionInFlight.has(recoveryId)) {
+      return;
+    }
+    inventoryPhaseTransitionInFlight.add(recoveryId);
+    try {
+      await this.seedProductionInventoryBeforeSnapshot(
+        recovery.facility_id,
+        recovery.previous_gateway_id,
+      );
+      const stored = await InventorySnapshotService.buildAndStoreForFacility(
+        recovery.facility_id,
+        recovery.gateway_id,
+      );
+      const nonce = uuidv4();
+      await this.recoveryModel.updateFields(recoveryId, {
+        status: 'inventory_push',
+        inventory_snapshot_id: stored.snapshotId,
+        inventory_nonce: nonce,
+        inventory_chunks_sent: 0,
+        inventory_chunks_total: null,
+      });
+      await this.eventModel.append(recoveryId, 'inventory_push', 'Starting inventory snapshot push', 40);
+      const latest = (await this.recoveryModel.findById(recoveryId))!;
+      this.broadcastProgress(latest, 40, 'Inventory snapshot push starting');
+      this.armRecoveryPushTarget(recovery.facility_id, recovery.gateway_id);
+      await this.refreshBlockingState(recovery.facility_id);
+      this.clearWatch(recoveryId);
+      this.executeInventoryPush(recoveryId).catch((err) => {
+        logger.error(`Inventory push failed recoveryId=${recoveryId}:`, err);
+      });
+      this.startWatch(recoveryId);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Inventory snapshot preparation failed';
+      logger.error(`Recovery inventory snapshot build failed recoveryId=${recoveryId}:`, err);
+      await this.recoveryModel.updateStatus(recoveryId, 'failed', message);
+      await this.eventModel.append(recoveryId, 'failed', message);
+      this.clearRecoveryPushTarget(recovery.facility_id);
+      await this.refreshBlockingState(recovery.facility_id);
+      const latest = (await this.recoveryModel.findById(recoveryId))!;
+      this.broadcastProgress(latest, 0, message, 'failed');
+      throw err;
+    } finally {
+      inventoryPhaseTransitionInFlight.delete(recoveryId);
+    }
   }
 
   private static async executeInventoryPush(recoveryId: string): Promise<void> {
@@ -578,10 +962,10 @@ export class GatewayRecoveryService {
       await this.recoveryModel.updateStatus(recovery.id, 'complete');
       this.clearWatch(recovery.id);
       await this.eventModel.append(recovery.id, 'complete', 'Gateway confirmed inventory snapshot', 100);
+      await this.refreshBlockingState(facilityId);
       await this.finalizeRecovery(recovery, false);
       const updated = (await this.recoveryModel.findById(recovery.id))!;
       this.broadcastProgress(updated, 100, 'Recovery complete — inventory sync unblocked', 'complete');
-      await this.refreshBlockingState(facilityId);
       return { accepted: true, recovery_id: recovery.id, recovery_status: 'complete' };
     }
 
@@ -632,6 +1016,9 @@ export class GatewayRecoveryService {
 
   private static startWatch(recoveryId: string): void {
     if (watchTimers.has(recoveryId)) return;
+    void this.checkChildProgress(recoveryId).catch((err) => {
+      logger.warn(`Recovery watch initial check failed recoveryId=${recoveryId}`, err);
+    });
     const timer = setInterval(() => {
       this.checkChildProgress(recoveryId).catch((err) => {
         logger.warn(`Recovery watch error recoveryId=${recoveryId}`, err);
@@ -648,6 +1035,14 @@ export class GatewayRecoveryService {
     }
   }
 
+  static async onFirmwarePushComplete(firmwarePushId: string, facilityId: string): Promise<void> {
+    const recovery = await this.recoveryModel.findActiveByFacility(facilityId);
+    if (!recovery || recovery.status !== 'firmware' || recovery.firmware_push_id !== firmwarePushId) {
+      return;
+    }
+    await this.checkChildProgress(recovery.id);
+  }
+
   private static async checkChildProgress(recoveryId: string): Promise<void> {
     const recovery = await this.recoveryModel.findById(recoveryId);
     if (!recovery || TERMINAL_RECOVERY_STATUSES.includes(recovery.status)) {
@@ -658,8 +1053,12 @@ export class GatewayRecoveryService {
     if (recovery.status === 'firmware' && recovery.firmware_push_id) {
       const push = await this.pushModel.findById(recovery.firmware_push_id);
       if (push?.status === 'complete') {
-        this.clearWatch(recoveryId);
-        await this.startInventoryPushPhase(recoveryId);
+        try {
+          await this.startInventoryPushPhase(recoveryId);
+        } catch (err) {
+          logger.warn(`Recovery inventory phase failed recoveryId=${recoveryId}`, err);
+          this.startWatch(recoveryId);
+        }
       } else if (push?.status === 'failed') {
         this.clearWatch(recoveryId);
         const message = push.error_message || 'Firmware push failed';
@@ -705,6 +1104,9 @@ export class GatewayRecoveryService {
         }
       } else if (active.status === 'firmware') {
         this.startWatch(active.id);
+        void this.checkChildProgress(active.id).catch((err) => {
+          logger.warn(`Recovery resume firmware check failed recoveryId=${active.id}`, err);
+        });
       }
     } finally {
       resumeInFlightRecoveries.delete(facilityId);
@@ -739,6 +1141,11 @@ export class GatewayRecoveryService {
         });
       } else if (['firmware', 'awaiting_config'].includes(recovery.status)) {
         this.startWatch(recovery.id);
+        if (recovery.status === 'firmware') {
+          void this.checkChildProgress(recovery.id).catch((err) => {
+            logger.warn(`Recovery startup firmware check failed recoveryId=${recovery.id}`, err);
+          });
+        }
       }
     }
     logger.info(`Gateway recovery startup: re-armed ${active.length} in-flight recoveries`);
@@ -865,3 +1272,5 @@ export const _testCancelledRecoveries = cancelledRecoveries;
 export const _testVerifyTimers = verifyTimers;
 export const _testBlockingFacilities = blockingFacilities;
 export const _testBlockingCache = blockingCache;
+export const _testInventoryPhaseTransitionInFlight = inventoryPhaseTransitionInFlight;
+export const _testProductionInventorySeedArmed = productionInventorySeedArmed;

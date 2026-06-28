@@ -719,6 +719,11 @@ class ApiService {
     return response.data;
   }
 
+  async setUnitOverlock(unitId: string, isOverlocked: boolean) {
+    const response = await this.api.put(`/units/${unitId}/overlock`, { is_overlocked: isOverlocked });
+    return response.data;
+  }
+
   async deleteUnit(id: string) {
     const response = await this.api.delete(`/units/${id}`);
     return response.data;
@@ -1321,7 +1326,7 @@ class ApiService {
 
   async initiateGatewayRecovery(
     gatewayId: string,
-    body?: { firmwareId?: string },
+    body?: { firmwareId?: string; includeFirmware?: boolean },
   ) {
     const response = await this.api.post(`/gateways/${gatewayId}/recovery/initiate`, body || {});
     return response.data;

@@ -112,6 +112,16 @@ describe('provisioning-storage.factory', () => {
       await expect(provider.download('provisioning/gw-1/backup-1/mesh.zip')).resolves.toBeDefined();
     });
 
+    it('allows inventory snapshot paths under provisioning and legacy prefix', async () => {
+      const provider = await getProvisioningStorageProvider();
+      await expect(
+        provider.download('provisioning/inventory-snapshots/gw-1/snap-1.json'),
+      ).resolves.toBeDefined();
+      await expect(
+        provider.download('inventory-snapshots/gw-1/snap-1.json'),
+      ).resolves.toBeDefined();
+    });
+
     it('swallows remove errors', async () => {
       mockBaseStorage.deleteFile.mockRejectedValueOnce(new Error('delete failed'));
       const provider = await getProvisioningStorageProvider();

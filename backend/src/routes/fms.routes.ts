@@ -73,7 +73,6 @@ import {
   fmsPendingChangesResponseSchema,
   fmsReviewChangesResponseSchema,
   fmsApplyChangesResponseSchema,
-  fmsWebhookResponseSchema,
 } from '@/schemas/fms.schemas';
 import { errorEnvelopeSchema } from '@/openapi/common-schemas';
 
@@ -661,28 +660,6 @@ registerPost(
         error: error instanceof Error ? error.message : 'Unknown error',
       });
     }
-  }),
-);
-
-registerPost(
-  router,
-  '/webhook/:facilityId',
-  {
-    openApiPath: `${MOUNT}/webhook/{facilityId}`,
-    tags: ['FMS'],
-    summary: 'Webhook receiver for FMS events',
-    description: 'TODO: Implement webhook signature validation per provider.',
-    security: 'bearer',
-    params: fmsFacilityIdParamSchema,
-    responses: {
-      200: fmsWebhookResponseSchema,
-    },
-  },
-  asyncHandler(async (_req: AuthenticatedRequest, res: Response): Promise<void> => {
-    res.json({
-      success: true,
-      message: 'Webhook received (processing not yet implemented)',
-    });
   }),
 );
 

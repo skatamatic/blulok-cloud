@@ -26,6 +26,7 @@ import { AuthenticatedRequest } from '@/types/auth.types';
 import { asyncHandler } from '@/middleware/error.middleware';
 import { GatewayEventsService } from '@/services/gateway/gateway-events.service';
 import { GatewayService } from '@/services/gateway/gateway.service';
+import { LockCommandService } from '@/services/lock-command.service';
 import { adminWriteLimiter } from '@/middleware/security-limits';
 import { DatabaseService } from '@/services/database.service';
 import { resolveLockCommandExpiresAtForFacility } from '@/utils/facility-lock-timeout.utils';
@@ -381,6 +382,7 @@ registerDelete(
   asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   const { id: facilityId } = req.params;
   const db = DatabaseService.getInstance().connection;
+  LockCommandService.getInstance().cancelPendingCommandsForFacility(facilityId);
   await db.transaction(async (trx) => {
     // Collect units in facility
     const unitIds: string[] = await trx('units').where({ facility_id: facilityId }).pluck('id');
@@ -413,6 +415,8 @@ registerDelete(
     if (unitIds.length > 0) {
       await trx('units').whereIn('id', unitIds).del().catch(() => {});
     }
+
+    await trx('user_facility_associations').where({ facility_id: facilityId }).del().catch(() => {});
 
     await trx('facilities').where({ id: facilityId }).del().catch(() => {});
   });

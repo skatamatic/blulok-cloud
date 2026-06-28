@@ -6,6 +6,11 @@ import { UserRole } from '@/types/auth.types';
 import { apiService } from '@/services/api.service';
 import { useToast } from '@/contexts/ToastContext';
 import { useAuth } from '@/contexts/AuthContext';
+import {
+  PASSWORD_COMPLEXITY_MESSAGE,
+  PASSWORD_COMPLEXITY_PATTERN,
+  PASSWORD_MIN_LENGTH,
+} from '@/constants/password';
 
 interface AddUserFormData {
   email: string;
@@ -441,12 +446,12 @@ export const AddUserModal: React.FC<AddUserModalProps> = ({
                 {...register('password', {
                   required: 'Password is required',
                   minLength: {
-                    value: 8,
-                    message: 'Password must be at least 8 characters',
+                    value: PASSWORD_MIN_LENGTH,
+                    message: `Password must be at least ${PASSWORD_MIN_LENGTH} characters`,
                   },
                   pattern: {
-                    value: /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&])[A-Za-z\d@$!%*?&]/,
-                    message: 'Password must contain uppercase, lowercase, number, and special character',
+                    value: PASSWORD_COMPLEXITY_PATTERN,
+                    message: PASSWORD_COMPLEXITY_MESSAGE,
                   },
                 })}
                 type="password"

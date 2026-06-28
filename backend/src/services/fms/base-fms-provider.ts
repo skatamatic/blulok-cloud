@@ -93,9 +93,18 @@ export abstract class BaseFMSProvider {
   abstract fetchUnit(externalId: string): Promise<FMSUnit | null>;
 
   /**
-   * Validate webhook signature (if supported)
+   * Validate webhook signature (if supported) — legacy; prefer validateWebhookRawBody.
    */
   abstract validateWebhook(payload: FMSWebhookPayload, signature: string): Promise<boolean>;
+
+  /**
+   * Validate webhook HMAC signature against the raw request body bytes.
+   */
+  validateWebhookRawBody(rawBody: Buffer, signatureHeader: string | undefined): boolean {
+    void rawBody;
+    void signatureHeader;
+    return false;
+  }
 
   /**
    * Parse webhook payload into standard format

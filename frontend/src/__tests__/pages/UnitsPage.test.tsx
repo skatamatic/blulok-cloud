@@ -41,6 +41,7 @@ jest.mock('@/contexts/WebSocketContext', () => ({
   useWebSocket: () => ({
     subscribe: mockSubscribe,
     unsubscribe: mockUnsubscribe,
+    isConnected: true,
   }),
 }));
 
@@ -133,6 +134,7 @@ describe('UnitsPage', () => {
     });
 
     expect(mockGetUnits).toHaveBeenCalled();
+    expect(mockSubscribe).toHaveBeenCalledWith('device_status', expect.any(Function), undefined, undefined);
     expect(mockSubscribe).toHaveBeenCalledWith('units', expect.any(Function), undefined);
   });
 

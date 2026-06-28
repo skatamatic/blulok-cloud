@@ -64,7 +64,12 @@ import path from 'path';
 import { WebSocketService } from '../services/websocket.service';
 import { logger } from '../utils/logger';
 import { registerGet, registerPost } from '@/openapi/register-route';
-import { devLogsQuerySchema } from '@/schemas/dev.schemas';
+import { devLogsQuerySchema, simulatorUserSessionSchema } from '@/schemas/dev.schemas';
+import { UserModel } from '@/models/user.model';
+import { AuthService } from '@/services/auth.service';
+import { FacilityAccessService } from '@/services/facility-access.service';
+import { Ed25519Service } from '@/services/crypto/ed25519.service';
+import jwt from 'jsonwebtoken';
 
 const router = Router();
 const MOUNT = '/api/v1/dev';
@@ -885,5 +890,68 @@ async function createAccessHistory(db: any, users: any[], facilities: any[], uni
   await db.connection('access_logs').insert(accessLogs);
   return accessLogs.length;
 }
+
+registerPost(
+  router,
+  '/simulator/user-session',
+  {
+    openApiPath: `${MOUNT}/simulator/user-session`,
+    tags: ['Admin'],
+    summary: 'Mint a JWT for an existing user (gateway simulator)',
+    security: 'bearer',
+    body: simulatorUserSessionSchema,
+  },
+  asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+    if (req.user?.role !== UserRole.ADMIN && req.user?.role !== UserRole.DEV_ADMIN) {
+      res.status(403).json({
+        success: false,
+        message: 'Admin or Dev Admin role required for simulator user sessions',
+      });
+      return;
+    }
+
+    const { userId } = req.body as { userId: string };
+    const user = (await UserModel.findById(userId)) as import('@/models/user.model').User | undefined;
+    if (!user) {
+      res.status(404).json({ success: false, message: 'User not found' });
+      return;
+    }
+    if (!user.is_active) {
+      res.status(400).json({ success: false, message: 'User account is deactivated' });
+      return;
+    }
+
+    let facilityIds: string[] = [];
+    if (AuthService.isFacilityScoped(user.role as UserRole)) {
+      facilityIds = await FacilityAccessService.getUserFacilityIds(user.id, user.role as UserRole);
+    }
+
+    const token = AuthService.generateToken(user, facilityIds);
+    const decoded = jwt.decode(token) as { exp?: number } | null;
+
+    let ops_public_key: string | undefined;
+    try {
+      ops_public_key = Ed25519Service.getOpsPublicKeyB64();
+    } catch {
+      /* optional */
+    }
+
+    logger.info(`Simulator user session minted for ${user.email ?? user.id} by ${req.user.email}`);
+
+    res.json({
+      success: true,
+      token,
+      expiresAt: decoded?.exp,
+      user: {
+        id: user.id,
+        email: user.email,
+        firstName: user.first_name,
+        lastName: user.last_name,
+        role: user.role,
+      },
+      ops_public_key,
+    });
+  }),
+);
 
 export { router as devRouter };

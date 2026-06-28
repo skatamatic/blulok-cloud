@@ -13,7 +13,7 @@ export const FMS_PROVIDERS: Record<FMSProviderType, FMSProviderMetadata> = {
     description: 'Storable Edge (StorEdge) self-storage management system integration with OAuth 1.0a authentication.',
     authType: FMSAuthType.OAUTH1,
     requiresBaseUrl: true,
-    supportsWebhooks: false,
+    supportsWebhooks: true,
     configFields: [
       {
         key: 'baseUrl',

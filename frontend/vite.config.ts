@@ -37,6 +37,11 @@ export default defineConfig(({ mode }) => {
           timeout: 120_000,
           proxyTimeout: 120_000,
         },
+        '/ws': {
+          target: apiProxyTarget,
+          ws: true,
+          changeOrigin: true,
+        },
       },
     },
     build: {

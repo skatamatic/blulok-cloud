@@ -54,8 +54,10 @@ describe('GatewaySwapRecoveryTab', () => {
     });
     (apiService.getGatewayRecoveryOptions as jest.Mock).mockResolvedValue({
       data: {
-        firmwareOptions: [{ id: 'fw-1', version: '1.0.0', label: '1.0.0' }],
-        defaultFirmwareId: 'fw-1',
+        productionFirmwareVersion: '2.0.0',
+        candidateFirmwareVersion: '1.0.0',
+        candidateMatchesProduction: false,
+        productionFirmwareImageAvailable: true,
       },
     });
     (apiService.getGatewayRecoveryEvents as jest.Mock).mockResolvedValue({
@@ -68,11 +70,35 @@ describe('GatewaySwapRecoveryTab', () => {
       <GatewaySwapRecoveryTab facilityId="fac-1" boundGatewayId="gw-old" wsConnected />,
     );
     await waitFor(() => {
-      expect(screen.getByText(/New gateway detected/i)).toBeInTheDocument();
+      expect(screen.getByText(/Replacement gateway detected/i)).toBeInTheDocument();
     });
   });
 
-  it('renders phased recovery stepper labels', async () => {
+  it('renders phased recovery stepper labels during active push', async () => {
+    (apiService.getGatewayRecoveryCandidates as jest.Mock).mockResolvedValue({
+      data: {
+        candidates: [{ gatewayId: 'gw-new', connected: true }],
+        recovery: {
+          id: 'rec-1',
+          status: 'inventory_push',
+          gateway_id: 'gw-new',
+          facility_id: 'fac-1',
+          inventory_chunks_sent: 1,
+          inventory_chunks_total: 4,
+        },
+      },
+    });
+    (apiService.getGatewayRecoveryStatus as jest.Mock).mockResolvedValue({
+      data: {
+        id: 'rec-1',
+        status: 'inventory_push',
+        gateway_id: 'gw-new',
+        facility_id: 'fac-1',
+        inventory_chunks_sent: 1,
+        inventory_chunks_total: 4,
+      },
+    });
+
     render(
       <GatewaySwapRecoveryTab facilityId="fac-1" boundGatewayId="gw-old" wsConnected />,
     );
@@ -81,6 +107,47 @@ describe('GatewaySwapRecoveryTab', () => {
       expect(screen.getByText('Inventory Push')).toBeInTheDocument();
     });
     expect(screen.queryByText('Provisioning')).not.toBeInTheDocument();
+  });
+
+  it('does not resurrect completion on mount and offers a fresh swap to the available candidate', async () => {
+    (apiService.getGatewayRecoveryCandidates as jest.Mock).mockResolvedValue({
+      data: {
+        candidates: [],
+        sessions: [
+          { gatewayId: 'gw-new', sessionRole: 'active', connected: true },
+          { gatewayId: 'gw-old', sessionRole: 'swap_candidate', connected: true },
+        ],
+        recovery: {
+          id: 'rec-1',
+          status: 'complete',
+          gateway_id: 'gw-new',
+          previous_gateway_id: 'gw-old',
+          facility_id: 'fac-1',
+        },
+      },
+    });
+    (apiService.getGatewayRecoveryStatus as jest.Mock).mockResolvedValue({
+      data: {
+        id: 'rec-1',
+        status: 'complete',
+        gateway_id: 'gw-new',
+        previous_gateway_id: 'gw-old',
+        facility_id: 'fac-1',
+      },
+    });
+
+    render(
+      <GatewaySwapRecoveryTab facilityId="fac-1" boundGatewayId="gw-new" wsConnected />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText(/Replacement gateway detected/i)).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /Start swap/i })).toBeInTheDocument();
+    });
+    // Completion is session-only — a persisted complete recovery must not show on mount.
+    expect(screen.queryByText(/Gateway swap complete/i)).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Swap back/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('progressbar')).not.toBeInTheDocument();
   });
 
   it('subscribes to gateway_recovery_progress websocket', async () => {
@@ -103,15 +170,14 @@ describe('GatewaySwapRecoveryTab', () => {
     expect(mockUnsubscribe).toHaveBeenCalledWith('sub-recovery-1');
   });
 
-  it('shows firmware selector before start', async () => {
+  it('shows firmware matching checkbox before start', async () => {
     render(
       <GatewaySwapRecoveryTab facilityId="fac-1" boundGatewayId="gw-old" wsConnected />,
     );
     await waitFor(() => {
-      expect(screen.getByText('Recovery configuration')).toBeInTheDocument();
-      expect(screen.getByText('Firmware image')).toBeInTheDocument();
+      expect(screen.getByText('Include firmware matching')).toBeInTheDocument();
     });
-    expect(screen.queryByText('Provisioning backup')).not.toBeInTheDocument();
+    expect(screen.queryByText('Firmware image')).not.toBeInTheDocument();
   });
 
   it('shows bypass option while recovery is detected', async () => {
@@ -119,7 +185,7 @@ describe('GatewaySwapRecoveryTab', () => {
       <GatewaySwapRecoveryTab facilityId="fac-1" boundGatewayId="gw-old" wsConnected />,
     );
     await waitFor(() => {
-      expect(screen.getByText(/Bypass recovery \(advanced\)/i)).toBeInTheDocument();
+      expect(screen.getByText(/Bypass swap \(advanced\)/i)).toBeInTheDocument();
     });
   });
 
@@ -139,7 +205,7 @@ describe('GatewaySwapRecoveryTab', () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByRole('button', { name: /retry recovery/i })).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /retry swap/i })).toBeInTheDocument();
     });
   });
 
@@ -173,7 +239,7 @@ describe('GatewaySwapRecoveryTab', () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByRole('button', { name: /Start new recovery/i })).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /Start swap/i })).toBeInTheDocument();
     });
   });
 
@@ -193,7 +259,7 @@ describe('GatewaySwapRecoveryTab', () => {
     );
 
     await waitFor(() => {
-      expect(screen.queryByText(/Bypass recovery \(advanced\)/i)).not.toBeInTheDocument();
+      expect(screen.queryByText(/Bypass swap \(advanced\)/i)).not.toBeInTheDocument();
     });
   });
 });

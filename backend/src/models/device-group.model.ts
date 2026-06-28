@@ -216,18 +216,23 @@ export class DeviceGroupModel {
 
   async removeMember(groupId: string, deviceId: string, deviceType?: DeviceGroupMemberType): Promise<void> {
     const knex = this.db.connection;
-    const query = knex('device_group_members')
-      .where('group_id', groupId)
-      .andWhere('device_id', deviceId);
-
+    let linkedUnitId: string | null = null;
     if (deviceType === 'blulok') {
       const device = await knex('blulok_devices').select('unit_id').where('id', deviceId).first();
       if (device?.unit_id) {
-        query.orWhere((qb) => {
-          qb.where('group_id', groupId).andWhere('source_unit_id', String(device.unit_id));
-        });
+        linkedUnitId = String(device.unit_id);
       }
     }
+
+    const query = knex('device_group_members').where('group_id', groupId).where(function matchMember() {
+      this.where('device_id', deviceId);
+      if (deviceType === 'blulok') {
+        this.orWhere('source_unit_id', deviceId);
+        if (linkedUnitId) {
+          this.orWhere('source_unit_id', linkedUnitId);
+        }
+      }
+    });
 
     if (deviceType) {
       query.andWhere('device_type', deviceType);
@@ -254,12 +259,92 @@ export class DeviceGroupModel {
     return rows as DeviceGroupMember[];
   }
 
-  async syncUnitLinkedMembers(unitId: string, deviceId: string): Promise<number> {
-    const knex = this.db.connection;
+  async syncUnitLinkedMembers(
+    unitId: string,
+    deviceId: string,
+    trx?: import('knex').Knex.Transaction,
+  ): Promise<number> {
+    const knex = trx ?? this.db.connection;
+
+    const linkedGroupIds = await knex('device_group_members')
+      .where({ source_unit_id: unitId, device_type: 'blulok' })
+      .pluck('group_id');
+
+    if (linkedGroupIds.length > 0) {
+      await knex('device_group_members')
+        .whereIn('group_id', linkedGroupIds)
+        .where({ device_id: deviceId, device_type: 'blulok' })
+        .whereNull('source_unit_id')
+        .del();
+    }
+
     return knex('device_group_members')
       .where('source_unit_id', unitId)
       .andWhere('device_type', 'blulok')
       .update({ device_id: deviceId });
+  }
+
+  /**
+   * Removes BluLok group rows keyed only by device id (not unit-anchored membership).
+   * Unit-linked rows are preserved so access groups stay tied to the unit across lock swaps.
+   */
+  async removeDirectBluLokMembershipsForDevice(
+    deviceId: string,
+    trx?: import('knex').Knex.Transaction,
+  ): Promise<number> {
+    const knex = trx ?? this.db.connection;
+    return knex('device_group_members')
+      .where({ device_id: deviceId, device_type: 'blulok' })
+      .whereNull('source_unit_id')
+      .del();
+  }
+
+  /**
+   * Removes BluLok rows from default access groups that no longer resolve to a facility unit
+   * or inventory lock (stale zombies after unit/lock deletion).
+   */
+  async removeUnknownBlulokDefaultGroupMembers(): Promise<{ removed: number; byFacility: Record<string, number> }> {
+    const knex = this.db.connection;
+
+    const unknownRows = await knex('device_group_members as m')
+      .join('device_groups as g', 'g.id', 'm.group_id')
+      .select('m.id', 'g.facility_id')
+      .where('g.is_default', true)
+      .andWhere('m.device_type', 'blulok')
+      .where(function markUnknown() {
+        this.where(function unitAnchorMissingUnit() {
+          this.whereNotNull('m.source_unit_id').whereNotExists(function unitExistsInFacility() {
+            this.select(knex.raw('1'))
+              .from('units as u')
+              .whereRaw('u.id = m.source_unit_id')
+              .whereRaw('u.facility_id = g.facility_id');
+          });
+        }).orWhere(function deviceOnlyMissingLock() {
+          this.whereNull('m.source_unit_id').whereNotExists(function lockExistsInFacility() {
+            this.select(knex.raw('1'))
+              .from('blulok_devices as bd')
+              .join('gateways as gw', 'gw.id', 'bd.gateway_id')
+              .whereRaw('bd.id = m.device_id')
+              .whereRaw('gw.facility_id = g.facility_id');
+          });
+        });
+      });
+
+    if (unknownRows.length === 0) {
+      return { removed: 0, byFacility: {} };
+    }
+
+    const byFacility: Record<string, number> = {};
+    for (const row of unknownRows) {
+      const facilityId = String(row.facility_id);
+      byFacility[facilityId] = (byFacility[facilityId] ?? 0) + 1;
+    }
+
+    await knex('device_group_members')
+      .whereIn('id', unknownRows.map((row) => String(row.id)))
+      .del();
+
+    return { removed: unknownRows.length, byFacility };
   }
 
   async findDefaultByFacility(facilityId: string): Promise<DeviceGroup | null> {

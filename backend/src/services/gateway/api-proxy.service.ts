@@ -16,13 +16,15 @@ export class ApiProxyService {
   public async proxyRequest(params: {
     user: { userId: string; role: UserRole; facilityIds?: string[]; email?: string };
     connectionFacilityId: string;
+    gatewayId?: string;
+    sessionRole?: string;
     method: string;
     path: string;
     headers?: Record<string, string>;
     query?: any;
     body?: any;
   }): Promise<{ status: number; headers: any; data: any }> {
-    const { user, connectionFacilityId, method, path, headers, query, body } = params;
+    const { user, connectionFacilityId, gatewayId, sessionRole, method, path, headers, query, body } = params;
 
     // Enforce facility scope for FACILITY_ADMIN
     FacilityGuardService.ensureWithinScope(user.role, connectionFacilityId, path, body, query);
@@ -48,6 +50,12 @@ export class ApiProxyService {
       'X-Gateway-Facility-Id': connectionFacilityId,
       'Content-Type': 'application/json',
     };
+    if (gatewayId) {
+      hdrs['X-Gateway-Id'] = gatewayId;
+    }
+    if (sessionRole) {
+      hdrs['X-Gateway-Session-Role'] = sessionRole;
+    }
 
     const requestBody = wrapProxyStringBodyForAddLog(normalizedPath, body);
 

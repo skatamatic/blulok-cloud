@@ -643,12 +643,20 @@ export class FirmwareService {
         this.broadcastProgress(push, 'transferring', percent, totalChunks, chunksSent);
       }
 
-      // All chunks delivered — transition to 'verifying' while gateway applies/relays
-      // For gateway target: gateway applies directly; for lock/friend_node: BLE relay needed.
-      // Final 'complete' status is set by handleUpdateStatus when the gateway reports success.
-      await this.pushModel.updateStatus(pushId, 'verifying');
-      this.scheduleVerifyingTimeout(push, verifyTimeoutForTarget(firmware.target_type));
-      this.broadcastProgress(push, 'verifying', 100, totalChunks, totalChunks);
+      // All chunks delivered — transition to 'verifying' while gateway applies/relays.
+      // Use an atomic transition so a fast gateway success report cannot be overwritten
+      // when success arrives before this loop finishes.
+      const transitioned = await this.pushModel.atomicTransitionToVerifying(pushId);
+      if (!transitioned) {
+        const latest = await this.pushModel.findById(pushId);
+        logger.info(
+          `Firmware push already terminal after chunk delivery pushId=${pushId} status=${latest?.status ?? 'unknown'}`,
+        );
+        return;
+      }
+      const latest = await this.pushModel.findById(pushId);
+      this.scheduleVerifyingTimeout(latest ?? push, verifyTimeoutForTarget(firmware.target_type));
+      this.broadcastProgress(latest ?? push, 'verifying', 100, totalChunks, totalChunks);
       logger.info(`Firmware push delivered, awaiting verification pushId=${pushId} firmware=${firmware.version} target=${firmware.target_type}`);
     } catch (err) {
       logger.error(`Firmware push failed pushId=${pushId}:`, err);
@@ -668,7 +676,8 @@ export class FirmwareService {
    * Validates nonce and facilityId to prevent cross-push ACK confusion.
    */
   static async handleChunkAck(facilityId: string, msg: any): Promise<void> {
-    const { nonce, chunkIndex, status, message } = msg;
+    const { nonce, status, message } = msg;
+    const chunkIndex = msg.chunkIndex ?? msg.chunk_index;
 
     // Schema validation: enforce field types and limits
     if (typeof nonce !== 'string' || nonce.length === 0 || nonce.length > 128) {
@@ -767,6 +776,8 @@ export class FirmwareService {
         this.broadcastProgress(matchedPush, 'complete', 100);
         logger.info(`Firmware update confirmed by gateway pushId=${matchedPush.id} version=${version}`);
       }
+      await this.persistGatewayFirmwareVersion(matchedPush, version);
+      void this.notifyRecoveryFirmwareComplete(matchedPush.id, facilityId);
       return { accepted: true, push_id: matchedPush.id, push_status: 'complete' };
     }
 
@@ -798,6 +809,30 @@ export class FirmwareService {
       `unknown status '${gwStatus}'`,
     );
     return reject(`unknown status '${gwStatus}'`, matchedPush.id);
+  }
+
+  /** Keep gateways.firmware_version in sync after a successful gateway-target OTA. */
+  private static async persistGatewayFirmwareVersion(
+    push: { target_type: string; gateway_id: string; firmware_id: string },
+    reportedVersion?: string,
+  ): Promise<void> {
+    if (push.target_type !== 'gateway' || !push.gateway_id) return;
+
+    let version = typeof reportedVersion === 'string' ? reportedVersion.trim() : '';
+    if (!version) {
+      const image = await this.firmwareModel.findById(push.firmware_id);
+      version = image?.version?.trim() ?? '';
+    }
+    if (!version) return;
+
+    try {
+      await this.gatewayModel.update(push.gateway_id, { firmware_version: version });
+    } catch (err) {
+      logger.warn(
+        `Failed to persist gateway firmware version gateway=${push.gateway_id} version=${version}`,
+        err,
+      );
+    }
   }
 
   // =========================================================================
@@ -1287,6 +1322,14 @@ export class FirmwareService {
   private static isFacilityGatewayOnline(facilityId: string): boolean {
     const status = GatewayEventsService.getInstance().getFacilityConnectionStatus(facilityId);
     return status.connected;
+  }
+
+  private static notifyRecoveryFirmwareComplete(pushId: string, facilityId: string): void {
+    import('@/services/gateway/gateway-recovery.service')
+      .then(({ GatewayRecoveryService }) => GatewayRecoveryService.onFirmwarePushComplete(pushId, facilityId))
+      .catch((err) => {
+        logger.warn(`Failed to advance recovery after firmware push complete pushId=${pushId}`, err);
+      });
   }
 
   /**

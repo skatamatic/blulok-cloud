@@ -95,9 +95,9 @@ class WebSocketService implements IWebSocketService {
     this.subscriptions.clear();
     this.subscriptionIds.clear();
 
-    // Re-subscribe with original type and filters
+    // Re-subscribe with original type and filters (always send to server — local map may be stale)
     subscriptionsToResend.forEach(({ type, filters }) => {
-      this.subscribe(type, filters);
+      this.reassertSubscription(type, filters);
     });
   }
 
@@ -447,22 +447,34 @@ class WebSocketService implements IWebSocketService {
 
     if (!this.subscriptions.has(subscriptionKey)) {
       this.subscriptions.set(subscriptionKey, filters);
-      const subscriptionId = `${subscriptionKey}-${Date.now()}`;
-      this.subscriptionIds.set(subscriptionKey, subscriptionId);
-
       websocketDebugService.showDebugToast('info', 'WS Sub', `+ ${displayName}`);
-
-      if (this.isWebSocketConnected()) {
-        this.send({
-          type: 'subscription',
-          subscriptionType,
-          subscriptionId,
-          data: filters,
-          timestamp: new Date().toISOString(),
-        });
-      }
+      this.reassertSubscription(subscriptionType, filters);
     } else {
       websocketDebugService.showDebugToast('warning', 'WS Sub (dup)', `Already: ${displayName}`);
+    }
+  }
+
+  /**
+   * Register or refresh a server-side subscription. Sends the subscription frame whenever
+   * the transport is open — used on reconnect and by WebSocketContext so local handler
+   * registration cannot drift from server watcher state.
+   */
+  public reassertSubscription(subscriptionType: string, filters?: Record<string, unknown>): void {
+    const subscriptionKey = makeWebSocketSubscriptionKey(subscriptionType, filters);
+    if (!this.subscriptions.has(subscriptionKey)) {
+      this.subscriptions.set(subscriptionKey, filters);
+    }
+    const subscriptionId = `${subscriptionKey}-${Date.now()}`;
+    this.subscriptionIds.set(subscriptionKey, subscriptionId);
+
+    if (this.isWebSocketConnected()) {
+      this.send({
+        type: 'subscription',
+        subscriptionType,
+        subscriptionId,
+        data: filters,
+        timestamp: new Date().toISOString(),
+      });
     }
   }
 
@@ -584,14 +596,28 @@ class WebSocketService implements IWebSocketService {
 
   public retryConnectionIfNeeded(): void {
     const token = localStorage.getItem('authToken');
-    if (token && !this.isWebSocketConnected()) {
-      if (this.reconnectTimer) {
-        clearTimeout(this.reconnectTimer);
-        this.reconnectTimer = null;
-      }
-      this.reconnectAttempts = 0; // Reset retry attempts
-      this.connect();
+    if (!token) {
+      return;
     }
+
+    if (this.isWebSocketConnected()) {
+      return;
+    }
+
+    // Drop dead sockets so connect() can open a fresh transport.
+    if (this.ws && this.ws.readyState !== WebSocket.CONNECTING) {
+      this.ws = null;
+    }
+    if (this.ws?.readyState === WebSocket.CONNECTING) {
+      return;
+    }
+
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+    this.reconnectAttempts = 0;
+    this.connect();
   }
 
   public disconnect(): void {

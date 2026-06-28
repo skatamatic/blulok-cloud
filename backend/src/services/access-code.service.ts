@@ -22,6 +22,7 @@ import {
   ACCESS_CODE_PUSH_ACK_TIMEOUT_MS,
 } from '@/constants/access-code-push-outbox.constants';
 import { AccessCodePushOutboxModel } from '@/models/access-code-push-outbox.model';
+import { applyBlulokZoneLockMatch } from '@/utils/blulok-zone-lock-match.utils';
 
 type RotationScope = { scopeType: AccessCodeScopeType; scopeId?: string | null; scheduleId?: string | null };
 
@@ -1009,6 +1010,34 @@ export class AccessCodeService {
     return Array.from(new Set([...assignedRows, ...sharedRows].map((row) => String(row.device_id))));
   }
 
+  private async getTenantAccessibleUnitIds(
+    userId: string,
+    targetFacilityIds: string[],
+  ): Promise<string[]> {
+    if (targetFacilityIds.length === 0) return [];
+
+    const assignedRows = await this.db('unit_assignments as ua')
+      .select('u.id as unit_id')
+      .join('units as u', 'u.id', 'ua.unit_id')
+      .where('ua.tenant_id', userId)
+      .whereIn('u.facility_id', targetFacilityIds)
+      .where((qb) => {
+        qb.whereNull('ua.access_expires_at').orWhere('ua.access_expires_at', '>', new Date());
+      });
+
+    const sharedRows = await this.db('key_sharing as ks')
+      .select('u.id as unit_id')
+      .join('units as u', 'u.id', 'ks.unit_id')
+      .where('ks.shared_with_user_id', userId)
+      .whereIn('u.facility_id', targetFacilityIds)
+      .andWhere('ks.is_active', true)
+      .where((qb) => {
+        qb.whereNull('ks.expires_at').orWhere('ks.expires_at', '>', new Date());
+      });
+
+    return Array.from(new Set([...assignedRows, ...sharedRows].map((row) => String(row.unit_id))));
+  }
+
   private async getAllKeypadAccessControlDevices(targetFacilityIds: string[]): Promise<Array<{
     id: string;
     facility_id: string;
@@ -1065,9 +1094,10 @@ export class AccessCodeService {
       .whereRaw(`JSON_CONTAINS(COALESCE(d.access_methods, '["app"]'), '"keypad"')`);
 
     const accessibleBluLokDeviceIds = await this.getTenantAccessibleBluLokDeviceIds(userId, targetFacilityIds);
+    const accessibleUnitIds = await this.getTenantAccessibleUnitIds(userId, targetFacilityIds);
     let scopedRows: Array<Record<string, unknown>> = [];
-    if (accessibleBluLokDeviceIds.length > 0) {
-      scopedRows = await this.db('device_group_members as access_members')
+    if (accessibleBluLokDeviceIds.length > 0 || accessibleUnitIds.length > 0) {
+      const scopedQb = this.db('device_group_members as access_members')
         .distinct('d.id', 'd.name', 'd.device_type', 'd.location_description', 'g.facility_id')
         .join('device_groups as g', 'g.id', 'access_members.group_id')
         .join('device_group_members as user_members', 'user_members.group_id', 'g.id')
@@ -1078,8 +1108,13 @@ export class AccessCodeService {
         .andWhere('g.is_default', false)
         .andWhere('access_members.device_type', 'access_control')
         .andWhere('user_members.device_type', 'blulok')
-        .whereIn('user_members.device_id', accessibleBluLokDeviceIds)
         .whereRaw(`JSON_CONTAINS(COALESCE(d.access_methods, '["app"]'), '"keypad"')`);
+
+      applyBlulokZoneLockMatch(scopedQb, 'user_members', {
+        unitIds: accessibleUnitIds,
+        bluLokDeviceIds: accessibleBluLokDeviceIds,
+      });
+      scopedRows = await scopedQb;
     }
 
     const byId = new Map<string, {

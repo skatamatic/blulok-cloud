@@ -15,6 +15,7 @@ jest.mock('@/models/device-group.model', () => ({
     removeMember: jest.fn(),
     getMembers: jest.fn(),
     getGroupsForDevice: jest.fn(),
+    removeUnknownBlulokDefaultGroupMembers: jest.fn(),
   })),
 }));
 
@@ -249,6 +250,55 @@ describe('DeviceGroupService', () => {
     expect(model.addMember).toHaveBeenCalledWith('grp-1', 'lock-1', 'blulok', 'unit-1');
   });
 
+  it('adds unit-only blulok member when unit has no bound lock', async () => {
+    model.findById.mockResolvedValue({
+      id: 'grp-1',
+      facility_id: 'fac-1',
+      is_default: false,
+      name: 'Unit-only Group',
+    });
+    const unitsQuery = {
+      select: jest.fn().mockReturnThis(),
+      where: jest.fn().mockReturnThis(),
+      first: jest.fn().mockResolvedValue({ facility_id: 'fac-1' }),
+    };
+    const boundDeviceQuery = {
+      select: jest.fn().mockReturnThis(),
+      where: jest.fn().mockReturnThis(),
+      first: jest.fn().mockResolvedValue(null),
+    };
+    dbMock.mockImplementation((table: string) => {
+      if (table === 'units') return unitsQuery;
+      if (table === 'blulok_devices') return boundDeviceQuery;
+      return {
+        join: jest.fn().mockReturnThis(),
+        select: jest.fn().mockReturnThis(),
+        where: jest.fn().mockReturnThis(),
+        first: jest.fn().mockResolvedValue(null),
+      };
+    });
+    model.addMember.mockResolvedValue({
+      id: 'm-2',
+      group_id: 'grp-1',
+      device_id: 'unit-1',
+      device_type: 'blulok',
+      source_unit_id: 'unit-1',
+    });
+
+    const member = await service.addMember(
+      'grp-1',
+      undefined,
+      'blulok',
+      'unit-1',
+      UserRole.FACILITY_ADMIN,
+      ['fac-1'],
+      { actorId: 'u1' },
+    );
+
+    expect(member.device_id).toBe('unit-1');
+    expect(model.addMember).toHaveBeenCalledWith('grp-1', 'unit-1', 'blulok', 'unit-1');
+  });
+
   it('removes access-control device from default group when added to specific group', async () => {
     model.findById.mockResolvedValue({
       id: 'grp-specific',
@@ -430,6 +480,13 @@ describe('DeviceGroupService', () => {
     dbMock.mockImplementation((table: string) => {
       if (table === 'access_control_devices as acd') return acQuery;
       if (table === 'blulok_devices as bd') return blulokQuery;
+      if (table === 'blulok_devices') {
+        return {
+          select: jest.fn().mockReturnThis(),
+          where: jest.fn().mockReturnThis(),
+          first: jest.fn().mockResolvedValue({ unit_id: 'unit-1' }),
+        };
+      }
       if (table === 'device_group_members') return membersQuery;
       return {};
     });
@@ -437,8 +494,8 @@ describe('DeviceGroupService', () => {
     const result = await service.backfillDefaultGroupMemberships('fac-1');
 
     expect(result.added).toBe(2);
-    expect(model.addMember).toHaveBeenCalledWith('grp-default', 'ac-1', 'access_control');
-    expect(model.addMember).toHaveBeenCalledWith('grp-default', 'lock-1', 'blulok');
+    expect(model.addMember).toHaveBeenCalledWith('grp-default', 'ac-1', 'access_control', undefined);
+    expect(model.addMember).toHaveBeenCalledWith('grp-default', 'lock-1', 'blulok', 'unit-1');
   });
 
   it('rejects deleting the default access group', async () => {
@@ -509,7 +566,7 @@ describe('DeviceGroupService', () => {
 
     await service.assignBluLokToDefaultGroup('fac-1', 'lock-9');
 
-    expect(model.addMember).toHaveBeenCalledWith('grp-default', 'lock-9', 'blulok');
+    expect(model.addMember).toHaveBeenCalledWith('grp-default', 'lock-9', 'blulok', undefined);
   });
 
   it('rejoins blulok lock to default group after removal from its last specific group', async () => {
@@ -526,6 +583,22 @@ describe('DeviceGroupService', () => {
       name: DEFAULT_ACCESS_GROUP_NAME,
     });
     model.countAccessControlMembershipsForDevice.mockResolvedValue(0);
+    dbMock.mockImplementation((table: string) => {
+      if (table === 'blulok_devices') {
+        return {
+          select: jest.fn().mockReturnThis(),
+          where: jest.fn().mockReturnThis(),
+          first: jest.fn().mockResolvedValue({ id: 'lock-1', unit_id: 'unit-1' }),
+        };
+      }
+      return {};
+    });
+    model.addMember.mockResolvedValue({
+      id: 'm-lock-default',
+      group_id: 'grp-default',
+      device_id: 'lock-1',
+      device_type: 'blulok',
+    });
 
     await service.removeMember(
       'grp-zone',
@@ -535,7 +608,7 @@ describe('DeviceGroupService', () => {
       ['fac-1'],
     );
 
-    expect(model.addMember).toHaveBeenCalledWith('grp-default', 'lock-1', 'blulok');
+    expect(model.addMember).toHaveBeenCalledWith('grp-default', 'lock-1', 'blulok', 'unit-1');
   });
 
   it('pushes group code updates when adding access-control member', async () => {
@@ -716,5 +789,23 @@ describe('DeviceGroupService', () => {
       const users = await service.getUsersWithAccess('grp-users', UserRole.FACILITY_ADMIN, ['fac-1']);
       expect(users).toEqual([]);
     });
+  });
+
+  it('cleanupUnknownDefaultGroupMembers delegates to model cleanup', async () => {
+    model.removeUnknownBlulokDefaultGroupMembers.mockResolvedValue({
+      removed: 3,
+      byFacility: { 'fac-1': 2, 'fac-2': 1 },
+    });
+
+    const result = await service.cleanupUnknownDefaultGroupMembers();
+
+    expect(result).toEqual({ removed: 3, byFacility: { 'fac-1': 2, 'fac-2': 1 } });
+    expect(model.removeUnknownBlulokDefaultGroupMembers).toHaveBeenCalledTimes(1);
+  });
+
+  it('cleanupUnknownDefaultGroupMembersOnStartup swallows model errors', async () => {
+    model.removeUnknownBlulokDefaultGroupMembers.mockRejectedValue(new Error('db unavailable'));
+
+    await expect(DeviceGroupService.cleanupUnknownDefaultGroupMembersOnStartup()).resolves.toBeUndefined();
   });
 });

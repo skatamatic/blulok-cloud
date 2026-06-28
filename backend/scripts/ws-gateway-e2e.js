@@ -1,6 +1,7 @@
 /* eslint-disable no-console */
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 const axios = require('axios').default;
 const WebSocket = require('ws');
 const dotenv = require('dotenv');
@@ -309,6 +310,21 @@ function authHeaders(token) {
   return { Authorization: `Bearer ${token}` };
 }
 
+/** Chaos soak coalesces pushes; wait until no delivery is in flight before failure-path tests. */
+async function waitForAccessCodePushIdle(token, facilityId, timeoutMs = 15000) {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    const resp = await axios.get(`${API_BASE}/access-codes/push-state/${facilityId}`, {
+      headers: authHeaders(token),
+    });
+    if (resp.data?.data?.status !== 'pending') {
+      return;
+    }
+    await delay(200);
+  }
+  throw new Error(`Timed out waiting for access-code push to leave pending (facility=${facilityId})`);
+}
+
 async function listFacilities(token, offset = 0, limit = 50) {
   const res = await axios.get(`${API_BASE}/facilities`, {
     headers: authHeaders(token),
@@ -344,7 +360,7 @@ async function cleanupStaleFacilities(token) {
     do {
       const { facilities, total: reportedTotal } = await listFacilities(token, offset, limit);
       total = reportedTotal ?? facilities.length;
-      const stale = facilities.filter((f) => (f.name || '').toLowerCase().includes(TEST_FACILITY_NAME.toLowerCase()));
+      const stale = facilities.filter((f) => /^E2E/i.test((f.name || '').trim()));
       for (const facility of stale) {
         try {
           await deleteFmsConfigIfExists(token, facility.id);
@@ -549,6 +565,102 @@ function startMockFmsServer(dataset) {
     });
     server.on('error', reject);
   });
+}
+
+function signStoredgeWebhookBody(bodyString, secret) {
+  return crypto.createHmac('sha256', secret).update(bodyString).digest('hex');
+}
+
+async function postFmsWebhook(facilityId, envelope, secret) {
+  const body = JSON.stringify(envelope);
+  const sig = signStoredgeWebhookBody(body, secret);
+  return axios.post(`${API_BASE}/fms/webhook/${facilityId}`, body, {
+    headers: {
+      'Content-Type': 'application/json',
+      'X-Storable-Signature': sig,
+    },
+    transformRequest: [(data) => data],
+    validateStatus: () => true,
+  });
+}
+
+async function createFmsWebhookTestConfig(token, facilityId, { mockPort, extStoredgeFacId, webhookSecret, autoAccept }) {
+  const res = await axios.post(`${API_BASE}/fms/config`, {
+    facility_id: facilityId,
+    provider_type: 'storedge',
+    is_enabled: true,
+    config: {
+      providerType: 'storedge',
+      baseUrl: `http://127.0.0.1:${mockPort}`,
+      auth: { type: 'api_key', credentials: { apiKey: 'dev-key' } },
+      features: {
+        supportsTenantSync: true,
+        supportsUnitSync: true,
+        supportsWebhooks: true,
+        supportsRealtime: false,
+      },
+      syncSettings: {
+        autoAcceptChanges: Boolean(autoAccept),
+        webhookSecret,
+      },
+      customSettings: { facilityId: extStoredgeFacId },
+    },
+  }, { headers: authHeaders(token) });
+  const configId = res.data?.config?.id;
+  if (!configId) throw new Error(`FMS webhook config create failed for facility ${facilityId}`);
+  return configId;
+}
+
+async function fmsSyncApplyFilteredChanges(token, facilityId, filterFn) {
+  const syncRes = await axios.post(`${API_BASE}/fms/sync/${facilityId}`, {}, { headers: authHeaders(token) });
+  const syncLogId = syncRes.data?.result?.syncLogId;
+  if (!syncLogId) throw new Error(`FMS sync missing syncLogId for facility ${facilityId}`);
+  const pending = await axios.get(`${API_BASE}/fms/changes/${syncLogId}/pending`, { headers: authHeaders(token) });
+  const changeIds = (pending.data?.changes || [])
+    .filter((c) => c.is_valid !== false)
+    .filter(filterFn || (() => true))
+    .map((c) => c.id);
+  if (changeIds.length === 0) {
+    throw new Error(`No applicable FMS changes to apply for facility ${facilityId}`);
+  }
+  await axios.post(`${API_BASE}/fms/changes/review`, { syncLogId, changeIds, accepted: true }, { headers: authHeaders(token) });
+  await axios.post(`${API_BASE}/fms/changes/apply`, { syncLogId, changeIds }, { headers: authHeaders(token) });
+  return syncLogId;
+}
+
+async function setupFmsWebhookFacility(token, {
+  label,
+  mockPort,
+  extStoredgeFacId,
+  extUnitId,
+  extTenantId,
+  unitNumber,
+  webhookSecret,
+  autoAccept = false,
+  trackExtraFacilityIds,
+}) {
+  const facilityId = await createTestFacility(token, `E2E-FMS-Webhook-${label}-${Date.now()}`);
+  if (trackExtraFacilityIds) trackExtraFacilityIds.push(facilityId);
+  await createGateway(token, facilityId, `E2E WH GW ${label}`).catch(() => null);
+  const configId = await createFmsWebhookTestConfig(token, facilityId, {
+    mockPort,
+    extStoredgeFacId,
+    webhookSecret,
+    autoAccept,
+  });
+  const testConn = await axios.post(`${API_BASE}/fms/config/${configId}/test`, {}, { headers: authHeaders(token) });
+  if (!testConn.data?.connected) throw new Error(`FMS connection test failed for webhook facility ${label}`);
+  await fmsSyncApplyFilteredChanges(token, facilityId, (c) => {
+    const payload = c.after_data || c.before_data || {};
+    const ext = payload.externalId || c.external_id;
+    if (ext === extTenantId || ext === extUnitId) return true;
+    if (c.entity_type === 'tenant' && c.external_id === extTenantId) return true;
+    if (c.entity_type === 'unit' && c.external_id === extUnitId) return true;
+    return false;
+  });
+  const unit = await findUnitByNumber(token, facilityId, unitNumber);
+  if (!unit?.id) throw new Error(`Webhook facility ${label}: unit ${unitNumber} not found after FMS sync`);
+  return { facilityId, configId, unitId: unit.id, extStoredgeFacId, extUnitId, extTenantId, unitNumber };
 }
 
 // -------------------------
@@ -2113,6 +2225,8 @@ async function run() {
   // Remember original configs to restore after test
   let existingConfig = null;
   let mockFmsServer = null;
+  let fmsWebhookMockServer = null;
+  const fmsWebhookFacilitiesToCleanup = [];
   let originalFirmwareStorageConfig = null;
   let firmwareStorageConfigOverridden = false;
   let canRestoreFirmwareStorageConfig = false;
@@ -3697,6 +3811,30 @@ async function run() {
     );
     ok(`Unit-linked group member created for unit ${unitId}`);
 
+    step('Creating unit-only access group member for vacant unit');
+    const vacantUnit = await createUnit(token, facilityId, `E2E-VACANT-UNIT-${Date.now()}`);
+    const vacantUnitId = vacantUnit.id;
+    await axios.post(
+      `${API_BASE}/device-groups/${unitLinkedSwapGroupId}/members`,
+      {
+        unit_id: vacantUnitId,
+        device_type: 'blulok',
+      },
+      { headers: { Authorization: `Bearer ${token}` } },
+    );
+    const vacantGroupAfterAdd = await axios.get(
+      `${API_BASE}/device-groups/${unitLinkedSwapGroupId}`,
+      { headers: { Authorization: `Bearer ${token}` } },
+    );
+    const vacantMember = (vacantGroupAfterAdd.data?.data?.members || []).find(
+      (member) => member.source_unit_id === vacantUnitId,
+    );
+    if (!vacantMember) throw new Error('Expected unit-only group member for vacant unit');
+    if (vacantMember.device_id !== vacantUnitId) {
+      throw new Error(`Expected unit-only placeholder device_id ${vacantUnitId}, got ${vacantMember.device_id}`);
+    }
+    ok(`Unit-only group member created for vacant unit ${vacantUnitId}`);
+
     // First, assign one of the inventory devices to a unit (will replace the original device)
     let testDeviceId = null;
     let originalDeviceWasReplaced = false;
@@ -3781,18 +3919,31 @@ async function run() {
       }
       ok(`Unit ${unitId} still exists and no longer has device ${testDeviceId}`);
 
+      if (unitLinkedSwapGroupId) {
+        step('Verifying unit-linked group membership persists after lock removal');
+        const linkedGroupAfterRemove = await axios.get(
+          `${API_BASE}/device-groups/${unitLinkedSwapGroupId}`,
+          { headers: { Authorization: `Bearer ${token}` } },
+        );
+        const membersAfterRemove = linkedGroupAfterRemove.data?.data?.members || [];
+        const memberAfterRemove = membersAfterRemove.find((member) => member.source_unit_id === unitId);
+        if (!memberAfterRemove) {
+          throw new Error('Expected unit-linked group member to persist after lock removal');
+        }
+        if (memberAfterRemove.device_id !== unitId) {
+          throw new Error(
+            `Expected unit-linked placeholder device_id ${unitId} after lock removal, got ${memberAfterRemove.device_id}`,
+          );
+        }
+        ok('Unit-linked group membership persisted after lock removal');
+      }
+
       // Re-assign the original device back to the unit since we replaced it during the test
       if (originalDeviceWasReplaced) {
         step('Re-assigning original device back to unit');
         await assignDeviceToUnit(token, deviceId, unitId);
         ok(`Re-assigned original device ${deviceId} back to unit ${unitId}`);
         if (unitLinkedSwapGroupId) {
-          // Gateway inventory delete removes unit-linked rows by source_unit_id; re-link after restore.
-          await axios.post(
-            `${API_BASE}/device-groups/${unitLinkedSwapGroupId}/members`,
-            { unit_id: unitId, device_type: 'blulok' },
-            { headers: { Authorization: `Bearer ${token}` } },
-          );
           const linkedGroupAfterRestore = await axios.get(
             `${API_BASE}/device-groups/${unitLinkedSwapGroupId}`,
             { headers: { Authorization: `Bearer ${token}` } },
@@ -4423,6 +4574,37 @@ async function run() {
         `Expected telemetry battery=92 signal=-48 temp≈24.5; got battery=${gwUnlockedRow.battery_level} signal=${gwUnlockedRow.signal_strength} temp=${gwUnlockedRow.temperature}`,
       );
     }
+
+    preUpdateCount = deviceStatusEvents.length;
+    step('POST /internal/gateway/devices/state online:false — expect device_status offline (DevicesPage live path)');
+    const reqStateOffline = 'req-state-offline-ws';
+    ws.send(JSON.stringify({
+      type: 'PROXY_REQUEST',
+      id: reqStateOffline,
+      method: 'POST',
+      path: `/internal/gateway/devices/state`,
+      body: {
+        facility_id: facilityId,
+        updates: [gwLockDevice({ lock_id: remainingSerial, online: false })],
+      },
+    }));
+    const respStateOffline = await waitForProxyResponse(ws, reqStateOffline);
+    if (respStateOffline.status !== 200) {
+      if (deviceStatusWs && deviceStatusWs.readyState === WebSocket.OPEN) deviceStatusWs.close();
+      throw new Error(`Gateway devices/state offline failed: ${respStateOffline.status}`);
+    }
+    const offlineRow = await waitForDeviceStatusRow(
+      deviceStatusEvents,
+      deviceId,
+      (d) => d.device_status === 'offline',
+      preUpdateCount,
+      8000,
+    );
+    if (!offlineRow) {
+      if (deviceStatusWs && deviceStatusWs.readyState === WebSocket.OPEN) deviceStatusWs.close();
+      throw new Error('Did not receive device_status_update with device_status offline after gateway state sync');
+    }
+    ok('WebSocket shows device_status offline after gateway devices/state (simulator offline sync)');
 
     heading('Device status subscription — gateway inventory property sync (dashboard/HMI)');
     let inventoryPropBaseline = deviceStatusEvents.length;
@@ -10014,6 +10196,7 @@ async function run() {
     ok('Mixed-chaos stress firmware deleted');
 
     step('Validating access-code push failure handling when gateway rejects ACK');
+    await waitForAccessCodePushIdle(created.facilityAdminToken, created.facilityId);
     accessCodeAckMode = 'reject';
     const rejectPushResp = await axios.post(
       `${API_BASE}/access-codes/push/${created.facilityId}`,
@@ -10206,8 +10389,8 @@ async function run() {
         throw new Error(`Expected recovery options 200, got ${optionsResp.status}`);
       }
       const options = optionsResp.data?.data;
-      if (!Array.isArray(options?.firmwareOptions)) {
-        throw new Error(`Expected recovery firmware options array, got ${JSON.stringify(options)}`);
+      if (!Array.isArray(options?.firmwareOptions) && options?.productionFirmwareVersion == null) {
+        throw new Error(`Expected recovery firmware options payload, got ${JSON.stringify(options)}`);
       }
       ok('Recovery options endpoint returns firmware choices');
 
@@ -10266,10 +10449,12 @@ async function run() {
         [gwLockDevice({ lock_id: `SWAP-BLOCK-${Date.now()}` })],
         `swap-inv-block-${Date.now()}`,
       );
-      if (blockedInv.status !== 409) {
-        throw new Error(`Expected inventory sync 409 during recovery, got ${blockedInv.status}: ${JSON.stringify(blockedInv.body)}`);
+      if (blockedInv.status !== 403 || blockedInv.body?.code !== 'not_bound_gateway') {
+        throw new Error(
+          `Expected swap candidate inventory sync 403 not_bound_gateway during recovery, got ${blockedInv.status}: ${JSON.stringify(blockedInv.body)}`,
+        );
       }
-      ok('Inventory sync returns 409 recovery_in_progress');
+      ok('Swap candidate inventory sync returns 403 not_bound_gateway while recovery active');
 
       step('Bypass without confirm rejected');
       const bypassReject = await axios.post(
@@ -10363,7 +10548,288 @@ async function run() {
       }
       ok('Second bypass rejected after recovery already bypassed');
 
+      ok('Second bypass rejected after recovery already bypassed');
+
       try { swapWs.close(1000, 'e2e_swap_done'); } catch {}
+    }
+
+    // ---------------- FMS Webhooks E2E ----------------
+    heading('FMS Webhooks E2E');
+    const whTs = Date.now();
+    const webhookSecret = `e2e-wh-bogus-secret-${whTs}`;
+    const extFacA = `ext-wh-fac-a-${whTs}`;
+    const extFacB = `ext-wh-fac-b-${whTs}`;
+    const extUnitA = `ext-wh-unit-a-${whTs}`;
+    const extUnitB = `ext-wh-unit-b-${whTs}`;
+    const extTenantA = `ext-wh-tenant-a-${whTs}`;
+    const extTenantB = `ext-wh-tenant-b-${whTs}`;
+    const whUnitNumberA = `E2E-WH-UNIT-A-${whTs}`;
+    const whUnitNumberB = `E2E-WH-UNIT-B-${whTs}`;
+    const whTenantEmailA = `wh-tenant-a-${whTs}@test.com`;
+    const whTenantEmailB = `wh-tenant-b-${whTs}@test.com`;
+
+    step('Start mock FMS + provision two isolated webhook facilities');
+    const webhookDataset = {
+      tenants: [
+        {
+          id: extTenantA,
+          email: whTenantEmailA,
+          first_name: 'Webhook',
+          last_name: 'TenantA',
+          phone_numbers: [{ number: '+15552000001', primary: true }],
+          active: true,
+        },
+        {
+          id: extTenantB,
+          email: whTenantEmailB,
+          first_name: 'Webhook',
+          last_name: 'TenantB',
+          phone_numbers: [{ number: '+15552000002', primary: true }],
+          active: true,
+        },
+      ],
+      units: [
+        {
+          id: extUnitA,
+          name: whUnitNumberA,
+          unit_type: { name: 'Small' },
+          size: '5x5',
+          status: 'occupied',
+          current_tenant_id: extTenantA,
+          price: 100,
+        },
+        {
+          id: extUnitB,
+          name: whUnitNumberB,
+          unit_type: { name: 'Small' },
+          size: '5x5',
+          status: 'occupied',
+          current_tenant_id: extTenantB,
+          price: 100,
+        },
+      ],
+      ledgers: [
+        { tenant: { id: extTenantA }, unit: { id: extUnitA } },
+        { tenant: { id: extTenantB }, unit: { id: extUnitB } },
+      ],
+    };
+    const { server: whMockServer, port: whMockPort } = await startMockFmsServer(webhookDataset);
+    fmsWebhookMockServer = whMockServer;
+    info(`Webhook mock FMS at http://127.0.0.1:${whMockPort}`);
+
+    const whFacA = await setupFmsWebhookFacility(token, {
+      label: 'A',
+      mockPort: whMockPort,
+      extStoredgeFacId: extFacA,
+      extUnitId: extUnitA,
+      extTenantId: extTenantA,
+      unitNumber: whUnitNumberA,
+      webhookSecret,
+      autoAccept: false,
+      trackExtraFacilityIds: created.extraFacilityIds,
+    });
+    const whFacB = await setupFmsWebhookFacility(token, {
+      label: 'B',
+      mockPort: whMockPort,
+      extStoredgeFacId: extFacB,
+      extUnitId: extUnitB,
+      extTenantId: extTenantB,
+      unitNumber: whUnitNumberB,
+      webhookSecret,
+      autoAccept: false,
+      trackExtraFacilityIds: created.extraFacilityIds,
+    });
+    fmsWebhookFacilitiesToCleanup.push(whFacA, whFacB);
+    ok(`Webhook facilities ready: A=${whFacA.facilityId} B=${whFacB.facilityId}`);
+
+    step('Reject invalid webhook signature');
+    const badSigRes = await postFmsWebhook(
+      whFacA.facilityId,
+      {
+        id: `evt-bad-sig-${whTs}`,
+        type: 'com.storedge.unit.overlock-applied.v1',
+        body: { facility_id: extFacA, unit_id: extUnitA },
+      },
+      'definitely-wrong-secret',
+    );
+    if (badSigRes.status !== 401) {
+      throw new Error(`Expected 401 for bad webhook signature, got ${badSigRes.status}`);
+    }
+    ok('Bad webhook signature rejected (401)');
+
+    step('Reject Storable facility_id mismatch for facility webhook URL');
+    const mismatchRes = await postFmsWebhook(whFacA.facilityId, {
+      id: `evt-fac-mismatch-${whTs}`,
+      type: 'com.storedge.unit.overlock-applied.v1',
+      body: { facility_id: extFacB, unit_id: extUnitA },
+    }, webhookSecret);
+    if (mismatchRes.status !== 400) {
+      throw new Error(`Expected 400 for facility_id mismatch, got ${mismatchRes.status}`);
+    }
+    ok('facility_id mismatch rejected (400)');
+
+    step('Manual review: coalesce multiple webhooks into one sync log');
+    const batchEvt1 = await postFmsWebhook(whFacA.facilityId, {
+      id: `evt-wh-batch-1-${whTs}`,
+      type: 'com.storedge.tenant.updated.v1',
+      body: {
+        facility_id: extFacA,
+        tenant_id: extTenantA,
+        first_name: 'Webhook',
+        last_name: 'TenantA-Updated',
+        email: whTenantEmailA,
+      },
+    }, webhookSecret);
+    const batchEvt2 = await postFmsWebhook(whFacA.facilityId, {
+      id: `evt-wh-batch-2-${whTs}`,
+      type: 'com.storedge.unit.overlock-applied.v1',
+      body: { facility_id: extFacA, unit_id: extUnitA },
+    }, webhookSecret);
+    const batchEvt3 = await postFmsWebhook(whFacA.facilityId, {
+      id: `evt-wh-batch-3-${whTs}`,
+      type: 'com.storedge.tenant.updated.v1',
+      body: {
+        facility_id: extFacA,
+        tenant_id: extTenantA,
+        first_name: 'Webhook',
+        last_name: 'TenantA-Again',
+        email: whTenantEmailA,
+      },
+    }, webhookSecret);
+    if (batchEvt1.status !== 200 || batchEvt2.status !== 200 || batchEvt3.status !== 200) {
+      throw new Error('Webhook batch delivery failed');
+    }
+    const batchSyncLogId = batchEvt1.data?.syncLogId;
+    if (!batchSyncLogId || batchSyncLogId !== batchEvt2.data?.syncLogId || batchSyncLogId !== batchEvt3.data?.syncLogId) {
+      throw new Error('Expected coalesced webhook deliveries to share one syncLogId');
+    }
+    const pendingBatch = await axios.get(`${API_BASE}/fms/changes/${batchSyncLogId}/pending`, {
+      headers: authHeaders(token),
+    });
+    const batchChanges = pendingBatch.data?.changes || [];
+    if (batchChanges.length < 3) {
+      throw new Error(`Expected at least 3 pending webhook changes, got ${batchChanges.length}`);
+    }
+    const overlockChange = batchChanges.find((c) => c.change_type === 'unit_overlock_changed');
+    const tenantChanges = batchChanges.filter((c) => c.change_type === 'tenant_updated');
+    if (!overlockChange || tenantChanges.length < 2) {
+      throw new Error('Missing expected tenant/overlock change types in webhook batch');
+    }
+    await axios.post(`${API_BASE}/fms/changes/review`, {
+      syncLogId: batchSyncLogId,
+      changeIds: [overlockChange.id],
+      accepted: false,
+    }, { headers: authHeaders(token) });
+    const acceptTenantIds = tenantChanges.map((c) => c.id);
+    await axios.post(`${API_BASE}/fms/changes/review`, {
+      syncLogId: batchSyncLogId,
+      changeIds: acceptTenantIds,
+      accepted: true,
+    }, { headers: authHeaders(token) });
+    await axios.post(`${API_BASE}/fms/changes/apply`, {
+      syncLogId: batchSyncLogId,
+      changeIds: acceptTenantIds,
+    }, { headers: authHeaders(token) });
+    const unitAfterBatch = (await axios.get(`${API_BASE}/units/${whFacA.unitId}`, {
+      headers: authHeaders(token),
+    })).data?.unit;
+    if (unitAfterBatch?.is_overlocked || unitAfterBatch?.status === 'overlocked') {
+      throw new Error('Rejected overlock webhook change should not mark unit overlocked');
+    }
+    ok('Manual review: deny overlock, accept tenant updates in one apply batch');
+
+    step('Cross-facility isolation: webhook on B must not change unit A');
+    const unitABeforeBWebhook = (await axios.get(`${API_BASE}/units/${whFacA.unitId}`, {
+      headers: authHeaders(token),
+    })).data?.unit;
+    const crossFacRes = await postFmsWebhook(whFacB.facilityId, {
+      id: `evt-wh-cross-b-${whTs}`,
+      type: 'com.storedge.unit.overlock-applied.v1',
+      body: { facility_id: extFacB, unit_id: extUnitB },
+    }, webhookSecret);
+    if (crossFacRes.status !== 200) {
+      throw new Error(`Facility B overlock webhook failed: ${crossFacRes.status}`);
+    }
+    const unitAAfterBWebhook = (await axios.get(`${API_BASE}/units/${whFacA.unitId}`, {
+      headers: authHeaders(token),
+    })).data?.unit;
+    if (unitAAfterBWebhook?.is_overlocked !== unitABeforeBWebhook?.is_overlocked) {
+      throw new Error('Facility B webhook affected facility A unit overlock state');
+    }
+    ok('Facility-scoped webhooks do not cross-contaminate other facilities');
+
+    step('Enable autoAcceptChanges and verify immediate webhook apply');
+    await axios.put(`${API_BASE}/fms/config/${whFacA.configId}`, {
+      provider_type: 'storedge',
+      is_enabled: true,
+      config: {
+        providerType: 'storedge',
+        baseUrl: `http://127.0.0.1:${whMockPort}`,
+        auth: { type: 'api_key', credentials: { apiKey: 'dev-key' } },
+        features: {
+          supportsTenantSync: true,
+          supportsUnitSync: true,
+          supportsWebhooks: true,
+          supportsRealtime: false,
+        },
+        syncSettings: { autoAcceptChanges: true, webhookSecret },
+        customSettings: { facilityId: extFacA },
+      },
+    }, { headers: authHeaders(token) });
+
+    const autoOverlockRes = await postFmsWebhook(whFacA.facilityId, {
+      id: `evt-wh-auto-overlock-${whTs}`,
+      type: 'com.storedge.unit.overlock-applied.v1',
+      body: { facility_id: extFacA, unit_id: extUnitA },
+    }, webhookSecret);
+    if (autoOverlockRes.status !== 200 || !autoOverlockRes.data?.changesApplied) {
+      throw new Error('Auto-accept overlock webhook did not apply changes');
+    }
+    const unitAutoOver = (await axios.get(`${API_BASE}/units/${whFacA.unitId}`, {
+      headers: authHeaders(token),
+    })).data?.unit;
+    if (!unitAutoOver?.is_overlocked && unitAutoOver?.status !== 'overlocked') {
+      throw new Error('Auto-accept overlock webhook did not set unit overlocked');
+    }
+    const autoClearRes = await postFmsWebhook(whFacA.facilityId, {
+      id: `evt-wh-auto-clear-${whTs}`,
+      type: 'com.storedge.unit.overlock-removed.v1',
+      body: { facility_id: extFacA, unit_id: extUnitA },
+    }, webhookSecret);
+    if (autoClearRes.status !== 200 || !autoClearRes.data?.changesApplied) {
+      throw new Error('Auto-accept overlock-clear webhook did not apply');
+    }
+    const unitAutoClear = (await axios.get(`${API_BASE}/units/${whFacA.unitId}`, {
+      headers: authHeaders(token),
+    })).data?.unit;
+    if (unitAutoClear?.is_overlocked || unitAutoClear?.status === 'overlocked') {
+      throw new Error('Auto-accept overlock-clear webhook did not clear overlock');
+    }
+    ok('Auto-accept webhooks apply overlock changes immediately');
+
+    step('Cleanup webhook test facilities and verify webhook endpoint disabled');
+    for (const whFac of [whFacA, whFacB]) {
+      await axios.delete(`${API_BASE}/fms/config/${whFac.configId}`, { headers: authHeaders(token) }).catch(() => {});
+      await axios.delete(`${API_BASE}/admin/facilities/${whFac.facilityId}/hard`, { headers: authHeaders(token) }).catch(() => {});
+      created.extraFacilityIds = created.extraFacilityIds.filter((id) => id !== whFac.facilityId);
+      ok(`Hard deleted webhook facility ${whFac.facilityId}`);
+    }
+    fmsWebhookFacilitiesToCleanup.length = 0;
+
+    const deadWebhookRes = await postFmsWebhook(whFacA.facilityId, {
+      id: `evt-wh-after-delete-${whTs}`,
+      type: 'com.storedge.unit.overlock-applied.v1',
+      body: { facility_id: extFacA, unit_id: extUnitA },
+    }, webhookSecret);
+    if (deadWebhookRes.status !== 404) {
+      throw new Error(`Expected 404 webhook after facility delete, got ${deadWebhookRes.status}`);
+    }
+    ok('Webhook endpoint rejects deliveries after facility + FMS config removal (404)');
+
+    if (fmsWebhookMockServer) {
+      await new Promise((resolve) => fmsWebhookMockServer.close(resolve)).catch(() => {});
+      fmsWebhookMockServer = null;
+      ok('Webhook mock FMS server stopped');
     }
 
     // mark success; we'll print Result after cleanup
@@ -10484,6 +10950,18 @@ async function run() {
         ok('Mock FMS server stopped');
         mockFmsServer = null;
       }
+      if (fmsWebhookMockServer) {
+        step('Stopping webhook mock FMS server');
+        await new Promise((resolve) => fmsWebhookMockServer.close(resolve)).catch(() => {});
+        ok('Webhook mock FMS server stopped');
+        fmsWebhookMockServer = null;
+      }
+      for (const whFac of fmsWebhookFacilitiesToCleanup) {
+        step(`Cleaning up webhook facility ${whFac.facilityId}`);
+        await deleteFmsConfigIfExists(token, whFac.facilityId);
+        await axios.delete(`${API_BASE}/admin/facilities/${whFac.facilityId}/hard`, { headers: authHeaders(token) }).catch(() => {});
+      }
+      fmsWebhookFacilitiesToCleanup.length = 0;
       // Revoke any remaining shares
       for (const shareId of created.shares) {
         step(`Revoking share ${shareId}`);

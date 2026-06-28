@@ -14,6 +14,7 @@ import { DatabaseService } from '@/services/database.service';
 import { AccessCodeService } from '@/services/access-code.service';
 import { UserRole } from '@/types/auth.types';
 import { DEFAULT_ACCESS_GROUP_NAME, LEGACY_DEFAULT_ACCESS_GROUP_NAMES } from '@/constants/access-group.constants';
+import { logger } from '@/utils/logger';
 
 interface ActorContext {
   actorId?: string;
@@ -41,6 +42,11 @@ export interface DeviceGroupUserAccess {
   unit_numbers: string[];
 }
 
+export interface UnknownDefaultGroupMemberCleanupResult {
+  removed: number;
+  byFacility: Record<string, number>;
+}
+
 export class DeviceGroupService {
   private static instance: DeviceGroupService;
   private model = new DeviceGroupModel();
@@ -52,6 +58,28 @@ export class DeviceGroupService {
   public static getInstance(): DeviceGroupService {
     if (!this.instance) this.instance = new DeviceGroupService();
     return this.instance;
+  }
+
+  /**
+   * Removes stale BluLok members from default access groups (unknown units / deleted locks).
+   * Safe to run on every startup — idempotent.
+   */
+  async cleanupUnknownDefaultGroupMembers(): Promise<UnknownDefaultGroupMemberCleanupResult> {
+    return this.model.removeUnknownBlulokDefaultGroupMembers();
+  }
+
+  static async cleanupUnknownDefaultGroupMembersOnStartup(): Promise<void> {
+    try {
+      const result = await DeviceGroupService.getInstance().cleanupUnknownDefaultGroupMembers();
+      if (result.removed > 0) {
+        logger.info(
+          `Removed ${result.removed} unknown unit member(s) from default access groups`,
+          { byFacility: result.byFacility },
+        );
+      }
+    } catch (error) {
+      logger.warn('Default access group unit cleanup failed (non-fatal):', error);
+    }
   }
 
   private assertFacilityAccess(userRole: UserRole, userFacilityIds: string[] | undefined, facilityId: string): void {
@@ -260,7 +288,13 @@ export class DeviceGroupService {
       return;
     }
 
-    await this.model.addMember(defaultGroup.id, deviceId, deviceType);
+    let sourceUnitId: string | undefined;
+    if (deviceType === 'blulok') {
+      const row = await this.db('blulok_devices').select('unit_id').where('id', deviceId).first();
+      sourceUnitId = row?.unit_id ? String(row.unit_id) : undefined;
+    }
+
+    await this.model.addMember(defaultGroup.id, deviceId, deviceType, sourceUnitId);
   }
 
   /**
@@ -330,7 +364,13 @@ export class DeviceGroupService {
 
       if (alreadyInDefault) return;
 
-      await this.model.addMember(defaultGroup.id, deviceId, deviceType);
+      let sourceUnitId: string | undefined;
+      if (deviceType === 'blulok') {
+        const row = await this.db('blulok_devices').select('unit_id').where('id', deviceId).first();
+        sourceUnitId = row?.unit_id ? String(row.unit_id) : undefined;
+      }
+
+      await this.model.addMember(defaultGroup.id, deviceId, deviceType, sourceUnitId);
       added += 1;
     };
 
@@ -358,6 +398,11 @@ export class DeviceGroupService {
     await this.model.removeMember(defaultGroup.id, deviceId, deviceType);
   }
 
+  private async isBlulokInventoryDevice(deviceId: string): Promise<boolean> {
+    const row = await this.db('blulok_devices').select('id').where('id', deviceId).first();
+    return Boolean(row);
+  }
+
   private async rejoinDefaultGroupIfNeeded(
     facilityId: string,
     deviceId: string,
@@ -365,6 +410,11 @@ export class DeviceGroupService {
     removedFromGroup: DeviceGroup,
   ): Promise<void> {
     if (removedFromGroup.is_default) return;
+
+    if (deviceType === 'blulok' && !(await this.isBlulokInventoryDevice(deviceId))) {
+      // Unit-anchored membership without a bound lock — default group only tracks inventory devices.
+      return;
+    }
 
     const remainingSpecific = await this.model.countAccessControlMembershipsForDevice(
       deviceId,
@@ -524,27 +574,40 @@ export class DeviceGroupService {
     const group = await this.getGroupOrThrow(groupId);
     this.assertFacilityAccess(userRole, userFacilityIds, group.facility_id);
     let resolvedDeviceId = deviceId;
+    let boundUnitDevice: { id: string } | null = null;
 
     if (sourceUnitId) {
       if (deviceType !== 'blulok') {
         throw new ValidationError('unit_id can only be used with blulok device_type');
       }
       await this.assertUnitInFacility(sourceUnitId, group.facility_id);
-      const boundDevice = await this.db('blulok_devices')
+      boundUnitDevice = await this.db('blulok_devices')
         .select('id')
         .where('unit_id', sourceUnitId)
         .first();
-      if (!boundDevice) {
-        throw new NotFoundError('BluLok device for unit');
-      }
-      resolvedDeviceId = String(boundDevice.id);
+      resolvedDeviceId = boundUnitDevice
+        ? String(boundUnitDevice.id)
+        : sourceUnitId;
     }
 
     if (!resolvedDeviceId) {
       throw new NotFoundError('Device');
     }
 
-    await this.assertDeviceInFacility(resolvedDeviceId, group.facility_id, deviceType);
+    if (deviceType === 'blulok' && !sourceUnitId) {
+      const boundUnit = await this.db('blulok_devices')
+        .select('unit_id')
+        .where('id', resolvedDeviceId)
+        .first();
+      if (boundUnit?.unit_id) {
+        sourceUnitId = String(boundUnit.unit_id);
+      }
+    }
+
+    const isUnitOnlyBlulok = deviceType === 'blulok' && Boolean(sourceUnitId) && !boundUnitDevice;
+    if (!isUnitOnlyBlulok) {
+      await this.assertDeviceInFacility(resolvedDeviceId, group.facility_id, deviceType);
+    }
 
     // Devices live in the default group until moved into one or more specific groups.
     // A device may belong to several specific groups at once (e.g. a shared wing door),

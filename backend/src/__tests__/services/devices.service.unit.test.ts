@@ -22,9 +22,11 @@ jest.mock('@/models/device.model', () => ({
 }));
 
 const mockSyncUnitLinkedMembers = jest.fn().mockResolvedValue(undefined);
+const mockRemoveDirectBluLokMembershipsForDevice = jest.fn().mockResolvedValue(1);
 jest.mock('@/models/device-group.model', () => ({
   DeviceGroupModel: jest.fn().mockImplementation(() => ({
     syncUnitLinkedMembers: mockSyncUnitLinkedMembers,
+    removeDirectBluLokMembershipsForDevice: mockRemoveDirectBluLokMembershipsForDevice,
   })),
 }));
 
@@ -423,7 +425,7 @@ describe('DevicesService (unit)', () => {
       await svc.unassignDeviceFromUnit('dev-1', { performedBy: 'fa-1', source: 'manual' });
 
       expect(mockUnassignDeviceFromUnit).toHaveBeenCalledWith('dev-1');
-      expect(mockSyncUnitLinkedMembers).toHaveBeenCalledWith('unit-1', 'dev-1');
+      expect(mockSyncUnitLinkedMembers).toHaveBeenCalledWith('unit-1', 'unit-1');
       expect(mockEmitUnassigned).toHaveBeenCalledWith(
         expect.objectContaining({
           deviceId: 'dev-1',
@@ -486,6 +488,7 @@ describe('DevicesService (unit)', () => {
           metadata: expect.objectContaining({ reason: 'inventory_removed' }),
         }),
       );
+      expect(mockSyncUnitLinkedMembers).toHaveBeenCalledWith('unit-1', 'unit-1', expect.anything());
       expect(mockEmitRemoved).toHaveBeenCalledWith({
         deviceId: 'dev-1',
         deviceType: 'blulok',
@@ -514,6 +517,7 @@ describe('DevicesService (unit)', () => {
 
       const svc = DevicesService.getInstance();
       await svc.deleteBluLokFromInventory('dev-1', { source: 'gateway_sync' });
+      await new Promise((resolve) => setImmediate(resolve));
 
       expect(mockPushCodesToGateway).toHaveBeenCalledWith('fac-1');
       expect(mockEmitUnassigned).not.toHaveBeenCalled();

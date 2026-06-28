@@ -1,8 +1,11 @@
 import Joi from 'joi';
 import { UserRole } from '@/types/auth.types';
 import { successEnvelopeSchema, routeIdField } from '@/openapi/common-schemas';
+import {
+  PASSWORD_COMPLEXITY_PATTERN,
+} from '@/constants/password.constants';
 
-export const CREATE_PASSWORD_PATTERN = new RegExp('^(?=.*[a-z])(?=.*[A-Z])(?=.*\\d)(?=.*[@$!%*?&])[A-Za-z\\d@$!%*?&]+$');
+export const CREATE_PASSWORD_PATTERN = PASSWORD_COMPLEXITY_PATTERN;
 
 export const usersListQuerySchema = Joi.object({
   search: Joi.string().optional(),

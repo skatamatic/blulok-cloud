@@ -47,6 +47,7 @@ jest.mock('@/services/widget-subscription-manager', () => ({
 jest.mock('@/services/websocket.service', () => ({
   websocketService: {
     subscribe: jest.fn(),
+    reassertSubscription: jest.fn(),
     unsubscribe: jest.fn(),
     onMessage: jest.fn(() => jest.fn()),
   },

@@ -76,6 +76,27 @@ describe('AccessCodeService', () => {
   let service: AccessCodeService;
   let model: any;
 
+  function mockTenantZoneAccess(
+    svc: AccessCodeService,
+    bluLokDeviceIds: string[],
+    unitIds: string[] = [],
+  ) {
+    jest.spyOn(svc as any, 'getTenantAccessibleBluLokDeviceIds').mockResolvedValue(bluLokDeviceIds);
+    jest.spyOn(svc as any, 'getTenantAccessibleUnitIds').mockResolvedValue(unitIds);
+  }
+
+  function mockAwaitableQueryBuilder<T>(rows: T[]) {
+    return {
+      distinct: jest.fn().mockReturnThis(),
+      join: jest.fn().mockReturnThis(),
+      whereIn: jest.fn().mockReturnThis(),
+      where: jest.fn().mockReturnThis(),
+      andWhere: jest.fn().mockReturnThis(),
+      whereRaw: jest.fn().mockReturnThis(),
+      then: (resolve: (value: T[]) => void) => resolve(rows),
+    };
+  }
+
   beforeEach(() => {
     jest.clearAllMocks();
     (AccessCodeService as any).instance = undefined;
@@ -528,7 +549,7 @@ describe('AccessCodeService', () => {
     const dbMock = jest.fn();
     jest.spyOn(service as any, 'db', 'get').mockReturnValue(dbMock);
     jest.spyOn(service as any, 'getAccessibleFacilityIds').mockResolvedValue(['fac-1']);
-    jest.spyOn(service as any, 'getTenantAccessibleBluLokDeviceIds').mockResolvedValue(['lock-1']);
+    mockTenantZoneAccess(service, ['lock-1']);
     model.findCodesForDevices.mockResolvedValue([
       {
         device_id: 'ac-global',
@@ -564,16 +585,9 @@ describe('AccessCodeService', () => {
         { id: 'ac-global', facility_id: 'fac-1', name: 'Front Gate', device_type: 'gate', location_description: 'Main' },
       ]),
     };
-    const scopedRowsQuery = {
-      distinct: jest.fn().mockReturnThis(),
-      join: jest.fn().mockReturnThis(),
-      whereIn: jest.fn().mockReturnThis(),
-      where: jest.fn().mockReturnThis(),
-      andWhere: jest.fn().mockReturnThis(),
-      whereRaw: jest.fn().mockResolvedValue([
-        { id: 'ac-scoped', facility_id: 'fac-1', name: 'Building Door', device_type: 'door', location_description: 'B1' },
-      ]),
-    };
+    const scopedRowsQuery = mockAwaitableQueryBuilder([
+      { id: 'ac-scoped', facility_id: 'fac-1', name: 'Building Door', device_type: 'door', location_description: 'B1' },
+    ]);
     const userSchedulesQuery = {
       select: jest.fn().mockReturnThis(),
       where: jest.fn().mockReturnThis(),
@@ -605,7 +619,7 @@ describe('AccessCodeService', () => {
     const dbMock = jest.fn();
     jest.spyOn(service as any, 'db', 'get').mockReturnValue(dbMock);
     jest.spyOn(service as any, 'getAccessibleFacilityIds').mockResolvedValue(['fac-1']);
-    jest.spyOn(service as any, 'getTenantAccessibleBluLokDeviceIds').mockResolvedValue([]);
+    mockTenantZoneAccess(service, []);
     model.findCodesForDevices.mockResolvedValue([]);
 
     const globalRowsQuery = {
@@ -636,7 +650,7 @@ describe('AccessCodeService', () => {
     const dbMock = jest.fn();
     jest.spyOn(service as any, 'db', 'get').mockReturnValue(dbMock);
     jest.spyOn(service as any, 'getAccessibleFacilityIds').mockResolvedValue(['fac-1']);
-    jest.spyOn(service as any, 'getTenantAccessibleBluLokDeviceIds').mockResolvedValue(['lock-1']);
+    mockTenantZoneAccess(service, ['lock-1']);
     model.findCodesForDevices.mockResolvedValue([
       {
         device_id: 'ac-multi',
@@ -670,16 +684,9 @@ describe('AccessCodeService', () => {
       andWhere: jest.fn().mockReturnThis(),
       whereRaw: jest.fn().mockResolvedValue([]),
     };
-    const scopedRowsQuery = {
-      distinct: jest.fn().mockReturnThis(),
-      join: jest.fn().mockReturnThis(),
-      whereIn: jest.fn().mockReturnThis(),
-      where: jest.fn().mockReturnThis(),
-      andWhere: jest.fn().mockReturnThis(),
-      whereRaw: jest.fn().mockResolvedValue([
-        { id: 'ac-multi', facility_id: 'fac-1', name: 'Shared Gate', device_type: 'gate', location_description: 'Entry' },
-      ]),
-    };
+    const scopedRowsQuery = mockAwaitableQueryBuilder([
+      { id: 'ac-multi', facility_id: 'fac-1', name: 'Shared Gate', device_type: 'gate', location_description: 'Entry' },
+    ]);
     const userSchedulesQuery = {
       select: jest.fn().mockReturnThis(),
       where: jest.fn().mockReturnThis(),
@@ -772,7 +779,7 @@ describe('AccessCodeService', () => {
     const dbMock = jest.fn();
     jest.spyOn(service as any, 'db', 'get').mockReturnValue(dbMock);
     jest.spyOn(service as any, 'getAccessibleFacilityIds').mockResolvedValue(['fac-1']);
-    jest.spyOn(service as any, 'getTenantAccessibleBluLokDeviceIds').mockResolvedValue([]);
+    mockTenantZoneAccess(service, []);
     model.findCodesForDevices.mockResolvedValue([
       {
         device_id: 'ac-global',
@@ -848,7 +855,7 @@ describe('AccessCodeService', () => {
     const dbMock = jest.fn();
     jest.spyOn(service as any, 'db', 'get').mockReturnValue(dbMock);
     jest.spyOn(service as any, 'getAccessibleFacilityIds').mockResolvedValue(['fac-1']);
-    jest.spyOn(service as any, 'getTenantAccessibleBluLokDeviceIds').mockResolvedValue(['lock-1']);
+    mockTenantZoneAccess(service, ['lock-1']);
     model.findCodesForDevices.mockResolvedValue([
       {
         device_id: 'ac-global',
@@ -873,14 +880,7 @@ describe('AccessCodeService', () => {
         { id: 'ac-global', facility_id: 'fac-1', name: 'Front Gate', device_type: 'gate', location_description: 'Main' },
       ]),
     };
-    const scopedRowsQuery = {
-      distinct: jest.fn().mockReturnThis(),
-      join: jest.fn().mockReturnThis(),
-      whereIn: jest.fn().mockReturnThis(),
-      where: jest.fn().mockReturnThis(),
-      andWhere: jest.fn().mockReturnThis(),
-      whereRaw: jest.fn().mockResolvedValue([]),
-    };
+    const scopedRowsQuery = mockAwaitableQueryBuilder([]);
     const userSchedulesQuery = {
       select: jest.fn().mockReturnThis(),
       where: jest.fn().mockReturnThis(),
@@ -901,7 +901,7 @@ describe('AccessCodeService', () => {
     const dbMock = jest.fn();
     jest.spyOn(service as any, 'db', 'get').mockReturnValue(dbMock);
     jest.spyOn(service as any, 'getAccessibleFacilityIds').mockResolvedValue(['fac-1']);
-    jest.spyOn(service as any, 'getTenantAccessibleBluLokDeviceIds').mockResolvedValue([]);
+    mockTenantZoneAccess(service, []);
     model.findCodesForDevices.mockResolvedValue([
       {
         device_id: 'ac-global',

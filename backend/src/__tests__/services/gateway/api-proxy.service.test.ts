@@ -23,6 +23,33 @@ describe('ApiProxyService', () => {
     });
   });
 
+  it('forwards gateway identity headers when proxying from WS', async () => {
+    const svc = ApiProxyService.getInstance();
+    await svc.proxyRequest({
+      user: {
+        userId: 'user-1',
+        role: UserRole.ADMIN,
+        facilityIds: ['fac-1'],
+        email: 'admin@test.com',
+      },
+      connectionFacilityId: 'fac-1',
+      gatewayId: 'gw-candidate',
+      sessionRole: 'swap_candidate',
+      method: 'POST',
+      path: '/internal/gateway/devices/inventory',
+      body: { facility_id: 'fac-1', devices: [] },
+    });
+
+    expect(mockAxiosRequest).toHaveBeenCalledWith(
+      expect.objectContaining({
+        headers: expect.objectContaining({
+          'X-Gateway-Id': 'gw-candidate',
+          'X-Gateway-Session-Role': 'swap_candidate',
+        }),
+      }),
+    );
+  });
+
   it('forwards request with passthrough auth and facility header', async () => {
     const svc = ApiProxyService.getInstance();
     const result = await svc.proxyRequest({

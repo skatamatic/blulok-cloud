@@ -27,6 +27,7 @@ import { FMSConfigurationModel } from '@/models/fms-configuration.model';
 import { FMSSyncLogModel } from '@/models/fms-sync-log.model';
 import { FMSChangeModel } from '@/models/fms-change.model';
 import { FMSEntityMappingModel } from '@/models/fms-entity-mapping.model';
+import { FMSWebhookEventModel } from '@/models/fms-webhook-event.model';
 import { User, UserModel } from '@/models/user.model';
 import { KeySharingModel } from '@/models/key-sharing.model';
 import { UnitModel } from '@/models/unit.model';
@@ -45,7 +46,10 @@ import {
   FMSChangeApplicationResult,
   FMSApplyContext,
   FMSConfiguration,
+  FMSWebhookPayload,
+  FMSSyncLog,
 } from '@/types/fms.types';
+import { StoredgeProvider } from './providers/storedge-provider';
 import { UserRole } from '@/types/auth.types';
 import { logger } from '@/utils/logger';
 
@@ -64,6 +68,7 @@ export class FMSService {
   private syncLogModel: FMSSyncLogModel;
   private changeModel: FMSChangeModel;
   private entityMappingModel: FMSEntityMappingModel;
+  private webhookEventModel: FMSWebhookEventModel;
 
   // Business logic services
   private unitModel: UnitModel;
@@ -82,6 +87,7 @@ export class FMSService {
     this.syncLogModel = new FMSSyncLogModel();
     this.changeModel = new FMSChangeModel();
     this.entityMappingModel = new FMSEntityMappingModel();
+    this.webhookEventModel = new FMSWebhookEventModel();
     this.unitModel = new UnitModel();
     this.unitsService = UnitsService.getInstance();
     this.unitAssignmentModel = new UnitAssignmentModel();
@@ -1133,6 +1139,7 @@ export class FMSService {
       [FMSChangeType.UNIT_ADDED]: 1,
       [FMSChangeType.UNIT_UPDATED]: 1,
       [FMSChangeType.UNIT_REMOVED]: 1,
+      [FMSChangeType.UNIT_OVERLOCK_CHANGED]: 1,
       [FMSChangeType.TENANT_ADDED]: 2,
       [FMSChangeType.TENANT_UPDATED]: 2,
       [FMSChangeType.TENANT_REMOVED]: 2,
@@ -1226,6 +1233,14 @@ export class FMSService {
 
       case FMSChangeType.UNIT_UPDATED:
         await this.applyUnitUpdated(change, result, ctx);
+        break;
+
+      case FMSChangeType.UNIT_REMOVED:
+        await this.applyUnitRemoved(change, result, ctx);
+        break;
+
+      case FMSChangeType.UNIT_OVERLOCK_CHANGED:
+        await this.applyUnitOverlockChanged(change, result, ctx);
         break;
 
       default:
@@ -1645,17 +1660,21 @@ export class FMSService {
     result: FMSChangeApplicationResult,
     ctx: FMSApplyContext,
   ): Promise<void> {
-    if (!change.internal_id) {
-      throw new Error('Internal tenant ID not found');
-    }
-
     const facilityId = ctx.facilityId;
     const performedBy = ctx.performedBy;
-    const actionData = (change.after_data || change.before_data);
+    const tenantInternalId = await this.resolveTenantInternalId(facilityId, change);
+    const actionData = (change.after_data || change.before_data) as {
+      action?: string;
+      unitId?: string;
+      externalUnitId?: string;
+      unitNumber?: string;
+    };
 
     if (change.after_data && actionData.action === 'assign_unit') {
-      // Assign tenant to unit using UnitsService (which will emit events)
-      const unitId = actionData.unitId;
+      const unitId = await this.resolveUnitInternalId(facilityId, {
+        unitId: actionData.unitId,
+        externalUnitId: actionData.externalUnitId,
+      });
 
       // SECURITY: Validate unit belongs to this facility
       const unit = await this.unitModel.findById(unitId);
@@ -1666,7 +1685,7 @@ export class FMSService {
           sync_log_id: change.sync_log_id,
           facility_id: facilityId,
           change_id: change.id,
-          tenant_id: change.internal_id,
+          tenant_id: tenantInternalId,
           unit_id: unitId,
         });
         throw new Error(`Unit ${unitId} not found`);
@@ -1679,7 +1698,7 @@ export class FMSService {
           expected_facility_id: facilityId,
           actual_facility_id: unit.facility_id,
           change_id: change.id,
-          tenant_id: change.internal_id,
+          tenant_id: tenantInternalId,
           unit_id: unitId,
           unit_number: unit.unit_number,
         });
@@ -1688,7 +1707,7 @@ export class FMSService {
 
       await this.unitsService.assignTenant(
         unitId,
-        change.internal_id,
+        tenantInternalId,
         {
           accessType: 'full',
           isPrimary: true,
@@ -1700,13 +1719,15 @@ export class FMSService {
       );
 
       result.accessChanges.accessGranted.push({
-        userId: change.internal_id,
+        userId: tenantInternalId,
         unitId,
       });
 
     } else if (change.before_data && actionData.action === 'unassign_unit') {
-      // Unassign tenant from unit using UnitsService (which will emit events)
-      const unitId = actionData.unitId;
+      const unitId = await this.resolveUnitInternalId(facilityId, {
+        unitId: actionData.unitId,
+        externalUnitId: actionData.externalUnitId,
+      });
 
       // SECURITY: Validate unit belongs to this facility
       const unit = await this.unitModel.findById(unitId);
@@ -1716,7 +1737,7 @@ export class FMSService {
 
       await this.unitsService.unassignTenant(
         unitId,
-        change.internal_id,
+        tenantInternalId,
         {
           performedBy,
           source: 'fms_sync',
@@ -1725,10 +1746,47 @@ export class FMSService {
       );
 
       result.accessChanges.accessRevoked.push({
-        userId: change.internal_id,
+        userId: tenantInternalId,
         unitId,
       });
     }
+  }
+
+  private async resolveTenantInternalId(facilityId: string, change: FMSChange): Promise<string> {
+    if (change.internal_id) {
+      return change.internal_id;
+    }
+    const mapping = await this.entityMappingModel.findByExternalId(
+      facilityId,
+      'user',
+      change.external_id
+    );
+    if (!mapping?.internal_id) {
+      throw new Error(`Internal tenant ID not found for FMS tenant ${change.external_id}`);
+    }
+    return mapping.internal_id;
+  }
+
+  private async resolveUnitInternalId(
+    facilityId: string,
+    refs: { unitId?: string; externalUnitId?: string }
+  ): Promise<string> {
+    if (refs.unitId) {
+      return refs.unitId;
+    }
+    if (refs.externalUnitId) {
+      const mapping = await this.entityMappingModel.findByExternalId(
+        facilityId,
+        'unit',
+        refs.externalUnitId
+      );
+      if (mapping?.internal_id) {
+        return mapping.internal_id;
+      }
+    }
+    throw new Error(
+      `Internal unit ID not found${refs.externalUnitId ? ` for FMS unit ${refs.externalUnitId}` : ''}`
+    );
   }
 
   /**
@@ -2060,6 +2118,510 @@ export class FMSService {
       sync_log_id: change.sync_log_id,
       facility_id: facilityId,
     });
+  }
+
+  /**
+   * Apply unit removed change (FMS unit deleted webhook or full sync).
+   */
+  private async applyUnitRemoved(
+    change: FMSChange,
+    _result: FMSChangeApplicationResult,
+    ctx: FMSApplyContext,
+  ): Promise<void> {
+    const facilityId = ctx.facilityId;
+    const performedBy = ctx.performedBy;
+    const externalId = change.external_id;
+
+    const mapping = await this.entityMappingModel.findByExternalId(facilityId, 'unit', externalId);
+    const internalId = change.internal_id ?? mapping?.internal_id;
+    if (!internalId) {
+      logger.info('[FMS] Unit removed webhook: no mapped unit — nothing to delete', {
+        fms_sync: true,
+        sync_log_id: change.sync_log_id,
+        facility_id: facilityId,
+        external_id: externalId,
+      });
+      return;
+    }
+
+    const unit = await this.unitModel.findById(internalId);
+    if (!unit || unit.facility_id !== facilityId) {
+      throw new Error(`Unit ${internalId} not found in facility ${facilityId}`);
+    }
+
+    const assignments = await this.unitAssignmentModel.findByUnitId(internalId);
+    if (assignments.length > 0) {
+      throw new Error(
+        `Cannot remove unit ${unit.unit_number}: tenants are still assigned. Unassign tenants first.`
+      );
+    }
+
+    const hasDevice = await this.unitModel.hasBlulokDevice(internalId);
+    if (hasDevice) {
+      throw new Error(
+        `Cannot remove unit ${unit.unit_number}: a BluLok device is still assigned. Unassign the device first.`
+      );
+    }
+
+    let userRole = UserRole.ADMIN;
+    if (performedBy && performedBy !== 'fms-system') {
+      const triggeringUser = await UserModel.findById(performedBy);
+      if (triggeringUser) {
+        userRole = (triggeringUser as any).role;
+      }
+    }
+
+    await this.unitsService.deleteUnit(internalId, performedBy, userRole);
+
+    if (mapping) {
+      await this.entityMappingModel.delete(mapping.id);
+    }
+
+    logger.info(`[FMS] Removed unit ${unit.unit_number} (${internalId}) from FMS delete event`, {
+      fms_sync: true,
+      sync_log_id: change.sync_log_id,
+      facility_id: facilityId,
+      external_id: externalId,
+    });
+  }
+
+  /**
+   * Apply overlock flag change from webhook or manual review.
+   */
+  private async applyUnitOverlockChanged(
+    change: FMSChange,
+    _result: FMSChangeApplicationResult,
+    ctx: FMSApplyContext,
+  ): Promise<void> {
+    const facilityId = ctx.facilityId;
+    const unitId = change.internal_id
+      ?? (await this.resolveUnitInternalId(facilityId, { externalUnitId: change.external_id }));
+
+    const after = change.after_data as { is_overlocked?: boolean };
+    const isOverlocked = Boolean(after?.is_overlocked);
+
+    const unit = await this.unitModel.findById(unitId);
+    if (!unit || unit.facility_id !== facilityId) {
+      throw new Error(`Unit ${unitId} not found in facility ${facilityId}`);
+    }
+
+    const assignments = await this.unitAssignmentModel.findByUnitId(unitId);
+    if (isOverlocked && assignments.length === 0) {
+      throw new Error('Cannot overlock a vacant unit');
+    }
+
+    await this.unitModel.setOverlockStatus(unitId, isOverlocked);
+
+    logger.info(`[FMS] Set overlock=${isOverlocked} on unit ${unitId}`, {
+      fms_sync: true,
+      sync_log_id: change.sync_log_id,
+      facility_id: facilityId,
+    });
+  }
+
+  /**
+   * Process an inbound FMS webhook (Storable Edge CloudEvents).
+   */
+  public async handleWebhookEvent(
+    facilityId: string,
+    rawBody: Buffer,
+    signatureHeader: string | undefined
+  ): Promise<{
+    duplicate: boolean;
+    message: string;
+    syncLogId?: string;
+    changesDetected?: number;
+    changesApplied?: number;
+    requiresReview?: boolean;
+  }> {
+    const config = await this.fmsConfigModel.findByFacilityId(facilityId);
+    if (!config) {
+      throw new Error('FMS configuration not found for facility');
+    }
+    if (!config.is_enabled) {
+      throw new Error('FMS integration is not enabled for this facility');
+    }
+
+    const provider = this.getProvider(facilityId, config);
+    if (!provider.getCapabilities().supportsWebhooks) {
+      throw new Error(`Provider ${config.provider_type} does not support webhooks`);
+    }
+
+    if (!provider.validateWebhookRawBody(rawBody, signatureHeader)) {
+      throw new Error('Invalid webhook signature');
+    }
+
+    const payload = await provider.parseWebhookPayload(rawBody);
+
+    const existing = await this.webhookEventModel.findByExternalEventId(
+      facilityId,
+      payload.externalEventId
+    );
+    if (existing && this.webhookEventModel.isProcessed(existing)) {
+      return { duplicate: true, message: 'Event already processed' };
+    }
+    if (existing && !this.webhookEventModel.isProcessed(existing)) {
+      await this.webhookEventModel.deleteByExternalEventId(facilityId, payload.externalEventId);
+    }
+
+    const autoAccept = config.config.syncSettings.autoAcceptChanges;
+    let syncLog: FMSSyncLog;
+    let syncLogCreatedForEvent = false;
+
+    if (!autoAccept) {
+      const openReview = await this.syncLogModel.findOpenWebhookReviewSyncLog(facilityId);
+      if (openReview) {
+        syncLog = openReview;
+      } else {
+        syncLog = await this.syncLogModel.create({
+          facility_id: facilityId,
+          fms_config_id: config.id,
+          triggered_by: 'webhook',
+        });
+        syncLogCreatedForEvent = true;
+      }
+    } else {
+      syncLog = await this.syncLogModel.create({
+        facility_id: facilityId,
+        fms_config_id: config.id,
+        triggered_by: 'webhook',
+      });
+      syncLogCreatedForEvent = true;
+    }
+
+    const webhookRecord = await this.webhookEventModel.create({
+      facility_id: facilityId,
+      external_event_id: payload.externalEventId,
+      event_type: payload.event_type,
+      sync_log_id: syncLog.id,
+    });
+
+    try {
+      const pendingInserts = await this.buildWebhookChanges(
+        facilityId,
+        syncLog.id,
+        payload,
+        provider
+      );
+
+      const changes: FMSChange[] = [];
+      for (const insert of pendingInserts) {
+        changes.push(await this.changeModel.create(insert));
+      }
+
+      const priorDetected = Number(syncLog.changes_detected ?? 0);
+      const priorPending = Number(syncLog.changes_pending ?? 0);
+
+      await this.syncLogModel.update(syncLog.id, {
+        changes_detected: priorDetected + changes.length,
+        changes_pending: autoAccept ? priorPending : priorPending + changes.length,
+        sync_status: autoAccept
+          ? FMSSyncStatus.COMPLETED
+          : FMSSyncStatus.PENDING_REVIEW,
+      });
+
+      let changesApplied = 0;
+      if (autoAccept && changes.length > 0) {
+        const applyResult = await this.applyChanges(
+          syncLog.id,
+          changes.map((c) => c.id)
+        );
+        changesApplied = applyResult.changesApplied;
+        await this.syncLogModel.update(syncLog.id, {
+          changes_applied: changesApplied,
+          sync_status: FMSSyncStatus.COMPLETED,
+        });
+        await this.syncLogModel.markCompleted(syncLog.id, {
+          tenants_synced: 0,
+          units_synced: 0,
+          errors: applyResult.errors,
+          warnings: [],
+          changes_auto_applied: true,
+        });
+      } else {
+        await this.syncLogModel.markCompleted(syncLog.id, {
+          tenants_synced: 0,
+          units_synced: 0,
+          errors: [],
+          warnings: [],
+          changes_auto_applied: false,
+        });
+      }
+
+      await this.webhookEventModel.markProcessed(webhookRecord.id, syncLog.id);
+      this.broadcastFMSSyncUpdate(facilityId);
+
+      return {
+        duplicate: false,
+        message: `Processed ${payload.event_type} webhook`,
+        syncLogId: syncLog.id,
+        changesDetected: changes.length,
+        changesApplied,
+        requiresReview: !autoAccept && changes.length > 0,
+      };
+    } catch (error) {
+      await this.webhookEventModel.deleteByExternalEventId(facilityId, payload.externalEventId);
+      if (syncLogCreatedForEvent) {
+        await this.syncLogModel.update(syncLog.id, {
+          sync_status: FMSSyncStatus.FAILED,
+          error_message: error instanceof Error ? error.message : 'Webhook processing failed',
+        });
+      }
+      throw error;
+    }
+  }
+
+  private async buildWebhookChanges(
+    facilityId: string,
+    syncLogId: string,
+    payload: FMSWebhookPayload,
+    provider: BaseFMSProvider
+  ): Promise<Parameters<FMSChangeModel['create']>[0][]> {
+    const data = payload.data;
+    const inserts: Parameters<FMSChangeModel['create']>[0][] = [];
+
+    const resolveTenantMapping = async (externalTenantId: string) =>
+      this.entityMappingModel.findByExternalId(facilityId, 'user', externalTenantId);
+
+    const resolveUnitMapping = async (externalUnitId: string) =>
+      this.entityMappingModel.findByExternalId(facilityId, 'unit', externalUnitId);
+
+    switch (payload.event_type) {
+      case 'tenant.created': {
+        const tenantData =
+          provider instanceof StoredgeProvider
+            ? provider.mapTenantBodyToFMSTenant(data)
+            : this.mapGenericTenantBody(data);
+        const validationErrors = this.validateTenantData(tenantData);
+        inserts.push({
+          sync_log_id: syncLogId,
+          change_type: FMSChangeType.TENANT_ADDED,
+          entity_type: 'tenant',
+          external_id: tenantData.externalId,
+          after_data: tenantData,
+          required_actions: [FMSChangeAction.CREATE_USER, FMSChangeAction.ADD_ACCESS],
+          impact_summary: `Create tenant ${tenantData.email ?? tenantData.externalId} from webhook`,
+          is_valid: validationErrors.length === 0,
+          validation_errors: validationErrors.length > 0 ? validationErrors : undefined,
+        });
+        break;
+      }
+      case 'tenant.updated': {
+        const tenantData =
+          provider instanceof StoredgeProvider
+            ? provider.mapTenantBodyToFMSTenant(data)
+            : this.mapGenericTenantBody(data);
+        const mapping = await resolveTenantMapping(tenantData.externalId);
+        inserts.push({
+          sync_log_id: syncLogId,
+          change_type: FMSChangeType.TENANT_UPDATED,
+          entity_type: 'tenant',
+          external_id: tenantData.externalId,
+          internal_id: mapping?.internal_id,
+          after_data: tenantData,
+          required_actions: [FMSChangeAction.UPDATE_USER],
+          impact_summary: `Update tenant ${tenantData.email ?? tenantData.externalId} from webhook`,
+          is_valid: Boolean(mapping?.internal_id),
+          validation_errors: mapping?.internal_id ? undefined : ['Tenant is not mapped in BluLok yet'],
+        });
+        break;
+      }
+      case 'ledger.moved-in': {
+        const tenantExternalId = String(data.tenant_id);
+        const unitExternalId = String(data.unit_id);
+        let tenantMapping = await resolveTenantMapping(tenantExternalId);
+        if (!tenantMapping) {
+          const fetched = await provider.fetchTenant(tenantExternalId);
+          if (fetched) {
+            const validationErrors = this.validateTenantData(fetched);
+            inserts.push({
+              sync_log_id: syncLogId,
+              change_type: FMSChangeType.TENANT_ADDED,
+              entity_type: 'tenant',
+              external_id: fetched.externalId,
+              after_data: fetched,
+              required_actions: [FMSChangeAction.CREATE_USER],
+              impact_summary: `Create tenant before move-in (${tenantExternalId})`,
+              is_valid: validationErrors.length === 0,
+              validation_errors: validationErrors.length > 0 ? validationErrors : undefined,
+            });
+          }
+        }
+
+        let unitMapping = await resolveUnitMapping(unitExternalId);
+        if (!unitMapping) {
+          const fetchedUnit = await provider.fetchUnit(unitExternalId);
+          if (fetchedUnit) {
+            inserts.push({
+              sync_log_id: syncLogId,
+              change_type: FMSChangeType.UNIT_ADDED,
+              entity_type: 'unit',
+              external_id: fetchedUnit.externalId,
+              after_data: fetchedUnit,
+              required_actions: [FMSChangeAction.ADD_ACCESS],
+              impact_summary: `Create unit ${fetchedUnit.unitNumber} before move-in`,
+              is_valid: true,
+            });
+          }
+        }
+
+        tenantMapping = tenantMapping ?? (await resolveTenantMapping(tenantExternalId));
+        unitMapping = unitMapping ?? (await resolveUnitMapping(unitExternalId));
+        const unit = unitMapping?.internal_id
+          ? await this.unitModel.findById(unitMapping.internal_id)
+          : null;
+
+        inserts.push({
+          sync_log_id: syncLogId,
+          change_type: FMSChangeType.TENANT_UNIT_CHANGED,
+          entity_type: 'tenant',
+          external_id: tenantExternalId,
+          internal_id: tenantMapping?.internal_id,
+          after_data: {
+            action: 'assign_unit',
+            unitId: unitMapping?.internal_id,
+            externalUnitId: unitExternalId,
+            unitNumber: unit?.unit_number ?? unitExternalId,
+            webhookOnly: true,
+          },
+          required_actions: [FMSChangeAction.ASSIGN_UNIT, FMSChangeAction.ADD_ACCESS],
+          impact_summary: `Move-in: assign tenant to unit ${unit?.unit_number ?? unitExternalId}`,
+          is_valid: true,
+        });
+        break;
+      }
+      case 'ledger.moved-out': {
+        const tenantExternalId = String(data.tenant_id);
+        const unitExternalId = String(data.unit_id);
+        const tenantMapping = await resolveTenantMapping(tenantExternalId);
+        const unitMapping = await resolveUnitMapping(unitExternalId);
+        const unit = unitMapping?.internal_id
+          ? await this.unitModel.findById(unitMapping.internal_id)
+          : null;
+
+        inserts.push({
+          sync_log_id: syncLogId,
+          change_type: FMSChangeType.TENANT_UNIT_CHANGED,
+          entity_type: 'tenant',
+          external_id: tenantExternalId,
+          internal_id: tenantMapping?.internal_id,
+          before_data: {
+            action: 'unassign_unit',
+            unitId: unitMapping?.internal_id,
+            externalUnitId: unitExternalId,
+            unitNumber: unit?.unit_number ?? unitExternalId,
+            webhookOnly: true,
+          },
+          after_data: {},
+          required_actions: [FMSChangeAction.UNASSIGN_UNIT, FMSChangeAction.REMOVE_ACCESS],
+          impact_summary: `Move-out: unassign tenant from unit ${unit?.unit_number ?? unitExternalId}`,
+          is_valid: Boolean(tenantExternalId && unitExternalId),
+          validation_errors:
+            tenantExternalId && unitExternalId
+              ? undefined
+              : ['Move-out payload missing tenant_id or unit_id'],
+        });
+        break;
+      }
+      case 'unit.created': {
+        const unitExternalId = String(data.unit_id);
+        const fetchedUnit = await provider.fetchUnit(unitExternalId);
+        if (!fetchedUnit) {
+          inserts.push({
+            sync_log_id: syncLogId,
+            change_type: FMSChangeType.UNIT_ADDED,
+            entity_type: 'unit',
+            external_id: unitExternalId,
+            after_data: { externalId: unitExternalId },
+            required_actions: [FMSChangeAction.ADD_ACCESS],
+            impact_summary: `Create unit ${unitExternalId} from webhook`,
+            is_valid: false,
+            validation_errors: [`Could not fetch unit ${unitExternalId} from FMS API`],
+          });
+        } else {
+          inserts.push({
+            sync_log_id: syncLogId,
+            change_type: FMSChangeType.UNIT_ADDED,
+            entity_type: 'unit',
+            external_id: fetchedUnit.externalId,
+            after_data: fetchedUnit,
+            required_actions: [FMSChangeAction.ADD_ACCESS],
+            impact_summary: `Create unit ${fetchedUnit.unitNumber} from webhook`,
+            is_valid: true,
+          });
+        }
+        break;
+      }
+      case 'unit.deleted': {
+        const unitExternalId = String(data.unit_id);
+        const mapping = await resolveUnitMapping(unitExternalId);
+        inserts.push({
+          sync_log_id: syncLogId,
+          change_type: FMSChangeType.UNIT_REMOVED,
+          entity_type: 'unit',
+          external_id: unitExternalId,
+          internal_id: mapping?.internal_id,
+          before_data: mapping ? { externalId: unitExternalId } : null,
+          after_data: null,
+          required_actions: [FMSChangeAction.REMOVE_ACCESS],
+          impact_summary: `Remove unit ${unitExternalId} deleted in FMS`,
+          is_valid: Boolean(mapping?.internal_id),
+          validation_errors: mapping?.internal_id ? undefined : ['Unit is not mapped in BluLok'],
+        });
+        break;
+      }
+      case 'unit.overlock-applied':
+      case 'unit.overlock-removed': {
+        const unitExternalId = String(data.unit_id);
+        const mapping = await resolveUnitMapping(unitExternalId);
+        const isOverlocked = payload.event_type === 'unit.overlock-applied';
+        inserts.push({
+          sync_log_id: syncLogId,
+          change_type: FMSChangeType.UNIT_OVERLOCK_CHANGED,
+          entity_type: 'unit',
+          external_id: unitExternalId,
+          internal_id: mapping?.internal_id,
+          before_data: { is_overlocked: !isOverlocked },
+          after_data: { is_overlocked: isOverlocked },
+          required_actions: isOverlocked
+            ? [FMSChangeAction.REMOVE_ACCESS]
+            : [FMSChangeAction.ADD_ACCESS],
+          impact_summary: isOverlocked
+            ? `Apply overlock to unit ${unitExternalId}`
+            : `Remove overlock from unit ${unitExternalId}`,
+          is_valid: Boolean(mapping?.internal_id),
+          validation_errors: mapping?.internal_id ? undefined : ['Unit is not mapped in BluLok'],
+        });
+        break;
+      }
+      default:
+        throw new Error(`Unhandled webhook event type: ${payload.event_type}`);
+    }
+
+    return inserts;
+  }
+
+  private mapGenericTenantBody(data: Record<string, unknown>): FMSTenant {
+    return {
+      externalId: String(data.tenant_id ?? data.externalId ?? ''),
+      email: data.email != null ? String(data.email) : null,
+      firstName: data.first_name != null ? String(data.first_name) : (data.firstName != null ? String(data.firstName) : null),
+      lastName: data.last_name != null ? String(data.last_name) : (data.lastName != null ? String(data.lastName) : null),
+      phone: data.phone != null ? String(data.phone) : undefined,
+      unitIds: [],
+      status: 'active',
+    };
+  }
+
+  private validateTenantData(tenant: FMSTenant): string[] {
+    const errors: string[] = [];
+    if (!tenant.email && !tenant.phone) {
+      errors.push('Tenant must have an email or phone number');
+    }
+    if (!tenant.firstName && !tenant.lastName) {
+      errors.push('Tenant must have a first or last name');
+    }
+    return errors;
   }
 
   /**

@@ -184,11 +184,27 @@ describe('DeviceGroupManager', () => {
     expect(mockAddToast).not.toHaveBeenCalled();
   });
 
-  it('adds blulok members with explicit device type', async () => {
+  it('adds units with unit-centric API payload', async () => {
     render(
       <MemoryRouter>
         <DeviceGroupManager
           facilityId="facility-1"
+          units={[
+            {
+              id: 'unit-101',
+              facility_id: 'facility-1',
+              unit_number: '101',
+              status: 'available',
+              created_at: new Date().toISOString(),
+              updated_at: new Date().toISOString(),
+              blulok_device: {
+                id: 'lock-1',
+                device_serial: 'BLU-101',
+                lock_status: 'locked',
+                device_status: 'online',
+              },
+            },
+          ]}
           devices={[
             { id: 'lock-1', name: 'Unit 101 Lock', device_category: 'blulok', unit_id: 'unit-101', unit_number: '101', device_serial: 'BLU-101' },
           ]}
@@ -212,16 +228,69 @@ describe('DeviceGroupManager', () => {
     );
 
     fireEvent.click(screen.getByRole('button', { name: /Residential Zone/i }));
-    fireEvent.change(screen.getByPlaceholderText('Search by unit, device, serial, location, or ID...'), {
+    fireEvent.change(screen.getByPlaceholderText('Search by unit number or status...'), {
       target: { value: '101' },
     });
-    fireEvent.click(screen.getByRole('button', { name: /Unit 101 Lock/i }));
-    fireEvent.click(screen.getByRole('button', { name: /add device/i }));
+    fireEvent.click(screen.getByRole('button', { name: /Unit 101/i }));
+    fireEvent.click(screen.getByRole('button', { name: /^Add unit$/i }));
 
     await waitFor(() => {
       expect(mockAddDeviceGroupMember).toHaveBeenCalledWith('group-1', {
-        deviceId: 'lock-1',
         unitId: 'unit-101',
+        deviceType: 'blulok',
+      });
+    });
+  });
+
+  it('adds unit-only members when no lock is assigned', async () => {
+    render(
+      <MemoryRouter>
+        <DeviceGroupManager
+          facilityId="facility-1"
+          units={[
+            {
+              id: 'unit-202',
+              facility_id: 'facility-1',
+              unit_number: '202',
+              status: 'available',
+              created_at: new Date().toISOString(),
+              updated_at: new Date().toISOString(),
+            },
+          ]}
+          devices={[]}
+          groups={[
+            defaultGroup,
+            {
+              id: 'group-1',
+              facility_id: 'facility-1',
+              group_type: 'zone',
+              is_global_shared: false,
+              is_default: false,
+              name: 'Vacant Wing',
+              is_active: true,
+              created_at: new Date().toISOString(),
+              updated_at: new Date().toISOString(),
+            },
+          ]}
+          onGroupsChanged={async () => undefined}
+          initialGroupId="group-1"
+        />
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByPlaceholderText('Search by unit number or status...')).toBeInTheDocument();
+    });
+
+    fireEvent.change(screen.getByPlaceholderText('Search by unit number or status...'), {
+      target: { value: '202' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /Unit 202/i }));
+    fireEvent.click(screen.getByRole('button', { name: /^Add unit$/i }));
+
+    await waitFor(() => {
+      expect(mockAddDeviceGroupMember).toHaveBeenCalledWith('group-1', {
+        unitId: 'unit-202',
         deviceType: 'blulok',
       });
     });
@@ -264,11 +333,11 @@ describe('DeviceGroupManager', () => {
     );
 
     fireEvent.click(screen.getByRole('button', { name: /Building A/i }));
-    fireEvent.change(screen.getByPlaceholderText('Search by unit, device, serial, location, or ID...'), {
+    fireEvent.change(screen.getByPlaceholderText('Search by name, serial, location, or ID...'), {
       target: { value: 'Gate A' },
     });
     fireEvent.click(screen.getByRole('button', { name: /Gate A/i }));
-    fireEvent.click(screen.getByRole('button', { name: /add device/i }));
+    fireEvent.click(screen.getByRole('button', { name: /^Add device$/i }));
 
     await waitFor(() => {
       expect(mockAddToast).toHaveBeenCalledWith(expect.objectContaining({
@@ -341,6 +410,17 @@ describe('DeviceGroupManager', () => {
       <MemoryRouter>
         <DeviceGroupManager
           facilityId="facility-1"
+          units={[
+            {
+              id: 'unit-1',
+              facility_id: 'facility-1',
+              unit_number: '1',
+              status: 'occupied',
+              created_at: new Date().toISOString(),
+              updated_at: new Date().toISOString(),
+              blulok_device: { id: 'lock-1', device_serial: '123', lock_status: 'locked', device_status: 'online' },
+            },
+          ]}
           devices={[
             { id: 'lock-1', name: 'Unit 1', device_category: 'blulok', unit_id: 'unit-1', unit_number: '1', device_serial: '123' },
             { id: 'ac-1', name: 'Main Gate', device_category: 'access_control', device_type: 'gate', device_serial: 'GATE-1' },
@@ -352,13 +432,13 @@ describe('DeviceGroupManager', () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByText('Unit locks')).toBeInTheDocument();
+      expect(screen.getByText('Units')).toBeInTheDocument();
       expect(screen.getByText('Access control')).toBeInTheDocument();
     });
 
     expect(screen.getAllByText(/Auto-assigned/i)).toHaveLength(2);
     expect(screen.queryByRole('button', { name: /^remove$/i })).not.toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /add device/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /^Add unit$/i })).not.toBeInTheDocument();
   });
 
   it('shows remove actions for members in specific groups', async () => {
@@ -377,6 +457,17 @@ describe('DeviceGroupManager', () => {
       <MemoryRouter>
         <DeviceGroupManager
           facilityId="facility-1"
+          units={[
+            {
+              id: 'unit-1',
+              facility_id: 'facility-1',
+              unit_number: '1',
+              status: 'occupied',
+              created_at: new Date().toISOString(),
+              updated_at: new Date().toISOString(),
+              blulok_device: { id: 'lock-1', lock_status: 'locked', device_status: 'online' },
+            },
+          ]}
           devices={[
             { id: 'lock-1', name: 'Unit 1', device_category: 'blulok', unit_id: 'unit-1', unit_number: '1' },
           ]}
@@ -404,7 +495,7 @@ describe('DeviceGroupManager', () => {
     await waitFor(() => {
       expect(screen.getByRole('button', { name: /^remove$/i })).toBeInTheDocument();
     });
-    expect(screen.getByText('Unit locks')).toBeInTheDocument();
+    expect(screen.getByText('Units')).toBeInTheDocument();
   });
 
   it('creates a new group by copying members and access-code settings from an existing group', async () => {
@@ -604,7 +695,7 @@ describe('DeviceGroupManager', () => {
     );
   });
 
-  it('shows lock page title for blulok members instead of device id', async () => {
+  it('shows unit number as the primary blulok member title', async () => {
     mockGetDeviceGroup.mockResolvedValue({
       data: {
         members: [{ device_id: 'lock-1', device_type: 'blulok', source_unit_id: 'unit-101' }],
@@ -615,6 +706,23 @@ describe('DeviceGroupManager', () => {
       <MemoryRouter>
         <DeviceGroupManager
           facilityId="facility-1"
+          units={[
+            {
+              id: 'unit-101',
+              facility_id: 'facility-1',
+              unit_number: '101',
+              status: 'occupied',
+              created_at: new Date().toISOString(),
+              updated_at: new Date().toISOString(),
+              blulok_device: {
+                id: 'lock-1',
+                device_serial: '550e8400-e29b-41d4-a716-446655440011',
+                lock_status: 'locked',
+                device_status: 'online',
+                device_settings: { lockNumber: 2453 },
+              },
+            },
+          ]}
           devices={[
             {
               id: 'lock-1',
@@ -646,12 +754,14 @@ describe('DeviceGroupManager', () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByText('Lock #2453')).toBeInTheDocument();
+      expect(screen.getByText('Unit 101')).toBeInTheDocument();
+      expect(screen.getByText(/Lock assigned/i)).toBeInTheDocument();
     });
+    expect(screen.queryByText('Lock #2453')).not.toBeInTheDocument();
     expect(screen.queryByText('550e8400-e29b-41d4-a716-446655440011')).not.toBeInTheDocument();
   });
 
-  it('shows display name from device settings in member list', async () => {
+  it('shows lock serial in subtitle for unit members with assigned devices', async () => {
     mockGetDeviceGroup.mockResolvedValue({
       data: {
         members: [{ device_id: 'lock-1', device_type: 'blulok', source_unit_id: 'unit-101' }],
@@ -662,6 +772,23 @@ describe('DeviceGroupManager', () => {
       <MemoryRouter>
         <DeviceGroupManager
           facilityId="facility-1"
+          units={[
+            {
+              id: 'unit-101',
+              facility_id: 'facility-1',
+              unit_number: '101',
+              status: 'occupied',
+              created_at: new Date().toISOString(),
+              updated_at: new Date().toISOString(),
+              blulok_device: {
+                id: 'lock-1',
+                device_serial: 'BLU-NORTH',
+                lock_status: 'locked',
+                device_status: 'online',
+                device_settings: { displayName: 'North wing lock' },
+              },
+            },
+          ]}
           devices={[
             {
               id: 'lock-1',
@@ -692,14 +819,15 @@ describe('DeviceGroupManager', () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByText('North wing lock')).toBeInTheDocument();
+      expect(screen.getByText('Unit 101')).toBeInTheDocument();
+      expect(screen.getByText(/Lock assigned · BLU-NORTH/i)).toBeInTheDocument();
     });
   });
 
-  it('shows unknown lock when member device is missing from facility devices', async () => {
+  it('shows no-lock state when unit member has no assigned device', async () => {
     mockGetDeviceGroup.mockResolvedValue({
       data: {
-        members: [{ device_id: 'missing-lock', device_type: 'blulok', source_unit_id: 'unit-999' }],
+        members: [{ device_id: 'unit-999', device_type: 'blulok', source_unit_id: 'unit-999' }],
       },
     });
 
@@ -707,6 +835,16 @@ describe('DeviceGroupManager', () => {
       <MemoryRouter>
         <DeviceGroupManager
           facilityId="facility-1"
+          units={[
+            {
+              id: 'unit-999',
+              facility_id: 'facility-1',
+              unit_number: '999',
+              status: 'available',
+              created_at: new Date().toISOString(),
+              updated_at: new Date().toISOString(),
+            },
+          ]}
           devices={[]}
           groups={[
             defaultGroup,
@@ -729,9 +867,11 @@ describe('DeviceGroupManager', () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByText('Unknown lock')).toBeInTheDocument();
+      expect(screen.getByText('Unit 999')).toBeInTheDocument();
+      expect(screen.getByText('No lock assigned')).toBeInTheDocument();
+      expect(screen.getByText('No lock')).toBeInTheDocument();
     });
-    expect(screen.queryByText('missing-lock')).not.toBeInTheDocument();
+    expect(screen.queryByText('unit-999')).not.toBeInTheDocument();
   });
 
   it('follows initialGroupId when navigating to a different valid group', async () => {
@@ -782,11 +922,28 @@ describe('DeviceGroupManager', () => {
     });
   });
 
-  it('finds blulok devices in add-member search by lock number', async () => {
+  it('finds units in add-member search by assigned lock serial', async () => {
     render(
       <MemoryRouter>
         <DeviceGroupManager
           facilityId="facility-1"
+          units={[
+            {
+              id: 'unit-101',
+              facility_id: 'facility-1',
+              unit_number: '101',
+              status: 'occupied',
+              created_at: new Date().toISOString(),
+              updated_at: new Date().toISOString(),
+              blulok_device: {
+                id: 'lock-1',
+                device_serial: 'BLU-2453',
+                lock_status: 'locked',
+                device_status: 'online',
+                device_settings: { lockNumber: 2453 },
+              },
+            },
+          ]}
           devices={[
             {
               id: 'lock-1',
@@ -817,15 +974,89 @@ describe('DeviceGroupManager', () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByPlaceholderText('Search by unit, device, serial, location, or ID...')).toBeInTheDocument();
+      expect(screen.getByPlaceholderText('Search by unit number or status...')).toBeInTheDocument();
     });
 
-    const searchInput = screen.getByPlaceholderText('Search by unit, device, serial, location, or ID...');
-    fireEvent.change(searchInput, { target: { value: '2453' } });
+    const searchInput = screen.getByPlaceholderText('Search by unit number or status...');
+    fireEvent.change(searchInput, { target: { value: 'BLU-2453' } });
 
     await waitFor(() => {
-      expect(screen.getByRole('button', { name: /Lock #2453/i })).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /Unit 101/i })).toBeInTheDocument();
     });
+  });
+
+  it('hides units without locks when the filter toggle is off', async () => {
+    mockGetDeviceGroup.mockResolvedValue({
+      data: {
+        members: [
+          { device_id: 'lock-1', device_type: 'blulok', source_unit_id: 'unit-101' },
+          { device_id: 'unit-202', device_type: 'blulok', source_unit_id: 'unit-202' },
+        ],
+      },
+    });
+
+    render(
+      <MemoryRouter>
+        <DeviceGroupManager
+          facilityId="facility-1"
+          units={[
+            {
+              id: 'unit-101',
+              facility_id: 'facility-1',
+              unit_number: '101',
+              status: 'occupied',
+              created_at: new Date().toISOString(),
+              updated_at: new Date().toISOString(),
+              blulok_device: { id: 'lock-1', device_serial: 'BLU-101', lock_status: 'locked', device_status: 'online' },
+            },
+            {
+              id: 'unit-202',
+              facility_id: 'facility-1',
+              unit_number: '202',
+              status: 'available',
+              created_at: new Date().toISOString(),
+              updated_at: new Date().toISOString(),
+            },
+          ]}
+          devices={[
+            { id: 'lock-1', device_category: 'blulok', unit_id: 'unit-101', unit_number: '101', device_serial: 'BLU-101' },
+          ]}
+          groups={[
+            defaultGroup,
+            {
+              id: 'group-1',
+              facility_id: 'facility-1',
+              group_type: 'zone',
+              is_global_shared: false,
+              is_default: false,
+              name: 'Building A',
+              is_active: true,
+              created_at: new Date().toISOString(),
+              updated_at: new Date().toISOString(),
+            },
+          ]}
+          onGroupsChanged={async () => undefined}
+          initialGroupId="group-1"
+        />
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText('Unit 101')).toBeInTheDocument();
+      expect(screen.getByText('Unit 202')).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByRole('switch', { name: /Include units without locks/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText('Unit 101')).toBeInTheDocument();
+      expect(screen.queryByText('Unit 202')).not.toBeInTheDocument();
+    });
+
+    fireEvent.change(screen.getByPlaceholderText('Search by unit number or status...'), {
+      target: { value: '202' },
+    });
+    expect(screen.queryByRole('button', { name: /Unit 202/i })).not.toBeInTheDocument();
   });
 
   it('deletes the last non-default group without selecting a fallback group', async () => {

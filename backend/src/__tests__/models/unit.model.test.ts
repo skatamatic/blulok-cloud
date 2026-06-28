@@ -22,6 +22,16 @@ describe('deriveEffectiveUnitStatus', () => {
     expect(deriveEffectiveUnitStatus('reserved', 0)).toBe('reserved');
     expect(deriveEffectiveUnitStatus('available', 0)).toBe('available');
   });
+
+  it('returns overlocked when occupied and flagged', () => {
+    expect(deriveEffectiveUnitStatus('occupied', 1, true)).toBe('overlocked');
+    expect(deriveEffectiveUnitStatus('occupied', 2, true)).toBe('overlocked');
+  });
+
+  it('ignores overlock flag when unit is vacant', () => {
+    expect(deriveEffectiveUnitStatus('available', 0, true)).toBe('available');
+    expect(deriveEffectiveUnitStatus('occupied', 0, true)).toBe('available');
+  });
 });
 
 describe('last unlock timestamp subquery', () => {

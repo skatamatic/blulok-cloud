@@ -468,6 +468,18 @@ export class LockCommandService {
     return true;
   }
 
+  /**
+   * Cancel in-memory pending lock commands for a facility (e.g. before hard delete).
+   * Prevents stale timeouts from firing after the facility row is removed.
+   */
+  public cancelPendingCommandsForFacility(facilityId: string): void {
+    for (const [deviceId, pending] of this.pendingCommands.entries()) {
+      if (pending.facilityId === facilityId) {
+        this.clearPending(deviceId);
+      }
+    }
+  }
+
   private storePendingAttribution(params: PendingLockCommand): void {
     this.pendingCommands.set(params.deviceId, params);
   }
@@ -592,6 +604,21 @@ export class LockCommandService {
     }
   }
 
+  private async facilityExists(facilityId: string): Promise<boolean> {
+    try {
+      const knex = (this.deviceModel as any).db.connection as import('knex').Knex;
+      const row = await knex('facilities').where('id', facilityId).select('id').first();
+      return Boolean(row);
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      logger.warn('LockCommandService: failed to verify facility existence', {
+        facilityId,
+        error: message,
+      });
+      return false;
+    }
+  }
+
   private async resolveFacilityLockTimeoutMs(facilityId: string): Promise<number> {
     try {
       const knex = (this.deviceModel as any).db.connection as import('knex').Knex;
@@ -620,8 +647,17 @@ export class LockCommandService {
     initiator?: LockCommandInitiator;
     deviceType: 'blulok' | 'access_control';
   }): void {
-    void this.logRemoteCommandFailure(params);
     void (async () => {
+      if (!(await this.facilityExists(params.facilityId))) {
+        logger.warn('LockCommandService: skipping lock command failure side effects for deleted facility', {
+          facilityId: params.facilityId,
+          deviceId: params.deviceId,
+        });
+        return;
+      }
+
+      await this.logRemoteCommandFailure(params);
+
       try {
         const { InAppNotificationDispatcher } = await import(
           '@/services/notifications/in-app-notification-dispatcher.service'
@@ -666,6 +702,14 @@ export class LockCommandService {
     const timeoutMessage = 'Gateway did not confirm lock command before timeout';
 
     if (!pending) {
+      return;
+    }
+
+    if (!(await this.facilityExists(pending.facilityId))) {
+      logger.warn('LockCommandService: lock command timeout for deleted facility, skipping failure side effects', {
+        deviceId,
+        facilityId: pending.facilityId,
+      });
       return;
     }
 

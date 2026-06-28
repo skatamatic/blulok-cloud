@@ -37,6 +37,10 @@ import {
   userIdParamSchema,
   usersResponseSchema,
 } from '@/schemas/users.schemas';
+import {
+  PASSWORD_COMPLEXITY_MESSAGE,
+  PASSWORD_MIN_LENGTH,
+} from '@/constants/password.constants';
 
 /**
  * User Management Routes
@@ -375,11 +379,11 @@ registerGet(
 
   // facilitiesWithUnits is already properly structured
 
-  // Get user devices (only for dev admins)
+  // Get user devices (admin/dev_admin — used by gateway simulator user import)
   let userDevices: any[] = [];
   let accessControlDevices: any[] = [];
-  const isDevAdmin = AuthService.isAdmin(req.user!.role) && req.user!.role === UserRole.DEV_ADMIN;
-  if (isDevAdmin) {
+  const canLoadUserDevices = AuthService.isAdmin(req.user!.role);
+  if (canLoadUserDevices) {
     const userDeviceModel = new UserDeviceModel();
     userDevices = await userDeviceModel.listByUser(id);
 
@@ -551,11 +555,10 @@ registerPost(
     const value = req.body;
     const passwordTrimmed = typeof value.password === 'string' ? value.password.trim() : '';
   if (passwordTrimmed) {
-    if (passwordTrimmed.length < 8 || !CREATE_PASSWORD_PATTERN.test(passwordTrimmed)) {
+    if (passwordTrimmed.length < PASSWORD_MIN_LENGTH || !CREATE_PASSWORD_PATTERN.test(passwordTrimmed)) {
       res.status(400).json({
         success: false,
-        message:
-          'Password must be at least 8 characters and contain uppercase, lowercase, number, and special character (@$!%*?&)',
+        message: PASSWORD_COMPLEXITY_MESSAGE,
       });
       return;
     }

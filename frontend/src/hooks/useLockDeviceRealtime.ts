@@ -39,7 +39,7 @@ export interface UseLockDeviceRealtimeParams {
 }
 
 export function useLockDeviceRealtime(params: UseLockDeviceRealtimeParams): void {
-  const { subscribe, unsubscribe } = useWebSocket();
+  const { subscribe, unsubscribe, isConnected } = useWebSocket();
   const paramsRef = useRef(params);
   paramsRef.current = params;
 
@@ -84,6 +84,7 @@ export function useLockDeviceRealtime(params: UseLockDeviceRealtimeParams): void
 
   useEffect(() => {
     if (params.enabled === false) return;
+    if (!isConnected) return;
 
     const p = paramsRef.current;
     const wantsRefresh = p.debouncedRefresh != null;
@@ -126,6 +127,7 @@ export function useLockDeviceRealtime(params: UseLockDeviceRealtimeParams): void
     params.facilityId,
     params.subscribeUnitsForRefresh,
     params.subscribeDeviceStatusForRefresh,
+    isConnected,
     subscribe,
     unsubscribe,
     onDeviceStatusMessage,

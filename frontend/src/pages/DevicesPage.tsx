@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useWebSocket } from '@/contexts/WebSocketContext';
 import { useLockDeviceRealtime } from '@/hooks/useLockDeviceRealtime';
-import { shouldRefreshDeviceListForPayload } from '@/utils/deviceStatusWs.utils';
+import { shouldRefreshDeviceListForPayload, type LockDeviceSnapshot } from '@/utils/deviceStatusWs.utils';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { generateHighlightId } from '@/utils/navigation.utils';
 import { useHighlightWithPagination } from '@/hooks/useHighlightWithPagination';
@@ -123,8 +123,52 @@ export default function DevicesPage({ initialCommandQueue }: DevicesPageProps = 
     void loadDevicesRef.current({ background: true });
   }, []);
 
+  const applyDeviceSnapshots = useCallback((rows: LockDeviceSnapshot[]) => {
+    if (!rows.length) return;
+    setDevices((prev) => {
+      let changed = false;
+      const next = prev.map((device) => {
+        const snap = rows.find((r) => r.device_id === device.id);
+        if (!snap) return device;
+
+        if (device.device_category === 'blulok') {
+          const d = device as BluLokDevice & { device_category: string };
+          const patch: Partial<BluLokDevice> = {};
+          if (snap.device_status) patch.device_status = snap.device_status as BluLokDevice['device_status'];
+          if (snap.lock_status) patch.lock_status = snap.lock_status as BluLokDevice['lock_status'];
+          if (snap.battery_level != null) patch.battery_level = snap.battery_level;
+          if (snap.last_activity) patch.last_activity = snap.last_activity;
+          if (snap.last_seen) patch.last_seen = snap.last_seen;
+          if (Object.keys(patch).length === 0) return device;
+          changed = true;
+          return { ...d, ...patch };
+        }
+
+        if (device.device_category === 'access_control') {
+          const d = device as AccessControlDevice & { device_category: string };
+          const patch: Partial<AccessControlDevice> = {};
+          if (snap.device_status) patch.status = snap.device_status as AccessControlDevice['status'];
+          if (snap.lock_status) patch.is_locked = snap.lock_status === 'locked';
+          if (snap.last_activity) patch.last_activity = snap.last_activity;
+          if (snap.last_seen) patch.last_seen = snap.last_seen;
+          if (Object.keys(patch).length === 0) return device;
+          changed = true;
+          return { ...d, ...patch };
+        }
+
+        return device;
+      });
+      return changed ? next : prev;
+    });
+  }, []);
+
   useLockDeviceRealtime({
     enabled: activeTab !== 'commands',
+    facilityId:
+      selectedFacilityId && selectedFacilityId !== ALL_FACILITIES_ID
+        ? selectedFacilityId
+        : undefined,
+    onDeviceRows: applyDeviceSnapshots,
     debouncedRefresh: debouncedWsDevicesRefresh,
     debounceRefreshFilter: (p) => shouldRefreshDeviceListForPayload(p, deviceIdsRef.current),
     debounceMs: 500,

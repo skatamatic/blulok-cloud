@@ -26,6 +26,7 @@ export default {
   },
   testPathIgnorePatterns: [
     '/node_modules/',
+    '/src/__tests__/mocks/',
     '/src/__tests__/integration/setup-integration.ts',
     '/src/__tests__/integration/simple-backend-mock.ts',
     '/src/__tests__/integration/real-backend-integration.ts',

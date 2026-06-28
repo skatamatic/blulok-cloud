@@ -24,6 +24,7 @@ export const gatewayListQuerySchema = Joi.object({
 
 export const gatewayRecoveryInitiateSchema = Joi.object({
   firmwareId: Joi.string().uuid().optional(),
+  includeFirmware: Joi.boolean().optional(),
 });
 
 export const gatewayRecoveryBypassSchema = Joi.object({

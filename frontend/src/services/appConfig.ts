@@ -79,6 +79,11 @@ export const getApiBaseUrl = (): string => {
  * Returns empty string if none are set — configure `VITE_WS_URL` and/or `VITE_API_URL` (see `.env.example`).
  */
 export const getWsBaseUrl = (): string => {
+  // In Vite dev, use the page origin so `/ws` is proxied to the API server (same-origin WS).
+  if (isViteDev() && typeof window !== 'undefined') {
+    const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    return `${proto}//${window.location.host}`;
+  }
   const runtime = getRuntimeConfig();
   if (runtime.wsBaseUrl) return runtime.wsBaseUrl.replace(/\/+$/, '');
   const viteWs = getViteEnv('VITE_WS_URL') || '';

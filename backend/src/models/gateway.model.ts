@@ -341,9 +341,11 @@ export class GatewayModel {
       .where('gateway_id', id)
       .orderBy('relay_channel');
 
+    // Left join so gateway-synced devices not yet assigned to a unit (unit_id NULL)
+    // are still included — e.g. in the recovery inventory snapshot.
     const blulokDevices = await knex('blulok_devices')
       .select('blulok_devices.*', 'units.unit_number', 'units.unit_type')
-      .join('units', 'blulok_devices.unit_id', 'units.id')
+      .leftJoin('units', 'blulok_devices.unit_id', 'units.id')
       .where('blulok_devices.gateway_id', id)
       .orderBy('units.unit_number');
 

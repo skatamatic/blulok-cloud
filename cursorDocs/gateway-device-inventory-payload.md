@@ -339,10 +339,27 @@ Unknown `{kind}:{serial}` → `network_infra.not_found[]` entry like `bridge:BR-
       "removed": 0,
       "unchanged": 1,
       "errors": []
-    }
+    },
+    "operational_devices": [
+      {
+        "cloud_device_id": "uuid-blulok-1",
+        "kind": "lock",
+        "serial": "L-001",
+        "denylist": [{ "sub": "tenant-user-id", "exp": 1704067200 }]
+      },
+      {
+        "cloud_device_id": "uuid-ac-1",
+        "kind": "access_control",
+        "serial": "AC-001",
+        "relay_channel": 1,
+        "denylist": []
+      }
+    ]
   }
 }
 ```
+
+`operational_devices` carries the cloud’s active denylist per lock/access_control row so gateways (and the desktop simulator) can reconcile local denylist state after inventory sync or swap recovery. Recovery snapshots embed the same `denylist` array on each operational device row in the pushed JSON payload.
 
 ### Multi-door keypad (same `access_id`, different relays)
 

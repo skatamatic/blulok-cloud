@@ -186,7 +186,14 @@ async function assertRecoveryGatewayAccess(
     return null;
   }
   const recovery = await GatewayRecoveryService.getStatusForGateway(gatewayId);
-  const facilityId = recovery?.facility_id || gateway.facility_id;
+  let facilityId = recovery?.facility_id || gateway.facility_id || undefined;
+  if (!facilityId && req.user?.role === UserRole.FACILITY_ADMIN && req.user.facilityIds?.length) {
+    facilityId =
+      (await GatewayRecoveryService.resolveFacilityAccessForUnboundGateway(
+        gatewayId,
+        req.user.facilityIds,
+      )) ?? undefined;
+  }
   if (!facilityId) {
     res.status(409).json({ success: false, message: 'Gateway is not associated with a facility recovery' });
     return null;
@@ -236,9 +243,8 @@ registerGet(
   const facilityId = String(req.params.facilityId);
   if (!(await assertFacilityAccess(req, res, facilityId))) return;
 
-  const candidates = GatewayRecoveryService.getSwapCandidates(facilityId);
-  const recovery = await GatewayRecoveryService.getStatusForFacility(facilityId);
-  res.json({ success: true, data: { candidates, recovery } });
+  const candidates = await GatewayRecoveryService.getRecoveryCandidatesPayload(facilityId);
+  res.json({ success: true, data: candidates });
 }));
 
 // GET /api/gateways/:gatewayId/recovery/inventory-preview
@@ -687,12 +693,29 @@ registerGet(
 
   // Check facility access for FACILITY_ADMIN users
   if (user.role === UserRole.FACILITY_ADMIN && user.facilityIds) {
-    if (!gateway.facility_id || !user.facilityIds.includes(gateway.facility_id)) {
-      res.status(403).json({ 
-        success: false, 
-        message: 'Access denied. You can only access gateways in your assigned facilities.' 
+    const boundToAssignedFacility =
+      gateway.facility_id != null && user.facilityIds.includes(gateway.facility_id);
+
+    if (boundToAssignedFacility) {
+      // allowed
+    } else if (gateway.facility_id) {
+      res.status(403).json({
+        success: false,
+        message: 'Access denied. You can only access gateways in your assigned facilities.',
       });
       return;
+    } else {
+      const scopedViaRecovery = await GatewayRecoveryService.resolveFacilityAccessForUnboundGateway(
+        gateway.id,
+        user.facilityIds,
+      );
+      if (!scopedViaRecovery) {
+        res.status(403).json({
+          success: false,
+          message: 'Access denied. You can only access gateways in your assigned facilities.',
+        });
+        return;
+      }
     }
   }
 

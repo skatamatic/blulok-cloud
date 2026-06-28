@@ -10,6 +10,8 @@ import { DatabaseService } from '@/services/database.service';
 type QueryLike = {
   select: jest.Mock;
   whereIn: jest.Mock;
+  orWhereIn: jest.Mock;
+  whereRaw: jest.Mock;
   distinct: jest.Mock;
   join: jest.Mock;
   where: jest.Mock;
@@ -23,10 +25,18 @@ const makeThenableQuery = (rows: any[]): QueryLike => {
   const query: QueryLike = {
     select: jest.fn().mockReturnThis(),
     whereIn: jest.fn().mockReturnThis(),
+    orWhereIn: jest.fn().mockReturnThis(),
+    whereRaw: jest.fn().mockReturnThis(),
     distinct: jest.fn().mockReturnThis(),
     join: jest.fn().mockReturnThis(),
     where: jest.fn().mockReturnThis(),
-    andWhere: jest.fn().mockReturnThis(),
+    andWhere: jest.fn().mockImplementation(function (this: QueryLike, arg: unknown) {
+      if (typeof arg === 'function') {
+        const nested = makeThenableQuery([]);
+        arg.call(nested);
+      }
+      return this;
+    }),
     then: (resolve, reject) => Promise.resolve(rows).then(resolve, reject),
     catch: (reject) => Promise.resolve(rows).catch(reject),
     finally: (finalizer) => Promise.resolve(rows).finally(finalizer),
@@ -85,22 +95,20 @@ describe('AccessControlZoneAccessService', () => {
 
     expect(zoneQuery.where).toHaveBeenCalledWith('dg.is_active', true);
     expect(zoneQuery.andWhere).toHaveBeenCalledWith('dg.is_default', false);
-    expect(zoneQuery.whereIn).toHaveBeenCalledWith('zone_lock.device_id', ['lock-1']);
     expect(result).toEqual(['ac-1', '44']);
   });
 
-  it('chains unit -> blulok -> access-control resolution', async () => {
-    const lockSpy = jest
-      .spyOn(AccessControlZoneAccessService, 'getBluLokDeviceIdsForUnits')
-      .mockResolvedValue(['lock-a', 'lock-b']);
-    const acSpy = jest
-      .spyOn(AccessControlZoneAccessService, 'getAccessControlDeviceIdsForBluLokDevices')
-      .mockResolvedValue(['ac-a']);
+  it('resolves zone-linked access-control IDs from unit IDs', async () => {
+    const zoneQuery = makeThenableQuery([{ device_id: 'ac-a' }]);
+    const db = jest.fn((table: string) => {
+      if (table === 'device_group_members as zone_access') return zoneQuery;
+      throw new Error(`Unexpected table: ${table}`);
+    });
+    (DatabaseService.getInstance as jest.Mock).mockReturnValue({ connection: db });
 
     const result = await AccessControlZoneAccessService.getAccessControlDeviceIdsForUnits(['unit-a']);
 
-    expect(lockSpy).toHaveBeenCalledWith(['unit-a']);
-    expect(acSpy).toHaveBeenCalledWith(['lock-a', 'lock-b']);
+    expect(zoneQuery.where).toHaveBeenCalledWith('dg.is_active', true);
     expect(result).toEqual(['ac-a']);
   });
 

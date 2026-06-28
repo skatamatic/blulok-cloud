@@ -29,7 +29,7 @@ jest.mock('@/models/firmware-push.model', () => ({
 
 jest.mock('@/models/gateway.model', () => ({
   GatewayModel: jest.fn().mockImplementation(() => ({
-    findById: jest.fn(),
+    findById: jest.fn().mockResolvedValue({ id: 'gw-new', firmware_version: '1.0.0' }),
     findByFacilityId: jest.fn(),
   })),
 }));
@@ -37,6 +37,7 @@ jest.mock('@/models/gateway.model', () => ({
 jest.mock('@/models/firmware.model', () => ({
   FirmwareModel: jest.fn().mockImplementation(() => ({
     findAll: jest.fn().mockResolvedValue([]),
+    findById: jest.fn().mockResolvedValue({ id: 'fw-1', version: '2.0.0' }),
   })),
 }));
 

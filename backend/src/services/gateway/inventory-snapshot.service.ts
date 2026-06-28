@@ -5,7 +5,8 @@ import { GatewayInventorySnapshotModel } from '@/models/gateway-recovery.model';
 import { getProvisioningStorageProvider } from '@/services/provisioning/provisioning-storage.factory';
 import { logger } from '@/utils/logger';
 
-import { NetworkInfraSyncKind } from '@/config/gateway-device-kinds';
+import { NetworkInfraSyncKind, getGatewayDeviceKindDefinition } from '@/config/gateway-device-kinds';
+import { DenylistSyncEntry, DenylistSyncService } from '@/services/denylist-sync.service';
 
 export interface InventorySnapshotDevice {
   kind: 'lock' | 'access_control' | NetworkInfraSyncKind;
@@ -20,6 +21,8 @@ export interface InventorySnapshotDevice {
   firmware_version?: string | null;
   info?: Record<string, unknown>;
   properties?: Record<string, unknown>;
+  /** Active cloud denylist entries for operational devices (lock / access_control). */
+  denylist?: DenylistSyncEntry[];
 }
 
 export interface InventorySnapshotPayload {
@@ -73,6 +76,11 @@ export class InventorySnapshotService {
     }
 
     for (const row of inventoryDevices) {
+      const kind = String(row.device_kind);
+      const kindDef = getGatewayDeviceKindDefinition(kind);
+      if (!kindDef?.includedInRecoverySnapshot) {
+        continue;
+      }
       const info =
         row.info && typeof row.info === 'object' && !Array.isArray(row.info)
           ? (row.info as Record<string, unknown>)
@@ -105,8 +113,41 @@ export class InventorySnapshotService {
     };
   }
 
+  static async attachActiveDenylists(
+    payload: InventorySnapshotPayload,
+  ): Promise<InventorySnapshotPayload> {
+    const operationalIds = payload.devices
+      .filter((device) => device.kind === 'lock' || device.kind === 'access_control')
+      .map((device) => device.device_id);
+    const denylistByDevice = await DenylistSyncService.getDenylistsForDeviceIds(operationalIds);
+
+    const devices = payload.devices.map((device) => {
+      if (device.kind !== 'lock' && device.kind !== 'access_control') {
+        return device;
+      }
+      const denylist = denylistByDevice.get(device.device_id) ?? [];
+      return { ...device, denylist };
+    });
+
+    return { ...payload, devices };
+  }
+
   static serializeDeterministic(payload: InventorySnapshotPayload): string {
-    return JSON.stringify(payload, Object.keys(payload).sort());
+    const sortDeep = (value: unknown): unknown => {
+      if (Array.isArray(value)) {
+        return value.map(sortDeep);
+      }
+      if (value !== null && typeof value === 'object') {
+        const record = value as Record<string, unknown>;
+        const sorted: Record<string, unknown> = {};
+        for (const key of Object.keys(record).sort()) {
+          sorted[key] = sortDeep(record[key]);
+        }
+        return sorted;
+      }
+      return value;
+    };
+    return JSON.stringify(sortDeep(payload));
   }
 
   static async buildAndStoreForFacility(
@@ -120,18 +161,19 @@ export class InventorySnapshotService {
       throw new Error('Gateway not found for inventory snapshot');
     }
 
-    const payload = this.buildSnapshotPayload(
+    const basePayload = this.buildSnapshotPayload(
       facilityId,
       targetGatewayId,
       withDevices.blulokDevices,
       withDevices.accessControlDevices,
       withDevices.inventoryDevices,
     );
+    const payload = await this.attachActiveDenylists(basePayload);
     const json = this.serializeDeterministic(payload);
     const binary = Buffer.from(json, 'utf8');
     const sha256 = crypto.createHash('sha256').update(binary).digest('hex');
     const snapshotId = uuidv4();
-    const storagePath = `inventory-snapshots/${targetGatewayId}/${snapshotId}.json`;
+    const storagePath = `provisioning/inventory-snapshots/${targetGatewayId}/${snapshotId}.json`;
 
     const storage = await getProvisioningStorageProvider();
     await storage.initialize();
@@ -178,13 +220,14 @@ export class InventorySnapshotService {
     if (!bound) return [];
     const withDevices = await this.gatewayModel.getGatewayWithDevices(bound.id);
     if (!withDevices) return [];
-    const payload = this.buildSnapshotPayload(
+    const basePayload = this.buildSnapshotPayload(
       facilityId,
       bound.id,
       withDevices.blulokDevices,
       withDevices.accessControlDevices,
       withDevices.inventoryDevices,
     );
+    const payload = await this.attachActiveDenylists(basePayload);
     return payload.devices;
   }
 }

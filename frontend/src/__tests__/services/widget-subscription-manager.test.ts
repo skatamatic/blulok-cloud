@@ -5,6 +5,7 @@ import { websocketService } from '@/services/websocket.service';
 jest.mock('@/services/websocket.service', () => ({
   websocketService: {
     subscribe: jest.fn(),
+    reassertSubscription: jest.fn(),
     unsubscribe: jest.fn(),
     onMessage: jest.fn(),
   }

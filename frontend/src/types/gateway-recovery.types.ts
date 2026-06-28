@@ -50,6 +50,33 @@ export interface SwapCandidate {
   lastActivityAt?: number;
 }
 
+export type FacilityGatewaySessionRole = 'active' | 'swap_candidate';
+
+export interface FacilityGatewaySession {
+  gatewayId: string;
+  sessionRole: FacilityGatewaySessionRole;
+  connected: boolean;
+  lastActivityAt?: number;
+}
+
+/** Demoted previous production gateway after a completed swap (may still be connected as swap candidate). */
+export interface DemotedPreviousGateway {
+  gatewayId: string;
+  connected: boolean;
+}
+
+export interface PostSwapActions {
+  /** Previous production gateway can be restored via a new recovery. */
+  canSwapBack: boolean;
+  swapBackGatewayId?: string;
+  /** Whether the swap-back target is connected as a swap candidate right now. */
+  swapBackOnline?: boolean;
+  canSwapAgain: boolean;
+  swapAgainGatewayId?: string;
+  /** Whether the next swap candidate is connected right now. */
+  swapAgainOnline?: boolean;
+}
+
 export interface GatewayRecoveryEvent {
   id: string;
   phase: string;

@@ -24,6 +24,7 @@ import { unitsRouter } from '@/routes/units.routes';
 import accessHistoryRouter from '@/routes/access-history.routes';
 import keySharingRouter from '@/routes/key-sharing.routes';
 import { fmsRouter } from '@/routes/fms.routes';
+import { fmsWebhookRouter } from '@/routes/fms-webhook.routes';
 import { devRouter } from '@/routes/dev.routes';
 import { systemSettingsRouter } from '@/routes/system-settings.routes';
 import { userDevicesRouter } from '@/routes/user-devices.routes';
@@ -93,6 +94,12 @@ export function createApp(): Application {
 
   // Compression and parsing middleware
   app.use(compression());
+  // FMS webhooks require raw body for HMAC signature verification (before JSON parser)
+  app.use(
+    '/api/v1/fms/webhook',
+    express.raw({ type: 'application/json', limit: '1mb' }),
+    fmsWebhookRouter
+  );
   app.use(express.json({ limit: '10mb' }));
   app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 

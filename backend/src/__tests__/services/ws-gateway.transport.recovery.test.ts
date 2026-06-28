@@ -139,6 +139,11 @@ describe('WebsocketGatewayTransport recovery routing', () => {
     const primaryWs = await authGatewayWs(port, 'facility-1');
     const swapWs = await authGatewayWs(port, 'facility-1', 'gw-new');
 
+    const swapMessages: unknown[] = [];
+    swapWs.on('message', (data) => {
+      try { swapMessages.push(JSON.parse(data.toString())); } catch { /* ignore */ }
+    });
+
     transport.finalizeRecoverySession('facility-1', 'gw-new', 'gw-old');
 
     await new Promise((resolve) => setTimeout(resolve, 100));
@@ -146,6 +151,12 @@ describe('WebsocketGatewayTransport recovery routing', () => {
     expect(swapWs.readyState).toBe(WebSocket.OPEN);
     expect(primaryWs.readyState).not.toBe(WebSocket.OPEN);
     expect(transport.getSwapCandidatesForFacility('facility-1')).toEqual([]);
+
+    const roleUpdate = swapMessages.find(
+      (msg) => (msg as { type?: string; sessionRole?: string }).type === 'AUTH_OK'
+        && (msg as { sessionRole?: string }).sessionRole === 'active',
+    );
+    expect(roleUpdate).toBeTruthy();
 
     const routed: unknown[] = [];
     swapWs.on('message', (data) => {

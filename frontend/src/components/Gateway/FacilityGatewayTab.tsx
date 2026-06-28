@@ -98,9 +98,18 @@ function FacilityGatewayTab({ facilityId, facilityName, canManageGateway, liveSt
     hasSwapAlert,
     isBlocking: recoveryBlocking,
     hasActiveRecovery,
-    recovery: facilityRecovery,
     refetch: refetchRecoverySummary,
   } = useFacilityGatewayRecovery(facilityId, canManageGateway && activeTab !== 'swap-recovery');
+
+  const handleRecoveryChange = useCallback(async (snapshot?: { status?: import('@/types/gateway-recovery.types').GatewayRecoveryStatus; terminal?: boolean }) => {
+    await refetchRecoverySummary({ silent: true });
+    if (
+      snapshot?.terminal
+      && (snapshot.status === 'complete' || snapshot.status === 'bypassed')
+    ) {
+      await reload();
+    }
+  }, [refetchRecoverySummary, reload]);
 
   // Gateway debug stream (DEV tools)
   const [gatewayDebugEvents, setGatewayDebugEvents] = useState<any[]>([]);
@@ -1342,17 +1351,9 @@ function FacilityGatewayTab({ facilityId, facilityName, canManageGateway, liveSt
         {activeTab === 'swap-recovery' && canManageGateway && (
           <GatewaySwapRecoveryTab
             facilityId={facilityId}
-            boundGatewayId={gateway?.id ?? facilityRecovery?.previous_gateway_id ?? undefined}
+            boundGatewayId={gateway?.id ?? undefined}
             wsConnected={wsConnected}
-            onRecoveryChange={async (snapshot) => {
-              await refetchRecoverySummary();
-              if (
-                snapshot?.terminal
-                && (snapshot.status === 'complete' || snapshot.status === 'bypassed')
-              ) {
-                await reload();
-              }
-            }}
+            onRecoveryChange={handleRecoveryChange}
           />
         )}
         {activeTab === 'devtools' && renderDevtoolsTab()}

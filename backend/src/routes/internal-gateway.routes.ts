@@ -46,6 +46,10 @@ import {
   gatewayStateUpdateBodySchema,
   gatewayAccessCodesQuerySchema,
 } from '@/schemas/internal-gateway.schemas';
+import {
+  readGatewayProxySessionHeaders,
+  rejectOperationalSyncIfNotBound,
+} from '@/utils/gateway-operational-sync.utils';
 
 const router = Router();
 const MOUNT = '/api/v1/internal/gateway';
@@ -68,6 +72,25 @@ const assertFacilityAccess = async (req: AuthenticatedRequest, res: Response, fa
   }
   return true;
 };
+
+function inventoryHadChanges(result: InventorySyncResult | null | undefined): boolean {
+  if (!result) return false;
+  return (
+    (result.added ?? 0) > 0
+    || (result.removed ?? 0) > 0
+    || (result.updated ?? 0) > 0
+    || (result.skipped_manual ?? 0) > 0
+  );
+}
+
+async function broadcastDeviceListRefresh(reason: string): Promise<void> {
+  try {
+    const { WebSocketService } = await import('@/services/websocket.service');
+    await WebSocketService.getInstance().broadcastUnitsUpdate();
+  } catch (err) {
+    logger.warn(`Failed to broadcast units update after ${reason}`, { err });
+  }
+}
 
 const resolveScopedFacilityId = async (
   req: AuthenticatedRequest,
@@ -171,8 +194,34 @@ registerPost(
   const facilityId = await resolveScopedFacilityId(req, res, value.facility_id);
   if (!facilityId) return;
 
+  const gatewayModel = new GatewayModel();
+  const gateway = await gatewayModel.findByFacilityId(facilityId);
+  if (!gateway) {
+    res.status(404).json({ success: false, message: 'Gateway not found for facility' });
+    return;
+  }
+
+  const boundReject = rejectOperationalSyncIfNotBound(req, gateway.id);
+  if (boundReject) {
+    res.status(boundReject.status).json({
+      success: false,
+      code: boundReject.code,
+      message: boundReject.message,
+    });
+    return;
+  }
+
   const { GatewayRecoveryService } = await import('@/services/gateway/gateway-recovery.service');
-  if (await GatewayRecoveryService.isBlockingActiveForFacility(facilityId)) {
+  const { sessionRole, gatewayId: requestingGatewayId } = readGatewayProxySessionHeaders(req);
+  const recoveryBlocking = await GatewayRecoveryService.isBlockingActiveForFacility(facilityId);
+  const preSnapshotSeed = recoveryBlocking
+    && GatewayRecoveryService.isProductionInventorySeedAllowed(
+      facilityId,
+      sessionRole,
+      requestingGatewayId,
+      gateway.id,
+    );
+  if (recoveryBlocking && !preSnapshotSeed) {
     res.status(409).json({
       success: false,
       code: 'recovery_in_progress',
@@ -181,13 +230,7 @@ registerPost(
     return;
   }
 
-  const gatewayModel = new GatewayModel();
-  const gateway = await gatewayModel.findByFacilityId(facilityId);
-  if (!gateway) {
-    res.status(404).json({ success: false, message: 'Gateway not found for facility' });
-    return;
-  }
-
+  try {
   // Perform inventory sync (locks + optional access control + network infra)
   let lockDevices: DeviceInventoryItem[];
   let accessDevices: AccessDeviceInventoryItem[];
@@ -245,6 +288,9 @@ registerPost(
     responseData.network_infra = networkInfraResult;
   }
 
+  const { DenylistSyncService } = await import('@/services/denylist-sync.service');
+  responseData.operational_devices = await DenylistSyncService.buildOperationalSyncForGateway(gateway.id);
+
   try {
     await GatewayDeviceSyncLogService.getInstance().recordInventorySync({
       gatewayId: gateway.id,
@@ -282,11 +328,24 @@ registerPost(
     },
   });
 
+  if (
+    inventoryHadChanges(lockResult)
+    || inventoryHadChanges(accessResult)
+    || inventoryHadChanges(networkInfraResult)
+  ) {
+    await broadcastDeviceListRefresh('gateway inventory sync');
+  }
+
   res.json({
     success: true,
     message: 'Inventory sync completed',
     data: responseData,
   });
+  } finally {
+    if (preSnapshotSeed) {
+      GatewayRecoveryService.completeProductionInventorySeed(facilityId);
+    }
+  }
   }),
 );
 
@@ -308,10 +367,30 @@ registerPost(
   const facilityId = await resolveScopedFacilityId(req, res, value.facility_id);
   if (!facilityId) return;
 
+  const { GatewayRecoveryService } = await import('@/services/gateway/gateway-recovery.service');
+  if (await GatewayRecoveryService.isBlockingActiveForFacility(facilityId)) {
+    res.status(409).json({
+      success: false,
+      code: 'recovery_in_progress',
+      message: 'Gateway recovery in progress — state sync blocked until recovery completes or is bypassed',
+    });
+    return;
+  }
+
   const gatewayModel = new GatewayModel();
   const gateway = await gatewayModel.findByFacilityId(facilityId);
   if (!gateway) {
     res.status(404).json({ success: false, message: 'Gateway not found for facility' });
+    return;
+  }
+
+  const boundReject = rejectOperationalSyncIfNotBound(req, gateway.id);
+  if (boundReject) {
+    res.status(boundReject.status).json({
+      success: false,
+      code: boundReject.code,
+      message: boundReject.message,
+    });
     return;
   }
 
@@ -361,6 +440,14 @@ registerPost(
 
   if (networkInfraResult) {
     responseData.network_infra = networkInfraResult;
+  }
+
+  const stateUpdatesApplied =
+    (lockResult?.updated ?? 0) > 0
+    || (accessResult?.updated ?? 0) > 0
+    || (networkInfraResult?.updated ?? 0) > 0;
+  if (stateUpdatesApplied) {
+    await broadcastDeviceListRefresh('gateway devices/state');
   }
 
   res.json({

@@ -3,6 +3,7 @@
  */
 
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import '@/__tests__/mocks/websocket-provider-deps';
 import { FacilityFMSTab } from '@/components/FMS/FacilityFMSTab';
 import { fmsService } from '@/services/fms.service';
 import { FMSProviderType, FMSSyncStatus } from '@/types/fms.types';

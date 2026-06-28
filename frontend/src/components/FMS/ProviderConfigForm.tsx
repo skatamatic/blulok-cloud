@@ -9,6 +9,7 @@ import { fmsService } from '@/services/fms.service';
 import { getProviderMetadata } from '@/config/fms-providers';
 import { FMSConfiguration, FMSProviderType } from '@/types/fms.types';
 import { useToast } from '@/contexts/ToastContext';
+import { getApiBaseUrl } from '@/services/appConfig';
 
 interface ProviderConfigFormProps {
   facilityId: string;
@@ -27,6 +28,8 @@ export function ProviderConfigForm({
   const [formData, setFormData] = useState<Record<string, any>>({});
   const [saving, setSaving] = useState(false);
   const [autoAccept, setAutoAccept] = useState(false);
+  const [webhookSecret, setWebhookSecret] = useState('');
+  const [hasStoredWebhookSecret, setHasStoredWebhookSecret] = useState(false);
 
   const providerMeta = getProviderMetadata(providerType);
 
@@ -57,6 +60,8 @@ export function ProviderConfigForm({
       if (config.syncSettings?.autoAcceptChanges !== undefined) {
         setAutoAccept(config.syncSettings.autoAcceptChanges);
       }
+      setHasStoredWebhookSecret(Boolean(config.syncSettings?.webhookSecret));
+      setWebhookSecret('');
 
       setFormData(newFormData);
     }
@@ -85,6 +90,11 @@ export function ProviderConfigForm({
         }
       });
 
+      const resolvedWebhookSecret =
+        webhookSecret.trim() ||
+        existingConfig?.config?.syncSettings?.webhookSecret ||
+        undefined;
+
       const config = {
         providerType,
         baseUrl: formData.baseUrl,
@@ -101,6 +111,7 @@ export function ProviderConfigForm({
         },
         syncSettings: {
           autoAcceptChanges: autoAccept,
+          ...(resolvedWebhookSecret ? { webhookSecret: resolvedWebhookSecret } : {}),
         },
         customSettings:
           providerType === FMSProviderType.SIMULATED
@@ -124,6 +135,8 @@ export function ProviderConfigForm({
           });
 
       onSaved(savedConfig);
+      setHasStoredWebhookSecret(Boolean(savedConfig.config?.syncSettings?.webhookSecret));
+      setWebhookSecret('');
       addToast({
         type: 'success',
         title: 'Configuration Saved',
@@ -165,6 +178,41 @@ export function ProviderConfigForm({
           </div>
         ))}
       </div>
+
+      {providerType === FMSProviderType.STOREDGE && (
+        <div className="space-y-3 pt-4 border-t border-gray-200 dark:border-gray-700">
+          <div>
+            <label htmlFor="webhookSecret" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+              Webhook signing secret
+            </label>
+            <input
+              id="webhookSecret"
+              type="password"
+              value={webhookSecret}
+              onChange={(e) => setWebhookSecret(e.target.value)}
+              placeholder={
+                hasStoredWebhookSecret && !webhookSecret
+                  ? 'Saved — leave blank to keep current secret'
+                  : 'Secret from Storable webhook registration'
+              }
+              autoComplete="new-password"
+              className="w-full px-3 py-2.5 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
+            />
+            <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+              HMAC-SHA256 secret used to verify inbound Storable CloudEvents. Leave blank when updating
+              other settings to keep the existing secret.
+            </p>
+          </div>
+          <div className="rounded-lg bg-gray-50 dark:bg-gray-900/40 border border-gray-200 dark:border-gray-700 px-3 py-2 text-xs text-gray-600 dark:text-gray-400 break-all">
+            <span className="font-medium text-gray-700 dark:text-gray-300">Webhook URL: </span>
+            {`${getApiBaseUrl() || window.location.origin}/api/v1/fms/webhook/${facilityId}`}
+          </div>
+          <p className="text-xs text-gray-500 dark:text-gray-400">
+            Subscribe in Storable to: tenant.created, tenant.updated, ledger.moved-in, ledger.moved-out,
+            unit.created, unit.deleted, unit.overlock-applied, unit.overlock-removed.
+          </p>
+        </div>
+      )}
 
       <div className="flex items-start gap-3 pt-4 border-t border-gray-200 dark:border-gray-700">
         <input

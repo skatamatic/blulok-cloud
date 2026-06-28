@@ -1,13 +1,16 @@
 import Joi from 'joi';
-
-const passwordPattern = new RegExp('^(?=.*[a-z])(?=.*[A-Z])(?=.*\\d)(?=.*[^A-Za-z0-9]).+$');
+import {
+  PASSWORD_COMPLEXITY_MESSAGE,
+  PASSWORD_COMPLEXITY_PATTERN,
+  PASSWORD_MIN_LENGTH,
+} from '@/constants/password.constants';
 
 const passwordField = Joi.string()
-  .min(8)
-  .pattern(passwordPattern)
+  .min(PASSWORD_MIN_LENGTH)
+  .pattern(PASSWORD_COMPLEXITY_PATTERN)
   .required()
   .messages({
-    'string.pattern.base': 'Password must include uppercase, lowercase, number, and special character',
+    'string.pattern.base': PASSWORD_COMPLEXITY_MESSAGE,
   });
 
 export const loginSchema = Joi.object({

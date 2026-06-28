@@ -75,4 +75,47 @@ describe('Dev routes (/api/v1/dev)', () => {
       expectForbidden(response);
     });
   });
+
+  describe('POST /api/v1/dev/simulator/user-session', () => {
+    it('returns 401 without token', async () => {
+      const response = await request(app)
+        .post('/api/v1/dev/simulator/user-session')
+        .send({ userId: testData.users.tenant.id })
+        .expect(401);
+
+      expectUnauthorized(response);
+    });
+
+    it('returns 403 for tenant', async () => {
+      const response = await request(app)
+        .post('/api/v1/dev/simulator/user-session')
+        .set('Authorization', `Bearer ${testData.users.tenant.token}`)
+        .send({ userId: testData.users.tenant.id })
+        .expect(403);
+
+      expectForbidden(response);
+    });
+
+    it('mints a JWT for an existing user when called by admin', async () => {
+      const response = await request(app)
+        .post('/api/v1/dev/simulator/user-session')
+        .set('Authorization', `Bearer ${testData.users.admin.token}`)
+        .send({ userId: testData.users.tenant.id })
+        .expect(200);
+
+      expectSuccess(response);
+      expect(response.body.token).toBeTruthy();
+      expect(response.body.user?.id).toBe(testData.users.tenant.id);
+    });
+
+    it('returns 404 when target user does not exist', async () => {
+      const response = await request(app)
+        .post('/api/v1/dev/simulator/user-session')
+        .set('Authorization', `Bearer ${testData.users.devAdmin.token}`)
+        .send({ userId: '550e8400-e29b-41d4-a716-446655440099' })
+        .expect(404);
+
+      expect(response.body.message).toMatch(/not found/i);
+    });
+  });
 });

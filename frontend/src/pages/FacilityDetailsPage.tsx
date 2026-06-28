@@ -1772,6 +1772,7 @@ const normalizeFacilityTab = (value: string | null): FacilityTab | null => {
       {activeTab === 'device-groups' && facility && (
         <DeviceGroupManager
           facilityId={facility.id}
+          units={facilityUnitsPageData}
           devices={[
             ...((deviceHierarchy?.accessControlDevices || []).map((d) => ({ ...d, device_category: 'access_control' as const }))),
             ...((deviceHierarchy?.blulokDevices || []).map((d) => ({

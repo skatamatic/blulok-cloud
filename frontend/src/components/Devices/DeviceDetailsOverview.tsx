@@ -35,6 +35,7 @@ import type { UnitAccessGroupRef } from '@/utils/device-group-membership.utils';
 import {
   deviceStatusColors,
   lockStatusColors,
+  unitStatusColors,
   statusBadgeSmClass,
 } from '@/utils/statusBadge.utils';
 import { isGatewaySyncProvisioned } from '@/utils/accessDeviceDisplay.utils';
@@ -161,6 +162,10 @@ interface DeviceDetailsOverviewProps {
   loadingDenylist: boolean;
   canManage: boolean;
   isDevAdmin: boolean;
+  unitStatus?: string | null;
+  isOverlocked?: boolean;
+  overlockSaving?: boolean;
+  onToggleOverlock?: (next: boolean) => void;
   onUnassignFromUnit: () => void;
   onRemoveFromInventory: () => void;
   onSendDenylistAdd: () => Promise<void>;
@@ -178,6 +183,10 @@ export function DeviceDetailsOverview({
   loadingDenylist,
   canManage,
   isDevAdmin,
+  unitStatus,
+  isOverlocked = false,
+  overlockSaving = false,
+  onToggleOverlock,
   onUnassignFromUnit,
   onRemoveFromInventory,
   onSendDenylistAdd,
@@ -203,7 +212,19 @@ export function DeviceDetailsOverview({
   const hasTemperature = tempNum != null && !Number.isNaN(tempNum);
 
   const statStrip = (
-    <div className="grid grid-cols-2 gap-2 sm:grid-cols-2">
+    <div className={`grid gap-2 ${device.unit_id && unitStatus ? 'grid-cols-2 sm:grid-cols-3' : 'grid-cols-2 sm:grid-cols-2'}`}>
+      {device.unit_id && unitStatus && (
+        <OverviewStat label="Unit status">
+          <span
+            className={statusBadgeSmClass(
+              unitStatusColors[unitStatus as keyof typeof unitStatusColors] ??
+                unitStatusColors.occupied
+            )}
+          >
+            {unitStatus.replace('_', ' ')}
+          </span>
+        </OverviewStat>
+      )}
       <OverviewStat label="Connectivity">
         <span
           className={statusBadgeSmClass(deviceStatusColors[deviceStatus])}
@@ -349,6 +370,21 @@ export function DeviceDetailsOverview({
                       className={detailsBtnDangerOutlineSm}
                     >
                       Unassign from unit
+                    </button>
+                  )}
+                  {canManage && onToggleOverlock && (unitStatus === 'occupied' || unitStatus === 'overlocked') && (
+                    <button
+                      type="button"
+                      disabled={overlockSaving}
+                      onClick={() => onToggleOverlock(!isOverlocked)}
+                      className={`inline-flex items-center gap-2 rounded-lg border px-3 py-1.5 text-sm font-medium transition-colors disabled:opacity-50 ${
+                        isOverlocked
+                          ? 'border-amber-300 bg-amber-50 text-amber-800 hover:bg-amber-100 dark:border-amber-700 dark:bg-amber-950/40 dark:text-amber-200 dark:hover:bg-amber-950/60'
+                          : 'border-gray-300 bg-white text-gray-700 hover:bg-gray-50 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-200 dark:hover:bg-gray-750'
+                      }`}
+                    >
+                      <ShieldExclamationIcon className={`h-4 w-4 ${isOverlocked ? 'text-amber-600 dark:text-amber-400' : 'text-gray-500'}`} />
+                      {overlockSaving ? 'Saving…' : isOverlocked ? 'Overlocked' : 'Mark overlocked'}
                     </button>
                   )}
                 </div>

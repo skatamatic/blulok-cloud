@@ -13,6 +13,7 @@ import {
   BuildingOfficeIcon,
   PencilIcon,
   TrashIcon,
+  ShieldExclamationIcon,
 } from '@heroicons/react/24/outline';
 import { useDetailsBackNavigation, replaceSearchParams, withReturnPath } from '@/hooks/useBackNavigation';
 import {
@@ -45,7 +46,8 @@ interface UnitDetails {
   id: string;
   unit_number: string;
   unit_type: string;
-  status: 'available' | 'occupied' | 'maintenance' | 'reserved';
+  status: 'available' | 'occupied' | 'overlocked' | 'maintenance' | 'reserved';
+  is_overlocked?: boolean;
   facility_id: string;
   facility_name: string;
   facility_address: string;
@@ -93,6 +95,7 @@ const statusColors = unitStatusColors;
 const statusIcons = {
   available: CheckCircleIcon,
   occupied: HomeIcon,
+  overlocked: ShieldExclamationIcon,
   maintenance: WrenchScrewdriverIcon,
   reserved: ClockIcon
 };
@@ -137,6 +140,7 @@ export default function UnitDetailsPage() {
   const [showDeviceAssignmentModal, setShowDeviceAssignmentModal] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [deletingUnit, setDeletingUnit] = useState(false);
+  const [overlockSaving, setOverlockSaving] = useState(false);
   const [accessGroups, setAccessGroups] = useState<UnitAccessGroupRef[]>([]);
   const [activeTab, setActiveTab] = useState<UnitDetailsTab>(() => getUnitTabFromSearch(location.search));
   const unitLockStatusRef = useRef<string | undefined>(undefined);
@@ -341,6 +345,36 @@ export default function UnitDetailsPage() {
     return `Permanently delete Unit ${unit.unit_number}?${impact} This cannot be undone.`;
   };
 
+  const handleToggleOverlock = async (next: boolean) => {
+    if (!unitId) return;
+    setOverlockSaving(true);
+    try {
+      const response = await apiService.setUnitOverlock(unitId, next);
+      const updated = response?.unit ?? response;
+      setUnit((prev) =>
+        prev
+          ? {
+              ...prev,
+              status: updated?.status ?? (next ? 'overlocked' : 'occupied'),
+              is_overlocked: Boolean(updated?.is_overlocked ?? next),
+            }
+          : prev,
+      );
+      addToast({
+        type: 'success',
+        title: next ? 'Unit marked as overlocked' : 'Overlock cleared',
+      });
+    } catch (err: unknown) {
+      const apiErr = err as { response?: { data?: { message?: string } } };
+      addToast({
+        type: 'error',
+        title: apiErr?.response?.data?.message || 'Failed to update overlock status',
+      });
+    } finally {
+      setOverlockSaving(false);
+    }
+  };
+
   const handleRemoteUnlock = async () => {
     if (!unit?.blulok_device || !unitId || !canRequestRemoteUnlock(unit.blulok_device.lock_status)) return;
 
@@ -510,6 +544,9 @@ export default function UnitDetailsPage() {
         deviceStatusColors={deviceStatusColors}
         deviceStatusIcons={deviceStatusIcons}
         canManageUnits={canManageUnits}
+        canManageOverlock={canManageUnits}
+        overlockSaving={overlockSaving}
+        onToggleOverlock={(next) => void handleToggleOverlock(next)}
         canChangePrimaryTenant={canChangePrimaryTenant}
         canManageSharedAccess={canManageSharedAccess}
         assigningTenant={assigningTenant}

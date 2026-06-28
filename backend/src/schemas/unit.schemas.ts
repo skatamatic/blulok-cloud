@@ -32,6 +32,10 @@ export const createUnitSchema = Joi.object({
   metadata: Joi.object().optional().default({})
 });
 
+export const updateUnitOverlockSchema = Joi.object({
+  is_overlocked: Joi.boolean().required(),
+});
+
 export const updateUnitSchema = Joi.object({
   unit_number: Joi.string().min(1).max(50).optional().messages({
     'string.min': 'Unit number must be at least 1 character long',

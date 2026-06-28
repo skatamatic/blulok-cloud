@@ -170,7 +170,9 @@ class ProvisioningStorageAdapter implements ProvisioningStorageProvider {
 
   private assertValidPath(storagePath: string): void {
     const valid =
-      storagePath.startsWith('facility-provisioning/') || storagePath.startsWith('provisioning/');
+      storagePath.startsWith('facility-provisioning/')
+      || storagePath.startsWith('provisioning/')
+      || storagePath.startsWith('inventory-snapshots/');
     if (!valid) {
       throw new Error('Path does not reference provisioning storage');
     }
