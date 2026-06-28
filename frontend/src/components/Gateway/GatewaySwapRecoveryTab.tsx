@@ -310,7 +310,7 @@ export default function GatewaySwapRecoveryTab({
         setRecovery(nextRecovery);
         setEvents([]);
         setInventoryPreview([]);
-        setFirmwareOptions([]);
+        setFirmwareOptions(null);
         setLiveProgress(nextRecovery && !RECOVERY_TERMINAL_STATUSES.includes(nextRecovery.status)
           ? mergeRecoveryProgress(nextRecovery, null)
           : null);

@@ -61,6 +61,7 @@ export interface AccessControlDevice {
   /** When true, cloud may send remote lock (CLOSE). Default false — unlock-only from cloud. */
   supports_remote_lock?: boolean;
   last_activity?: string;
+  last_seen?: string;
   device_settings?: Record<string, unknown>;
   metadata?: Record<string, unknown>;
   access_methods?: AccessMethod[];
@@ -261,7 +262,8 @@ export interface Unit {
   facility_lock_command_timeout_sec?: number | null;
   unit_number: string;
   unit_type?: string;
-  status: 'available' | 'occupied' | 'maintenance' | 'reserved';
+  status: 'available' | 'occupied' | 'overlocked' | 'maintenance' | 'reserved';
+  is_overlocked?: boolean;
   description?: string;
   features?: string[];
   metadata?: Record<string, unknown>;

@@ -31,6 +31,7 @@ import { resolveLockTimeoutMsForUnit } from '@/utils/facilityLockTimeout.utils';
 const statusColors = {
   available: 'bg-green-100 text-green-800 dark:bg-green-900/20 dark:text-green-400',
   occupied: 'bg-blue-100 text-blue-800 dark:bg-blue-900/20 dark:text-blue-400',
+  overlocked: 'bg-orange-100 text-orange-800 dark:bg-orange-900/20 dark:text-orange-400',
   maintenance: 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/20 dark:text-yellow-400',
   reserved: 'bg-purple-100 text-purple-800 dark:bg-purple-900/20 dark:text-purple-400',
   locked: 'bg-blue-100 text-blue-800 dark:bg-blue-900/20 dark:text-blue-400',

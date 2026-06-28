@@ -43,6 +43,8 @@ export interface GroupableDeviceFields {
   id?: string;
   name?: string;
   device_category?: 'access_control' | 'blulok';
+  device_type?: AccessControlDevice['device_type'] | string;
+  location_description?: string;
   device_settings?: Record<string, unknown> | null;
   device_serial?: string;
   unit_id?: string;
