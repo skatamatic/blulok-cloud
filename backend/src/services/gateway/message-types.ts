@@ -14,6 +14,12 @@ export type AuthMessage = {
    * or auto-bound as the active gateway when the facility has none (first install).
    */
   gatewayId?: string;
+  /**
+   * Running gateway firmware version reported on connect/reconnect.
+   * Canonical seed for gateways.firmware_version — always overwrites the stored
+   * value when present. OTA may update the row between AUTHs; the next AUTH wins.
+   */
+  firmware_version?: string;
 };
 
 export type GatewaySessionRole = 'active' | 'swap_candidate' | 'legacy';

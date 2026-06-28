@@ -39,7 +39,7 @@ Device slider edits coalesce into one undo step per device field.
 
 | Real gateway behavior | Simulator implementation |
 |----------------------|---------------------------|
-| WS connect + AUTH | `GatewayConnection` → `ws://<host>/ws/gateway` |
+| WS connect + AUTH | `GatewayConnection` → `ws://<host>/ws/gateway` (includes `firmware_version` seed) |
 | PING/PONG heartbeat | Auto-reply when `respondToPing` enabled |
 | PROXY inventory/state/logs | `ProxyClient` → `/internal/gateway/*` |
 | PROXY access events | `ProxyClient.accessEvents()` → `/internal/gateway/access-events` |
@@ -108,7 +108,7 @@ Excluded from coverage (integration-only): `GatewayConnection.ts`, IPC handlers,
 ## UI behavior
 
 - **Tabbed panel**: Each gateway uses secondary navigation — **Devices**, **Connection**, **Behavior**, **Settings**, **Logs** (in the main content area). Gateway instances are listed in a **resizable, collapsible** left sidebar (drag the right edge; « / » toggle in the header). Width and collapsed state persist in localStorage. **Add gateway** at the bottom of the sidebar.
-- **Settings tab**: Edit the simulator sidebar **tab label** (local only), cloud **gateway name**, and **hardware serial** (`mac_address` on the gateway record). Changes to name/serial call `PUT /api/gateways/:id` via the main-process backend client; serial updates also propagate to the local gateway self-device inventory row when present.
+- **Settings tab**: Edit the simulator sidebar **tab label** (local only), cloud **gateway name**, **hardware serial** (`mac_address` on the gateway record), and **running firmware** (sent as `firmware_version` on WebSocket AUTH). Name/serial changes call `PUT /api/gateways/:id`; firmware is local until the next reconnect seeds the cloud via AUTH.
 - **Devices tab**: Card layout with inline state fields plus **Details** on each card. **Device detail view** tabs: **Overview** (identity/binding + live telemetry), **Security** (trust keys, denylist, access codes for access_control), **Simulate** (lock/access_control only — route pass and access events), **Activity** (inbound command log). Legacy `keys` / `telemetry` tab ids in localStorage map to **Security** / **Overview**.
 - **Auto-reconnect**: When **Auto-reconnect** is enabled in Behavior, the simulator reconnects after an unexpected WebSocket drop (3s countdown shown in the toolbar and offline banner). **Disconnect** / **Disconnect all** clears the persisted “connect on restore” flag and never schedules a retry. On app launch, tabs that were connected when the app last closed reconnect automatically if auto-reconnect is still enabled.
 - **Device inventory**: Card layout with inline state fields (lock state, online, battery, firmware, etc.). Gateway self-device is shown but not addable. **Recovery inventory snapshot push** from the cloud (`INVENTORY_SNAPSHOT_*`) is applied via `InventorySnapshotReceiver` → `inventory-snapshot-applier` → `DeviceRegistry.loadInventorySnapshot` (full replace; preserves sim state for devices retained by serial/id). Inventory push is **not** gated by firmware test behavior (`firmwareMode`). `DEVICE_DELETED` tombstones remove matching local rows and refresh the Devices tab via `onDevicesChanged`.

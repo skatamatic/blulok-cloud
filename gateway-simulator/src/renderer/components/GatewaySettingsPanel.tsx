@@ -14,6 +14,7 @@ type FormState = {
   label: string;
   gatewayName: string;
   gatewaySerial: string;
+  gatewayFirmwareVersion: string;
 };
 
 function toFormState(gateway: GatewayInstanceState): FormState {
@@ -21,11 +22,17 @@ function toFormState(gateway: GatewayInstanceState): FormState {
     label: gateway.label,
     gatewayName: gateway.gatewayName ?? '',
     gatewaySerial: gateway.gatewaySerial ?? '',
+    gatewayFirmwareVersion: gateway.gatewayFirmwareVersion ?? '',
   };
 }
 
 function formsEqual(a: FormState, b: FormState): boolean {
-  return a.label === b.label && a.gatewayName === b.gatewayName && a.gatewaySerial === b.gatewaySerial;
+  return (
+    a.label === b.label
+    && a.gatewayName === b.gatewayName
+    && a.gatewaySerial === b.gatewaySerial
+    && a.gatewayFirmwareVersion === b.gatewayFirmwareVersion
+  );
 }
 
 export function GatewaySettingsPanel({ gateway, onChange }: Props) {
@@ -43,7 +50,7 @@ export function GatewaySettingsPanel({ gateway, onChange }: Props) {
     const next = toFormState(gateway);
     setForm(next);
     setSavedForm(next);
-  }, [gateway.id, gateway.label, gateway.gatewayName, gateway.gatewaySerial]);
+  }, [gateway.id, gateway.label, gateway.gatewayName, gateway.gatewaySerial, gateway.gatewayFirmwareVersion]);
 
   useEffect(() => {
     let cancelled = false;
@@ -93,6 +100,7 @@ export function GatewaySettingsPanel({ gateway, onChange }: Props) {
         label?: string;
         gatewayName?: string;
         gatewaySerial?: string;
+        gatewayFirmwareVersion?: string;
       } = {};
 
       if (form.label.trim() !== savedForm.label) patch.label = form.label.trim();
@@ -100,9 +108,16 @@ export function GatewaySettingsPanel({ gateway, onChange }: Props) {
       if (form.gatewaySerial.trim() !== savedForm.gatewaySerial) {
         patch.gatewaySerial = form.gatewaySerial.trim();
       }
+      if (form.gatewayFirmwareVersion.trim() !== savedForm.gatewayFirmwareVersion) {
+        patch.gatewayFirmwareVersion = form.gatewayFirmwareVersion.trim();
+      }
 
       if (!form.gatewayName.trim()) {
         setError('Gateway name is required.');
+        return;
+      }
+      if (!form.gatewayFirmwareVersion.trim()) {
+        setError('Gateway firmware version is required.');
         return;
       }
 
@@ -199,6 +214,21 @@ export function GatewaySettingsPanel({ gateway, onChange }: Props) {
               />
               <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
                 Stored as the gateway&apos;s MAC / serial field in cloud inventory sync.
+              </p>
+            </div>
+            <div className="sm:col-span-2">
+              <label className="label" htmlFor="gateway-settings-firmware">
+                Running firmware
+              </label>
+              <input
+                id="gateway-settings-firmware"
+                className="input font-mono text-sm"
+                value={form.gatewayFirmwareVersion}
+                onChange={(e) => setForm((prev) => ({ ...prev, gatewayFirmwareVersion: e.target.value }))}
+                placeholder="1.0.0"
+              />
+              <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                Sent as <code className="text-xs">firmware_version</code> on WebSocket AUTH when this simulator connects. Reconnect to push an updated seed to the cloud.
               </p>
             </div>
           </div>

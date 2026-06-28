@@ -42,6 +42,8 @@ export type AuthMessage = {
   token: string;
   facilityId: string;
   gatewayId?: string;
+  /** Running gateway firmware — canonical seed on the cloud gateways row. */
+  firmware_version?: string;
 };
 
 export type AuthOkMessage = {

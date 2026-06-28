@@ -23,7 +23,7 @@ export const ADDABLE_INVENTORY_KINDS: GatewayInventoryKind[] = GATEWAY_INVENTORY
 );
 
 export function filterManagedInventoryDevices(items: DeviceInventoryItem[]): DeviceInventoryItem[] {
-  // Gateway self is reported separately on inventory sync (updates gateways.firmware_version).
+  // Gateway firmware is reported on WS AUTH (firmware_version), not inventory.
   return items.filter((item) => item.kind !== 'gateway');
 }
 

@@ -678,6 +678,7 @@ export class GatewayManager {
         gatewaySerial:
           cloudRecord?.mac_address?.trim() ??
           (patch.gatewaySerial !== undefined ? patch.gatewaySerial.trim() : undefined),
+        gatewayFirmwareVersion: patch.gatewayFirmwareVersion,
       });
       await gw.persist();
       next = gw.getState();
@@ -716,6 +717,7 @@ export class GatewayManager {
       gatewayId: profile.gatewayId,
       gatewayName: profile.gatewayName,
       gatewaySerial: profile.gatewaySerial,
+      gatewayFirmwareVersion: profile.gatewayFirmwareVersion,
       token: profile.token,
       devices: profile.devices,
       deviceRecords: profile.deviceRecords,

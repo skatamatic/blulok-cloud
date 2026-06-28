@@ -199,6 +199,8 @@ export type UpdateGatewaySettingsRequest = {
   gatewayName?: string;
   /** Hardware serial stored as `mac_address` on the gateway record. */
   gatewaySerial?: string;
+  /** Running firmware reported on WS AUTH (`firmware_version`). */
+  gatewayFirmwareVersion?: string;
 };
 
 export type CreateGatewayRequest = {

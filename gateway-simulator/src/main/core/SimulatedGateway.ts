@@ -12,8 +12,9 @@ import {
   rotateDeviceOperationsKey,
 } from '../devices/device-simulator.utils';
 import type { DeviceSimulatorState, SimulatedDeviceRecord, UpdateDeviceSimRequest } from '@protocol/device-simulator-state';
-import type { DeviceInventoryItem, GatewaySelfInventoryItem } from '@protocol/device-kinds';
+import type { DeviceInventoryItem } from '@protocol/device-kinds';
 import { assertAddableInventoryKind, filterManagedInventoryDevices } from '@protocol/device-kinds';
+import { resolveSimulatorGatewayFirmwareVersion } from './gateway-firmware.utils';
 import type { AccessEventPayload, SimulateAccessEventRequest } from '@protocol/access-events';
 import { FirmwareReceiver } from '../firmware/FirmwareReceiver';
 import { InventorySnapshotReceiver } from '../inventory/InventorySnapshotReceiver';
@@ -45,6 +46,8 @@ export type SimulatedGatewayOptions = {
   gatewayId: string;
   gatewayName?: string;
   gatewaySerial?: string;
+  /** Persisted simulator gateway firmware — sent on WS AUTH as firmware_version. */
+  gatewayFirmwareVersion?: string;
   token: string;
   devices?: DeviceInventoryItem[];
   deviceRecords?: SimulatedDeviceRecord[];
@@ -67,7 +70,7 @@ export class SimulatedGateway {
   private gatewayId: string;
   private gatewayName?: string;
   private gatewaySerial?: string;
-  private gatewayFirmwareVersion?: string;
+  private gatewayFirmwareVersion: string;
   private token: string;
   private behavior: BehaviorConfig;
   private connectionStatus: ConnectionStatus = 'disconnected';
@@ -110,11 +113,13 @@ export class SimulatedGateway {
       { facilityId: this.facilityId, devices: options.devices, deviceRecords: options.deviceRecords },
       this.cachedOpsPublicKey,
     );
+    const legacyGateway = records.find((d) => d.item.kind === 'gateway');
+    this.gatewayFirmwareVersion = resolveSimulatorGatewayFirmwareVersion({
+      profileVersion: options.gatewayFirmwareVersion,
+      legacyInventoryVersion:
+        legacyGateway?.item.kind === 'gateway' ? legacyGateway.item.firmware_version : undefined,
+    });
     if (records.length) {
-      const legacyGateway = records.find((d) => d.item.kind === 'gateway');
-      if (legacyGateway?.item.kind === 'gateway' && legacyGateway.item.firmware_version) {
-        this.gatewayFirmwareVersion = legacyGateway.item.firmware_version;
-      }
       this.registry.load(records);
     }
   }
@@ -178,6 +183,7 @@ export class SimulatedGateway {
         token: this.token,
         facilityId: this.facilityId,
         gatewayId: this.gatewayId,
+        firmwareVersion: this.gatewayFirmwareVersion,
         onLog: (dir, summary, payload) => this.log(dir, summary, payload),
         onSessionRoleChanged: (auth, previousRole) => {
           if (previousRole === undefined) return;
@@ -367,7 +373,8 @@ export class SimulatedGateway {
       onDevicesChanged: () => this.emitUpdate(),
       canOperationalSync: () => this.canOperationalSyncNow(),
       applyGatewayFirmware: (version: string) => {
-        this.gatewayFirmwareVersion = version;
+        this.gatewayFirmwareVersion = version.trim();
+        void this.persist();
       },
       applyOperationsKeyRotation: (newOpsPublicB64, ts) => {
         this.cachedOpsPublicKey = newOpsPublicB64;
@@ -433,30 +440,10 @@ export class SimulatedGateway {
     });
   }
 
-  private buildGatewaySelfInventorySyncItem(): GatewaySelfInventoryItem {
-    const serial = this.gatewaySerial?.trim() || this.gatewayId;
-    return {
-      kind: 'gateway',
-      serial,
-      state: this.connectionStatus === 'connected' ? 'healthy' : 'offline',
-      ...(this.gatewayFirmwareVersion?.trim()
-        ? { firmware_version: this.gatewayFirmwareVersion.trim() }
-        : {}),
-      last_seen: new Date().toISOString(),
-      info: {
-        gateway_id: this.gatewayId,
-        ...(this.gatewayName?.trim() ? { name: this.gatewayName.trim() } : {}),
-      },
-    };
-  }
-
   private async syncInventoryInternal(): Promise<SyncResult> {
     return this.runExclusiveInventorySync(async () => {
       if (!this.proxy) return { ok: false, status: 0, message: 'Not connected' };
-      const devices = [
-        ...this.registry.inventorySyncItems(),
-        this.buildGatewaySelfInventorySyncItem(),
-      ];
+      const devices = [...this.registry.inventorySyncItems()];
       const res = await this.proxy.inventorySync(this.facilityId, devices);
       this.log('system', `Inventory sync HTTP ${res.status}`, res.body);
       if (res.status >= 400) {
@@ -895,7 +882,12 @@ export class SimulatedGateway {
     };
   }
 
-  applySettings(patch: { label?: string; gatewayName?: string; gatewaySerial?: string }): void {
+  applySettings(patch: {
+    label?: string;
+    gatewayName?: string;
+    gatewaySerial?: string;
+    gatewayFirmwareVersion?: string;
+  }): void {
     if (patch.label !== undefined) {
       const trimmed = patch.label.trim();
       if (trimmed) this.label = trimmed;
@@ -905,6 +897,10 @@ export class SimulatedGateway {
     }
     if (patch.gatewaySerial !== undefined) {
       this.gatewaySerial = patch.gatewaySerial.trim();
+    }
+    if (patch.gatewayFirmwareVersion !== undefined) {
+      const trimmed = patch.gatewayFirmwareVersion.trim();
+      if (trimmed) this.gatewayFirmwareVersion = trimmed;
     }
     this.emitUpdate();
   }
@@ -934,12 +930,13 @@ export class SimulatedGateway {
     this.label = profile.label;
     this.gatewayName = profile.gatewayName;
     this.gatewaySerial = profile.gatewaySerial;
-    this.gatewayFirmwareVersion = profile.gatewayFirmwareVersion;
     const records = normalizeProfileDeviceRecords(profile, this.cachedOpsPublicKey);
     const legacyGateway = records.find((d) => d.item.kind === 'gateway');
-    if (!this.gatewayFirmwareVersion && legacyGateway?.item.kind === 'gateway' && legacyGateway.item.firmware_version) {
-      this.gatewayFirmwareVersion = legacyGateway.item.firmware_version;
-    }
+    this.gatewayFirmwareVersion = resolveSimulatorGatewayFirmwareVersion({
+      profileVersion: profile.gatewayFirmwareVersion,
+      legacyInventoryVersion:
+        legacyGateway?.item.kind === 'gateway' ? legacyGateway.item.firmware_version : undefined,
+    });
     this.behavior = normalizeBehavior(profile.behavior);
     this.connectOnRestore = profile.connectOnRestore ?? false;
     this.registry.setCreateContext({ facilityId: this.facilityId, operationsKeyPublicB64: this.cachedOpsPublicKey });

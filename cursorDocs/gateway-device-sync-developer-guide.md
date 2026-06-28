@@ -271,9 +271,11 @@ If the device **reappears in inventory** before the tombstone is delivered, the 
 
 **Gateway-initiated removal** (omission from inventory) deletes the cloud row **without** sending `DEVICE_DELETED`.
 
-#### 3.6.8 Facility gateway self-update (`kind: "gateway"`)
+#### 3.6.8 Facility gateway firmware (WS AUTH)
 
-Separate from bridge/friend_node rows: an optional inventory item with `"kind": "gateway"` updates the **bound facility gateway** row itself (`firmware_version`, `status` from `state`, `last_seen`, `metadata.inventory_info` from `info`). It does **not** create a duplicate device row, and omission from inventory does **not** unbind the gateway.
+The gateway **does not** appear as a device in inventory. Its running firmware is reported on **WebSocket AUTH** as optional `firmware_version`. When present, the cloud always overwrites `gateways.firmware_version` for the connecting gateway row. OTA success may update that column between reconnects; the next AUTH seed wins.
+
+Legacy inventory item `kind: "gateway"` (optional self-update on inventory POST) remains supported for backward compatibility but is **not** the canonical path for production gateways.
 
 #### 3.6.9 Gateway swap / recovery
 

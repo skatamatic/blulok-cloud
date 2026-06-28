@@ -968,6 +968,25 @@ export class WebsocketGatewayTransport implements GatewayTransport {
           return;
         }
 
+        const { parseAuthFirmwareVersion, persistAuthFirmwareSeed } = await import(
+          '@/utils/gateway-auth-firmware.utils'
+        );
+        const authFirmwareVersion = parseAuthFirmwareVersion(msg?.firmware_version);
+        if (authFirmwareVersion) {
+          try {
+            await persistAuthFirmwareSeed({
+              facilityId,
+              gatewayId: resolvedGatewayId,
+              firmwareVersion: authFirmwareVersion,
+            });
+          } catch (err) {
+            logger.warn(
+              `Gateway WS AUTH firmware seed persist failed facility=${facilityId} gateway=${resolvedGatewayId || 'legacy'}`,
+              err,
+            );
+          }
+        }
+
         if (sessionRole === 'active' || sessionRole === 'legacy') {
           this.notifyConnectionChange(facilityId, true, 'auth_ok', authed.lastActivityAt, decoded.userId, remote);
         }

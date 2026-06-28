@@ -100,9 +100,9 @@ Stored in **`gateway_inventory_devices`**. Record-keeping only — no lock/unloc
 
 **Cloud-initiated removal:** **`DELETE /devices/network-infra/:id`** enqueues **`DEVICE_DELETED`** with `{ device_kind: "bridge"|"friend_node", serial }`.
 
-### Facility gateway inventory update (`kind: "gateway"`)
+### Facility gateway inventory update (`kind: "gateway"`) — legacy
 
-Optional. Updates the facility's bound **`gateways`** row (`firmware_version`, `status` from `state`, `last_seen`, `metadata.inventory_info` from `info`). Does **not** create a duplicate device row and omission from inventory does **not** unbind the gateway.
+Optional backward-compatible path: an inventory item with `"kind": "gateway"` can update the bound **`gateways`** row (`firmware_version`, `status`, `last_seen`, etc.). Production gateways should report firmware on **WebSocket AUTH** (`firmware_version`) instead; see [Gateway device sync — developer guide §3.6.8](./gateway-device-sync-developer-guide.md#368-facility-gateway-firmware-ws-auth).
 
 ---
 

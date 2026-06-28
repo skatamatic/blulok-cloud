@@ -34,14 +34,8 @@ function connectWithLiveSync(
   return { stateSync, inventorySync };
 }
 
-function expectGatewaySelfInventoryOnly(devices: unknown[] | undefined): void {
-  expect(devices).toEqual([
-    expect.objectContaining({
-      kind: 'gateway',
-      serial: expect.any(String),
-      state: expect.stringMatching(/healthy|offline|starting|stopped/),
-    }),
-  ]);
+function expectNoGatewaySelfInInventory(devices: unknown[] | undefined): void {
+  expect(devices?.some((d) => (d as { kind?: string }).kind === 'gateway')).toBe(false);
 }
 
 describe('SimulatedGateway live state sync', () => {
@@ -140,7 +134,8 @@ describe('SimulatedGateway live state sync', () => {
     const key = SimulatedGateway.deviceKeyForItem(item);
     await gateway.removeDevice(key);
     expect(inventorySync).toHaveBeenCalledTimes(1);
-    expectGatewaySelfInventoryOnly(inventorySync.mock.calls[0]?.[1]);
+    expectNoGatewaySelfInInventory(inventorySync.mock.calls[0]?.[1]);
+    expect(inventorySync.mock.calls[0]?.[1]).toEqual([]);
   });
 
   it('skips live sync when disabled or disconnected', async () => {
@@ -252,7 +247,8 @@ describe('SimulatedGateway live state sync', () => {
 
     expect(inventorySync).toHaveBeenCalledTimes(1);
     expect(stateSync).not.toHaveBeenCalled();
-    expectGatewaySelfInventoryOnly(inventorySync.mock.calls[0]?.[1]);
+    expectNoGatewaySelfInInventory(inventorySync.mock.calls[0]?.[1]);
+    expect(inventorySync.mock.calls[0]?.[1]).toEqual([]);
   });
 
   it('pushes access_control telemetry without inventory-only fields', async () => {

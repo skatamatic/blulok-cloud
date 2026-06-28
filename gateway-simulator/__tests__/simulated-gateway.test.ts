@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { AuthOkMessage } from '../src/protocol/messages';
 import { SimulatedGateway } from '../src/main/core/SimulatedGateway';
+import type { GatewayConnectionOptions } from '../src/main/net/GatewayConnection';
+import { DEFAULT_SIMULATOR_GATEWAY_FIRMWARE_VERSION } from '../src/main/core/gateway-firmware.utils';
 import { createMockStore } from './helpers/mock-store';
 import { createMockTransport, type MockTransport } from './helpers/mock-transport';
 import type { GatewayTransport } from '../src/main/core/SimulatedGateway';
@@ -10,6 +12,7 @@ function buildGateway(options?: {
   proxyBody?: unknown;
   initialSessionRole?: AuthOkMessage['sessionRole'];
   autoProxyResponse?: boolean;
+  gatewayFirmwareVersion?: string;
   proxyResponder?: (
     req: { method?: string; path?: string; id: string },
     callIndex: number,
@@ -18,6 +21,7 @@ function buildGateway(options?: {
   const store = createMockStore();
   const onUpdate = vi.fn();
   const onLog = vi.fn();
+  let capturedConnectionOptions: GatewayConnectionOptions | undefined;
   const initialAuth: AuthOkMessage = {
     type: 'AUTH_OK',
     facilityId: 'fac-1',
@@ -32,23 +36,34 @@ function buildGateway(options?: {
     facilityId: 'fac-1',
     gatewayId: 'cloud-gw-1',
     token: 'tok',
+    gatewayFirmwareVersion: options?.gatewayFirmwareVersion,
     store,
     onUpdate,
     onLog,
-    createTransport: (opts) =>
-      createMockTransport({
+    createTransport: (opts) => {
+      capturedConnectionOptions = opts;
+      return createMockTransport({
         authOk: initialAuth,
         autoProxyResponse: options?.autoProxyResponse ?? !options?.proxyResponder,
         proxyStatus: options?.proxyStatus,
         proxyBody: options?.proxyBody,
         proxyResponder: options?.proxyResponder,
         onSessionRoleChanged: opts.onSessionRoleChanged,
-      }) as unknown as GatewayTransport,
+      }) as unknown as GatewayTransport;
+    },
   });
 
   const transport = gateway['connection'] as MockTransport | null;
 
-  return { gateway, transport, store, onUpdate, onLog, getTransport: () => gateway['connection'] as MockTransport | null };
+  return {
+    gateway,
+    transport,
+    store,
+    onUpdate,
+    onLog,
+    getTransport: () => gateway['connection'] as MockTransport | null,
+    getConnectionOptions: () => capturedConnectionOptions,
+  };
 }
 
 describe('SimulatedGateway', () => {
@@ -131,27 +146,29 @@ describe('SimulatedGateway', () => {
     expect(gateway.getState().connectionWarning).toBeTruthy();
   });
 
-  it('includes gateway self firmware in inventory sync payload', async () => {
-    const { gateway, getTransport } = buildGateway();
+  it('defaults gateway firmware for AUTH seeding', () => {
+    const { gateway } = buildGateway();
+    expect(gateway.getState().gatewayFirmwareVersion).toBe(DEFAULT_SIMULATOR_GATEWAY_FIRMWARE_VERSION);
+  });
+
+  it('passes gateway firmware to transport for WS AUTH on connect', async () => {
+    const { gateway, getConnectionOptions } = buildGateway({ gatewayFirmwareVersion: '2.4.1' });
+    await gateway.connect();
+    expect(getConnectionOptions()?.firmwareVersion).toBe('2.4.1');
+  });
+
+  it('does not include gateway self row in inventory sync payload', async () => {
+    const { gateway, getTransport } = buildGateway({ gatewayFirmwareVersion: '2.4.1' });
     gateway.applySettings({ gatewaySerial: 'SIM-GW-001' });
-    gateway['gatewayFirmwareVersion'] = '2.4.1';
     await gateway.connect();
 
     const inventoryRequest = getTransport()!.sent.find(
       (msg) =>
         (msg as { type?: string; path?: string }).type === 'PROXY_REQUEST'
         && (msg as { path?: string }).path === '/internal/gateway/devices/inventory',
-    ) as { body?: { devices?: Array<{ kind: string; firmware_version?: string; serial?: string }> } } | undefined;
+    ) as { body?: { devices?: Array<{ kind: string }> } } | undefined;
 
-    expect(inventoryRequest?.body?.devices).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          kind: 'gateway',
-          serial: 'SIM-GW-001',
-          firmware_version: '2.4.1',
-        }),
-      ]),
-    );
+    expect(inventoryRequest?.body?.devices?.some((d) => d.kind === 'gateway')).toBe(false);
   });
 
   it('resetState restores defaults and clears devices', async () => {

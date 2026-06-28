@@ -2,6 +2,7 @@ import { copyFile, mkdir, readdir, rename, unlink } from 'fs/promises';
 import { join } from 'path';
 import type { BehaviorConfig } from '@protocol/ipc-channels';
 import { DEFAULT_BEHAVIOR } from '@protocol/ipc-channels';
+import { DEFAULT_SIMULATOR_GATEWAY_FIRMWARE_VERSION } from '../core/gateway-firmware.utils';
 import type { DeviceInventoryItem } from '@protocol/device-kinds';
 import type { SimulatedDeviceRecord } from '@protocol/device-simulator-state';
 import type { UserProfile } from '@protocol/user-simulator-state';
@@ -353,6 +354,7 @@ export function emptyProfile(
   return {
     deviceRecords: [],
     behavior: { ...DEFAULT_BEHAVIOR },
+    gatewayFirmwareVersion: DEFAULT_SIMULATOR_GATEWAY_FIRMWARE_VERSION,
     updatedAt: new Date().toISOString(),
     ...overrides,
   };

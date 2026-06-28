@@ -191,7 +191,8 @@ API: `POST /api/v1/gateways/:gatewayId/recovery/bypass` body `{ "confirm": true 
   "type": "AUTH",
   "token": "<JWT from this backend>",
   "facilityId": "<facility UUID>",
-  "gatewayId": "<device's stable UUID>"
+  "gatewayId": "<device's stable UUID>",
+  "firmware_version": "<running gateway firmware — optional>"
 }
 ```
 

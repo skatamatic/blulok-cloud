@@ -740,7 +740,7 @@ async function proxyWs(ws, id, method, path, { query, body } = {}) {
   return await waitForProxyResponse(ws, id);
 }
 
-async function connectGatewayWsAndAuth(wsUrl, token, facilityId, gatewayId) {
+async function connectGatewayWsAndAuth(wsUrl, token, facilityId, gatewayId, authExtras = {}) {
   const ws = new WebSocket(wsUrl);
   await new Promise((res, rej) => { ws.once('open', res); ws.once('error', rej); });
   ws.on('message', (data) => {
@@ -786,6 +786,7 @@ async function connectGatewayWsAndAuth(wsUrl, token, facilityId, gatewayId) {
   });
   const authMsg = { type: 'AUTH', token, facilityId };
   if (gatewayId) authMsg.gatewayId = gatewayId;
+  if (authExtras.firmware_version) authMsg.firmware_version = authExtras.firmware_version;
   if (VERBOSE) console.log('[WS ->]', JSON.stringify(authMsg));
   ws.send(JSON.stringify(authMsg));
   let authOkData = null;
@@ -2332,6 +2333,61 @@ async function run() {
   if (loginOpsPublicKeyPem !== authOkPem) throw new Error('PEM mismatch between login and AUTH_OK');
   ok('All ops key formats consistent across HTTP login and gateway AUTH_OK');
 
+  heading('Gateway AUTH firmware_version seed');
+  step('Reconnecting gateway WS with firmware_version in AUTH');
+  const authFwSeed = '3.14.0-e2e-auth';
+  try {
+    ws.close();
+  } catch {
+    /* ignore */
+  }
+  await delay(200);
+  ws = await connectGatewayWsAndAuth(WS_URL, token, facilityId, gatewayId, { firmware_version: authFwSeed });
+  ok('Gateway AUTH_OK with firmware_version');
+
+  step('Verifying gateways.firmware_version persisted from AUTH seed');
+  const gatewayDetailAfterAuth = await axios.get(`${API_BASE}/gateways/${gatewayId}`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  const fwAfterAuth = gatewayDetailAfterAuth.data?.gateway?.firmware_version;
+  if (fwAfterAuth !== authFwSeed) {
+    throw new Error(`Expected gateway firmware ${authFwSeed} from AUTH, got ${fwAfterAuth}`);
+  }
+  ok(`AUTH firmware_version seed persisted (${authFwSeed})`);
+
+  step('Verifying reconnect AUTH overwrites previous gateway firmware seed');
+  const authFwSeed2 = '3.15.0-e2e-auth';
+  try {
+    ws.close();
+  } catch {
+    /* ignore */
+  }
+  await delay(200);
+  ws = await connectGatewayWsAndAuth(WS_URL, token, facilityId, gatewayId, { firmware_version: authFwSeed2 });
+  const gatewayDetailAfterAuth2 = await axios.get(`${API_BASE}/gateways/${gatewayId}`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (gatewayDetailAfterAuth2.data?.gateway?.firmware_version !== authFwSeed2) {
+    throw new Error(`Expected AUTH reconnect to overwrite firmware to ${authFwSeed2}, got ${gatewayDetailAfterAuth2.data?.gateway?.firmware_version}`);
+  }
+  ok('Reconnect AUTH overwrites gateways.firmware_version');
+
+  step('Verifying AUTH without firmware_version does not clear existing firmware');
+  try {
+    ws.close();
+  } catch {
+    /* ignore */
+  }
+  await delay(200);
+  ws = await connectGatewayWsAndAuth(WS_URL, token, facilityId, gatewayId);
+  const gatewayDetailNoFw = await axios.get(`${API_BASE}/gateways/${gatewayId}`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (gatewayDetailNoFw.data?.gateway?.firmware_version !== authFwSeed2) {
+    throw new Error(`AUTH without firmware_version should preserve ${authFwSeed2}, got ${gatewayDetailNoFw.data?.gateway?.firmware_version}`);
+  }
+  ok('AUTH omitting firmware_version preserves stored gateway firmware');
+
   // Verify ops keys in WS proxy login
   step('Verifying ops keys in WS proxy login');
   const proxyLoginId = 'req-proxy-login';
@@ -3690,7 +3746,7 @@ async function run() {
     }
     ok('POST /devices/state tracks network infra not_found without creating rows');
 
-    step('Testing POST /devices/inventory (gateway kind updates bound gateway row)');
+    step('Testing POST /devices/inventory (legacy gateway kind updates bound gateway row)');
     const gatewayMacSerial = 'AA:BB:CC:DD:EE:FF';
     const reqGatewayInv = `req-gateway-inv-${Date.now()}`;
     const respGatewayInv = await inventorySync(
