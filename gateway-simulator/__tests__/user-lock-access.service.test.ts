@@ -253,4 +253,44 @@ describe('user-lock-access.service', () => {
 
     expect(result.denial_reason).toBe('internal_error');
   });
+
+  it('returns granted when unlock succeeds but access event fails', async () => {
+    const { jwt, opsKey } = await signedPass('L100');
+    const profile = emptyUserProfile({
+      id: 'u1',
+      label: 'Tenant',
+      backendUrl: 'http://localhost',
+      email: 't@t.com',
+      password: 'x',
+      cloudUserId: 'user-1',
+    });
+    const device = createUserDevice('d1', { appDeviceId: 'phone-1' });
+    upsertCachedPass(device, {
+      facilityId: 'fac-1',
+      jwt,
+      fetchedAt: new Date().toISOString(),
+      tamper: 'none',
+    });
+    profile.devices = [device];
+
+    let unlocked = false;
+    const result = await tryOpenLockWithUserDevice({
+      facilityId: 'fac-1',
+      gatewayId: 'gw-1',
+      deviceKey: 'lock:L100',
+      inventoryItem: { kind: 'lock', lock_id: 'L100', locked: true, state: 'CLOSED' },
+      opsPublicKeyB64: opsKey,
+      userProfile: profile,
+      appDeviceId: 'phone-1',
+      applyUnlock: () => {
+        unlocked = true;
+      },
+      emitAccessEvent: vi.fn().mockRejectedValue(new Error('Device not found in cloud')),
+    });
+
+    expect(result.granted).toBe(true);
+    expect(result.lockUpdated).toBe(true);
+    expect(unlocked).toBe(true);
+    expect(result.message).toContain('failed to report access event');
+  });
 });

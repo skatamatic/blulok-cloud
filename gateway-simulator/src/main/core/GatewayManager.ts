@@ -330,8 +330,8 @@ export class GatewayManager {
       userProfile,
       appDeviceId: req.appDeviceId,
       resolveCloudDeviceId: async () => gw.resolveCloudDeviceId(record.item),
-      applyUnlock: () => {
-        gw.unlockDevice(req.deviceKey);
+      applyUnlock: async () => {
+        await gw.unlockDevice(req.deviceKey);
         this.broadcastUpdate(gw.getState());
       },
       emitAccessEvent: async ({ success, denial_reason, userId, role }) => {
@@ -364,8 +364,8 @@ export class GatewayManager {
       inventoryItem: record.item,
       deviceSim: record.sim,
       enteredCode: req.code,
-      applyUnlock: () => {
-        gw.unlockDevice(req.deviceKey);
+      applyUnlock: async () => {
+        await gw.unlockDevice(req.deviceKey);
         this.broadcastUpdate(gw.getState());
       },
       emitAccessEvent: async ({ success, action, denial_reason, keypad }) => {

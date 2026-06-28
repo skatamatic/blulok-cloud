@@ -1,6 +1,6 @@
 /**
  * Drives runtime state-based visuals for storage units, with a small reusable
- * per-frame animation system for the time-based effects (flashing + door swing).
+ * per-frame animation system for the time-based effects (flashing + garage door).
  *
  * Behaviour only kicks in for units wearing the built-in "White & Blue Steel"
  * theme ({@link THEMED_UNIT_SKIN_ID}); every other asset falls back to the
@@ -10,7 +10,7 @@
  * Themed unit appearance, driven by binding + {@link DeviceState}:
  *  - not bound      → slightly dimmer + ~66% opacity (subtle translucency)
  *  - locked (bound) → the plain themed look
- *  - unlocked       → door swings open and reads black (the dark opening)
+ *  - unlocked       → garage-style roll-up: door shrinks upward, black opening behind
  *  - error          → the whole unit flashes an alarming red tint
  *  - unknown        → the whole unit flashes an alarming yellow tint
  *
@@ -47,13 +47,23 @@ interface MaterialBase {
   depthWrite: boolean;
 }
 
+/** Garage-door rig cached on the unit group (see {@link ensureDoorRig}). */
+export interface UnitDoorRig {
+  pivot: THREE.Group;
+  door: THREE.Mesh;
+  opening: THREE.Mesh;
+}
+
 interface UnitVisualEntry {
   group: THREE.Group;
   /** Materials that pulse while flashing (null colour ⇒ no flash). */
   flashColor: THREE.Color | null;
   flashMaterials: THREE.MeshStandardMaterial[];
-  doorPivot: THREE.Object3D | null;
-  doorTargetAngle: number;
+  doorRig: UnitDoorRig | null;
+  /** Target open amount: 0 = closed, 1 = fully open. */
+  doorTargetOpen: number;
+  /** Animated open amount (lerped in {@link update}). */
+  doorCurrentOpen: number;
 }
 
 const FLASH_RED = 0xff2a2a;
@@ -62,9 +72,10 @@ const FLASH_SPEED = 5.2; // rad/s ≈ 0.8 Hz
 const FLASH_MIN = 0.06;
 const FLASH_MAX = 0.95;
 
-const DOOR_OPEN_ANGLE = Math.PI * 0.6; // ~108°
-const DOOR_DAMP = 9; // higher = snappier swing
+/** Full open/close transition duration (seconds). */
+export const DOOR_ANIM_DURATION = 1;
 const DOOR_BLACK = 0x0a0a0a;
+const OPENING_INSET = 0.025;
 
 const UNBOUND_OPACITY = 0.66;
 const UNBOUND_DIM = 0.15; // slight darkening of the themed colour
@@ -85,7 +96,7 @@ export class UnitStateVisualManager {
     this.applyThemedState(group, params.bound, params.state);
   }
 
-  /** Per-frame tick: advances flashing emissive and door-swing animation. */
+  /** Per-frame tick: advances flashing emissive and garage-door animation. */
   update(delta: number): void {
     if (this.entries.size === 0) return;
     this.elapsed += delta;
@@ -105,18 +116,9 @@ export class UnitStateVisualManager {
         }
       }
 
-      if (entry.doorPivot) {
-        const current = entry.doorPivot.rotation.y;
-        if (Math.abs(current - entry.doorTargetAngle) > 1e-3) {
-          entry.doorPivot.rotation.y = THREE.MathUtils.damp(
-            current,
-            entry.doorTargetAngle,
-            DOOR_DAMP,
-            delta
-          );
-        } else {
-          entry.doorPivot.rotation.y = entry.doorTargetAngle;
-        }
+      if (entry.doorRig) {
+        this.stepDoorAnimation(entry, delta);
+        this.applyDoorRigVisual(entry.doorRig, entry.doorCurrentOpen);
       }
     }
   }
@@ -128,7 +130,7 @@ export class UnitStateVisualManager {
   // ----------------------------------------------------------------------------
 
   private applyThemedState(group: THREE.Group, bound: boolean, state: DeviceState): void {
-    const doorPivot = this.ensureDoorPivot(group);
+    const doorRig = this.ensureDoorRig(group);
     const bodyRoofMats = this.collectMaterials(group, ['body', 'roof']);
     const doorMats = this.collectMaterials(group, ['door']);
     const allMats = [...bodyRoofMats, ...doorMats];
@@ -137,7 +139,7 @@ export class UnitStateVisualManager {
     for (const mat of allMats) this.resetToBase(mat);
 
     let flashColor: THREE.Color | null = null;
-    let doorTargetAngle = 0;
+    let doorTargetOpen = 0;
 
     if (!bound) {
       // No live data → ghostly, dim and mostly transparent.
@@ -145,8 +147,7 @@ export class UnitStateVisualManager {
     } else {
       switch (state) {
         case DeviceState.UNLOCKED:
-          doorTargetAngle = group.userData.unitDoorOpenAngle ?? DOOR_OPEN_ANGLE;
-          for (const mat of doorMats) this.applyOpenDoor(mat);
+          doorTargetOpen = 1;
           break;
         case DeviceState.ERROR:
           flashColor = new THREE.Color(FLASH_RED);
@@ -170,13 +171,24 @@ export class UnitStateVisualManager {
       }
     }
 
+    const prev = this.entries.get(group.uuid);
+    let doorCurrentOpen = prev?.doorCurrentOpen ?? doorTargetOpen;
+    if (prev && prev.doorTargetOpen !== doorTargetOpen) {
+      doorCurrentOpen = prev.doorCurrentOpen;
+    }
+
     this.entries.set(group.uuid, {
       group,
       flashColor,
       flashMaterials,
-      doorPivot: doorPivot ?? null,
-      doorTargetAngle,
+      doorRig: doorRig ?? null,
+      doorTargetOpen,
+      doorCurrentOpen,
     });
+
+    if (doorRig) {
+      this.applyDoorRigVisual(doorRig, doorCurrentOpen);
+    }
   }
 
   /** Restore base materials and close the door; optionally keep the entry gone. */
@@ -188,9 +200,34 @@ export class UnitStateVisualManager {
     for (const mat of mats) {
       if (this.materialBases.has(mat)) this.resetToBase(mat);
     }
-    const pivot = group.userData.unitDoorPivot as THREE.Object3D | undefined;
-    if (pivot) pivot.rotation.y = 0;
+
+    const rig = group.userData.unitDoorRig as UnitDoorRig | undefined;
+    if (rig) {
+      rig.pivot.scale.y = 1;
+      rig.door.visible = true;
+      rig.opening.visible = false;
+    }
+
     this.entries.delete(group.uuid);
+  }
+
+  private stepDoorAnimation(entry: UnitVisualEntry, delta: number): void {
+    const diff = entry.doorTargetOpen - entry.doorCurrentOpen;
+    if (Math.abs(diff) <= 1e-4) {
+      entry.doorCurrentOpen = entry.doorTargetOpen;
+      return;
+    }
+    const step = delta / DOOR_ANIM_DURATION;
+    entry.doorCurrentOpen += Math.sign(diff) * Math.min(Math.abs(diff), step);
+  }
+
+  /** Shrink the door panel upward; reveal the black opening behind it. */
+  private applyDoorRigVisual(rig: UnitDoorRig, openAmount: number): void {
+    const t = THREE.MathUtils.clamp(openAmount, 0, 1);
+    const closedScale = Math.max(0.001, 1 - t);
+    rig.pivot.scale.y = closedScale;
+    rig.door.visible = t < 0.999;
+    rig.opening.visible = t > 0.001;
   }
 
   private collectMaterials(
@@ -200,6 +237,7 @@ export class UnitStateVisualManager {
     const result: THREE.MeshStandardMaterial[] = [];
     group.traverse((child) => {
       if (!(child instanceof THREE.Mesh)) return;
+      if (child.userData.unitStateOpening) return;
       const part = child.userData.partName as string | undefined;
       if (!part || !partNames.includes(part)) return;
       const mat = Array.isArray(child.material) ? child.material[0] : child.material;
@@ -249,62 +287,120 @@ export class UnitStateVisualManager {
     mat.needsUpdate = true;
   }
 
-  private applyOpenDoor(mat: THREE.MeshStandardMaterial): void {
-    mat.color.setHex(DOOR_BLACK);
-    mat.emissive.setHex(0x000000);
-    mat.emissiveIntensity = 0;
-    mat.metalness = 0.1;
-    mat.roughness = 0.95;
-    mat.needsUpdate = true;
-  }
-
-  /**
-   * Wraps a unit's door mesh in a hinge pivot so it can swing open. Idempotent —
-   * the pivot + open angle are cached on the group's userData. Hinge edge and
-   * swing direction are derived from the door geometry so it works for both the
-   * standard front door and custom doors on any side.
-   */
-  private ensureDoorPivot(group: THREE.Group): THREE.Object3D | undefined {
-    const existing = group.userData.unitDoorPivot as THREE.Object3D | undefined;
-    if (existing) return existing;
-
+  private findDoorMesh(group: THREE.Group): THREE.Mesh | undefined {
     let door: THREE.Mesh | undefined;
     group.traverse((child) => {
       if (!door && child instanceof THREE.Mesh && child.userData.partName === 'door') {
         door = child;
       }
     });
+    return door;
+  }
+
+  /**
+   * Builds a bottom-anchored garage-door rig: the door panel scales down on Y
+   * while a black opening mesh behind it is revealed. Idempotent — cached on
+   * {@link THREE.Object3D.userData.unitDoorRig}. Migrates legacy swing pivots.
+   */
+  private ensureDoorRig(group: THREE.Group): UnitDoorRig | undefined {
+    const cached = group.userData.unitDoorRig as UnitDoorRig | undefined;
+    if (cached?.pivot && cached.door && cached.opening) return cached;
+
+    this.teardownLegacySwingPivot(group);
+
+    const door = this.findDoorMesh(group);
     if (!door || door.parent !== group) return undefined;
 
     door.geometry.computeBoundingBox();
+    const bbox = door.geometry.boundingBox!;
     const size = new THREE.Vector3();
-    door.geometry.boundingBox!.getSize(size);
+    bbox.getSize(size);
+    const center = new THREE.Vector3();
+    bbox.getCenter(center);
 
-    const pos = door.position.clone();
+    const doorBottomY = door.position.y + bbox.min.y;
+    const openingPos = door.position.clone();
+
     const pivot = new THREE.Group();
-    pivot.name = 'UnitDoorPivot';
-
-    let openAngle: number;
-    if (size.x <= size.z) {
-      // Thin along X ⇒ door faces ±X; hinge runs along Z.
-      const doorWidth = size.z;
-      pivot.position.set(pos.x, pos.y, pos.z - doorWidth / 2);
-      door.position.set(0, 0, doorWidth / 2);
-      openAngle = (Math.sign(pos.x) || 1) * DOOR_OPEN_ANGLE;
-    } else {
-      // Thin along Z ⇒ door faces ±Z; hinge runs along X.
-      const doorWidth = size.x;
-      pivot.position.set(pos.x - doorWidth / 2, pos.y, pos.z);
-      door.position.set(doorWidth / 2, 0, 0);
-      openAngle = -(Math.sign(pos.z) || 1) * DOOR_OPEN_ANGLE;
-    }
+    pivot.name = 'UnitDoorGaragePivot';
+    pivot.position.set(door.position.x, doorBottomY, door.position.z);
 
     group.remove(door);
+    door.position.set(0, -bbox.min.y, 0);
     pivot.add(door);
     group.add(pivot);
 
-    group.userData.unitDoorPivot = pivot;
-    group.userData.unitDoorOpenAngle = openAngle;
-    return pivot;
+    const openingGeo = door.geometry.clone();
+    const openingMat = new THREE.MeshStandardMaterial({
+      color: DOOR_BLACK,
+      metalness: 0.1,
+      roughness: 0.95,
+    });
+    const opening = new THREE.Mesh(openingGeo, openingMat);
+    opening.name = 'UnitDoorOpening';
+    opening.userData.unitStateOpening = true;
+    opening.castShadow = false;
+    opening.receiveShadow = false;
+    opening.position.copy(openingPos);
+    this.insetOpeningTowardUnitInterior(opening, openingPos, size);
+    opening.visible = false;
+    group.add(opening);
+
+    const rig: UnitDoorRig = { pivot, door, opening };
+    group.userData.unitDoorRig = rig;
+    delete group.userData.unitDoorPivot;
+    delete group.userData.unitDoorOpenAngle;
+    return rig;
+  }
+
+  /** Nudge the opening mesh slightly into the unit so it sits behind the door panel. */
+  private insetOpeningTowardUnitInterior(
+    opening: THREE.Mesh,
+    doorPos: THREE.Vector3,
+    size: THREE.Vector3,
+  ): void {
+    if (size.x <= size.z) {
+      const sign = -(Math.sign(doorPos.x) || -1);
+      opening.position.x += sign * OPENING_INSET;
+    } else {
+      const sign = -(Math.sign(doorPos.z) || -1);
+      opening.position.z += sign * OPENING_INSET;
+    }
+  }
+
+  /** Remove legacy hinge-pivot swing rigs from older simulator sessions. */
+  private teardownLegacySwingPivot(group: THREE.Group): void {
+    const legacy = group.userData.unitDoorPivot as THREE.Object3D | undefined;
+    if (!legacy) return;
+
+    legacy.rotation.set(0, 0, 0);
+    legacy.updateMatrixWorld(true);
+
+    const door = legacy.children.find(
+      (child): child is THREE.Mesh =>
+        child instanceof THREE.Mesh && child.userData.partName === 'door',
+    );
+    if (door) {
+      const worldPos = new THREE.Vector3();
+      const worldQuat = new THREE.Quaternion();
+      const worldScale = new THREE.Vector3();
+      door.getWorldPosition(worldPos);
+      door.getWorldQuaternion(worldQuat);
+      door.getWorldScale(worldScale);
+      legacy.remove(door);
+      group.add(door);
+      group.updateMatrixWorld(true);
+      const inv = new THREE.Matrix4().copy(group.matrixWorld).invert();
+      worldPos.applyMatrix4(inv);
+      door.position.copy(worldPos);
+      const parentQuat = new THREE.Quaternion();
+      group.getWorldQuaternion(parentQuat);
+      door.quaternion.copy(parentQuat.invert().multiply(worldQuat));
+      door.scale.copy(worldScale);
+    }
+
+    group.remove(legacy);
+    delete group.userData.unitDoorPivot;
+    delete group.userData.unitDoorOpenAngle;
   }
 }

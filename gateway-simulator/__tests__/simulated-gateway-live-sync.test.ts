@@ -444,4 +444,35 @@ describe('SimulatedGateway live state sync', () => {
 
     expect(stateSync).not.toHaveBeenCalled();
   });
+
+  it('unlockDevice pushes live state sync when enabled', async () => {
+    const gateway = new SimulatedGateway({
+      id: 'gw-unlock-sync',
+      label: 'Test',
+      backendUrl: 'http://127.0.0.1:3000',
+      facilityId: 'fac-1',
+      gatewayId: 'gateway-1',
+      token: 'token',
+      store: mockStore(),
+      onUpdate: vi.fn(),
+      onLog: vi.fn(),
+      behavior: { liveStateSync: true },
+    });
+
+    const { stateSync, inventorySync } = connectWithLiveSync(gateway, {});
+
+    const item = await gateway.addDevice('lock');
+    inventorySync.mockClear();
+    stateSync.mockClear();
+
+    const key = SimulatedGateway.deviceKeyForItem(item);
+    await gateway.unlockDevice(key);
+
+    expect(stateSync).toHaveBeenCalledTimes(1);
+    expect(stateSync.mock.calls[0]?.[1]).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ kind: 'lock', locked: false, state: 'OPENED' }),
+      ]),
+    );
+  });
 });

@@ -19,7 +19,7 @@ export type TryOpenLockContext = {
   userProfile: UserProfile;
   appDeviceId: string;
   resolveCloudDeviceId?: () => Promise<string | null>;
-  applyUnlock: () => void;
+  applyUnlock: () => void | Promise<void>;
   emitAccessEvent: (input: {
     success: boolean;
     denial_reason?: AccessEventDenialReason;
@@ -103,12 +103,21 @@ export async function tryOpenLockWithUserDevice(
     };
   }
 
-  ctx.applyUnlock();
-  await ctx.emitAccessEvent({
-    success: true,
-    userId: ctx.userProfile.cloudUserId,
-    role: ctx.userProfile.role,
-  });
+  await Promise.resolve(ctx.applyUnlock());
+  try {
+    await ctx.emitAccessEvent({
+      success: true,
+      userId: ctx.userProfile.cloudUserId,
+      role: ctx.userProfile.role,
+    });
+  } catch (err) {
+    const detail = err instanceof Error ? err.message : String(err);
+    return {
+      granted: true,
+      message: `Unlocked locally; failed to report access event: ${detail}`,
+      lockUpdated: true,
+    };
+  }
   return { granted: true, message: 'Access granted via route pass', lockUpdated: true };
 }
 

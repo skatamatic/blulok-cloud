@@ -49,7 +49,6 @@ export function DeviceDetailSimulateSection({
         userId: user.id,
         appDeviceId: device.appDeviceId,
       });
-      onRefresh();
       setTryOpenResult({
         at: new Date().toISOString(),
         granted: result.granted,
@@ -59,6 +58,7 @@ export function DeviceDetailSimulateSection({
     } catch (err) {
       toast.error('Try open failed', errorMessage(err));
     } finally {
+      onRefresh();
       setTryOpenBusy(false);
     }
   };
@@ -78,7 +78,6 @@ export function DeviceDetailSimulateSection({
         deviceKey,
         code: accessCode.trim(),
       });
-      onRefresh();
       setAccessCodeResult({
         at: new Date().toISOString(),
         granted: result.granted,
@@ -89,6 +88,7 @@ export function DeviceDetailSimulateSection({
     } catch (err) {
       toast.error('Keypad try failed', errorMessage(err));
     } finally {
+      onRefresh();
       setAccessCodeBusy(false);
     }
   };

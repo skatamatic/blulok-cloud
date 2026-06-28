@@ -12,7 +12,7 @@ export type TryAccessCodeContext = {
   inventoryItem: DeviceInventoryItem;
   deviceSim?: DeviceSimulatorState;
   enteredCode: string;
-  applyUnlock: () => void;
+  applyUnlock: () => void | Promise<void>;
   emitAccessEvent: (input: {
     success: boolean;
     action: AccessEventAction;
@@ -51,15 +51,25 @@ export async function tryOpenWithAccessCode(
     };
   }
 
-  ctx.applyUnlock();
-  await ctx.emitAccessEvent({
-    success: true,
-    action: 'keypad_attempt',
-    keypad: {
-      entered_code: entered,
-      code_label: evaluation.matchedCode.schedule_name ?? undefined,
-    },
-  });
+  await Promise.resolve(ctx.applyUnlock());
+  try {
+    await ctx.emitAccessEvent({
+      success: true,
+      action: 'keypad_attempt',
+      keypad: {
+        entered_code: entered,
+        code_label: evaluation.matchedCode.schedule_name ?? undefined,
+      },
+    });
+  } catch (err) {
+    const detail = err instanceof Error ? err.message : String(err);
+    return {
+      granted: true,
+      message: `Unlocked locally; failed to report access event: ${detail}`,
+      lockUpdated: true,
+      schedule_name: evaluation.matchedCode.schedule_name ?? undefined,
+    };
+  }
 
   return {
     granted: true,

@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { AssetFactory } from '../../../../components/bludesign/assets/AssetFactory';
 import {
+  DOOR_ANIM_DURATION,
   UnitStateVisualManager,
 } from '../../../../components/bludesign/core/state/UnitStateVisualManager';
 import { DeviceState } from '../../../../components/bludesign/core/types';
@@ -44,23 +45,43 @@ describe('UnitStateVisualManager', () => {
     expect(bodyMat(body).color.r).toBeLessThan(0.95);
   });
 
-  it('opens the door (black) for unlocked bound units', () => {
+  it('builds a garage-door rig and reveals a black opening when unlocked', () => {
     const mgr = new UnitStateVisualManager();
     const { group, door } = makeUnit();
 
     mgr.applyState(group, { themed: true, bound: true, state: DeviceState.UNLOCKED });
 
-    // A hinge pivot is created and the door reparented under it.
-    const pivot = group.userData.unitDoorPivot as THREE.Object3D | undefined;
-    expect(pivot).toBeDefined();
-    expect(door.parent).toBe(pivot);
-    // Door reads black.
-    expect(bodyMat(door).color.getHex()).toBe(0x0a0a0a);
+    const rig = group.userData.unitDoorRig as { pivot: THREE.Group; door: THREE.Mesh; opening: THREE.Mesh };
+    expect(rig).toBeDefined();
+    expect(door.parent).toBe(rig.pivot);
+    expect(rig.opening.userData.unitStateOpening).toBe(true);
+    expect((rig.opening.material as THREE.MeshStandardMaterial).color.getHex()).toBe(0x0a0a0a);
+    // Door keeps its themed colour (not painted black).
+    expect(bodyMat(door).color.getHex()).toBe(0xf3f5f7);
 
-    // The swing animates toward the open angle over a few frames.
-    pivot!.rotation.y = 0;
-    for (let i = 0; i < 30; i++) mgr.update(0.1);
-    expect(Math.abs(pivot!.rotation.y)).toBeGreaterThan(0.5);
+    rig.pivot.scale.y = 1;
+    for (let i = 0; i < 30; i++) mgr.update(DOOR_ANIM_DURATION / 30);
+    expect(rig.pivot.scale.y).toBeLessThan(0.05);
+    expect(rig.opening.visible).toBe(true);
+  });
+
+  it('animates open/close over one second on state changes', () => {
+    const mgr = new UnitStateVisualManager();
+    const { group } = makeUnit();
+    const rig = () => group.userData.unitDoorRig as { pivot: THREE.Group };
+
+    mgr.applyState(group, { themed: true, bound: true, state: DeviceState.LOCKED });
+    mgr.applyState(group, { themed: true, bound: true, state: DeviceState.UNLOCKED });
+
+    mgr.update(0.25);
+    expect(rig().pivot.scale.y).toBeCloseTo(0.75, 2);
+
+    mgr.update(0.75);
+    expect(rig().pivot.scale.y).toBeLessThan(0.05);
+
+    mgr.applyState(group, { themed: true, bound: true, state: DeviceState.LOCKED });
+    mgr.update(0.5);
+    expect(rig().pivot.scale.y).toBeCloseTo(0.5, 2);
   });
 
   it('flashes red for error and animates emissive intensity', () => {
@@ -95,7 +116,9 @@ describe('UnitStateVisualManager', () => {
     mgr.applyState(group, { themed: true, bound: false, state: DeviceState.UNKNOWN });
     mgr.applyState(group, { themed: true, bound: true, state: DeviceState.ERROR });
     mgr.applyState(group, { themed: true, bound: true, state: DeviceState.UNLOCKED });
+    for (let i = 0; i < 30; i++) mgr.update(DOOR_ANIM_DURATION / 30);
     mgr.applyState(group, { themed: true, bound: true, state: DeviceState.LOCKED });
+    for (let i = 0; i < 30; i++) mgr.update(DOOR_ANIM_DURATION / 30);
 
     expect(bodyMat(body).transparent).toBe(false);
     expect(bodyMat(body).opacity).toBeCloseTo(1, 5);
@@ -106,6 +129,10 @@ describe('UnitStateVisualManager', () => {
     expect(bodyMat(door).color.getHex()).toBe(0xf3f5f7);
     expect(bodyMat(door).metalness).toBeCloseTo(doorBaseMetalness, 5);
     expect(bodyMat(door).roughness).toBeCloseTo(doorBaseRoughness, 5);
+
+    const rig = group.userData.unitDoorRig as { pivot: THREE.Group; opening: THREE.Mesh };
+    expect(rig.pivot.scale.y).toBeCloseTo(1, 3);
+    expect(rig.opening.visible).toBe(false);
   });
 
   it('delegates non-themed units to the legacy flat-colour swap', () => {

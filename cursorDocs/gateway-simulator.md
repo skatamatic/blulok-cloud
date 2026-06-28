@@ -171,7 +171,7 @@ No manual email/password entry — users must already exist in the backend.
 | Use cloud device | Existing backend registration | Imported as **Cloud** — fetch route passes directly |
 | Take over locally | Regenerate keys + register | **Take over locally** on cloud-linked device |
 | Fetch route pass | `POST /passes/request` | **Fetch route pass** |
-| Present at lock | Local verify + access event | **Try open with user device** on device detail |
+| Present at lock | Local verify + access event + live state sync | **Try open with user device** on device detail |
 
 **Persistence:** `user-profiles.json` stores session JWT (+ expiry), ops public key, cloud user id, devices (cloud-linked or simulator-local), and cached route passes per facility.
 

@@ -378,14 +378,14 @@ describe('SimulatedGateway', () => {
     const { gateway } = buildGateway();
     const lock = await gateway.addDevice('lock');
     const lockKey = SimulatedGateway.deviceKeyForItem(lock);
-    gateway.unlockDevice(lockKey);
+    await gateway.unlockDevice(lockKey);
     const lockRow = gateway.getState().devices.find((d) => d.kind === 'lock');
     expect(lockRow?.locked).toBe(false);
     expect(lockRow?.state).toBe('OPENED');
 
     const ac = await gateway.addDevice('access_control');
     const acKey = SimulatedGateway.deviceKeyForItem(ac);
-    gateway.unlockDevice(acKey);
+    await gateway.unlockDevice(acKey);
     const acRow = gateway.getState().devices.find((d) => d.kind === 'access_control');
     expect(acRow?.locked).toBe(false);
 

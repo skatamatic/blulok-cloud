@@ -768,16 +768,19 @@ export class SimulatedGateway {
     return this.registry.getRecord(key) ?? null;
   }
 
-  unlockDevice(key: string): void {
+  async unlockDevice(key: string): Promise<void> {
     const record = this.registry.getRecord(key);
     if (!record) return;
     if (record.item.kind === 'lock') {
       this.registry.update(key, { locked: false, state: 'OPENED' });
     } else if (record.item.kind === 'access_control') {
       this.registry.update(key, { locked: false, state: 'OPENED' });
+    } else {
+      return;
     }
     void this.persist();
     this.emitUpdate();
+    await this.syncLiveStateIfEnabled(key);
   }
 
   async resolveCloudDeviceId(item: DeviceInventoryItem): Promise<string | null> {

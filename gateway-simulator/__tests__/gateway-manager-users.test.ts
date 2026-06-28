@@ -40,7 +40,7 @@ function buildMockGateway(overrides: Partial<SimulatedGateway> = {}) {
       item: { kind: 'lock', lock_id: 'L1', locked: true, state: 'CLOSED' },
       sim: { denylist: [], facilityId: 'fac-1' },
     }),
-    unlockDevice: vi.fn(),
+    unlockDevice: vi.fn().mockResolvedValue(undefined),
     resolveCloudDeviceId: vi.fn().mockResolvedValue(null),
     simulateAccessEvent: vi.fn().mockResolvedValue(undefined),
     syncLiveAfterProfileRestore: vi.fn(),
