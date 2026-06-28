@@ -45,21 +45,34 @@ describe('UnitStateVisualManager', () => {
     expect(bodyMat(body).color.r).toBeLessThan(0.95);
   });
 
-  it('builds a garage-door rig and reveals a black opening when unlocked', () => {
+  it('builds a top-anchored roll-up rig with black backdrop when unlocked', () => {
     const mgr = new UnitStateVisualManager();
     const { group, door } = makeUnit();
+    const originalCenterY = door.position.y;
 
     mgr.applyState(group, { themed: true, bound: true, state: DeviceState.UNLOCKED });
 
-    const rig = group.userData.unitDoorRig as { pivot: THREE.Group; door: THREE.Mesh; opening: THREE.Mesh };
+    const rig = group.userData.unitDoorRig as {
+      pivot: THREE.Group;
+      door: THREE.Mesh;
+      opening: THREE.Mesh;
+    };
     expect(rig).toBeDefined();
     expect(door.parent).toBe(rig.pivot);
     expect(rig.opening.userData.unitStateOpening).toBe(true);
     expect((rig.opening.material as THREE.MeshStandardMaterial).color.getHex()).toBe(0x0a0a0a);
-    // Door keeps its themed colour (not painted black).
     expect(bodyMat(door).color.getHex()).toBe(0xf3f5f7);
 
+    // Closed rig preserves the door center (alignment with the unit frame).
     rig.pivot.scale.y = 1;
+    group.updateMatrixWorld(true);
+    const centerAfter = new THREE.Vector3();
+    door.getWorldPosition(centerAfter);
+    const expected = new THREE.Vector3();
+    door.parent!.parent!.updateMatrixWorld(true);
+    group.localToWorld(new THREE.Vector3(0, originalCenterY, door.position.z), expected);
+    expect(centerAfter.y).toBeCloseTo(originalCenterY, 4);
+
     for (let i = 0; i < 30; i++) mgr.update(DOOR_ANIM_DURATION / 30);
     expect(rig.pivot.scale.y).toBeLessThan(0.05);
     expect(rig.opening.visible).toBe(true);
@@ -122,10 +135,8 @@ describe('UnitStateVisualManager', () => {
 
     expect(bodyMat(body).transparent).toBe(false);
     expect(bodyMat(body).opacity).toBeCloseTo(1, 5);
-    // Emissive returns to its (black) base, so the unit no longer glows.
     expect(bodyMat(body).emissive.getHex()).toBe(0x000000);
     expect(bodyMat(body).color.getHex()).toBe(0xf3f5f7);
-    // The door fully restores (incl. metalness/roughness changed while open).
     expect(bodyMat(door).color.getHex()).toBe(0xf3f5f7);
     expect(bodyMat(door).metalness).toBeCloseTo(doorBaseMetalness, 5);
     expect(bodyMat(door).roughness).toBeCloseTo(doorBaseRoughness, 5);
@@ -143,7 +154,6 @@ describe('UnitStateVisualManager', () => {
     mgr.applyState(group, { themed: false, bound: true, state: DeviceState.ERROR });
     expect(spy).toHaveBeenCalledWith(group, DeviceState.ERROR);
 
-    // No flashing entry registered → update is a no-op for non-themed units.
     expect(() => mgr.update(0.1)).not.toThrow();
     spy.mockRestore();
   });

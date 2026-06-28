@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
+import { XMarkIcon } from '@heroicons/react/24/outline';
 import { createPortal } from 'react-dom';
 
 type Props = {
@@ -48,7 +49,7 @@ export function DeviceDetailDrawer({ deviceKey, onClose, children }: Props) {
 
   useEffect(() => {
     if (!visible || !panelRef.current) return;
-    panelRef.current.querySelector<HTMLElement>('.device-detail-nav-item')?.focus();
+    panelRef.current.querySelector<HTMLElement>('[data-device-detail-close]')?.focus();
   }, [visible, renderKey]);
 
   const handlePanelTransitionEnd = useCallback(
@@ -78,6 +79,15 @@ export function DeviceDetailDrawer({ deviceKey, onClose, children }: Props) {
         onMouseDown={(event) => event.stopPropagation()}
         onTransitionEnd={handlePanelTransitionEnd}
       >
+        <button
+          type="button"
+          className="device-detail-drawer-close"
+          aria-label="Close device details"
+          data-device-detail-close
+          onClick={onClose}
+        >
+          <XMarkIcon className="h-5 w-5" aria-hidden />
+        </button>
         <div className="device-detail-drawer-panel-inner">{children(renderKey)}</div>
       </div>
     </div>,

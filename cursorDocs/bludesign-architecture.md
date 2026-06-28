@@ -986,7 +986,7 @@ The viewer uses the same **`device_status`** channel as dashboard widgets (via `
 **Themed unit state visuals (`core/state/UnitStateVisualManager`):** A reusable, per-frame animation manager (ticked from `BluDesignEngine.renderFrame()` via `update(delta)`) that renders bound-state appearance for themed storage units. Driven by `PlacedObject.binding` (`entityId` ⇒ bound, `currentState` ⇒ `DeviceState`):
 - **not bound** → slightly dimmer + 90% opacity (subtly translucent)
 - **locked** → the plain themed look
-- **unlocked** → garage-style roll-up: door panel shrinks upward over 1s, black opening revealed behind
+- **unlocked** → roll-up door shrinks upward over 1s; black backdrop revealed through the opening
 - **error** → the whole unit flashes an alarming red emissive tint
 - **unknown** → the whole unit flashes an alarming yellow emissive tint
 

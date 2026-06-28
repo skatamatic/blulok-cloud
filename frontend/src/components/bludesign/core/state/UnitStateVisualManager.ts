@@ -10,7 +10,7 @@
  * Themed unit appearance, driven by binding + {@link DeviceState}:
  *  - not bound      → slightly dimmer + ~66% opacity (subtle translucency)
  *  - locked (bound) → the plain themed look
- *  - unlocked       → garage-style roll-up: door shrinks upward, black opening behind
+ *  - unlocked       → roll-up door shrinks upward; black opening revealed behind
  *  - error          → the whole unit flashes an alarming red tint
  *  - unknown        → the whole unit flashes an alarming yellow tint
  *
@@ -26,6 +26,9 @@ import { DeviceState } from '../types';
 
 /** The built-in skin these state visuals apply to. */
 export const THEMED_UNIT_SKIN_ID = 'skin-unit-white-blue';
+
+/** Bump when rig geometry/anchor changes so cached rigs rebuild on load. */
+const UNIT_DOOR_RIG_VERSION = 3;
 
 export interface UnitVisualStateParams {
   /** Whether the unit is wearing {@link THEMED_UNIT_SKIN_ID}. */
@@ -51,6 +54,7 @@ interface MaterialBase {
 export interface UnitDoorRig {
   pivot: THREE.Group;
   door: THREE.Mesh;
+  /** Black backdrop filling the opening (fixed; revealed as the door rolls up). */
   opening: THREE.Mesh;
 }
 
@@ -221,7 +225,10 @@ export class UnitStateVisualManager {
     entry.doorCurrentOpen += Math.sign(diff) * Math.min(Math.abs(diff), step);
   }
 
-  /** Shrink the door panel upward; reveal the black opening behind it. */
+  /**
+   * Top-anchored roll-up: the door panel shrinks toward the header (bottom edge
+   * rises), revealing the black backdrop from bottom to top.
+   */
   private applyDoorRigVisual(rig: UnitDoorRig, openAmount: number): void {
     const t = THREE.MathUtils.clamp(openAmount, 0, 1);
     const closedScale = Math.max(0.001, 1 - t);
@@ -298,14 +305,20 @@ export class UnitStateVisualManager {
   }
 
   /**
-   * Builds a bottom-anchored garage-door rig: the door panel scales down on Y
-   * while a black opening mesh behind it is revealed. Idempotent — cached on
-   * {@link THREE.Object3D.userData.unitDoorRig}. Migrates legacy swing pivots.
+   * Builds a top-anchored roll-up rig. Pivot sits on the door's top edge; the
+   * panel hangs down and scale.y compresses it upward. Black backdrop stays
+   * fixed in the original door frame.
    */
   private ensureDoorRig(group: THREE.Group): UnitDoorRig | undefined {
     const cached = group.userData.unitDoorRig as UnitDoorRig | undefined;
-    if (cached?.pivot && cached.door && cached.opening) return cached;
+    const version = group.userData.unitDoorRigVersion as number | undefined;
+    if (cached?.pivot && cached.door && cached.opening && version === UNIT_DOOR_RIG_VERSION) {
+      return cached;
+    }
 
+    if (cached || group.userData.unitDoorPivot) {
+      this.teardownDoorRig(group);
+    }
     this.teardownLegacySwingPivot(group);
 
     const door = this.findDoorMesh(group);
@@ -315,45 +328,44 @@ export class UnitStateVisualManager {
     const bbox = door.geometry.boundingBox!;
     const size = new THREE.Vector3();
     bbox.getSize(size);
-    const center = new THREE.Vector3();
-    bbox.getCenter(center);
 
-    const doorBottomY = door.position.y + bbox.min.y;
-    const openingPos = door.position.clone();
+    const doorCenter = door.position.clone();
+    const doorTopY = door.position.y + bbox.max.y;
 
     const pivot = new THREE.Group();
     pivot.name = 'UnitDoorGaragePivot';
-    pivot.position.set(door.position.x, doorBottomY, door.position.z);
+    pivot.position.set(door.position.x, doorTopY, door.position.z);
 
     group.remove(door);
-    door.position.set(0, -bbox.min.y, 0);
+    // Top of mesh at pivot origin; panel extends downward (roll-up toward header).
+    door.position.set(0, -bbox.max.y, 0);
     pivot.add(door);
     group.add(pivot);
 
-    const openingGeo = door.geometry.clone();
     const openingMat = new THREE.MeshStandardMaterial({
       color: DOOR_BLACK,
       metalness: 0.1,
       roughness: 0.95,
     });
-    const opening = new THREE.Mesh(openingGeo, openingMat);
+    const opening = new THREE.Mesh(door.geometry.clone(), openingMat);
     opening.name = 'UnitDoorOpening';
     opening.userData.unitStateOpening = true;
     opening.castShadow = false;
     opening.receiveShadow = false;
-    opening.position.copy(openingPos);
-    this.insetOpeningTowardUnitInterior(opening, openingPos, size);
+    opening.position.copy(doorCenter);
+    this.insetOpeningTowardUnitInterior(opening, doorCenter, size);
     opening.visible = false;
     group.add(opening);
 
     const rig: UnitDoorRig = { pivot, door, opening };
     group.userData.unitDoorRig = rig;
+    group.userData.unitDoorRigVersion = UNIT_DOOR_RIG_VERSION;
     delete group.userData.unitDoorPivot;
     delete group.userData.unitDoorOpenAngle;
     return rig;
   }
 
-  /** Nudge the opening mesh slightly into the unit so it sits behind the door panel. */
+  /** Nudge the backdrop slightly into the unit so it sits behind the door panel. */
   private insetOpeningTowardUnitInterior(
     opening: THREE.Mesh,
     doorPos: THREE.Vector3,
@@ -368,35 +380,52 @@ export class UnitStateVisualManager {
     }
   }
 
-  /** Remove legacy hinge-pivot swing rigs from older simulator sessions. */
+  /** Tear down a cached garage rig and restore the door mesh on the unit group. */
+  private teardownDoorRig(group: THREE.Group): void {
+    const rig = group.userData.unitDoorRig as (UnitDoorRig & { cavity?: THREE.Group }) | undefined;
+    if (!rig) return;
+
+    this.extractMeshToGroup(rig.door, group);
+    group.remove(rig.pivot);
+    if (rig.opening) group.remove(rig.opening);
+    else if (rig.cavity) group.remove(rig.cavity);
+    delete group.userData.unitDoorRig;
+    delete group.userData.unitDoorRigVersion;
+  }
+
+  private extractMeshToGroup(mesh: THREE.Mesh, group: THREE.Group): void {
+    group.updateMatrixWorld(true);
+    const worldPos = new THREE.Vector3();
+    const worldQuat = new THREE.Quaternion();
+    const worldScale = new THREE.Vector3();
+    mesh.getWorldPosition(worldPos);
+    mesh.getWorldQuaternion(worldQuat);
+    mesh.getWorldScale(worldScale);
+    mesh.parent?.remove(mesh);
+    group.add(mesh);
+    group.updateMatrixWorld(true);
+    const inv = new THREE.Matrix4().copy(group.matrixWorld).invert();
+    worldPos.applyMatrix4(inv);
+    mesh.position.copy(worldPos);
+    const groupQuat = new THREE.Quaternion();
+    group.getWorldQuaternion(groupQuat);
+    mesh.quaternion.copy(groupQuat.invert().multiply(worldQuat));
+    mesh.scale.copy(worldScale);
+    mesh.scale.y = Math.abs(mesh.scale.y);
+  }
+
+  /** Remove legacy hinge-pivot swing rigs from older sessions. */
   private teardownLegacySwingPivot(group: THREE.Group): void {
     const legacy = group.userData.unitDoorPivot as THREE.Object3D | undefined;
     if (!legacy) return;
 
     legacy.rotation.set(0, 0, 0);
-    legacy.updateMatrixWorld(true);
-
     const door = legacy.children.find(
       (child): child is THREE.Mesh =>
         child instanceof THREE.Mesh && child.userData.partName === 'door',
     );
     if (door) {
-      const worldPos = new THREE.Vector3();
-      const worldQuat = new THREE.Quaternion();
-      const worldScale = new THREE.Vector3();
-      door.getWorldPosition(worldPos);
-      door.getWorldQuaternion(worldQuat);
-      door.getWorldScale(worldScale);
-      legacy.remove(door);
-      group.add(door);
-      group.updateMatrixWorld(true);
-      const inv = new THREE.Matrix4().copy(group.matrixWorld).invert();
-      worldPos.applyMatrix4(inv);
-      door.position.copy(worldPos);
-      const parentQuat = new THREE.Quaternion();
-      group.getWorldQuaternion(parentQuat);
-      door.quaternion.copy(parentQuat.invert().multiply(worldQuat));
-      door.scale.copy(worldScale);
+      this.extractMeshToGroup(door, group);
     }
 
     group.remove(legacy);

@@ -1092,6 +1092,9 @@ body.gateway-sidebar-resizing {
 .device-detail-drawer-backdrop.is-open .device-detail-drawer-panel {
   transform: translateX(0);
 }
+.device-detail-drawer-close {
+  @apply absolute right-3 top-3 z-20 inline-flex h-9 w-9 items-center justify-center rounded-lg border border-gray-200 bg-white/95 text-gray-500 shadow-sm backdrop-blur transition hover:border-gray-300 hover:bg-gray-50 hover:text-gray-800 active:scale-[0.97] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2 dark:border-gray-600 dark:bg-gray-900/95 dark:text-gray-400 dark:hover:border-gray-500 dark:hover:bg-gray-800 dark:hover:text-gray-100 dark:focus-visible:ring-offset-gray-900;
+}
 .device-detail-drawer-panel-inner {
   @apply flex h-full min-h-0 flex-col overflow-hidden;
 }
@@ -1386,7 +1389,7 @@ body.gateway-sidebar-resizing {
     @apply h-full gap-0;
   }
   .device-detail-drawer-panel-inner .device-detail-header {
-    @apply sticky top-0 z-10 shrink-0 gap-3 border-b border-gray-200 bg-white/95 px-6 pb-3 pt-3 backdrop-blur-sm dark:border-gray-800 dark:bg-gray-900/95 sm:flex-row sm:items-center;
+    @apply sticky top-0 z-10 shrink-0 gap-3 border-b border-gray-200 bg-white/95 px-6 pb-3 pr-14 pt-3 backdrop-blur-sm dark:border-gray-800 dark:bg-gray-900/95 sm:flex-row sm:items-center;
   }
   .device-detail-drawer-panel-inner .device-detail-layout {
     @apply min-h-0 flex-1 gap-0 overflow-hidden px-6 pb-6 pt-5;
