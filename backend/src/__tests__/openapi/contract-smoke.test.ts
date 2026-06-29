@@ -19,7 +19,7 @@ describe('OpenAPI contract smoke tests', () => {
   });
 
   it('generated spec exists and defines core public paths', () => {
-    expect(spec.paths['/api/v1/auth/login']?.post).toBeDefined();
+    expect(spec.paths['/auth/login']?.post).toBeDefined();
     expect(spec.paths['/health']?.get).toBeDefined();
   });
 

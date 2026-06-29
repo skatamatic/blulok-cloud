@@ -190,6 +190,22 @@ function InlineNoticeBanner({ notice, onDismiss }: { notice: NonNullable<InlineN
   );
 }
 
+function recoveryPreviewDeviceLabel(device: {
+  kind: string;
+  lock_id?: string;
+  access_id?: string;
+  serial?: string;
+  relay_channel?: number | null;
+}): string {
+  if (device.kind === 'lock') return device.lock_id ?? '?';
+  if (device.kind === 'access_control') {
+    const relay = device.relay_channel ?? 1;
+    const id = device.access_id ?? '?';
+    return relay === 1 ? id : `${id} (relay ${relay})`;
+  }
+  return device.serial ?? '?';
+}
+
 export default function GatewaySwapRecoveryTab({
   facilityId,
   boundGatewayId,
@@ -206,7 +222,7 @@ export default function GatewaySwapRecoveryTab({
   const [sessions, setSessions] = useState<FacilityGatewaySession[]>([]);
   const [recovery, setRecovery] = useState<GatewayRecovery | null>(null);
   const [events, setEvents] = useState<GatewayRecoveryEvent[]>([]);
-  const [inventoryPreview, setInventoryPreview] = useState<Array<{ kind: string; serial: string }>>([]);
+  const [inventoryPreview, setInventoryPreview] = useState<Array<{ kind: string; label: string }>>([]);
   const [liveProgress, setLiveProgress] = useState<GatewayRecoveryProgress | null>(null);
   // Completion observed live during this session only — never hydrated on mount.
   const [sessionResult, setSessionResult] = useState<SessionSwapResult | null>(null);
@@ -327,7 +343,18 @@ export default function GatewaySwapRecoveryTab({
       const status = mergeHydratedRecoveryStatus(nextRecovery, statusRes.data);
 
       setRecovery(status);
-      setInventoryPreview(previewRes.data?.devices || []);
+      setInventoryPreview(
+        (previewRes.data?.devices || []).map((device: {
+          kind: string;
+          lock_id?: string;
+          access_id?: string;
+          serial?: string;
+          relay_channel?: number | null;
+        }) => ({
+          kind: device.kind,
+          label: recoveryPreviewDeviceLabel(device),
+        })),
+      );
 
       const options = optionsRes.data;
       if (options) {
@@ -470,7 +497,8 @@ export default function GatewaySwapRecoveryTab({
   const productionFirmwareImageAvailable = firmwareOptions?.productionFirmwareImageAvailable ?? false;
   const firmwareMatchBlocked = includeFirmwareMatch
     && !!productionFirmwareVersion
-    && !productionFirmwareImageAvailable;
+    && !productionFirmwareImageAvailable
+    && !candidateMatchesProduction;
 
   const previousGatewayConnected = useMemo(() => {
     if (!sessionResult?.previousGatewayId) return null;
@@ -832,7 +860,7 @@ export default function GatewaySwapRecoveryTab({
                       !view.canStart
                         ? 'Connect the swap candidate before starting a swap'
                         : firmwareMatchBlocked
-                          ? 'No firmware image is available for the production gateway version'
+                          ? 'Upload a firmware image for the production gateway version, or disable firmware matching'
                           : undefined
                     }
                     className="inline-flex items-center gap-2 rounded-lg bg-[#147FD4] px-4 py-2 text-sm font-medium text-white hover:bg-[#1269b0] active:scale-[0.98] disabled:opacity-50 transition-all"
@@ -925,7 +953,7 @@ export default function GatewaySwapRecoveryTab({
                 </p>
                 <ul className="max-h-40 overflow-y-auto text-xs font-mono text-secondary-600 dark:text-secondary-300 space-y-1">
                   {inventoryPreview.slice(0, 20).map((d, i) => (
-                    <li key={`${d.serial}-${i}`}>{d.kind}: {d.serial}</li>
+                    <li key={`${d.label}-${i}`}>{d.kind}: {d.label}</li>
                   ))}
                   {inventoryPreview.length > 20 && (
                     <li className="text-secondary-400">…and {inventoryPreview.length - 20} more</li>

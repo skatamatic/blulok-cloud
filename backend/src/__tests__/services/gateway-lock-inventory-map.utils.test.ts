@@ -1,6 +1,7 @@
 import {
   mapGatewayLockInventoryPropertiesToDbUpdate,
   readBluLokDisplayName,
+  readBluLokLockNumber,
 } from '@/utils/gateway-lock-inventory-map.utils';
 
 describe('mapGatewayLockInventoryPropertiesToDbUpdate', () => {
@@ -36,5 +37,11 @@ describe('mapGatewayLockInventoryPropertiesToDbUpdate', () => {
 describe('readBluLokDisplayName', () => {
   it('reads displayName from device_settings', () => {
     expect(readBluLokDisplayName({ device_settings: { displayName: 'Unit A' } })).toBe('Unit A');
+  });
+});
+
+describe('readBluLokLockNumber', () => {
+  it('reads lockNumber from device_settings', () => {
+    expect(readBluLokLockNumber({ device_settings: { lockNumber: 2453 } })).toBe(2453);
   });
 });

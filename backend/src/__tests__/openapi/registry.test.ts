@@ -1,6 +1,6 @@
 import { createApp } from '@/app';
 import { openApiRegistry } from '@/openapi/registry';
-import { buildOpenApiDocument } from '@/openapi/document';
+import { buildOpenApiDocument, openApiPathRelativeToServer } from '@/openapi/document';
 import { joiSchemaToOpenApi, resetJoiConverterState } from '@/openapi/joi-converter';
 import {
   errorEnvelopeSchema,
@@ -63,7 +63,7 @@ describe('OpenAPI registry unit', () => {
       components: { schemas: Record<string, unknown> };
     };
 
-    expect(doc.paths['/api/v1/auth/login']?.post?.requestBody?.content['application/json'].schema.$ref).toBe(
+    expect(doc.paths['/auth/login']?.post?.requestBody?.content['application/json'].schema.$ref).toBe(
       '#/components/schemas/PostAuthLoginRequest',
     );
     expect(doc.components.schemas.PostAuthLoginRequest).toBeDefined();
@@ -75,7 +75,25 @@ describe('OpenAPI registry unit', () => {
     const doc = buildOpenApiDocument([], [
       { method: 'get', path: '/api/v1/facilities/:facilityId/units' },
     ]) as { paths: Record<string, unknown> };
-    expect(doc.paths['/api/v1/facilities/{facilityId}/units']).toBeDefined();
+    expect(doc.paths['/facilities/{facilityId}/units']).toBeDefined();
+  });
+
+  it('strips /api/v1 from published paths when server base is /api/v1', () => {
+    openApiRegistry.register({
+      method: 'get',
+      openApiPath: '/api/v1/facilities/{facilityId}/units',
+      tags: ['Units'],
+      security: 'bearer',
+      responses: { 200: successEnvelopeSchema },
+      migrationStatus: 'complete',
+    });
+
+    const doc = buildOpenApiDocument(openApiRegistry.getRoutes()) as { paths: Record<string, unknown> };
+    expect(doc.paths['/facilities/{facilityId}/units']).toBeDefined();
+    expect(doc.paths['/api/v1/facilities/{facilityId}/units']).toBeUndefined();
+    expect(openApiPathRelativeToServer('/api/v1/facilities/{facilityId}/units')).toBe(
+      '/facilities/{facilityId}/units',
+    );
   });
 
   it('registers complete routes without pending status in merged output', () => {
@@ -92,7 +110,7 @@ describe('OpenAPI registry unit', () => {
     const doc = buildOpenApiDocument(openApiRegistry.getRoutes()) as {
       paths: Record<string, Record<string, Record<string, string>>>;
     };
-    const operation = doc.paths['/api/v1/units']?.get;
+    const operation = doc.paths['/units']?.get;
     expect(operation?.['x-migration-status']).toBe('complete');
   });
 });

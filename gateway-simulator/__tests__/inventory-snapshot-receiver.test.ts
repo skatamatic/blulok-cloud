@@ -100,17 +100,14 @@ describe('InventorySnapshotReceiver', () => {
       devices: [
         {
           kind: 'lock',
-          device_id: 'lock-1',
-          serial: 'L-001',
+          lock_id: 'L-001',
           lock_number: 12,
-          lock_id: 'lock-1',
           state: 'CLOSED',
           firmware_version: '2.1.0',
         },
         {
           kind: 'access_control',
-          device_id: 'ac-1',
-          serial: 'AC-001',
+          access_id: 'AC-001',
           relay_channel: 2,
           firmware_version: '1.4.0',
         },
@@ -186,8 +183,7 @@ describe('InventorySnapshotReceiver', () => {
       generated_at: new Date().toISOString(),
       devices: [{
         kind: 'lock',
-        device_id: 'cloud-lock-1',
-        serial: 'L-001',
+        lock_id: 'L-001',
         denylist: [{ sub: 'tenant-snap', exp: 9999999999 }],
       }],
     });
@@ -215,7 +211,8 @@ describe('InventorySnapshotReceiver', () => {
     }, ctx);
 
     const lock = registry.list()[0] as import('@protocol/device-kinds').LockInventoryItem;
-    expect(lock.cloud_device_id).toBe('cloud-lock-1');
+    expect(lock.lock_id).toBe('L-001');
+    expect(lock.cloud_device_id).toBeUndefined();
     expect(registry.getSimState(`lock:${lock.lock_id}`)?.denylist).toEqual(
       expect.arrayContaining([expect.objectContaining({ sub: 'tenant-snap' })]),
     );
@@ -242,7 +239,7 @@ describe('InventorySnapshotReceiver', () => {
       facility_id: 'fac-1',
       gateway_id: 'gw-new',
       generated_at: new Date().toISOString(),
-      devices: [{ kind: 'lock', device_id: 'id-1', serial: 'L-99', lock_id: 'id-1' }],
+      devices: [{ kind: 'lock', lock_id: 'L-99' }],
     });
     const binary = Buffer.from(snapshotJson, 'utf8');
     const sha256 = createHash('sha256').update(binary).digest('hex');

@@ -29,6 +29,19 @@ const OPENAPI_TAGS = [
   { name: 'Passes', description: 'Route passes and JWT passes' },
 ];
 
+const OPENAPI_SERVER_BASE = '/api/v1';
+
+/** Strip the server base prefix so Swagger resolves `/api/v1` + `/facilities/...` correctly. */
+export function openApiPathRelativeToServer(fullPath: string): string {
+  if (fullPath === OPENAPI_SERVER_BASE) {
+    return '/';
+  }
+  if (fullPath.startsWith(`${OPENAPI_SERVER_BASE}/`)) {
+    return fullPath.slice(OPENAPI_SERVER_BASE.length);
+  }
+  return fullPath;
+}
+
 function expressPathToOpenApi(path: string): string {
   return path.replace(/:([A-Za-z0-9_]+)/g, '{$1}');
 }
@@ -133,14 +146,15 @@ export function buildOpenApiDocument(
   );
 
   for (const route of registeredRoutes) {
-    if (!paths[route.openApiPath]) {
-      paths[route.openApiPath] = {};
+    const pathKey = openApiPathRelativeToServer(route.openApiPath);
+    if (!paths[pathKey]) {
+      paths[pathKey] = {};
     }
-    paths[route.openApiPath][route.method] = buildOperation(route, components);
+    paths[pathKey][route.method] = buildOperation(route, components);
   }
 
   for (const pending of pendingRoutes) {
-    const openApiPath = expressPathToOpenApi(pending.path);
+    const openApiPath = openApiPathRelativeToServer(expressPathToOpenApi(pending.path));
     const key = `${pending.method.toUpperCase()} ${openApiPath}`;
     if (registeredPathKeys.has(key)) continue;
     if (!paths[openApiPath]) {
@@ -176,7 +190,7 @@ export function buildOpenApiDocument(
       description:
         'BluLok Cloud REST API. Interactive docs at /api/docs (default). Raw spec at /api/openapi.json. Set ENABLE_OPENAPI_DOCS=false to hide Swagger UI.',
     },
-    servers: [{ url: '/api/v1', description: 'API v1 base (relative to host root)' }],
+    servers: [{ url: OPENAPI_SERVER_BASE, description: 'API v1 base (relative to host root)' }],
     tags: OPENAPI_TAGS,
     paths,
     components: {

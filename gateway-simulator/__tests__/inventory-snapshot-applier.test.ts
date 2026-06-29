@@ -17,15 +17,13 @@ describe('inventory-snapshot-applier', () => {
         devices: [
           {
             kind: 'lock',
-            device_id: 'lock-1',
-            serial: 'L-001',
+            lock_id: 'L-001',
             lock_number: 3,
             state: 'CLOSED',
             firmware_version: '2.0.0',
           },
           {
             kind: 'bridge',
-            device_id: 'br-1',
             serial: 'BR-001',
             state: 'healthy',
           },
@@ -35,11 +33,12 @@ describe('inventory-snapshot-applier', () => {
     );
 
     expect(mapped).toHaveLength(2);
-    expect(mapped[0]?.item).toMatchObject({ kind: 'lock', lock_id: 'L-001', lock_number: 3, cloud_device_id: 'lock-1' });
+    expect(mapped[0]?.item).toMatchObject({ kind: 'lock', lock_id: 'L-001', lock_number: 3 });
+    expect(mapped[0]?.item).not.toHaveProperty('cloud_device_id');
     expect(mapped[1]?.item).toMatchObject({ kind: 'bridge', serial: 'BR-001' });
   });
 
-  it('prefers device serial over cloud UUID for lock_id and access_id', () => {
+  it('uses lock_id and access_id from snapshot rows', () => {
     const mapped = mapSnapshotToInventoryItems(
       {
         facility_id: 'fac-1',
@@ -47,15 +46,12 @@ describe('inventory-snapshot-applier', () => {
         devices: [
           {
             kind: 'lock',
-            device_id: 'uuid-lock-1',
-            serial: 'A-001',
-            lock_id: 'uuid-lock-1',
+            lock_id: 'A-001',
             lock_number: 5,
           },
           {
             kind: 'access_control',
-            device_id: 'uuid-ac-1',
-            serial: 'AC-001',
+            access_id: 'AC-001',
             relay_channel: 2,
           },
         ],
@@ -67,12 +63,10 @@ describe('inventory-snapshot-applier', () => {
     expect(mapped.find((row) => row.item.kind === 'lock')?.item).toMatchObject({
       lock_id: 'A-001',
       lock_number: 5,
-      cloud_device_id: 'uuid-lock-1',
     });
     expect(mapped.find((row) => row.item.kind === 'access_control')?.item).toMatchObject({
       access_id: 'AC-001',
       relay_channel: 2,
-      cloud_device_id: 'uuid-ac-1',
     });
   });
 
@@ -84,8 +78,7 @@ describe('inventory-snapshot-applier', () => {
         devices: [
           {
             kind: 'lock',
-            device_id: 'uuid-lock-1',
-            serial: 'A-001',
+            lock_id: 'A-001',
             denylist: [{ sub: 'tenant-1', exp: 9999999999 }],
           },
         ],
@@ -98,12 +91,12 @@ describe('inventory-snapshot-applier', () => {
     expect(countDenylistEntriesInMap(denylistByKey)).toBe(1);
   });
 
-  it('returns undefined denylist map for legacy snapshots without denylist fields', () => {
+  it('returns undefined denylist map when snapshot rows omit denylist', () => {
     const mapped = mapSnapshotToInventoryItems(
       {
         facility_id: 'fac-1',
         gateway_id: 'gw-new',
-        devices: [{ kind: 'lock', device_id: 'lock-1', serial: 'L-001' }],
+        devices: [{ kind: 'lock', lock_id: 'L-001' }],
       },
       [],
     );
@@ -117,8 +110,8 @@ describe('inventory-snapshot-applier', () => {
         facility_id: 'fac-1',
         gateway_id: 'gw-new',
         devices: [
-          { kind: 'gateway', device_id: 'gw-new', serial: 'gw-new', state: 'healthy' },
-          { kind: 'lock', device_id: 'lock-1', serial: 'L-001' },
+          { kind: 'gateway', serial: 'gw-new', state: 'healthy' } as never,
+          { kind: 'lock', lock_id: 'L-001' },
         ],
       },
       [],
@@ -145,7 +138,7 @@ describe('inventory-snapshot-applier', () => {
     const json = JSON.stringify({
       facility_id: 'fac-1',
       gateway_id: 'gw-new',
-      devices: [{ kind: 'lock', device_id: 'l1', serial: 'L1' }],
+      devices: [{ kind: 'lock', lock_id: 'L1' }],
     });
     const { mapped } = applyInventorySnapshotBinary(Buffer.from(json, 'utf8'), []);
     expect(mapped.some((row) => row.item.kind === 'lock')).toBe(true);

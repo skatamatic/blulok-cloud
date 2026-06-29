@@ -7,23 +7,41 @@ import { logger } from '@/utils/logger';
 
 import { NetworkInfraSyncKind, getGatewayDeviceKindDefinition } from '@/config/gateway-device-kinds';
 import { DenylistSyncEntry, DenylistSyncService } from '@/services/denylist-sync.service';
+import { readBluLokLockNumber } from '@/utils/gateway-lock-inventory-map.utils';
 
-export interface InventorySnapshotDevice {
-  kind: 'lock' | 'access_control' | NetworkInfraSyncKind;
-  device_id: string;
-  serial: string;
+export interface InventorySnapshotLockDevice {
+  kind: 'lock';
+  /** Gateway mesh identity (hardware serial — same as inventory sync `lock_id`). */
+  lock_id: string;
   unit_id?: string | null;
   unit_number?: string | null;
   lock_number?: number | null;
+  properties?: Record<string, unknown>;
+  denylist?: DenylistSyncEntry[];
+}
+
+export interface InventorySnapshotAccessControlDevice {
+  kind: 'access_control';
+  /** Gateway mesh identity (hardware serial — same as inventory sync `access_id`). */
+  access_id: string;
   relay_channel?: number | null;
-  lock_id?: string | null;
+  properties?: Record<string, unknown>;
+  denylist?: DenylistSyncEntry[];
+}
+
+export interface InventorySnapshotInfraDevice {
+  kind: NetworkInfraSyncKind;
+  serial: string;
   state?: string | null;
   firmware_version?: string | null;
   info?: Record<string, unknown>;
   properties?: Record<string, unknown>;
-  /** Active cloud denylist entries for operational devices (lock / access_control). */
-  denylist?: DenylistSyncEntry[];
 }
+
+export type InventorySnapshotDevice =
+  | InventorySnapshotLockDevice
+  | InventorySnapshotAccessControlDevice
+  | InventorySnapshotInfraDevice;
 
 export interface InventorySnapshotPayload {
   schema_version: 1 | 2;
@@ -32,6 +50,28 @@ export interface InventorySnapshotPayload {
   generated_at: string;
   devices: InventorySnapshotDevice[];
 }
+
+/** Stable sort/display key for a snapshot device row. */
+export function inventorySnapshotDeviceKey(device: InventorySnapshotDevice): string {
+  if (device.kind === 'lock') return `lock:${device.lock_id}`;
+  if (device.kind === 'access_control') {
+    const relay = device.relay_channel ?? 1;
+    return `access_control:${device.access_id}:${relay}`;
+  }
+  return `${device.kind}:${device.serial}`;
+}
+
+/** Human-readable identifier for operator preview UIs. */
+export function inventorySnapshotDeviceLabel(device: InventorySnapshotDevice): string {
+  if (device.kind === 'lock') return device.lock_id;
+  if (device.kind === 'access_control') {
+    const relay = device.relay_channel ?? 1;
+    return relay === 1 ? device.access_id : `${device.access_id} (relay ${relay})`;
+  }
+  return device.serial;
+}
+
+type OperationalCloudIdKey = `lock:${string}` | `access_control:${string}:${number}`;
 
 export class InventorySnapshotService {
   private static gatewayModel = new GatewayModel();
@@ -43,18 +83,26 @@ export class InventorySnapshotService {
     blulokDevices: Array<Record<string, unknown>>,
     accessControlDevices: Array<Record<string, unknown>>,
     inventoryDevices: Array<Record<string, unknown>> = [],
-  ): InventorySnapshotPayload {
+  ): { payload: InventorySnapshotPayload; operationalCloudIds: Map<OperationalCloudIdKey, string> } {
     const devices: InventorySnapshotDevice[] = [];
+    const operationalCloudIds = new Map<OperationalCloudIdKey, string>();
 
     for (const row of blulokDevices) {
+      const lockId = String(row.device_serial || row.serial || '').trim();
+      const lockNumber =
+        readBluLokLockNumber({ device_settings: row.device_settings as Record<string, unknown> | null | undefined })
+        ?? null;
+
+      if (lockId) {
+        operationalCloudIds.set(`lock:${lockId}`, String(row.id));
+      }
+
       devices.push({
         kind: 'lock',
-        device_id: String(row.id),
-        serial: String(row.device_serial || row.serial || ''),
+        lock_id: lockId,
         unit_id: (row.unit_id as string | null | undefined) ?? null,
         unit_number: (row.unit_number as string | null | undefined) ?? null,
-        lock_number: typeof row.lock_number === 'number' ? row.lock_number : null,
-        lock_id: String(row.id),
+        lock_number: lockNumber,
         properties: {
           lock_status: row.lock_status,
           firmware_version: row.firmware_version,
@@ -63,10 +111,15 @@ export class InventorySnapshotService {
     }
 
     for (const row of accessControlDevices) {
+      const accessId = String(row.device_serial || row.serial || '').trim();
+      const relayChannel = typeof row.relay_channel === 'number' ? row.relay_channel : 1;
+      if (accessId) {
+        operationalCloudIds.set(`access_control:${accessId}:${relayChannel}`, String(row.id));
+      }
+
       devices.push({
         kind: 'access_control',
-        device_id: String(row.id),
-        serial: String(row.device_serial || row.serial || ''),
+        access_id: accessId,
         relay_channel: typeof row.relay_channel === 'number' ? row.relay_channel : null,
         properties: {
           device_name: row.device_name,
@@ -87,7 +140,6 @@ export class InventorySnapshotService {
           : undefined;
       devices.push({
         kind: String(row.device_kind) as NetworkInfraSyncKind,
-        device_id: String(row.id),
         serial: String(row.device_serial || ''),
         state: row.state != null ? String(row.state) : null,
         firmware_version: row.firmware_version != null ? String(row.firmware_version) : null,
@@ -98,35 +150,40 @@ export class InventorySnapshotService {
       });
     }
 
-    devices.sort((a, b) => {
-      const keyA = `${a.kind}:${a.serial}`;
-      const keyB = `${b.kind}:${b.serial}`;
-      return keyA.localeCompare(keyB);
-    });
+    devices.sort((a, b) => inventorySnapshotDeviceKey(a).localeCompare(inventorySnapshotDeviceKey(b)));
 
     return {
-      schema_version: 2,
-      facility_id: facilityId,
-      gateway_id: gatewayId,
-      generated_at: new Date().toISOString(),
-      devices,
+      payload: {
+        schema_version: 2,
+        facility_id: facilityId,
+        gateway_id: gatewayId,
+        generated_at: new Date().toISOString(),
+        devices,
+      },
+      operationalCloudIds,
     };
   }
 
   static async attachActiveDenylists(
     payload: InventorySnapshotPayload,
+    operationalCloudIds: Map<OperationalCloudIdKey, string>,
   ): Promise<InventorySnapshotPayload> {
-    const operationalIds = payload.devices
-      .filter((device) => device.kind === 'lock' || device.kind === 'access_control')
-      .map((device) => device.device_id);
-    const denylistByDevice = await DenylistSyncService.getDenylistsForDeviceIds(operationalIds);
+    const cloudIds = [...new Set(operationalCloudIds.values())];
+    const denylistByDevice = await DenylistSyncService.getDenylistsForDeviceIds(cloudIds);
 
     const devices = payload.devices.map((device) => {
-      if (device.kind !== 'lock' && device.kind !== 'access_control') {
-        return device;
+      if (device.kind === 'lock') {
+        const cloudId = operationalCloudIds.get(`lock:${device.lock_id}`);
+        const denylist = cloudId ? (denylistByDevice.get(cloudId) ?? []) : [];
+        return { ...device, denylist };
       }
-      const denylist = denylistByDevice.get(device.device_id) ?? [];
-      return { ...device, denylist };
+      if (device.kind === 'access_control') {
+        const relay = device.relay_channel ?? 1;
+        const cloudId = operationalCloudIds.get(`access_control:${device.access_id}:${relay}`);
+        const denylist = cloudId ? (denylistByDevice.get(cloudId) ?? []) : [];
+        return { ...device, denylist };
+      }
+      return device;
     });
 
     return { ...payload, devices };
@@ -161,14 +218,14 @@ export class InventorySnapshotService {
       throw new Error('Gateway not found for inventory snapshot');
     }
 
-    const basePayload = this.buildSnapshotPayload(
+    const { payload: basePayload, operationalCloudIds } = this.buildSnapshotPayload(
       facilityId,
       targetGatewayId,
       withDevices.blulokDevices,
       withDevices.accessControlDevices,
       withDevices.inventoryDevices,
     );
-    const payload = await this.attachActiveDenylists(basePayload);
+    const payload = await this.attachActiveDenylists(basePayload, operationalCloudIds);
     const json = this.serializeDeterministic(payload);
     const binary = Buffer.from(json, 'utf8');
     const sha256 = crypto.createHash('sha256').update(binary).digest('hex');
@@ -220,14 +277,14 @@ export class InventorySnapshotService {
     if (!bound) return [];
     const withDevices = await this.gatewayModel.getGatewayWithDevices(bound.id);
     if (!withDevices) return [];
-    const basePayload = this.buildSnapshotPayload(
+    const { payload: basePayload, operationalCloudIds } = this.buildSnapshotPayload(
       facilityId,
       bound.id,
       withDevices.blulokDevices,
       withDevices.accessControlDevices,
       withDevices.inventoryDevices,
     );
-    const payload = await this.attachActiveDenylists(basePayload);
+    const payload = await this.attachActiveDenylists(basePayload, operationalCloudIds);
     return payload.devices;
   }
 }

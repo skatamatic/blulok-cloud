@@ -361,6 +361,8 @@ Unknown `{kind}:{serial}` → `network_infra.not_found[]` entry like `bridge:BR-
 
 `operational_devices` carries the cloud’s active denylist per lock/access_control row so gateways (and the desktop simulator) can reconcile local denylist state after inventory sync or swap recovery. Recovery snapshots embed the same `denylist` array on each operational device row in the pushed JSON payload.
 
+**Recovery snapshot identity (schema v2):** operational rows use gateway-native identifiers only — locks carry **`lock_id`** (hardware serial), access control carries **`access_id`** (+ optional `relay_channel`), bridge/friend_node carry **`serial`**. Cloud row UUIDs and duplicate `serial` fields are **not** included on lock/access rows. **`lock_number`** comes from `device_settings.lockNumber`. Denylist entries are embedded per operational row.
+
 ### Multi-door keypad (same `access_id`, different relays)
 
 One physical keypad managing multiple doors appears in cloud inventory as **separate rows** per relay output:

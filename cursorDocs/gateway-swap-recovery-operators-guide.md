@@ -24,7 +24,7 @@ When a facility’s on-site gateway is replaced, the cloud **must not trust inve
 | Facility has a **bound gateway** row (`gateways.facility_id` set) | Defines “production” vs swap candidate |
 | Replacement gateway has a **stable GUID** it sends in `AUTH.gatewayId` | Identity; **the cloud record is auto-created on first connect** — pre-creating it is optional (see §5.1) |
 | Replacement gateway `facility_id` is **null** or matches this facility | Other-facility gateways are rejected as swap candidates |
-| At least one **gateway firmware image** uploaded (`target_type=gateway`) matching the production gateway version | Recovery phase 1 (only when **Include firmware matching** is enabled) |
+| Gateway firmware image matching production version (`target_type=gateway`) | Recovery phase 1 OTA (only when **Include firmware matching** is enabled **and** the swap candidate is behind production — skipped when versions already match) |
 | Operator JWT with **`facility_admin`** (scoped), **`admin`**, or **`dev_admin`** | WS AUTH (also gates auto-registration) + recovery REST |
 | Backend migration **078** + **079** applied | Recovery tables + one active recovery per facility |
 | Gateway can reach **`wss://<host>/ws/gateway`** and **`https://<host>/api/v1`** | Same URLs as Facility → Gateway → Overview |

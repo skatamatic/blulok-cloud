@@ -8,22 +8,40 @@ import type {
 } from '@protocol/device-kinds';
 import { deviceKey } from '../devices/IDeviceModel';
 
-/** Cloud inventory snapshot device row (recovery push payload). */
-export type CloudInventorySnapshotDevice = {
-  kind: string;
-  device_id?: string;
-  serial?: string;
+export type CloudInventorySnapshotLockDevice = {
+  kind: 'lock';
+  lock_id: string;
   unit_id?: string | null;
   unit_number?: string | null;
   lock_number?: number | null;
+  state?: string | null;
+  firmware_version?: string | null;
+  properties?: Record<string, unknown>;
+  denylist?: Array<{ sub: string; exp?: number }>;
+};
+
+export type CloudInventorySnapshotAccessControlDevice = {
+  kind: 'access_control';
+  access_id: string;
   relay_channel?: number | null;
-  lock_id?: string | null;
+  firmware_version?: string | null;
+  properties?: Record<string, unknown>;
+  denylist?: Array<{ sub: string; exp?: number }>;
+};
+
+export type CloudInventorySnapshotInfraDevice = {
+  kind: 'bridge' | 'friend_node';
+  serial: string;
   state?: string | null;
   firmware_version?: string | null;
   info?: Record<string, unknown>;
   properties?: Record<string, unknown>;
-  denylist?: Array<{ sub: string; exp?: number }>;
 };
+
+export type CloudInventorySnapshotDevice =
+  | CloudInventorySnapshotLockDevice
+  | CloudInventorySnapshotAccessControlDevice
+  | CloudInventorySnapshotInfraDevice;
 
 export type CloudInventorySnapshotPayload = {
   schema_version?: number;
@@ -33,21 +51,21 @@ export type CloudInventorySnapshotPayload = {
   devices: CloudInventorySnapshotDevice[];
 };
 
-function readFirmwareVersion(
-  row: CloudInventorySnapshotDevice,
-): string | undefined {
+type SnapshotRow = CloudInventorySnapshotDevice & { kind: string };
+
+function readFirmwareVersion(row: {
+  firmware_version?: string | null;
+  properties?: Record<string, unknown>;
+}): string | undefined {
   if (row.firmware_version?.trim()) return row.firmware_version.trim();
   const fromProps = row.properties?.firmware_version;
   if (typeof fromProps === 'string' && fromProps.trim()) return fromProps.trim();
   return undefined;
 }
 
-function mapLock(row: CloudInventorySnapshotDevice, now: string): LockInventoryItem {
-  // Cloud inventory sync and DEVICE_DELETED tombstones use device serial as lock_id.
-  const serial = String(row.serial || '').trim();
-  const cloudLockId = String(row.lock_id || row.device_id || '').trim();
-  const lockId = serial || cloudLockId;
-  if (!lockId) throw new Error('Inventory snapshot lock missing identifier');
+function mapLock(row: CloudInventorySnapshotLockDevice, now: string): LockInventoryItem {
+  const lockId = String(row.lock_id || '').trim();
+  if (!lockId) throw new Error('Inventory snapshot lock missing lock_id');
 
   const rawState = row.state?.toUpperCase();
   const state: LockState | undefined =
@@ -58,7 +76,6 @@ function mapLock(row: CloudInventorySnapshotDevice, now: string): LockInventoryI
   return {
     kind: 'lock',
     lock_id: lockId,
-    cloud_device_id: row.device_id?.trim() || undefined,
     lock_number: typeof row.lock_number === 'number' ? row.lock_number : undefined,
     state: state ?? 'CLOSED',
     locked: true,
@@ -68,15 +85,13 @@ function mapLock(row: CloudInventorySnapshotDevice, now: string): LockInventoryI
   };
 }
 
-function mapAccessControl(row: CloudInventorySnapshotDevice, now: string): AccessControlInventoryItem {
-  const serial = String(row.serial || '').trim();
-  const accessId = serial || String(row.device_id || '').trim();
-  if (!accessId) throw new Error('Inventory snapshot access_control missing identifier');
+function mapAccessControl(row: CloudInventorySnapshotAccessControlDevice, now: string): AccessControlInventoryItem {
+  const accessId = String(row.access_id || '').trim();
+  if (!accessId) throw new Error('Inventory snapshot access_control missing access_id');
 
   return {
     kind: 'access_control',
     access_id: accessId,
-    cloud_device_id: row.device_id?.trim() || undefined,
     relay_channel: typeof row.relay_channel === 'number' ? row.relay_channel : undefined,
     device_type: 'gate',
     locked: true,
@@ -86,8 +101,8 @@ function mapAccessControl(row: CloudInventorySnapshotDevice, now: string): Acces
   };
 }
 
-function mapBridge(row: CloudInventorySnapshotDevice, now: string): BridgeInventoryItem {
-  const serial = String(row.serial || row.device_id || '').trim();
+function mapBridge(row: CloudInventorySnapshotInfraDevice, now: string): BridgeInventoryItem {
+  const serial = String(row.serial || '').trim();
   if (!serial) throw new Error('Inventory snapshot bridge missing serial');
 
   return {
@@ -101,8 +116,8 @@ function mapBridge(row: CloudInventorySnapshotDevice, now: string): BridgeInvent
   };
 }
 
-function mapFriendNode(row: CloudInventorySnapshotDevice, now: string): FriendNodeInventoryItem {
-  const serial = String(row.serial || row.device_id || '').trim();
+function mapFriendNode(row: CloudInventorySnapshotInfraDevice, now: string): FriendNodeInventoryItem {
+  const serial = String(row.serial || '').trim();
   if (!serial) throw new Error('Inventory snapshot friend_node missing serial');
 
   return {
@@ -152,7 +167,7 @@ export function mapSnapshotToInventoryItems(
   const now = new Date().toISOString();
   const mapped: MappedSnapshotDevice[] = [];
 
-  for (const row of payload.devices) {
+  for (const row of payload.devices as SnapshotRow[]) {
     switch (row.kind) {
       case 'lock':
         mapped.push({

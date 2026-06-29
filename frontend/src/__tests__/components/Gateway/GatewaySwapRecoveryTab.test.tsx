@@ -180,6 +180,51 @@ describe('GatewaySwapRecoveryTab', () => {
     expect(screen.queryByText('Firmware image')).not.toBeInTheDocument();
   });
 
+  it('allows start swap when candidate matches production even without catalogued firmware image', async () => {
+    (apiService.getGatewayRecoveryOptions as jest.Mock).mockResolvedValue({
+      data: {
+        productionFirmwareVersion: '1.0.9-SNAPSHOT-15-3',
+        candidateFirmwareVersion: '1.0.9-SNAPSHOT-15-3',
+        candidateMatchesProduction: true,
+        productionFirmwareImageAvailable: false,
+      },
+    });
+
+    render(
+      <GatewaySwapRecoveryTab facilityId="fac-1" boundGatewayId="gw-old" wsConnected />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText(/Candidate already matches production/i)).toBeInTheDocument();
+    });
+    expect(
+      screen.queryByText(/No firmware image is catalogued for the production version/i),
+    ).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Start swap/i })).toBeEnabled();
+  });
+
+  it('blocks start swap when candidate is behind production and no catalogued firmware image', async () => {
+    (apiService.getGatewayRecoveryOptions as jest.Mock).mockResolvedValue({
+      data: {
+        productionFirmwareVersion: '2.0.0',
+        candidateFirmwareVersion: '1.0.0',
+        candidateMatchesProduction: false,
+        productionFirmwareImageAvailable: false,
+      },
+    });
+
+    render(
+      <GatewaySwapRecoveryTab facilityId="fac-1" boundGatewayId="gw-old" wsConnected />,
+    );
+
+    await waitFor(() => {
+      expect(
+        screen.getByText(/No firmware image is catalogued for the production version/i),
+      ).toBeInTheDocument();
+    });
+    expect(screen.getByRole('button', { name: /Start swap/i })).toBeDisabled();
+  });
+
   it('shows bypass option while recovery is detected', async () => {
     render(
       <GatewaySwapRecoveryTab facilityId="fac-1" boundGatewayId="gw-old" wsConnected />,

@@ -28,6 +28,16 @@ function readLockNumber(settings: Record<string, unknown>): number | undefined {
   return undefined;
 }
 
+/** Read lock number from a BluLok device row (`device_settings.lockNumber`). */
+export function readBluLokLockNumber(device: {
+  device_settings?: Record<string, unknown> | null;
+}): number | undefined {
+  if (!device.device_settings || typeof device.device_settings !== 'object') {
+    return undefined;
+  }
+  return readLockNumber(device.device_settings);
+}
+
 /**
  * Map gateway inventory property fields to BluLok metadata updates.
  * Identity (`lock_id` / device_serial) is handled separately and never changed here.

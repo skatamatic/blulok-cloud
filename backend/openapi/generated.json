@@ -200,7 +200,7 @@
         "security": []
       }
     },
-    "/api/v1/auth/login": {
+    "/auth/login": {
       "post": {
         "tags": [
           "Auth"
@@ -240,7 +240,7 @@
         "security": []
       }
     },
-    "/api/v1/auth/change-password": {
+    "/auth/change-password": {
       "post": {
         "tags": [
           "Auth"
@@ -284,7 +284,7 @@
         ]
       }
     },
-    "/api/v1/auth/profile": {
+    "/auth/profile": {
       "get": {
         "tags": [
           "Auth"
@@ -318,7 +318,7 @@
         ]
       }
     },
-    "/api/v1/auth/logout": {
+    "/auth/logout": {
       "post": {
         "tags": [
           "Auth"
@@ -352,7 +352,7 @@
         ]
       }
     },
-    "/api/v1/auth/verify-token": {
+    "/auth/verify-token": {
       "get": {
         "tags": [
           "Auth"
@@ -386,7 +386,7 @@
         ]
       }
     },
-    "/api/v1/auth/refresh-token": {
+    "/auth/refresh-token": {
       "post": {
         "tags": [
           "Auth"
@@ -420,7 +420,7 @@
         ]
       }
     },
-    "/api/v1/auth/invite/accept": {
+    "/auth/invite/accept": {
       "post": {
         "tags": [
           "Auth"
@@ -460,7 +460,7 @@
         "security": []
       }
     },
-    "/api/v1/auth/invite/request-otp": {
+    "/auth/invite/request-otp": {
       "post": {
         "tags": [
           "Auth"
@@ -500,7 +500,7 @@
         "security": []
       }
     },
-    "/api/v1/auth/invite/verify-otp": {
+    "/auth/invite/verify-otp": {
       "post": {
         "tags": [
           "Auth"
@@ -540,7 +540,7 @@
         "security": []
       }
     },
-    "/api/v1/auth/invite/set-password": {
+    "/auth/invite/set-password": {
       "post": {
         "tags": [
           "Auth"
@@ -580,7 +580,7 @@
         "security": []
       }
     },
-    "/api/v1/auth/forgot-password/request": {
+    "/auth/forgot-password/request": {
       "post": {
         "tags": [
           "Auth"
@@ -620,7 +620,7 @@
         "security": []
       }
     },
-    "/api/v1/auth/forgot-password/verify": {
+    "/auth/forgot-password/verify": {
       "post": {
         "tags": [
           "Auth"
@@ -660,7 +660,7 @@
         "security": []
       }
     },
-    "/api/v1/auth/forgot-password/reset": {
+    "/auth/forgot-password/reset": {
       "post": {
         "tags": [
           "Auth"
@@ -700,7 +700,7 @@
         "security": []
       }
     },
-    "/api/v1/users": {
+    "/users": {
       "get": {
         "tags": [
           "Users"
@@ -842,7 +842,7 @@
         ]
       }
     },
-    "/api/v1/users/{id}": {
+    "/users/{id}": {
       "get": {
         "tags": [
           "Users"
@@ -959,7 +959,7 @@
         ]
       }
     },
-    "/api/v1/users/{id}/details": {
+    "/users/{id}/details": {
       "get": {
         "tags": [
           "Users"
@@ -996,7 +996,7 @@
         ]
       }
     },
-    "/api/v1/users/{id}/resend-invite": {
+    "/users/{id}/resend-invite": {
       "post": {
         "tags": [
           "Users"
@@ -1033,7 +1033,7 @@
         ]
       }
     },
-    "/api/v1/users/{id}/activate": {
+    "/users/{id}/activate": {
       "post": {
         "tags": [
           "Users"
@@ -1070,7 +1070,7 @@
         ]
       }
     },
-    "/api/v1/user-facilities/{userId}": {
+    "/user-facilities/{userId}": {
       "get": {
         "tags": [
           "Users"
@@ -1152,7 +1152,7 @@
         ]
       }
     },
-    "/api/v1/user-facilities/{userId}/facilities/{facilityId}": {
+    "/user-facilities/{userId}/facilities/{facilityId}": {
       "post": {
         "tags": [
           "Users"
@@ -1242,7 +1242,7 @@
         ]
       }
     },
-    "/api/v1/widget-layouts": {
+    "/widget-layouts": {
       "get": {
         "tags": [
           "Dashboard"
@@ -1322,7 +1322,7 @@
         ]
       }
     },
-    "/api/v1/widget-layouts/{widgetId}": {
+    "/widget-layouts/{widgetId}": {
       "put": {
         "tags": [
           "Dashboard"
@@ -1430,7 +1430,7 @@
         ]
       }
     },
-    "/api/v1/widget-layouts/{widgetId}/show": {
+    "/widget-layouts/{widgetId}/show": {
       "post": {
         "tags": [
           "Dashboard"
@@ -1475,7 +1475,7 @@
         ]
       }
     },
-    "/api/v1/widget-layouts/reset": {
+    "/widget-layouts/reset": {
       "post": {
         "tags": [
           "Dashboard"
@@ -1511,7 +1511,7 @@
         ]
       }
     },
-    "/api/v1/widget-layouts/reset-defaults": {
+    "/widget-layouts/reset-defaults": {
       "post": {
         "tags": [
           "Dashboard"
@@ -1537,7 +1537,7 @@
         ]
       }
     },
-    "/api/v1/widget-layouts/templates": {
+    "/widget-layouts/templates": {
       "get": {
         "tags": [
           "Dashboard"
@@ -1563,7 +1563,7 @@
         ]
       }
     },
-    "/api/v1/saved-dashboards": {
+    "/saved-dashboards": {
       "get": {
         "tags": [
           "Dashboard"
@@ -1623,7 +1623,7 @@
         ]
       }
     },
-    "/api/v1/saved-dashboards/{id}/snapshot": {
+    "/saved-dashboards/{id}/snapshot": {
       "put": {
         "tags": [
           "Dashboard"
@@ -1660,7 +1660,7 @@
         ]
       }
     },
-    "/api/v1/saved-dashboards/{id}": {
+    "/saved-dashboards/{id}": {
       "patch": {
         "tags": [
           "Dashboard"
@@ -1742,7 +1742,7 @@
         ]
       }
     },
-    "/api/v1/saved-dashboards/{id}/load": {
+    "/saved-dashboards/{id}/load": {
       "post": {
         "tags": [
           "Dashboard"
@@ -1789,7 +1789,7 @@
         ]
       }
     },
-    "/api/v1/dashboard-assignments": {
+    "/dashboard-assignments": {
       "get": {
         "tags": [
           "Dashboard Assignments"
@@ -1869,7 +1869,7 @@
         ]
       }
     },
-    "/api/v1/dashboard-assignments/{id}": {
+    "/dashboard-assignments/{id}": {
       "patch": {
         "tags": [
           "Dashboard Assignments"
@@ -1981,7 +1981,7 @@
         ]
       }
     },
-    "/api/v1/facilities/{facilityId}/provisioning-data/direct-upload/{uploadId}": {
+    "/facilities/{facilityId}/provisioning-data/direct-upload/{uploadId}": {
       "put": {
         "tags": [
           "Facilities",
@@ -2044,7 +2044,7 @@
         "security": []
       }
     },
-    "/api/v1/facilities/{facilityId}/provisioning-data": {
+    "/facilities/{facilityId}/provisioning-data": {
       "get": {
         "tags": [
           "Facilities",
@@ -2108,7 +2108,7 @@
         ]
       }
     },
-    "/api/v1/facilities/{facilityId}/provisioning-data/prepare": {
+    "/facilities/{facilityId}/provisioning-data/prepare": {
       "post": {
         "tags": [
           "Facilities",
@@ -2176,7 +2176,7 @@
         ]
       }
     },
-    "/api/v1/facilities/{facilityId}/provisioning-data/complete": {
+    "/facilities/{facilityId}/provisioning-data/complete": {
       "post": {
         "tags": [
           "Facilities",
@@ -2244,7 +2244,7 @@
         ]
       }
     },
-    "/api/v1/facilities/{facilityId}/provisioning-data/{fileId}/download": {
+    "/facilities/{facilityId}/provisioning-data/{fileId}/download": {
       "get": {
         "tags": [
           "Facilities",
@@ -2301,7 +2301,7 @@
         ]
       }
     },
-    "/api/v1/facilities/{facilityId}/provisioning-data/{fileId}": {
+    "/facilities/{facilityId}/provisioning-data/{fileId}": {
       "delete": {
         "tags": [
           "Facilities",
@@ -2368,7 +2368,7 @@
         ]
       }
     },
-    "/api/v1/facilities": {
+    "/facilities": {
       "get": {
         "tags": [
           "Facilities"
@@ -2516,7 +2516,7 @@
         ]
       }
     },
-    "/api/v1/facilities/{id}/delete-impact": {
+    "/facilities/{id}/delete-impact": {
       "get": {
         "tags": [
           "Facilities"
@@ -2563,7 +2563,7 @@
         ]
       }
     },
-    "/api/v1/facilities/{id}": {
+    "/facilities/{id}": {
       "get": {
         "tags": [
           "Facilities"
@@ -2780,7 +2780,7 @@
         ]
       }
     },
-    "/api/v1/facilities/{facilityId}/units": {
+    "/facilities/{facilityId}/units": {
       "get": {
         "tags": [
           "Units",
@@ -2906,7 +2906,7 @@
         ]
       }
     },
-    "/api/v1/gateways/status/{facilityId}": {
+    "/gateways/status/{facilityId}": {
       "get": {
         "tags": [
           "Gateway"
@@ -2943,7 +2943,7 @@
         ]
       }
     },
-    "/api/v1/gateways/{gatewayId}/recovery/status": {
+    "/gateways/{gatewayId}/recovery/status": {
       "get": {
         "tags": [
           "Gateway"
@@ -2980,7 +2980,7 @@
         ]
       }
     },
-    "/api/v1/gateways/facility/{facilityId}/recovery/candidates": {
+    "/gateways/facility/{facilityId}/recovery/candidates": {
       "get": {
         "tags": [
           "Gateway"
@@ -3017,7 +3017,7 @@
         ]
       }
     },
-    "/api/v1/gateways/{gatewayId}/recovery/inventory-preview": {
+    "/gateways/{gatewayId}/recovery/inventory-preview": {
       "get": {
         "tags": [
           "Gateway"
@@ -3054,7 +3054,7 @@
         ]
       }
     },
-    "/api/v1/gateways/{gatewayId}/recovery/initiate": {
+    "/gateways/{gatewayId}/recovery/initiate": {
       "post": {
         "tags": [
           "Gateway"
@@ -3101,7 +3101,7 @@
         ]
       }
     },
-    "/api/v1/gateways/{gatewayId}/recovery/advance": {
+    "/gateways/{gatewayId}/recovery/advance": {
       "post": {
         "tags": [
           "Gateway"
@@ -3138,7 +3138,7 @@
         ]
       }
     },
-    "/api/v1/gateways/{gatewayId}/recovery/bypass": {
+    "/gateways/{gatewayId}/recovery/bypass": {
       "post": {
         "tags": [
           "Gateway"
@@ -3185,7 +3185,7 @@
         ]
       }
     },
-    "/api/v1/gateways/{gatewayId}/recovery/options": {
+    "/gateways/{gatewayId}/recovery/options": {
       "get": {
         "tags": [
           "Gateway"
@@ -3222,7 +3222,7 @@
         ]
       }
     },
-    "/api/v1/gateways/{gatewayId}/recovery/retry": {
+    "/gateways/{gatewayId}/recovery/retry": {
       "post": {
         "tags": [
           "Gateway"
@@ -3259,7 +3259,7 @@
         ]
       }
     },
-    "/api/v1/gateways/{gatewayId}/recovery/{recoveryId}/events": {
+    "/gateways/{gatewayId}/recovery/{recoveryId}/events": {
       "get": {
         "tags": [
           "Gateway"
@@ -3313,7 +3313,7 @@
         ]
       }
     },
-    "/api/v1/gateways/{gatewayId}/recovery/{recoveryId}/cancel": {
+    "/gateways/{gatewayId}/recovery/{recoveryId}/cancel": {
       "post": {
         "tags": [
           "Gateway"
@@ -3359,7 +3359,7 @@
         ]
       }
     },
-    "/api/v1/gateways": {
+    "/gateways": {
       "post": {
         "tags": [
           "Gateway"
@@ -3419,7 +3419,7 @@
         ]
       }
     },
-    "/api/v1/gateways/{id}/telemetry-logs": {
+    "/gateways/{id}/telemetry-logs": {
       "get": {
         "tags": [
           "Gateway"
@@ -3528,7 +3528,7 @@
         ]
       }
     },
-    "/api/v1/gateways/{id}/device-sync-logs": {
+    "/gateways/{id}/device-sync-logs": {
       "get": {
         "tags": [
           "Gateway"
@@ -3581,7 +3581,7 @@
         ]
       }
     },
-    "/api/v1/gateways/{id}": {
+    "/gateways/{id}": {
       "get": {
         "tags": [
           "Gateway"
@@ -3653,7 +3653,7 @@
         ]
       }
     },
-    "/api/v1/gateways/{id}/status": {
+    "/gateways/{id}/status": {
       "put": {
         "tags": [
           "Gateway"
@@ -3700,7 +3700,7 @@
         ]
       }
     },
-    "/api/v1/gateways/{id}/test-connection": {
+    "/gateways/{id}/test-connection": {
       "post": {
         "tags": [
           "Gateway"
@@ -3737,7 +3737,7 @@
         ]
       }
     },
-    "/api/v1/gateways/{id}/sync": {
+    "/gateways/{id}/sync": {
       "post": {
         "tags": [
           "Gateway"
@@ -3774,7 +3774,7 @@
         ]
       }
     },
-    "/api/v1/devices": {
+    "/devices": {
       "get": {
         "tags": [
           "Devices",
@@ -3919,7 +3919,7 @@
         ]
       }
     },
-    "/api/v1/devices/blulok/{id}": {
+    "/devices/blulok/{id}": {
       "get": {
         "tags": [
           "Devices",
@@ -3987,7 +3987,7 @@
         ]
       }
     },
-    "/api/v1/devices/access-control/{id}": {
+    "/devices/access-control/{id}": {
       "get": {
         "tags": [
           "Devices",
@@ -4131,7 +4131,7 @@
         ]
       }
     },
-    "/api/v1/devices/facility/{facilityId}/hierarchy": {
+    "/devices/facility/{facilityId}/hierarchy": {
       "get": {
         "tags": [
           "Devices",
@@ -4199,7 +4199,7 @@
         ]
       }
     },
-    "/api/v1/devices/access-control": {
+    "/devices/access-control": {
       "post": {
         "tags": [
           "Devices",
@@ -4256,7 +4256,7 @@
         ]
       }
     },
-    "/api/v1/devices/blulok": {
+    "/devices/blulok": {
       "post": {
         "tags": [
           "Devices",
@@ -4313,7 +4313,7 @@
         ]
       }
     },
-    "/api/v1/devices/access-control/{id}/metadata": {
+    "/devices/access-control/{id}/metadata": {
       "put": {
         "tags": [
           "Devices",
@@ -4391,7 +4391,7 @@
         ]
       }
     },
-    "/api/v1/devices/network-infra/{deviceId}": {
+    "/devices/network-infra/{deviceId}": {
       "delete": {
         "tags": [
           "Devices",
@@ -4459,7 +4459,7 @@
         ]
       }
     },
-    "/api/v1/devices/access-control/{deviceId}": {
+    "/devices/access-control/{deviceId}": {
       "delete": {
         "tags": [
           "Devices",
@@ -4527,7 +4527,7 @@
         ]
       }
     },
-    "/api/v1/devices/blulok/{id}/metadata": {
+    "/devices/blulok/{id}/metadata": {
       "put": {
         "tags": [
           "Devices",
@@ -4605,7 +4605,7 @@
         ]
       }
     },
-    "/api/v1/devices/{deviceType}/{id}/status": {
+    "/devices/{deviceType}/{id}/status": {
       "put": {
         "tags": [
           "Devices",
@@ -4681,7 +4681,7 @@
         ]
       }
     },
-    "/api/v1/devices/blulok/{id}/lock": {
+    "/devices/blulok/{id}/lock": {
       "put": {
         "tags": [
           "Devices",
@@ -4779,7 +4779,7 @@
         ]
       }
     },
-    "/api/v1/devices/access-control/{id}/lock": {
+    "/devices/access-control/{id}/lock": {
       "put": {
         "tags": [
           "Devices",
@@ -4877,7 +4877,7 @@
         ]
       }
     },
-    "/api/v1/devices/blulok/{id}/denylist": {
+    "/devices/blulok/{id}/denylist": {
       "get": {
         "tags": [
           "Devices",
@@ -4935,7 +4935,7 @@
         ]
       }
     },
-    "/api/v1/devices/unassigned": {
+    "/devices/unassigned": {
       "get": {
         "tags": [
           "Devices",
@@ -5080,7 +5080,7 @@
         ]
       }
     },
-    "/api/v1/devices/blulok/{deviceId}/assign": {
+    "/devices/blulok/{deviceId}/assign": {
       "post": {
         "tags": [
           "Devices",
@@ -5158,7 +5158,7 @@
         ]
       }
     },
-    "/api/v1/devices/blulok/{deviceId}": {
+    "/devices/blulok/{deviceId}": {
       "delete": {
         "tags": [
           "Devices",
@@ -5226,7 +5226,7 @@
         ]
       }
     },
-    "/api/v1/devices/blulok/{deviceId}/unassign": {
+    "/devices/blulok/{deviceId}/unassign": {
       "delete": {
         "tags": [
           "Devices",
@@ -5294,7 +5294,7 @@
         ]
       }
     },
-    "/api/v1/units": {
+    "/units": {
       "get": {
         "tags": [
           "Units",
@@ -5486,7 +5486,7 @@
         ]
       }
     },
-    "/api/v1/units/unlocked": {
+    "/units/unlocked": {
       "get": {
         "tags": [
           "Units",
@@ -5603,7 +5603,7 @@
         ]
       }
     },
-    "/api/v1/units/my": {
+    "/units/my": {
       "get": {
         "tags": [
           "Units",
@@ -5640,7 +5640,7 @@
         ]
       }
     },
-    "/api/v1/units/{unitId}": {
+    "/units/{unitId}": {
       "get": {
         "tags": [
           "Units",
@@ -5890,7 +5890,7 @@
         ]
       }
     },
-    "/api/v1/units/{unitId}/lock": {
+    "/units/{unitId}/lock": {
       "post": {
         "tags": [
           "Units",
@@ -5948,7 +5948,7 @@
         ]
       }
     },
-    "/api/v1/units/assignments": {
+    "/units/assignments": {
       "get": {
         "tags": [
           "Units",
@@ -5985,7 +5985,105 @@
         ]
       }
     },
-    "/api/v1/units/{unitId}/assign": {
+    "/units/{unitId}/overlock": {
+      "put": {
+        "tags": [
+          "Units",
+          "App"
+        ],
+        "summary": "Set or clear unit overlock status",
+        "parameters": [
+          {
+            "name": "unitId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PutUnitsUnitIdOverlockRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "HTTP 200",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PostUnitsResponse201"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "HTTP 400",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "HTTP 401",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "HTTP 403",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "HTTP 404",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "HTTP 500",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "x-migration-status": "complete",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/units/{unitId}/assign": {
       "post": {
         "tags": [
           "Units",
@@ -6073,7 +6171,7 @@
         ]
       }
     },
-    "/api/v1/units/{unitId}/assign/{tenantId}": {
+    "/units/{unitId}/assign/{tenantId}": {
       "delete": {
         "tags": [
           "Units",
@@ -6160,7 +6258,7 @@
         ]
       }
     },
-    "/api/v1/access-history": {
+    "/access-history": {
       "get": {
         "tags": [
           "AccessHistory"
@@ -6324,7 +6422,7 @@
         ]
       }
     },
-    "/api/v1/access-history/user/{userId}": {
+    "/access-history/user/{userId}": {
       "get": {
         "tags": [
           "AccessHistory"
@@ -6497,7 +6595,7 @@
         ]
       }
     },
-    "/api/v1/access-history/facility/{facilityId}": {
+    "/access-history/facility/{facilityId}": {
       "get": {
         "tags": [
           "AccessHistory"
@@ -6670,7 +6768,7 @@
         ]
       }
     },
-    "/api/v1/access-history/unit/{unitId}": {
+    "/access-history/unit/{unitId}": {
       "get": {
         "tags": [
           "AccessHistory"
@@ -6843,7 +6941,7 @@
         ]
       }
     },
-    "/api/v1/access-history/export": {
+    "/access-history/export": {
       "get": {
         "tags": [
           "AccessHistory"
@@ -7007,7 +7105,7 @@
         ]
       }
     },
-    "/api/v1/access-history/stats/activity": {
+    "/access-history/stats/activity": {
       "get": {
         "tags": [
           "AccessHistory"
@@ -7051,7 +7149,7 @@
         ]
       }
     },
-    "/api/v1/access-history/{id}": {
+    "/access-history/{id}": {
       "get": {
         "tags": [
           "AccessHistory"
@@ -7088,7 +7186,7 @@
         ]
       }
     },
-    "/api/v1/key-sharing": {
+    "/key-sharing": {
       "get": {
         "tags": [
           "KeySharing"
@@ -7238,7 +7336,7 @@
         ]
       }
     },
-    "/api/v1/key-sharing/user/{userId}": {
+    "/key-sharing/user/{userId}": {
       "get": {
         "tags": [
           "KeySharing"
@@ -7339,7 +7437,7 @@
         ]
       }
     },
-    "/api/v1/key-sharing/unit/{unitId}": {
+    "/key-sharing/unit/{unitId}": {
       "get": {
         "tags": [
           "KeySharing"
@@ -7440,7 +7538,7 @@
         ]
       }
     },
-    "/api/v1/key-sharing/{id}": {
+    "/key-sharing/{id}": {
       "put": {
         "tags": [
           "KeySharing"
@@ -7522,7 +7620,7 @@
         ]
       }
     },
-    "/api/v1/key-sharing/admin/expired": {
+    "/key-sharing/admin/expired": {
       "get": {
         "tags": [
           "KeySharing"
@@ -7548,7 +7646,7 @@
         ]
       }
     },
-    "/api/v1/key-sharing/invite": {
+    "/key-sharing/invite": {
       "post": {
         "tags": [
           "KeySharing"
@@ -7584,7 +7682,7 @@
         ]
       }
     },
-    "/api/v1/fms/config": {
+    "/fms/config": {
       "post": {
         "tags": [
           "FMS"
@@ -7641,7 +7739,7 @@
         ]
       }
     },
-    "/api/v1/fms/config/{facilityId}": {
+    "/fms/config/{facilityId}": {
       "get": {
         "tags": [
           "FMS"
@@ -7698,7 +7796,7 @@
         ]
       }
     },
-    "/api/v1/fms/config/{id}": {
+    "/fms/config/{id}": {
       "put": {
         "tags": [
           "FMS"
@@ -7802,7 +7900,7 @@
         ]
       }
     },
-    "/api/v1/fms/config/{id}/test": {
+    "/fms/config/{id}/test": {
       "post": {
         "tags": [
           "FMS"
@@ -7869,7 +7967,7 @@
         ]
       }
     },
-    "/api/v1/fms/sync/{facilityId}": {
+    "/fms/sync/{facilityId}": {
       "post": {
         "tags": [
           "FMS"
@@ -7916,7 +8014,7 @@
         ]
       }
     },
-    "/api/v1/fms/sync/{facilityId}/cancel": {
+    "/fms/sync/{facilityId}/cancel": {
       "post": {
         "tags": [
           "FMS"
@@ -7973,7 +8071,7 @@
         ]
       }
     },
-    "/api/v1/fms/sync/{facilityId}/history": {
+    "/fms/sync/{facilityId}/history": {
       "get": {
         "tags": [
           "FMS"
@@ -8036,7 +8134,7 @@
         ]
       }
     },
-    "/api/v1/fms/sync/{syncLogId}": {
+    "/fms/sync/{syncLogId}": {
       "get": {
         "tags": [
           "FMS"
@@ -8093,7 +8191,7 @@
         ]
       }
     },
-    "/api/v1/fms/changes/{syncLogId}/pending": {
+    "/fms/changes/{syncLogId}/pending": {
       "get": {
         "tags": [
           "FMS"
@@ -8150,7 +8248,7 @@
         ]
       }
     },
-    "/api/v1/fms/changes/review": {
+    "/fms/changes/review": {
       "post": {
         "tags": [
           "FMS"
@@ -8206,7 +8304,7 @@
         ]
       }
     },
-    "/api/v1/fms/changes/apply": {
+    "/fms/changes/apply": {
       "post": {
         "tags": [
           "FMS"
@@ -8272,13 +8370,13 @@
         ]
       }
     },
-    "/api/v1/fms/webhook/{facilityId}": {
+    "/fms/webhook/{facilityId}": {
       "post": {
         "tags": [
           "FMS"
         ],
         "summary": "Webhook receiver for FMS events",
-        "description": "TODO: Implement webhook signature validation per provider.",
+        "description": "Public Storable Edge CloudEvents receiver. Raw JSON body is required for HMAC signature verification (X-Storable-Signature, X-Webhook-Signature, or X-Signature).",
         "parameters": [
           {
             "name": "facilityId",
@@ -8300,17 +8398,53 @@
                 }
               }
             }
+          },
+          "400": {
+            "description": "HTTP 400",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "HTTP 401",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "HTTP 404",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "HTTP 500",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
           }
         },
         "x-migration-status": "complete",
-        "security": [
-          {
-            "bearerAuth": []
-          }
-        ]
+        "security": []
       }
     },
-    "/api/v1/dev/create-admin-users": {
+    "/dev/create-admin-users": {
       "post": {
         "tags": [
           "Admin"
@@ -8344,7 +8478,7 @@
         ]
       }
     },
-    "/api/v1/dev/seed-comprehensive-data": {
+    "/dev/seed-comprehensive-data": {
       "post": {
         "tags": [
           "Admin"
@@ -8378,7 +8512,7 @@
         ]
       }
     },
-    "/api/v1/dev/reset-database": {
+    "/dev/reset-database": {
       "post": {
         "tags": [
           "Admin"
@@ -8412,7 +8546,7 @@
         ]
       }
     },
-    "/api/v1/dev/logs": {
+    "/dev/logs": {
       "get": {
         "tags": [
           "Admin"
@@ -8464,7 +8598,7 @@
         ]
       }
     },
-    "/api/v1/dev/websocket-stats": {
+    "/dev/websocket-stats": {
       "get": {
         "tags": [
           "Admin"
@@ -8498,7 +8632,51 @@
         ]
       }
     },
-    "/api/v1/system-settings": {
+    "/dev/simulator/user-session": {
+      "post": {
+        "tags": [
+          "Admin"
+        ],
+        "summary": "Mint a JWT for an existing user (gateway simulator)",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PostDevSimulatorUserSessionRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Validation error"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "403": {
+            "description": "Forbidden"
+          },
+          "404": {
+            "description": "Not found"
+          },
+          "500": {
+            "description": "Server error"
+          }
+        },
+        "x-migration-status": "complete",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/system-settings": {
       "get": {
         "tags": [
           "System"
@@ -8574,7 +8752,7 @@
         ]
       }
     },
-    "/api/v1/system-settings/notifications": {
+    "/system-settings/notifications": {
       "get": {
         "tags": [
           "System"
@@ -8640,7 +8818,7 @@
         ]
       }
     },
-    "/api/v1/system-settings/notifications/test": {
+    "/system-settings/notifications/test": {
       "post": {
         "tags": [
           "System"
@@ -8674,7 +8852,7 @@
         ]
       }
     },
-    "/api/v1/user-devices/me": {
+    "/user-devices/me": {
       "get": {
         "tags": [
           "App",
@@ -8701,7 +8879,7 @@
         ]
       }
     },
-    "/api/v1/user-devices/register-key": {
+    "/user-devices/register-key": {
       "post": {
         "tags": [
           "App",
@@ -8758,7 +8936,7 @@
         ]
       }
     },
-    "/api/v1/user-devices/me/{id}": {
+    "/user-devices/me/{id}": {
       "delete": {
         "tags": [
           "App",
@@ -8816,7 +8994,7 @@
         ]
       }
     },
-    "/api/v1/user-devices/me/rotate-key": {
+    "/user-devices/me/rotate-key": {
       "post": {
         "tags": [
           "App",
@@ -8873,7 +9051,7 @@
         ]
       }
     },
-    "/api/v1/user-devices/admin/{id}": {
+    "/user-devices/admin/{id}": {
       "delete": {
         "tags": [
           "App",
@@ -8931,7 +9109,7 @@
         ]
       }
     },
-    "/api/v1/commands/pending": {
+    "/commands/pending": {
       "get": {
         "tags": [
           "Commands"
@@ -8983,7 +9161,7 @@
         ]
       }
     },
-    "/api/v1/commands/{id}/retry": {
+    "/commands/{id}/retry": {
       "post": {
         "tags": [
           "Commands"
@@ -9020,7 +9198,7 @@
         ]
       }
     },
-    "/api/v1/commands/{id}/cancel": {
+    "/commands/{id}/cancel": {
       "post": {
         "tags": [
           "Commands"
@@ -9057,7 +9235,7 @@
         ]
       }
     },
-    "/api/v1/commands/{id}/requeue-dead": {
+    "/commands/{id}/requeue-dead": {
       "post": {
         "tags": [
           "Commands"
@@ -9094,7 +9272,7 @@
         ]
       }
     },
-    "/api/v1/commands/{id}/attempts": {
+    "/commands/{id}/attempts": {
       "get": {
         "tags": [
           "Commands"
@@ -9131,7 +9309,7 @@
         ]
       }
     },
-    "/api/v1/passes/request": {
+    "/passes/request": {
       "post": {
         "tags": [
           "Passes"
@@ -9197,7 +9375,7 @@
         ]
       }
     },
-    "/api/v1/internal/gateway/time-sync": {
+    "/internal/gateway/time-sync": {
       "get": {
         "tags": [
           "GatewayInternal"
@@ -9231,7 +9409,7 @@
         ]
       }
     },
-    "/api/v1/internal/gateway/request-time-sync": {
+    "/internal/gateway/request-time-sync": {
       "post": {
         "tags": [
           "GatewayInternal"
@@ -9275,7 +9453,7 @@
         ]
       }
     },
-    "/api/v1/internal/gateway/fallback-pass": {
+    "/internal/gateway/fallback-pass": {
       "post": {
         "tags": [
           "GatewayInternal"
@@ -9319,7 +9497,7 @@
         ]
       }
     },
-    "/api/v1/internal/gateway/devices/inventory": {
+    "/internal/gateway/devices/inventory": {
       "post": {
         "tags": [
           "GatewayInternal"
@@ -9363,7 +9541,7 @@
         ]
       }
     },
-    "/api/v1/internal/gateway/devices/state": {
+    "/internal/gateway/devices/state": {
       "post": {
         "tags": [
           "GatewayInternal"
@@ -9407,7 +9585,7 @@
         ]
       }
     },
-    "/api/v1/internal/gateway/access-events": {
+    "/internal/gateway/access-events": {
       "post": {
         "tags": [
           "GatewayInternal"
@@ -9451,7 +9629,7 @@
         ]
       }
     },
-    "/api/v1/internal/gateway/add_log": {
+    "/internal/gateway/add_log": {
       "post": {
         "tags": [
           "GatewayInternal"
@@ -9485,7 +9663,7 @@
         ]
       }
     },
-    "/api/v1/internal/gateway/access-codes": {
+    "/internal/gateway/access-codes": {
       "get": {
         "tags": [
           "GatewayInternal"
@@ -9529,7 +9707,7 @@
         ]
       }
     },
-    "/api/v1/admin/ops-key-rotation/broadcast": {
+    "/admin/ops-key-rotation/broadcast": {
       "post": {
         "tags": [
           "Admin"
@@ -9563,7 +9741,7 @@
         ]
       }
     },
-    "/api/v1/admin/rate-limits/bypass": {
+    "/admin/rate-limits/bypass": {
       "post": {
         "tags": [
           "Admin"
@@ -9607,7 +9785,7 @@
         ]
       }
     },
-    "/api/v1/admin/dev-tools/notifications-test-mode": {
+    "/admin/dev-tools/notifications-test-mode": {
       "post": {
         "tags": [
           "Admin"
@@ -9651,7 +9829,7 @@
         ]
       }
     },
-    "/api/v1/admin/dev-tools/gateway-ping": {
+    "/admin/dev-tools/gateway-ping": {
       "post": {
         "tags": [
           "Admin"
@@ -9695,7 +9873,7 @@
         ]
       }
     },
-    "/api/v1/admin/dev-tools/device-deletion-outbox": {
+    "/admin/dev-tools/device-deletion-outbox": {
       "get": {
         "tags": [
           "Admin"
@@ -9763,7 +9941,7 @@
         ]
       }
     },
-    "/api/v1/admin/users/{id}/hard": {
+    "/admin/users/{id}/hard": {
       "delete": {
         "tags": [
           "Admin"
@@ -9808,7 +9986,7 @@
         ]
       }
     },
-    "/api/v1/admin/facilities/{id}/hard": {
+    "/admin/facilities/{id}/hard": {
       "delete": {
         "tags": [
           "Admin"
@@ -9853,7 +10031,7 @@
         ]
       }
     },
-    "/api/v1/admin/facilities": {
+    "/admin/facilities": {
       "post": {
         "tags": [
           "Admin"
@@ -9887,7 +10065,7 @@
         ]
       }
     },
-    "/api/v1/admin/dev-tools/gateway-command": {
+    "/admin/dev-tools/gateway-command": {
       "post": {
         "tags": [
           "Admin"
@@ -9931,7 +10109,7 @@
         ]
       }
     },
-    "/api/v1/admin/data-prune": {
+    "/admin/data-prune": {
       "post": {
         "tags": [
           "Admin"
@@ -9965,7 +10143,7 @@
         ]
       }
     },
-    "/api/v1/admin/route-pass-prune": {
+    "/admin/route-pass-prune": {
       "post": {
         "tags": [
           "Admin"
@@ -9999,7 +10177,7 @@
         ]
       }
     },
-    "/api/v1/denylist/devices/{deviceId}": {
+    "/denylist/devices/{deviceId}": {
       "get": {
         "tags": [
           "Denylist"
@@ -10046,7 +10224,7 @@
         ]
       }
     },
-    "/api/v1/denylist/users/{userId}": {
+    "/denylist/users/{userId}": {
       "get": {
         "tags": [
           "Denylist"
@@ -10083,7 +10261,7 @@
         ]
       }
     },
-    "/api/v1/denylist/prune": {
+    "/denylist/prune": {
       "post": {
         "tags": [
           "Denylist"
@@ -10119,7 +10297,7 @@
         ]
       }
     },
-    "/api/v1/route-passes/users/{userId}": {
+    "/route-passes/users/{userId}": {
       "get": {
         "tags": [
           "Passes"
@@ -10176,7 +10354,7 @@
         ]
       }
     },
-    "/api/v1/facilities/{facilityId}/schedules": {
+    "/facilities/{facilityId}/schedules": {
       "get": {
         "tags": [
           "Schedules"
@@ -10258,7 +10436,7 @@
         ]
       }
     },
-    "/api/v1/facilities/{facilityId}/schedules/{scheduleId}": {
+    "/facilities/{facilityId}/schedules/{scheduleId}": {
       "get": {
         "tags": [
           "Schedules"
@@ -10402,7 +10580,7 @@
         ]
       }
     },
-    "/api/v1/facilities/{facilityId}/schedules/{scheduleId}/usage": {
+    "/facilities/{facilityId}/schedules/{scheduleId}/usage": {
       "get": {
         "tags": [
           "Schedules"
@@ -10448,7 +10626,7 @@
         ]
       }
     },
-    "/api/v1/users/{userId}/facilities/{facilityId}/schedule": {
+    "/users/{userId}/facilities/{facilityId}/schedule": {
       "get": {
         "tags": [
           "Schedules"
@@ -10548,7 +10726,7 @@
         ]
       }
     },
-    "/api/v1/bludesign/projects": {
+    "/bludesign/projects": {
       "get": {
         "tags": [
           "BluDesign"
@@ -10636,7 +10814,7 @@
         ]
       }
     },
-    "/api/v1/bludesign/projects/{id}": {
+    "/bludesign/projects/{id}": {
       "get": {
         "tags": [
           "BluDesign"
@@ -10793,7 +10971,7 @@
         ]
       }
     },
-    "/api/v1/bludesign/projects/{id}/storage-usage": {
+    "/bludesign/projects/{id}/storage-usage": {
       "get": {
         "tags": [
           "BluDesign"
@@ -10850,7 +11028,7 @@
         ]
       }
     },
-    "/api/v1/bludesign/projects/{id}/storage/test": {
+    "/bludesign/projects/{id}/storage/test": {
       "post": {
         "tags": [
           "BluDesign"
@@ -10917,7 +11095,7 @@
         ]
       }
     },
-    "/api/v1/bludesign/projects/{projectId}/assets": {
+    "/bludesign/projects/{projectId}/assets": {
       "get": {
         "tags": [
           "BluDesign"
@@ -11059,7 +11237,7 @@
         ]
       }
     },
-    "/api/v1/bludesign/projects/{projectId}/assets/{assetId}": {
+    "/bludesign/projects/{projectId}/assets/{assetId}": {
       "get": {
         "tags": [
           "BluDesign"
@@ -11243,7 +11421,7 @@
         ]
       }
     },
-    "/api/v1/bludesign/projects/{projectId}/assets/{assetId}/upload": {
+    "/bludesign/projects/{projectId}/assets/{assetId}/upload": {
       "post": {
         "tags": [
           "BluDesign"
@@ -11319,7 +11497,7 @@
         ]
       }
     },
-    "/api/v1/bludesign/projects/{projectId}/assets/{assetId}/textures": {
+    "/bludesign/projects/{projectId}/assets/{assetId}/textures": {
       "post": {
         "tags": [
           "BluDesign"
@@ -11395,7 +11573,7 @@
         ]
       }
     },
-    "/api/v1/bludesign/projects/{projectId}/assets/{assetId}/download/{filename}": {
+    "/bludesign/projects/{projectId}/assets/{assetId}/download/{filename}": {
       "get": {
         "tags": [
           "BluDesign"
@@ -11469,7 +11647,7 @@
         ]
       }
     },
-    "/api/v1/bludesign/projects/{projectId}/assets/definitions": {
+    "/bludesign/projects/{projectId}/assets/definitions": {
       "get": {
         "tags": [
           "BluDesign"
@@ -11593,7 +11771,7 @@
         ]
       }
     },
-    "/api/v1/bludesign/projects/{projectId}/assets/definitions/{id}": {
+    "/bludesign/projects/{projectId}/assets/definitions/{id}": {
       "get": {
         "tags": [
           "BluDesign"
@@ -11757,7 +11935,7 @@
         ]
       }
     },
-    "/api/v1/bludesign/projects/{projectId}/assets/definitions/{assetId}/materials": {
+    "/bludesign/projects/{projectId}/assets/definitions/{assetId}/materials": {
       "get": {
         "tags": [
           "BluDesign"
@@ -11875,7 +12053,7 @@
         ]
       }
     },
-    "/api/v1/bludesign/projects/{projectId}/assets/definitions/{assetId}/materials/{presetId}": {
+    "/bludesign/projects/{projectId}/assets/definitions/{assetId}/materials/{presetId}": {
       "put": {
         "tags": [
           "BluDesign"
@@ -12003,7 +12181,7 @@
         ]
       }
     },
-    "/api/v1/bludesign/projects/{projectId}/assets/models/{projectId}": {
+    "/bludesign/projects/{projectId}/assets/models/{projectId}": {
       "get": {
         "tags": [
           "BluDesign"
@@ -12103,7 +12281,7 @@
         ]
       }
     },
-    "/api/v1/bludesign/projects/{projectId}/assets/models/{projectId}/{modelId}": {
+    "/bludesign/projects/{projectId}/assets/models/{projectId}/{modelId}": {
       "delete": {
         "tags": [
           "BluDesign"
@@ -12149,7 +12327,7 @@
         ]
       }
     },
-    "/api/v1/bludesign/assets/definitions": {
+    "/bludesign/assets/definitions": {
       "get": {
         "tags": [
           "BluDesign"
@@ -12253,7 +12431,7 @@
         ]
       }
     },
-    "/api/v1/bludesign/assets/definitions/{id}": {
+    "/bludesign/assets/definitions/{id}": {
       "get": {
         "tags": [
           "BluDesign"
@@ -12400,7 +12578,7 @@
         ]
       }
     },
-    "/api/v1/bludesign/assets/definitions/{id}/facilities": {
+    "/bludesign/assets/definitions/{id}/facilities": {
       "get": {
         "tags": [
           "BluDesign"
@@ -12447,7 +12625,7 @@
         ]
       }
     },
-    "/api/v1/bludesign/assets/definitions/{assetId}/materials": {
+    "/bludesign/assets/definitions/{assetId}/materials": {
       "get": {
         "tags": [
           "BluDesign"
@@ -12547,7 +12725,7 @@
         ]
       }
     },
-    "/api/v1/bludesign/assets/definitions/{assetId}/materials/{presetId}": {
+    "/bludesign/assets/definitions/{assetId}/materials/{presetId}": {
       "put": {
         "tags": [
           "BluDesign"
@@ -12657,7 +12835,7 @@
         ]
       }
     },
-    "/api/v1/bludesign/assets/models/{projectId}": {
+    "/bludesign/assets/models/{projectId}": {
       "get": {
         "tags": [
           "BluDesign"
@@ -12757,7 +12935,7 @@
         ]
       }
     },
-    "/api/v1/bludesign/assets/models/{projectId}/{modelId}": {
+    "/bludesign/assets/models/{projectId}/{modelId}": {
       "delete": {
         "tags": [
           "BluDesign"
@@ -12803,7 +12981,7 @@
         ]
       }
     },
-    "/api/v1/bludesign/assets/global-models": {
+    "/bludesign/assets/global-models": {
       "get": {
         "tags": [
           "BluDesign"
@@ -12871,7 +13049,7 @@
         ]
       }
     },
-    "/api/v1/bludesign/assets/global-models/{id}": {
+    "/bludesign/assets/global-models/{id}": {
       "get": {
         "tags": [
           "BluDesign"
@@ -12943,7 +13121,7 @@
         ]
       }
     },
-    "/api/v1/bludesign/assets/global-models/{id}/file": {
+    "/bludesign/assets/global-models/{id}/file": {
       "get": {
         "tags": [
           "BluDesign"
@@ -12980,7 +13158,7 @@
         ]
       }
     },
-    "/api/v1/bludesign/facilities": {
+    "/bludesign/facilities": {
       "get": {
         "tags": [
           "BluDesign"
@@ -13046,7 +13224,7 @@
         ]
       }
     },
-    "/api/v1/bludesign/facilities/last": {
+    "/bludesign/facilities/last": {
       "get": {
         "tags": [
           "BluDesign"
@@ -13080,7 +13258,7 @@
         ]
       }
     },
-    "/api/v1/bludesign/facilities/{id}/layout-source": {
+    "/bludesign/facilities/{id}/layout-source": {
       "get": {
         "tags": [
           "BluDesign"
@@ -13168,7 +13346,7 @@
         ]
       }
     },
-    "/api/v1/bludesign/facilities/terrain-data/{terrainDataId}/imagery": {
+    "/bludesign/facilities/terrain-data/{terrainDataId}/imagery": {
       "get": {
         "tags": [
           "BluDesign"
@@ -13256,7 +13434,7 @@
         ]
       }
     },
-    "/api/v1/bludesign/facilities/terrain-data/{terrainDataId}/heightmap": {
+    "/bludesign/facilities/terrain-data/{terrainDataId}/heightmap": {
       "get": {
         "tags": [
           "BluDesign"
@@ -13344,7 +13522,7 @@
         ]
       }
     },
-    "/api/v1/bludesign/facilities/terrain-data/{terrainDataId}": {
+    "/bludesign/facilities/terrain-data/{terrainDataId}": {
       "delete": {
         "tags": [
           "BluDesign"
@@ -13389,7 +13567,7 @@
         ]
       }
     },
-    "/api/v1/bludesign/facilities/{id}/terrain-imagery": {
+    "/bludesign/facilities/{id}/terrain-imagery": {
       "get": {
         "tags": [
           "BluDesign"
@@ -13477,7 +13655,7 @@
         ]
       }
     },
-    "/api/v1/bludesign/facilities/{id}/terrain-heightmap": {
+    "/bludesign/facilities/{id}/terrain-heightmap": {
       "get": {
         "tags": [
           "BluDesign"
@@ -13565,7 +13743,7 @@
         ]
       }
     },
-    "/api/v1/bludesign/facilities/{id}": {
+    "/bludesign/facilities/{id}": {
       "get": {
         "tags": [
           "BluDesign"
@@ -13696,7 +13874,7 @@
         ]
       }
     },
-    "/api/v1/bludesign/themes": {
+    "/bludesign/themes": {
       "get": {
         "tags": [
           "BluDesign"
@@ -13776,7 +13954,7 @@
         ]
       }
     },
-    "/api/v1/bludesign/themes/{id}": {
+    "/bludesign/themes/{id}": {
       "get": {
         "tags": [
           "BluDesign"
@@ -13933,7 +14111,7 @@
         ]
       }
     },
-    "/api/v1/bludesign/skins": {
+    "/bludesign/skins": {
       "get": {
         "tags": [
           "BluDesign"
@@ -14013,7 +14191,7 @@
         ]
       }
     },
-    "/api/v1/bludesign/skins/{id}": {
+    "/bludesign/skins/{id}": {
       "get": {
         "tags": [
           "BluDesign"
@@ -14170,7 +14348,7 @@
         ]
       }
     },
-    "/api/v1/bludesign/storage/config": {
+    "/bludesign/storage/config": {
       "get": {
         "tags": [
           "BluDesign"
@@ -14240,7 +14418,7 @@
         ]
       }
     },
-    "/api/v1/bludesign/storage/gdrive/auth-url": {
+    "/bludesign/storage/gdrive/auth-url": {
       "get": {
         "tags": [
           "BluDesign"
@@ -14292,7 +14470,7 @@
         ]
       }
     },
-    "/api/v1/bludesign/storage/gdrive/callback": {
+    "/bludesign/storage/gdrive/callback": {
       "get": {
         "tags": [
           "BluDesign"
@@ -14352,7 +14530,7 @@
         ]
       }
     },
-    "/api/v1/bludesign/storage/gdrive/refresh-tokens": {
+    "/bludesign/storage/gdrive/refresh-tokens": {
       "post": {
         "tags": [
           "BluDesign"
@@ -14388,7 +14566,7 @@
         ]
       }
     },
-    "/api/v1/bludesign/storage/{provider}/test": {
+    "/bludesign/storage/{provider}/test": {
       "post": {
         "tags": [
           "BluDesign"
@@ -14445,7 +14623,7 @@
         ]
       }
     },
-    "/api/v1/bludesign/layout-import/detect": {
+    "/bludesign/layout-import/detect": {
       "post": {
         "tags": [
           "BluDesign"
@@ -14479,7 +14657,7 @@
         ]
       }
     },
-    "/api/v1/bludesign/layout-import/detect/stream": {
+    "/bludesign/layout-import/detect/stream": {
       "post": {
         "tags": [
           "BluDesign"
@@ -14513,7 +14691,7 @@
         ]
       }
     },
-    "/api/v1/bludesign/site-terrain/fetch": {
+    "/bludesign/site-terrain/fetch": {
       "post": {
         "tags": [
           "BluDesign"
@@ -14547,7 +14725,7 @@
         ]
       }
     },
-    "/api/v1/access-control/facilities/{facilityId}/devices": {
+    "/access-control/facilities/{facilityId}/devices": {
       "get": {
         "tags": [
           "AccessControl",
@@ -14651,7 +14829,7 @@
         ]
       }
     },
-    "/api/v1/access-control/facilities/{facilityId}/summary": {
+    "/access-control/facilities/{facilityId}/summary": {
       "get": {
         "tags": [
           "AccessControl",
@@ -14699,7 +14877,7 @@
         ]
       }
     },
-    "/api/v1/access-control/devices/{deviceId}": {
+    "/access-control/devices/{deviceId}": {
       "get": {
         "tags": [
           "AccessControl",
@@ -14747,7 +14925,7 @@
         ]
       }
     },
-    "/api/v1/notifications": {
+    "/notifications": {
       "get": {
         "tags": [
           "Notifications"
@@ -14831,7 +15009,7 @@
         ]
       }
     },
-    "/api/v1/notifications/unread-count": {
+    "/notifications/unread-count": {
       "get": {
         "tags": [
           "Notifications"
@@ -14877,7 +15055,7 @@
         ]
       }
     },
-    "/api/v1/notifications/{id}": {
+    "/notifications/{id}": {
       "get": {
         "tags": [
           "Notifications"
@@ -14969,7 +15147,7 @@
         ]
       }
     },
-    "/api/v1/notifications/{id}/read": {
+    "/notifications/{id}/read": {
       "post": {
         "tags": [
           "Notifications"
@@ -15016,7 +15194,7 @@
         ]
       }
     },
-    "/api/v1/notifications/read": {
+    "/notifications/read": {
       "post": {
         "tags": [
           "Notifications"
@@ -15052,7 +15230,7 @@
         ]
       }
     },
-    "/api/v1/notifications/read-all": {
+    "/notifications/read-all": {
       "post": {
         "tags": [
           "Notifications"
@@ -15098,7 +15276,7 @@
         ]
       }
     },
-    "/api/v1/activity": {
+    "/activity": {
       "get": {
         "tags": [
           "Activity"
@@ -15230,7 +15408,7 @@
         ]
       }
     },
-    "/api/v1/activity/facilities/{facilityId}": {
+    "/activity/facilities/{facilityId}": {
       "get": {
         "tags": [
           "Activity"
@@ -15309,7 +15487,7 @@
         ]
       }
     },
-    "/api/v1/activity/units/{unitId}": {
+    "/activity/units/{unitId}": {
       "get": {
         "tags": [
           "Activity"
@@ -15362,7 +15540,7 @@
         ]
       }
     },
-    "/api/v1/activity/devices/{deviceId}": {
+    "/activity/devices/{deviceId}": {
       "get": {
         "tags": [
           "Activity"
@@ -15415,7 +15593,7 @@
         ]
       }
     },
-    "/api/v1/firmware/upload": {
+    "/firmware/upload": {
       "post": {
         "tags": [
           "Firmware"
@@ -15451,7 +15629,7 @@
         ]
       }
     },
-    "/api/v1/firmware": {
+    "/firmware": {
       "get": {
         "tags": [
           "Firmware"
@@ -15487,7 +15665,7 @@
         ]
       }
     },
-    "/api/v1/firmware/push-status/{gatewayId}": {
+    "/firmware/push-status/{gatewayId}": {
       "get": {
         "tags": [
           "Firmware"
@@ -15540,7 +15718,7 @@
         ]
       }
     },
-    "/api/v1/firmware/push-history/{gatewayId}": {
+    "/firmware/push-history/{gatewayId}": {
       "get": {
         "tags": [
           "Firmware"
@@ -15601,7 +15779,7 @@
         ]
       }
     },
-    "/api/v1/firmware/push/{pushId}/cancel": {
+    "/firmware/push/{pushId}/cancel": {
       "post": {
         "tags": [
           "Firmware"
@@ -15638,7 +15816,7 @@
         ]
       }
     },
-    "/api/v1/firmware/push/{pushId}/events": {
+    "/firmware/push/{pushId}/events": {
       "get": {
         "tags": [
           "Firmware"
@@ -15699,7 +15877,7 @@
         ]
       }
     },
-    "/api/v1/firmware/{id}": {
+    "/firmware/{id}": {
       "get": {
         "tags": [
           "Firmware"
@@ -15771,7 +15949,7 @@
         ]
       }
     },
-    "/api/v1/firmware/{id}/push/{gatewayId}": {
+    "/firmware/{id}/push/{gatewayId}": {
       "post": {
         "tags": [
           "Firmware"
@@ -15817,7 +15995,7 @@
         ]
       }
     },
-    "/api/v1/admin/storage-config": {
+    "/admin/storage-config": {
       "get": {
         "tags": [
           "Admin"
@@ -15883,7 +16061,7 @@
         ]
       }
     },
-    "/api/v1/admin/storage-config/test": {
+    "/admin/storage-config/test": {
       "post": {
         "tags": [
           "Admin"
@@ -15917,7 +16095,7 @@
         ]
       }
     },
-    "/api/v1/device-groups": {
+    "/device-groups": {
       "post": {
         "tags": [
           "AccessCodes"
@@ -15995,7 +16173,7 @@
         ]
       }
     },
-    "/api/v1/device-groups/{id}": {
+    "/device-groups/{id}": {
       "get": {
         "tags": [
           "AccessCodes"
@@ -16112,7 +16290,7 @@
         ]
       }
     },
-    "/api/v1/device-groups/{id}/users": {
+    "/device-groups/{id}/users": {
       "get": {
         "tags": [
           "AccessCodes"
@@ -16149,7 +16327,7 @@
         ]
       }
     },
-    "/api/v1/device-groups/{id}/members": {
+    "/device-groups/{id}/members": {
       "post": {
         "tags": [
           "AccessCodes"
@@ -16196,7 +16374,7 @@
         ]
       }
     },
-    "/api/v1/device-groups/{id}/members/{deviceId}": {
+    "/device-groups/{id}/members/{deviceId}": {
       "delete": {
         "tags": [
           "AccessCodes"
@@ -16250,7 +16428,7 @@
         ]
       }
     },
-    "/api/v1/access-codes/my": {
+    "/access-codes/my": {
       "get": {
         "tags": [
           "AccessCodes"
@@ -16286,7 +16464,7 @@
         ]
       }
     },
-    "/api/v1/access-codes/app/my": {
+    "/access-codes/app/my": {
       "get": {
         "tags": [
           "AccessCodes"
@@ -16322,7 +16500,7 @@
         ]
       }
     },
-    "/api/v1/access-codes/config/{facilityId}": {
+    "/access-codes/config/{facilityId}": {
       "get": {
         "tags": [
           "AccessCodes"
@@ -16404,7 +16582,7 @@
         ]
       }
     },
-    "/api/v1/access-codes/push-state/{facilityId}": {
+    "/access-codes/push-state/{facilityId}": {
       "get": {
         "tags": [
           "AccessCodes"
@@ -16441,7 +16619,7 @@
         ]
       }
     },
-    "/api/v1/access-codes": {
+    "/access-codes": {
       "get": {
         "tags": [
           "AccessCodes"
@@ -16485,7 +16663,7 @@
         ]
       }
     },
-    "/api/v1/access-codes/effective": {
+    "/access-codes/effective": {
       "get": {
         "tags": [
           "AccessCodes"
@@ -16529,7 +16707,7 @@
         ]
       }
     },
-    "/api/v1/access-codes/groups/{groupId}/config": {
+    "/access-codes/groups/{groupId}/config": {
       "get": {
         "tags": [
           "AccessCodes"
@@ -16611,7 +16789,7 @@
         ]
       }
     },
-    "/api/v1/access-codes/rotate": {
+    "/access-codes/rotate": {
       "post": {
         "tags": [
           "AccessCodes"
@@ -16647,7 +16825,7 @@
         ]
       }
     },
-    "/api/v1/access-codes/manual/set": {
+    "/access-codes/manual/set": {
       "put": {
         "tags": [
           "AccessCodes"
@@ -16683,7 +16861,7 @@
         ]
       }
     },
-    "/api/v1/access-codes/{id}/set": {
+    "/access-codes/{id}/set": {
       "put": {
         "tags": [
           "AccessCodes"
@@ -16730,7 +16908,7 @@
         ]
       }
     },
-    "/api/v1/access-codes/push/{facilityId}": {
+    "/access-codes/push/{facilityId}": {
       "post": {
         "tags": [
           "AccessCodes"
@@ -16767,7 +16945,7 @@
         ]
       }
     },
-    "/api/v1/dashboard/general-stats": {
+    "/dashboard/general-stats": {
       "get": {
         "tags": [
           "Dashboard"
@@ -18096,6 +18274,9 @@
           "firmwareId": {
             "type": "string",
             "format": "uuid"
+          },
+          "includeFirmware": {
+            "type": "boolean"
           }
         },
         "additionalProperties": false
@@ -18757,6 +18938,18 @@
         ],
         "additionalProperties": false
       },
+      "PutUnitsUnitIdOverlockRequest": {
+        "type": "object",
+        "properties": {
+          "is_overlocked": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "is_overlocked"
+        ],
+        "additionalProperties": false
+      },
       "PutUnitsUnitIdRequest": {
         "type": "object",
         "properties": {
@@ -19374,6 +19567,19 @@
         "required": [
           "success",
           "message"
+        ],
+        "additionalProperties": false
+      },
+      "PostDevSimulatorUserSessionRequest": {
+        "type": "object",
+        "properties": {
+          "userId": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "userId"
         ],
         "additionalProperties": false
       },
