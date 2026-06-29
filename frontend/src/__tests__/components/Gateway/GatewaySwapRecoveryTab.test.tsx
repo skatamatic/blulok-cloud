@@ -50,7 +50,12 @@ describe('GatewaySwapRecoveryTab', () => {
       data: { id: 'rec-1', status: 'detected', gateway_id: 'gw-new', facility_id: 'fac-1' },
     });
     (apiService.getGatewayRecoveryInventoryPreview as jest.Mock).mockResolvedValue({
-      data: { devices: [{ kind: 'lock', serial: 'L-001' }] },
+      data: {
+        devices: [
+          { kind: 'lock', lock_id: '0961cd2f-f892-4a5e-921c-45abe91068d2' },
+          { kind: 'bridge', serial: 'BR-001' },
+        ],
+      },
     });
     (apiService.getGatewayRecoveryOptions as jest.Mock).mockResolvedValue({
       data: {
@@ -223,6 +228,19 @@ describe('GatewaySwapRecoveryTab', () => {
       ).toBeInTheDocument();
     });
     expect(screen.getByRole('button', { name: /Start swap/i })).toBeDisabled();
+  });
+
+  it('shows inventory preview with lock_id in snapshot format', async () => {
+    render(
+      <GatewaySwapRecoveryTab facilityId="fac-1" boundGatewayId="gw-old" wsConnected />,
+    );
+    await waitFor(() => {
+      expect(screen.getByText(/Inventory snapshot preview/i)).toBeInTheDocument();
+    });
+    expect(
+      screen.getByText('lock · lock_id: 0961cd2f-f892-4a5e-921c-45abe91068d2'),
+    ).toBeInTheDocument();
+    expect(screen.getByText('bridge · serial: BR-001')).toBeInTheDocument();
   });
 
   it('shows bypass option while recovery is detected', async () => {

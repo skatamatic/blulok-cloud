@@ -39,6 +39,11 @@ import {
 import RecoveryBlockingBanner from '@/components/Gateway/RecoveryBlockingBanner';
 import { useAuth } from '@/contexts/AuthContext';
 import { UserRole } from '@/types/auth.types';
+import {
+  formatRecoveryInventoryPreviewIdentity,
+  formatRecoveryInventoryPreviewLine,
+  type RecoveryInventoryPreviewDevice,
+} from '@/utils/gateway-recovery-inventory-preview.utils';
 
 interface RecoveryFirmwareOptions {
   productionFirmwareVersion?: string | null;
@@ -190,22 +195,6 @@ function InlineNoticeBanner({ notice, onDismiss }: { notice: NonNullable<InlineN
   );
 }
 
-function recoveryPreviewDeviceLabel(device: {
-  kind: string;
-  lock_id?: string;
-  access_id?: string;
-  serial?: string;
-  relay_channel?: number | null;
-}): string {
-  if (device.kind === 'lock') return device.lock_id ?? '?';
-  if (device.kind === 'access_control') {
-    const relay = device.relay_channel ?? 1;
-    const id = device.access_id ?? '?';
-    return relay === 1 ? id : `${id} (relay ${relay})`;
-  }
-  return device.serial ?? '?';
-}
-
 export default function GatewaySwapRecoveryTab({
   facilityId,
   boundGatewayId,
@@ -222,7 +211,7 @@ export default function GatewaySwapRecoveryTab({
   const [sessions, setSessions] = useState<FacilityGatewaySession[]>([]);
   const [recovery, setRecovery] = useState<GatewayRecovery | null>(null);
   const [events, setEvents] = useState<GatewayRecoveryEvent[]>([]);
-  const [inventoryPreview, setInventoryPreview] = useState<Array<{ kind: string; label: string }>>([]);
+  const [inventoryPreview, setInventoryPreview] = useState<RecoveryInventoryPreviewDevice[]>([]);
   const [liveProgress, setLiveProgress] = useState<GatewayRecoveryProgress | null>(null);
   // Completion observed live during this session only — never hydrated on mount.
   const [sessionResult, setSessionResult] = useState<SessionSwapResult | null>(null);
@@ -343,18 +332,7 @@ export default function GatewaySwapRecoveryTab({
       const status = mergeHydratedRecoveryStatus(nextRecovery, statusRes.data);
 
       setRecovery(status);
-      setInventoryPreview(
-        (previewRes.data?.devices || []).map((device: {
-          kind: string;
-          lock_id?: string;
-          access_id?: string;
-          serial?: string;
-          relay_channel?: number | null;
-        }) => ({
-          kind: device.kind,
-          label: recoveryPreviewDeviceLabel(device),
-        })),
-      );
+      setInventoryPreview(previewRes.data?.devices || []);
 
       const options = optionsRes.data;
       if (options) {
@@ -952,8 +930,10 @@ export default function GatewaySwapRecoveryTab({
                       : `${inventoryPreview.length} device(s) will be pushed to the swap candidate.`}
                 </p>
                 <ul className="max-h-40 overflow-y-auto text-xs font-mono text-secondary-600 dark:text-secondary-300 space-y-1">
-                  {inventoryPreview.slice(0, 20).map((d, i) => (
-                    <li key={`${d.label}-${i}`}>{d.kind}: {d.label}</li>
+                  {inventoryPreview.slice(0, 20).map((device, i) => (
+                    <li key={`${device.kind}-${formatRecoveryInventoryPreviewIdentity(device)}-${i}`}>
+                      {formatRecoveryInventoryPreviewLine(device)}
+                    </li>
                   ))}
                   {inventoryPreview.length > 20 && (
                     <li className="text-secondary-400">…and {inventoryPreview.length - 20} more</li>
