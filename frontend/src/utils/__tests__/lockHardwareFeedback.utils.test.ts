@@ -23,10 +23,13 @@ describe('isLockFeedbackStuck', () => {
 });
 
 describe('startHardwareAckWatch', () => {
-  jest.useFakeTimers();
+  beforeEach(() => {
+    jest.useFakeTimers();
+  });
 
   afterEach(() => {
     jest.clearAllTimers();
+    jest.useRealTimers();
   });
 
   it('fires onTimedOut when still pending', () => {

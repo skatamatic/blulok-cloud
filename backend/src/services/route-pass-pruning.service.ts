@@ -61,6 +61,7 @@ export class RoutePassPruningService {
         logger.error('Error in scheduled route pass prune (non-fatal, will retry tomorrow):', err);
       }
     }, this.DAILY_MS);
+    this.intervalId.unref?.();
 
     logger.info('Route pass pruning service started (daily interval)');
   }
@@ -74,6 +75,14 @@ export class RoutePassPruningService {
       this.intervalId = null;
       logger.info('Route pass pruning service stopped');
     }
+  }
+
+  /** Test-only: stop loops and drop the singleton. */
+  public static resetForTests(): void {
+    if (RoutePassPruningService.instance) {
+      RoutePassPruningService.instance.stop();
+    }
+    RoutePassPruningService.instance = undefined as unknown as RoutePassPruningService;
   }
 
   /**

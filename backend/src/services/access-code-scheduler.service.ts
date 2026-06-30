@@ -94,12 +94,22 @@ export class AccessCodeSchedulerService {
     logger.info('AccessCodeSchedulerService stopped');
   }
 
+  /** Test-only: stop loops and drop the singleton so intervals cannot leak between suites. */
+  public static resetForTests(): void {
+    const existing = AccessCodeSchedulerService.instance;
+    if (existing) {
+      existing.stop();
+    }
+    AccessCodeSchedulerService.instance = undefined as unknown as AccessCodeSchedulerService;
+  }
+
   private startRunLoop(): void {
     if (this.intervalId) return;
     this.runSafe('Initial access code scheduler run failed (non-fatal):');
     this.intervalId = setInterval(async () => {
       await this.runSafe('Scheduled access code rotation failed (non-fatal):');
     }, this.CHECK_INTERVAL_MS);
+    this.intervalId.unref?.();
   }
 
   private stopRunLoop(): void {

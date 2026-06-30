@@ -63,6 +63,14 @@ function readFirmwareVersion(row: {
   return undefined;
 }
 
+function readOnlineFromProperties(row: { properties?: Record<string, unknown> }): boolean {
+  const raw = row.properties?.online;
+  if (typeof raw === 'boolean') return raw;
+  if (raw === 'true' || raw === 1) return true;
+  if (raw === 'false' || raw === 0) return false;
+  return false;
+}
+
 function mapLock(row: CloudInventorySnapshotLockDevice, now: string): LockInventoryItem {
   const lockId = String(row.lock_id || '').trim();
   if (!lockId) throw new Error('Inventory snapshot lock missing lock_id');
@@ -80,7 +88,7 @@ function mapLock(row: CloudInventorySnapshotLockDevice, now: string): LockInvent
     state: state ?? 'CLOSED',
     locked: true,
     firmware_version: readFirmwareVersion(row),
-    online: true,
+    online: readOnlineFromProperties(row),
     last_seen: now,
   };
 }
@@ -96,7 +104,7 @@ function mapAccessControl(row: CloudInventorySnapshotAccessControlDevice, now: s
     device_type: 'gate',
     locked: true,
     firmware_version: readFirmwareVersion(row),
-    online: true,
+    online: readOnlineFromProperties(row),
     last_seen: now,
   };
 }
@@ -111,7 +119,7 @@ function mapBridge(row: CloudInventorySnapshotInfraDevice, now: string): BridgeI
     state: row.state ?? 'healthy',
     firmware_version: readFirmwareVersion(row),
     info: row.info,
-    online: true,
+    online: readOnlineFromProperties(row),
     last_seen: now,
   };
 }
@@ -126,7 +134,7 @@ function mapFriendNode(row: CloudInventorySnapshotInfraDevice, now: string): Fri
     state: row.state ?? 'healthy',
     firmware_version: readFirmwareVersion(row),
     info: row.info,
-    online: true,
+    online: readOnlineFromProperties(row),
     last_seen: now,
   };
 }

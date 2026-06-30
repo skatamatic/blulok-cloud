@@ -8,6 +8,11 @@ import { logger } from '@/utils/logger';
 import { NetworkInfraSyncKind, getGatewayDeviceKindDefinition } from '@/config/gateway-device-kinds';
 import { DenylistSyncEntry, DenylistSyncService } from '@/services/denylist-sync.service';
 import { readBluLokLockNumber } from '@/utils/gateway-lock-inventory-map.utils';
+import {
+  snapshotOnlineFromAccessControlStatus,
+  snapshotOnlineFromBluLokDeviceStatus,
+  snapshotOnlineFromInfraState,
+} from '@/utils/inventory-snapshot-online.utils';
 
 export interface InventorySnapshotLockDevice {
   kind: 'lock';
@@ -106,6 +111,7 @@ export class InventorySnapshotService {
         properties: {
           lock_status: row.lock_status,
           firmware_version: row.firmware_version,
+          online: snapshotOnlineFromBluLokDeviceStatus(row.device_status),
         },
       });
     }
@@ -124,6 +130,7 @@ export class InventorySnapshotService {
         properties: {
           device_name: row.device_name,
           firmware_version: row.firmware_version,
+          online: snapshotOnlineFromAccessControlStatus(row.status),
         },
       });
     }
@@ -146,6 +153,7 @@ export class InventorySnapshotService {
         info,
         properties: {
           metadata: row.metadata,
+          online: snapshotOnlineFromInfraState(row.state),
         },
       });
     }

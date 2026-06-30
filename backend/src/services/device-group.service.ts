@@ -320,8 +320,27 @@ export class DeviceGroupService {
   }
 
   /**
-   * Idempotently ensure all facility devices (access-control + blulok unit locks) belong to the
-   * default group unless they are in a specific (non-default) zone group.
+   * Assign a unit to the facility default group when it has no bound lock yet.
+   * Units with locks are covered by assignBluLokToDefaultGroup.
+   */
+  async assignUnitToDefaultGroup(
+    facilityId: string,
+    unitId: string,
+    actor: ActorContext = {},
+  ): Promise<{ added: boolean }> {
+    const boundLock = await this.db('blulok_devices').select('id').where('unit_id', unitId).first();
+    if (boundLock) {
+      await this.assignBluLokToDefaultGroup(facilityId, String(boundLock.id), actor);
+      return { added: false };
+    }
+
+    const added = await this.ensureLocklessUnitInDefaultGroup(facilityId, unitId, actor);
+    return { added };
+  }
+
+  /**
+   * Repair pass for migrations and ops tooling — not invoked on read paths.
+   * Prefer migration 091 + assignUnitToDefaultGroup on unit create for steady state.
    */
   async backfillDefaultGroupMemberships(
     facilityId: string,
@@ -381,7 +400,52 @@ export class DeviceGroupService {
       await backfillDevice(String(row.id), 'blulok');
     }
 
+    const units = await this.db('units').select('id').where('facility_id', facilityId);
+    for (const row of units) {
+      const unitId = String(row.id);
+      const boundLock = await this.db('blulok_devices').select('id').where('unit_id', unitId).first();
+      if (boundLock) continue;
+
+      if (await this.ensureLocklessUnitInDefaultGroup(facilityId, unitId, actor)) {
+        added += 1;
+      }
+    }
+
     return { added };
+  }
+
+  private async findUnitDefaultMembership(
+    defaultGroupId: string,
+    unitId: string,
+  ): Promise<{ id: string } | undefined> {
+    const row = await this.db('device_group_members')
+      .where({ group_id: defaultGroupId, device_type: 'blulok' })
+      .where(function matchUnitAnchor() {
+        this.where('source_unit_id', unitId).orWhere('device_id', unitId);
+      })
+      .first();
+    return row ? { id: String(row.id) } : undefined;
+  }
+
+  /** Returns true when a new default-group row was inserted for a lock-less unit. */
+  private async ensureLocklessUnitInDefaultGroup(
+    facilityId: string,
+    unitId: string,
+    actor: ActorContext = {},
+  ): Promise<boolean> {
+    const defaultGroup = await this.ensureDefaultGroup(facilityId, actor);
+    const inSpecificGroup = await this.model.countSpecificGroupMembershipsForUnit(unitId, facilityId);
+    if (inSpecificGroup > 0) {
+      await this.model.removeMember(defaultGroup.id, unitId, 'blulok');
+      return false;
+    }
+
+    if (await this.findUnitDefaultMembership(defaultGroup.id, unitId)) {
+      return false;
+    }
+
+    await this.model.addMember(defaultGroup.id, unitId, 'blulok', unitId);
+    return true;
   }
 
   private async removeFromDefaultGroupIfNeeded(
@@ -412,7 +476,9 @@ export class DeviceGroupService {
     if (removedFromGroup.is_default) return;
 
     if (deviceType === 'blulok' && !(await this.isBlulokInventoryDevice(deviceId))) {
-      // Unit-anchored membership without a bound lock — default group only tracks inventory devices.
+      const inSpecificGroup = await this.model.countSpecificGroupMembershipsForUnit(deviceId, facilityId);
+      if (inSpecificGroup > 0) return;
+      await this.assignUnitToDefaultGroup(facilityId, deviceId);
       return;
     }
 

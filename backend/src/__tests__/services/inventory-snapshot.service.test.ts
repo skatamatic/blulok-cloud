@@ -107,6 +107,31 @@ describe('InventorySnapshotService', () => {
     expect(JSON.stringify(payload)).not.toContain('device_id');
   });
 
+  it('includes online in properties from cloud device status', () => {
+    const { payload } = InventorySnapshotService.buildSnapshotPayload(
+      'fac-1',
+      'gw-new',
+      [
+        { id: 'd1', device_serial: 'ON-1', device_status: 'online' },
+        { id: 'd2', device_serial: 'OFF-1', device_status: 'offline' },
+        { id: 'd3', device_serial: 'LOW-1', device_status: 'low_battery' },
+      ],
+      [{ id: 'ac1', device_serial: 'AC-1', relay_channel: 1, status: 'online' }],
+      [{ id: 'br1', device_kind: 'bridge', device_serial: 'BR-1', state: 'healthy' }],
+    );
+    expect(payload.devices.find((d) => d.kind === 'lock' && d.lock_id === 'ON-1')?.properties).toMatchObject({
+      online: true,
+    });
+    expect(payload.devices.find((d) => d.kind === 'lock' && d.lock_id === 'OFF-1')?.properties).toMatchObject({
+      online: false,
+    });
+    expect(payload.devices.find((d) => d.kind === 'lock' && d.lock_id === 'LOW-1')?.properties).toMatchObject({
+      online: true,
+    });
+    expect(payload.devices.find((d) => d.kind === 'access_control')?.properties).toMatchObject({ online: true });
+    expect(payload.devices.find((d) => d.kind === 'bridge')?.properties).toMatchObject({ online: true });
+  });
+
   it('omits cloud device_id and serial on lock rows — only lock_id', () => {
     const { payload } = InventorySnapshotService.buildSnapshotPayload(
       'fac-1',

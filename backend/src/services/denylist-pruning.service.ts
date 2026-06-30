@@ -65,6 +65,7 @@ export class DenylistPruningService {
         logger.error('Error in scheduled denylist prune (non-fatal, will retry tomorrow):', err);
       }
     }, this.DAILY_MS);
+    this.intervalId.unref?.();
 
     logger.info('Denylist pruning service started (daily interval)');
   }
@@ -78,6 +79,14 @@ export class DenylistPruningService {
       this.intervalId = null;
       logger.info('Denylist pruning service stopped');
     }
+  }
+
+  /** Test-only: stop loops and drop the singleton. */
+  public static resetForTests(): void {
+    if (DenylistPruningService.instance) {
+      DenylistPruningService.instance.stop();
+    }
+    DenylistPruningService.instance = undefined as unknown as DenylistPruningService;
   }
 
   /**

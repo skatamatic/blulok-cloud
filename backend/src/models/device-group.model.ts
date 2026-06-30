@@ -392,6 +392,23 @@ export class DeviceGroupModel {
       .update({ is_default: false, updated_at: new Date() });
   }
 
+  async countSpecificGroupMembershipsForUnit(unitId: string, facilityId: string): Promise<number> {
+    const knex = this.db.connection;
+    const row = await knex('device_group_members as m')
+      .join('device_groups as dg', 'dg.id', 'm.group_id')
+      .where('m.device_type', 'blulok')
+      .andWhere('dg.facility_id', facilityId)
+      .andWhere('dg.is_active', true)
+      .andWhere('dg.is_default', false)
+      .andWhere('dg.is_global_shared', false)
+      .where(function matchUnit() {
+        this.where('m.source_unit_id', unitId).orWhere('m.device_id', unitId);
+      })
+      .count<{ count: string | number }[]>('* as count')
+      .first();
+    return Number(row?.count ?? 0);
+  }
+
   async countAccessControlMembershipsForDevice(
     deviceId: string,
     facilityId: string,

@@ -1274,3 +1274,29 @@ export const _testBlockingFacilities = blockingFacilities;
 export const _testBlockingCache = blockingCache;
 export const _testInventoryPhaseTransitionInFlight = inventoryPhaseTransitionInFlight;
 export const _testProductionInventorySeedArmed = productionInventorySeedArmed;
+
+/** Test-only: clear module-level recovery timers between Jest suites. */
+export function _testClearPendingTimers(): void {
+  for (const timer of watchTimers.values()) {
+    clearInterval(timer);
+  }
+  watchTimers.clear();
+
+  for (const timer of verifyTimers.values()) {
+    clearTimeout(timer);
+  }
+  verifyTimers.clear();
+
+  for (const waiter of productionInventorySeedWaiters.values()) {
+    clearTimeout(waiter.timer);
+  }
+  productionInventorySeedWaiters.clear();
+
+  cancelledRecoveries.clear();
+  resumeInFlightRecoveries.clear();
+  blockingFacilities.clear();
+  blockingCache.clear();
+  startupInventoryPushInFlight.clear();
+  inventoryPhaseTransitionInFlight.clear();
+  productionInventorySeedArmed.clear();
+}

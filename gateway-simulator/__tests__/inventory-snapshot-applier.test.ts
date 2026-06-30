@@ -9,6 +9,54 @@ import {
 } from '../src/main/devices/denylist-sync.utils';
 
 describe('inventory-snapshot-applier', () => {
+  it('applies properties.online from snapshot rows', () => {
+    const mapped = mapSnapshotToInventoryItems(
+      {
+        facility_id: 'fac-1',
+        gateway_id: 'gw-new',
+        devices: [
+          {
+            kind: 'lock',
+            lock_id: 'L-ON',
+            properties: { online: true },
+          },
+          {
+            kind: 'lock',
+            lock_id: 'L-OFF',
+            properties: { online: false },
+          },
+          {
+            kind: 'access_control',
+            access_id: 'AC-1',
+            properties: { online: true },
+          },
+        ],
+      },
+      [],
+    );
+
+    expect(mapped.find((row) => row.item.kind === 'lock' && row.item.lock_id === 'L-ON')?.item).toMatchObject({
+      online: true,
+    });
+    expect(mapped.find((row) => row.item.kind === 'lock' && row.item.lock_id === 'L-OFF')?.item).toMatchObject({
+      online: false,
+    });
+    expect(mapped.find((row) => row.item.kind === 'access_control')?.item).toMatchObject({ online: true });
+  });
+
+  it('defaults online to false when snapshot properties omit online', () => {
+    const mapped = mapSnapshotToInventoryItems(
+      {
+        facility_id: 'fac-1',
+        gateway_id: 'gw-new',
+        devices: [{ kind: 'lock', lock_id: 'L-001' }],
+      },
+      [],
+    );
+
+    expect(mapped[0]?.item).toMatchObject({ kind: 'lock', online: false });
+  });
+
   it('maps cloud snapshot devices to simulator inventory items', () => {
     const mapped = mapSnapshotToInventoryItems(
       {

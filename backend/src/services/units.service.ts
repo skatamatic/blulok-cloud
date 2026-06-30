@@ -6,6 +6,7 @@ import { UnitAssignmentModel } from '@/models/unit-assignment.model';
 import { UnitAssignmentEventsService } from './events/unit-assignment-events.service';
 import { NotificationService } from '@/services/notification.service';
 import { ActivityService } from '@/services/activity.service';
+import { DeviceGroupService } from '@/services/device-group.service';
 import { logger } from '@/utils/logger';
 
 /**
@@ -140,7 +141,16 @@ export class UnitsService {
    */
   async createUnit(unitData: any, userId: string, userRole: UserRole): Promise<any> {
     try {
-      return await this.unitModel.createUnit(unitData, userId, userRole);
+      const unit = await this.unitModel.createUnit(unitData, userId, userRole);
+      try {
+        await DeviceGroupService.getInstance().assignUnitToDefaultGroup(
+          String(unit.facility_id),
+          String(unit.id),
+        );
+      } catch (groupErr) {
+        logger.warn('Failed to assign new unit to default access group (non-fatal):', groupErr);
+      }
+      return unit;
     } catch (error) {
       logger.error('Error creating unit:', error);
       throw error;

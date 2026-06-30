@@ -1,6 +1,7 @@
 import React from 'react';
 import { Sidebar } from './Sidebar';
 import { useSidebar } from '@/contexts/SidebarContext';
+import { useNavigateOnFacilityChange } from '@/hooks/useNavigateOnFacilityChange';
 
 interface DashboardLayoutProps {
   children: React.ReactNode;
@@ -13,7 +14,8 @@ export const DashboardLayout: React.FC<DashboardLayoutProps> = ({
   lockViewport = false,
 }) => {
   const { isCollapsed } = useSidebar();
-  
+  useNavigateOnFacilityChange();
+
   return (
     <div className="flex h-screen bg-gray-50 dark:bg-gray-900 transition-colors duration-200">
       {/* Sidebar */}

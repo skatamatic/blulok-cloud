@@ -63,5 +63,4 @@ module.exports = {
   moduleFileExtensions: ['ts', 'tsx', 'js', 'jsx', 'json', 'node'],
   testTimeout: 10000,
   maxWorkers: process.env.CI ? 1 : '50%',
-  forceExit: true,
 };

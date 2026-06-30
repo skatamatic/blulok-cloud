@@ -54,7 +54,11 @@ describe('AccessCodeSchedulerService', () => {
     jest.clearAllMocks();
     connectionChangeListener = undefined;
     isGatewayOnline.mockReturnValue(true);
-    (AccessCodeSchedulerService as any).instance = undefined;
+    AccessCodeSchedulerService.resetForTests();
+  });
+
+  afterEach(() => {
+    AccessCodeSchedulerService.resetForTests();
   });
 
   it('rotates due access-code groups on run', async () => {

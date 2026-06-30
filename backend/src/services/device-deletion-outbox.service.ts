@@ -42,6 +42,19 @@ export class DeviceDeletionOutboxService {
     return this.instance;
   }
 
+  /** Test-only: clear pending ack timers and drop the singleton. */
+  public static resetForTests(): void {
+    const existing = DeviceDeletionOutboxService.instance;
+    if (existing) {
+      for (const pending of existing.pendingAcksByNonce.values()) {
+        clearTimeout(pending.timer);
+      }
+      existing.pendingAcksByNonce.clear();
+      existing.flushInProgressByFacility.clear();
+    }
+    DeviceDeletionOutboxService.instance = undefined as unknown as DeviceDeletionOutboxService;
+  }
+
   public isGatewayOnline(facilityId: string): boolean {
     return GatewayEventsService.getInstance().getFacilityConnectionStatus(facilityId).connected;
   }

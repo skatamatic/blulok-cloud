@@ -65,6 +65,17 @@ export class LockCommandService {
     return LockCommandService.instance;
   }
 
+  /** Test-only: clear pending command timers and drop the singleton. */
+  public static resetForTests(): void {
+    const existing = LockCommandService.instance;
+    if (existing) {
+      for (const deviceId of [...existing.pendingCommands.keys()]) {
+        existing.clearPending(deviceId);
+      }
+    }
+    LockCommandService.instance = undefined as unknown as LockCommandService;
+  }
+
   public async issueLockCommand(
     deviceId: string,
     requestedStatus: 'locked' | 'unlocked',

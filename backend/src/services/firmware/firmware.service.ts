@@ -1495,3 +1495,25 @@ export class FirmwareService {
     }
   }
 }
+
+/** Test-only: clear module-level firmware push timers between Jest suites. */
+export function _testClearPendingTimers(): void {
+  for (const timer of verifyingTimeouts.values()) {
+    clearTimeout(timer);
+  }
+  verifyingTimeouts.clear();
+
+  for (const timer of transferDisconnectTimeouts.values()) {
+    clearTimeout(timer);
+  }
+  transferDisconnectTimeouts.clear();
+
+  for (const timer of resumeFacilityRetryTimers.values()) {
+    clearTimeout(timer);
+  }
+  resumeFacilityRetryTimers.clear();
+
+  activePushes.clear();
+  resumeInFlightPushes.clear();
+  resumeFacilityRunsInFlight.clear();
+}

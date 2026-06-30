@@ -154,7 +154,7 @@ The facility **gateway** itself remains in the `gateways` table and appears in t
 **Purpose**: Unified access groups control **both app-entry (route pass / BLE) and keypad access**. Each facility has one protected **default group** (`is_default=true`, `is_global_shared=true`, name `Default Facility Group`). Because it is global-shared, every tenant in the facility is entitled to its access-control devices — this guarantees a route to their unit through the shared gate/door.
 
 **Membership model**:
-- **Every device — access-control *and* BluLok unit locks — auto-joins the default group** on create/sync. Manual creates, gateway-sync provisioning, and gateway swap recovery finalize/bypass all backfill the default group. Migrations `084` (access-control) and `085` (BluLok) repair historical gaps.
+- **Every access-control device and BluLok unit lock auto-joins the default group** on create/sync. **Lock-less units** are stored as unit-anchored `blulok` members (`device_id = source_unit_id = unit id`) via the unit-create hook; migration `091` backfills existing rows. Migrations `084` (access-control) and `085` (BluLok locks) repair historical device gaps.
 - A device may be moved into one or more **specific (non-default) groups** to restrict a wing/section. **A device never belongs to a specific group and the default group at the same time**: adding it to its first specific group removes it from the default group; removing its last specific membership returns it to the default group automatically.
 - **Access-control devices can belong to multiple specific groups at once** (e.g. a shared wing door reachable from several sub-hallway groups). The same applies to BluLok locks.
 
