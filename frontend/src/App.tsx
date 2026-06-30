@@ -9,6 +9,7 @@ import { WebSocketDebugProvider } from '@/contexts/WebSocketDebugContext';
 import { FMSSyncProvider, useFMSSync } from '@/contexts/FMSSyncContext';
 import { BluFMSDemoProvider } from '@/contexts/BluFMSDemoContext';
 import { GlobalFacilityProvider } from '@/contexts/GlobalFacilityContext';
+import { FacilityChangeNavigator } from '@/components/Layout/FacilityChangeNavigator';
 import { BluDesignProvider } from '@/contexts/BluDesignContext';
 import { FMSSyncStatusBar } from '@/components/FMS/FMSSyncStatusBar';
 import { FMSSyncProgressModal } from '@/components/FMS/FMSSyncProgressModal';
@@ -96,6 +97,7 @@ function App() {
               <SidebarProvider>
                 <DropdownProvider>
                   <GlobalFacilityProvider>
+                    <FacilityChangeNavigator />
                     <BluFMSDemoProvider>
                       <BluDesignProvider>
                         <FMSSyncProvider>

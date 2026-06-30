@@ -6,6 +6,13 @@ import userEvent from '@testing-library/user-event';
 import { TopLevelFacilitySelector } from '@/components/Layout/TopLevelFacilitySelector';
 
 const mockSetSelectedFacilityId = jest.fn();
+const mockNavigate = jest.fn();
+const mockUseLocation = jest.fn();
+
+jest.mock('react-router-dom', () => ({
+  useNavigate: () => mockNavigate,
+  useLocation: () => mockUseLocation(),
+}));
 
 jest.mock('@/contexts/SidebarContext', () => ({
   useSidebar: () => ({ isCollapsed: false }),
@@ -27,6 +34,7 @@ describe('TopLevelFacilitySelector', () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+    mockUseLocation.mockReturnValue({ pathname: '/dashboard' });
     mockUseGlobalFacility.mockReturnValue({
       facilities: [facility],
       selectedFacilityId: 'fac-1',
@@ -97,5 +105,49 @@ describe('TopLevelFacilitySelector', () => {
     await user.click(screen.getByRole('button', { name: /Alpha Storage/i }));
 
     expect(mockSetSelectedFacilityId).toHaveBeenCalledWith('fac-1');
+  });
+
+  it('navigates to facility setup when selecting a facility from a unit detail route', async () => {
+    const user = userEvent.setup();
+    const facilityB = { id: 'fac-2', name: 'Beta Storage', address: '2 Oak Ave' };
+
+    mockUseLocation.mockReturnValue({ pathname: '/units/unit-1' });
+    mockUseGlobalFacility.mockReturnValue({
+      facilities: [facility, facilityB],
+      selectedFacilityId: 'fac-1',
+      selectedFacility: facility,
+      setSelectedFacilityId: mockSetSelectedFacilityId,
+      isAllFacilitiesSelected: false,
+      isLoading: false,
+    });
+
+    render(<TopLevelFacilitySelector />);
+
+    await user.click(screen.getByRole('button', { name: /Alpha Storage/i }));
+    await user.click(screen.getByRole('button', { name: /Beta Storage/i }));
+
+    expect(mockSetSelectedFacilityId).toHaveBeenCalledWith('fac-2');
+    expect(mockNavigate).toHaveBeenCalledWith('/facilities/fac-2', { replace: true });
+  });
+
+  it('navigates to facilities hub from device detail when All Facilities is selected', async () => {
+    const user = userEvent.setup();
+
+    mockUseLocation.mockReturnValue({ pathname: '/devices/device-1' });
+    mockUseGlobalFacility.mockReturnValue({
+      facilities: [facility],
+      selectedFacilityId: 'fac-1',
+      selectedFacility: facility,
+      setSelectedFacilityId: mockSetSelectedFacilityId,
+      isAllFacilitiesSelected: false,
+      isLoading: false,
+    });
+
+    render(<TopLevelFacilitySelector />);
+
+    await user.click(screen.getByRole('button', { name: /Alpha Storage/i }));
+    await user.click(screen.getAllByRole('button', { name: /All Facilities/i })[0]);
+
+    expect(mockNavigate).toHaveBeenCalledWith('/facilities', { replace: true });
   });
 });

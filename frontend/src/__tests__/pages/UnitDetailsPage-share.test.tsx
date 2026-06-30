@@ -259,4 +259,62 @@ describe('UnitDetailsPage shared access', () => {
       expect(mockApiService.assignTenantToUnit).toHaveBeenCalledWith('unit-1', 'tenant-2', true);
     });
   });
+
+  it('allows admin to remove the primary tenant without switching first', async () => {
+    mockUseAuth.mockReturnValue({
+      authState: {
+        user: adminUser,
+        isAuthenticated: true,
+      },
+    });
+    mockApiService.getUnitDetails.mockResolvedValue({ unit: baseUnit } as any);
+
+    render(
+      <MemoryRouter initialEntries={['/units/unit-1?tab=tenant']}>
+        <ToastProvider>
+          <UnitDetailsPage />
+        </ToastProvider>
+      </MemoryRouter>
+    );
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /^remove$/i })).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: /^remove$/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText(/remove primary tenant\?/i)).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: /remove tenant/i }));
+
+    await waitFor(() => {
+      expect(mockApiService.removeTenantFromUnit).toHaveBeenCalledWith('unit-1', 'tenant-primary');
+    });
+  });
+
+  it('does not show primary tenant remove for non-admin users', async () => {
+    mockUseAuth.mockReturnValue({
+      authState: {
+        user: tenantUser,
+        isAuthenticated: true,
+      },
+    });
+    mockApiService.getUnitDetails.mockResolvedValue({ unit: baseUnit } as any);
+
+    render(
+      <MemoryRouter initialEntries={['/units/unit-1?tab=tenant']}>
+        <ToastProvider>
+          <UnitDetailsPage />
+        </ToastProvider>
+      </MemoryRouter>
+    );
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /back to units/i })).toBeInTheDocument();
+    });
+
+    expect(screen.queryByRole('button', { name: /^remove$/i })).not.toBeInTheDocument();
+  });
 });

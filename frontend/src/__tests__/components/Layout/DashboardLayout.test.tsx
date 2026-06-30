@@ -14,10 +14,6 @@ jest.mock('@/contexts/SidebarContext', () => ({
   useSidebar: () => mockUseSidebar(),
 }));
 
-jest.mock('@/hooks/useNavigateOnFacilityChange', () => ({
-  useNavigateOnFacilityChange: () => {},
-}));
-
 describe('DashboardLayout', () => {
   beforeEach(() => {
     mockUseSidebar.mockReturnValue({ isCollapsed: false });

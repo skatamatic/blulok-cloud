@@ -128,6 +128,7 @@ interface UnitDetailsOverviewProps {
   isSubmittingUnlock: boolean;
   onAssignPrimary: () => void;
   onRemoveTenant: (tenantId: string) => void;
+  onRequestRemovePrimaryTenant?: () => void;
   onRemoteUnlock: () => void;
   onAssignDevice: () => void;
   onChangeDevice: () => void;
@@ -172,6 +173,7 @@ export function UnitDetailsOverview({
   isSubmittingUnlock,
   onAssignPrimary,
   onRemoveTenant,
+  onRequestRemovePrimaryTenant,
   onRemoteUnlock,
   onAssignDevice,
   onChangeDevice,
@@ -451,9 +453,25 @@ export function UnitDetailsOverview({
                   {shouldShowUserEmail(unit.primary_tenant) ? unit.primary_tenant.email : 'Primary tenant'}
                 </p>
               </div>
-              <span className={primaryRoleBadgeClass}>
-                Primary
-              </span>
+              <div className="flex shrink-0 items-center gap-2">
+                <span className={primaryRoleBadgeClass}>
+                  Primary
+                </span>
+                {canChangePrimaryTenant && onRequestRemovePrimaryTenant && (
+                  <button
+                    type="button"
+                    onClick={onRequestRemovePrimaryTenant}
+                    disabled={removingTenant === unit.primary_tenant!.id}
+                    className={detailsBtnDangerOutlineSm}
+                  >
+                    {removingTenant === unit.primary_tenant!.id ? (
+                      <ArrowPathIcon className="h-4 w-4 animate-spin" />
+                    ) : (
+                      'Remove'
+                    )}
+                  </button>
+                )}
+              </div>
             </div>
           ) : (
             <div className={`mt-4 ${overviewEmptyStateClass}`}>

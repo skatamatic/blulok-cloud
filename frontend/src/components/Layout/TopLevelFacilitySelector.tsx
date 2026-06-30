@@ -1,10 +1,17 @@
-import React, { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect } from 'react';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { BuildingOfficeIcon, ChevronDownIcon, GlobeAltIcon } from '@heroicons/react/24/outline';
 import { useGlobalFacility, ALL_FACILITIES_ID } from '@/contexts/GlobalFacilityContext';
 import { useSidebar } from '@/contexts/SidebarContext';
+import {
+  isFacilitySetupDetailRoute,
+  resolveFacilitySetupPath,
+} from '@/utils/facility-setup-navigation.utils';
 
 export const TopLevelFacilitySelector: React.FC = () => {
   const { isCollapsed } = useSidebar();
+  const navigate = useNavigate();
+  const location = useLocation();
   const { facilities, selectedFacilityId, selectedFacility, setSelectedFacilityId, isAllFacilitiesSelected, isLoading } = useGlobalFacility();
   const [isOpen, setIsOpen] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
@@ -32,6 +39,11 @@ export const TopLevelFacilitySelector: React.FC = () => {
   const handleSelect = (facilityId: string | null) => {
     setSelectedFacilityId(facilityId);
     setIsOpen(false);
+
+    if (isFacilitySetupDetailRoute(location.pathname)) {
+      const isAll = facilityId === ALL_FACILITIES_ID;
+      navigate(resolveFacilitySetupPath(facilityId, isAll), { replace: true });
+    }
   };
 
   // Calculate dropdown position when opening and on scroll/resize

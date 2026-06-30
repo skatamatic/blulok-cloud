@@ -139,6 +139,7 @@ export default function UnitDetailsPage() {
   const [showPrimaryTenantChange, setShowPrimaryTenantChange] = useState(false);
   const [showDeviceAssignmentModal, setShowDeviceAssignmentModal] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [showRemovePrimaryConfirm, setShowRemovePrimaryConfirm] = useState(false);
   const [deletingUnit, setDeletingUnit] = useState(false);
   const [overlockSaving, setOverlockSaving] = useState(false);
   const [accessGroups, setAccessGroups] = useState<UnitAccessGroupRef[]>([]);
@@ -296,9 +297,8 @@ export default function UnitDetailsPage() {
       setRemovingTenant(tenantId);
       await apiService.removeTenantFromUnit(unitId, tenantId);
       await loadUnitDetails(); // Refresh unit data
-      
-      // Show success notification
-      console.log('Tenant access removed successfully');
+
+      addToast({ type: 'success', title: 'Tenant removed', message: 'Unit access was revoked for this tenant.' });
     } catch (error: any) {
       console.error('Failed to remove tenant:', error);
       // Show error notification
@@ -565,6 +565,9 @@ export default function UnitDetailsPage() {
           }
         }}
         onRemoveTenant={(tenantId) => void handleRemoveTenant(tenantId)}
+        onRequestRemovePrimaryTenant={
+          unit.primary_tenant ? () => setShowRemovePrimaryConfirm(true) : undefined
+        }
         onRemoteUnlock={() => void handleRemoteUnlock()}
         onAssignDevice={() => setShowDeviceAssignmentModal(true)}
         onChangeDevice={() => setShowDeviceAssignmentModal(true)}
@@ -618,6 +621,30 @@ export default function UnitDetailsPage() {
         onConfirm={() => void handleDeleteUnit()}
         onCancel={() => {
           if (!deletingUnit) setShowDeleteConfirm(false);
+        }}
+      />
+
+      <ConfirmDialog
+        isOpen={showRemovePrimaryConfirm}
+        title="Remove primary tenant?"
+        message={
+          unit.primary_tenant
+            ? `Remove ${unit.primary_tenant.first_name} ${unit.primary_tenant.last_name} from Unit ${unit.unit_number}? Their route pass access to this unit will be revoked. You can assign a different tenant afterward.`
+            : ''
+        }
+        confirmLabel="Remove tenant"
+        confirmTone="danger"
+        isLoading={Boolean(unit.primary_tenant && removingTenant === unit.primary_tenant.id)}
+        onConfirm={() => {
+          if (!unit.primary_tenant) return;
+          void handleRemoveTenant(unit.primary_tenant.id).finally(() => {
+            setShowRemovePrimaryConfirm(false);
+          });
+        }}
+        onCancel={() => {
+          if (!unit.primary_tenant || removingTenant !== unit.primary_tenant.id) {
+            setShowRemovePrimaryConfirm(false);
+          }
         }}
       />
     </DetailsPageShell>
