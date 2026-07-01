@@ -866,6 +866,13 @@ export class DeviceSyncService {
       );
 
       const devicesToAdd: CreateAccessControlDeviceData[] = [];
+      /** One adminIdentityOverride row per relay may reconcile at most once per sync (see §5.4). */
+      const reconciledOverrideRelays = new Set<number>();
+
+      const countIncomingOnRelay = (relay: number): number =>
+        [...incomingMap.values()].filter(
+          (d) => resolveAccessRelayChannel(d.relay_channel) === relay,
+        ).length;
 
       for (const [key, item] of incomingMap) {
         if (!existingMap.has(key)) {
@@ -878,9 +885,14 @@ export class DeviceSyncService {
               hasAdminIdentityOverride(d.metadata as Record<string, unknown> | undefined)
           );
           const overrideOnRelay =
-            overridesOnRelay.length === 1 ? overridesOnRelay[0] : undefined;
+            overridesOnRelay.length === 1 &&
+            countIncomingOnRelay(relayChannel) === 1 &&
+            !reconciledOverrideRelays.has(relayChannel)
+              ? overridesOnRelay[0]
+              : undefined;
 
           if (overrideOnRelay) {
+            reconciledOverrideRelays.add(relayChannel);
             try {
               const meta =
                 overrideOnRelay.metadata && typeof overrideOnRelay.metadata === 'object'

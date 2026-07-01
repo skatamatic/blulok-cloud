@@ -3,6 +3,39 @@ import WebSocket from 'ws';
 import { createIntegrationTestApp } from '../utils/integration-test-server';
 import { GatewayEventsService } from '@/services/gateway/gateway-events.service';
 
+const TEST_BOUND_GATEWAY_ID = '11111111-1111-4111-8111-111111111111';
+
+jest.mock('@/models/gateway.model', () => ({
+  GatewayModel: jest.fn().mockImplementation(() => ({
+    findByFacilityId: jest.fn().mockResolvedValue({ id: '11111111-1111-4111-8111-111111111111' }),
+    findById: jest.fn().mockResolvedValue({
+      id: '11111111-1111-4111-8111-111111111111',
+      facility_id: 'facility-1',
+    }),
+    createUnboundSwapCandidateIfAbsent: jest.fn(),
+    createOrBindAsFirstGateway: jest.fn(),
+    update: jest.fn().mockResolvedValue(undefined),
+    updateStatusAndLastSeen: jest.fn().mockResolvedValue(undefined),
+  })),
+}));
+
+jest.mock('@/services/gateway/gateway-recovery.service', () => ({
+  GatewayRecoveryService: {
+    detect: jest.fn().mockResolvedValue(undefined),
+    isBlockingActiveForFacilitySync: jest.fn().mockReturnValue(false),
+    resumePendingForFacility: jest.fn().mockResolvedValue(undefined),
+  },
+}));
+
+function authPayload(facilityId: string) {
+  return {
+    type: 'AUTH',
+    token: 'mock-jwt-token',
+    facilityId,
+    gatewayId: TEST_BOUND_GATEWAY_ID,
+  };
+}
+
 function waitForMessage(ws: WebSocket, timeoutMs = 3000): Promise<any> {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error('timeout waiting for ws message')), timeoutMs);
@@ -51,7 +84,7 @@ describe('WebsocketGatewayTransport', () => {
     await new Promise<void>((resolve) => ws.once('open', () => resolve()));
 
     // Send AUTH (admin role is accepted by mocked AuthService)
-    ws.send(JSON.stringify({ type: 'AUTH', token: 'mock-jwt-token', facilityId: 'facility-1' }));
+    ws.send(JSON.stringify(authPayload('facility-1')));
     const authOk = await waitForMessage(ws);
     expect(authOk?.type).toBe('AUTH_OK');
     expect(authOk?.facilityId).toBe('facility-1');
@@ -71,7 +104,7 @@ describe('WebsocketGatewayTransport', () => {
   it('receives unicast commands for its facility (JWT format)', async () => {
     const ws = new WebSocket(`ws://127.0.0.1:${port}/ws/gateway`);
     await new Promise<void>((resolve) => ws.once('open', () => resolve()));
-    ws.send(JSON.stringify({ type: 'AUTH', token: 'mock-jwt-token', facilityId: 'facility-1' }));
+    ws.send(JSON.stringify(authPayload('facility-1')));
     await waitForMessage(ws); // AUTH_OK
 
     // Mock JWT string (header.payload.signature format)
@@ -87,7 +120,7 @@ describe('WebsocketGatewayTransport', () => {
   it('receives unicast commands for its facility (legacy object format)', async () => {
     const ws = new WebSocket(`ws://127.0.0.1:${port}/ws/gateway`);
     await new Promise<void>((resolve) => ws.once('open', () => resolve()));
-    ws.send(JSON.stringify({ type: 'AUTH', token: 'mock-jwt-token', facilityId: 'facility-1' }));
+    ws.send(JSON.stringify(authPayload('facility-1')));
     await waitForMessage(ws); // AUTH_OK
 
     // Legacy object format (still supported for backward compatibility)
@@ -108,7 +141,7 @@ describe('WebsocketGatewayTransport', () => {
       }
     });
 
-    ws.send(JSON.stringify({ type: 'AUTH', token: 'mock-jwt-token', facilityId: 'facility-1' }));
+    ws.send(JSON.stringify(authPayload('facility-1')));
     await waitForMessage(ws); // AUTH_OK
 
     // Wait long enough for at least one heartbeat cycle
@@ -122,7 +155,7 @@ describe('WebsocketGatewayTransport', () => {
     it('PROXY_REQUEST with tid in body returns tid in PROXY_RESPONSE body', async () => {
       const ws = new WebSocket(`ws://127.0.0.1:${port}/ws/gateway`);
       await new Promise<void>((resolve) => ws.once('open', () => resolve()));
-      ws.send(JSON.stringify({ type: 'AUTH', token: 'mock-jwt-token', facilityId: 'facility-1' }));
+      ws.send(JSON.stringify(authPayload('facility-1')));
       await waitForMessage(ws); // AUTH_OK
 
       const reqId = 'test-tid-1';
@@ -146,7 +179,7 @@ describe('WebsocketGatewayTransport', () => {
     it('PROXY_REQUEST without tid does not add tid to response (backward compatibility)', async () => {
       const ws = new WebSocket(`ws://127.0.0.1:${port}/ws/gateway`);
       await new Promise<void>((resolve) => ws.once('open', () => resolve()));
-      ws.send(JSON.stringify({ type: 'AUTH', token: 'mock-jwt-token', facilityId: 'facility-1' }));
+      ws.send(JSON.stringify(authPayload('facility-1')));
       await waitForMessage(ws); // AUTH_OK
 
       const reqId = 'test-tid-2';
@@ -168,7 +201,7 @@ describe('WebsocketGatewayTransport', () => {
     it('tid passthrough works with successful responses (200 status)', async () => {
       const ws = new WebSocket(`ws://127.0.0.1:${port}/ws/gateway`);
       await new Promise<void>((resolve) => ws.once('open', () => resolve()));
-      ws.send(JSON.stringify({ type: 'AUTH', token: 'mock-jwt-token', facilityId: 'facility-1' }));
+      ws.send(JSON.stringify(authPayload('facility-1')));
       await waitForMessage(ws); // AUTH_OK
 
       const reqId = 'test-tid-3';
@@ -189,7 +222,7 @@ describe('WebsocketGatewayTransport', () => {
     it('tid passthrough works with error responses (4xx/5xx status)', async () => {
       const ws = new WebSocket(`ws://127.0.0.1:${port}/ws/gateway`);
       await new Promise<void>((resolve) => ws.once('open', () => resolve()));
-      ws.send(JSON.stringify({ type: 'AUTH', token: 'mock-jwt-token', facilityId: 'facility-1' }));
+      ws.send(JSON.stringify(authPayload('facility-1')));
       await waitForMessage(ws); // AUTH_OK
 
       const reqId = 'test-tid-4';
@@ -213,7 +246,7 @@ describe('WebsocketGatewayTransport', () => {
     it('tid preserves type (number or string) from request', async () => {
       const ws = new WebSocket(`ws://127.0.0.1:${port}/ws/gateway`);
       await new Promise<void>((resolve) => ws.once('open', () => resolve()));
-      ws.send(JSON.stringify({ type: 'AUTH', token: 'mock-jwt-token', facilityId: 'facility-1' }));
+      ws.send(JSON.stringify(authPayload('facility-1')));
       await waitForMessage(ws); // AUTH_OK
 
       // Test with number tid
@@ -249,7 +282,7 @@ describe('WebsocketGatewayTransport', () => {
     it('tid works with different endpoint types (GET, POST, PUT)', async () => {
       const ws = new WebSocket(`ws://127.0.0.1:${port}/ws/gateway`);
       await new Promise<void>((resolve) => ws.once('open', () => resolve()));
-      ws.send(JSON.stringify({ type: 'AUTH', token: 'mock-jwt-token', facilityId: 'facility-1' }));
+      ws.send(JSON.stringify(authPayload('facility-1')));
       await waitForMessage(ws); // AUTH_OK
 
       const tid = 'multi-method-test';
@@ -292,7 +325,7 @@ describe('WebsocketGatewayTransport', () => {
     it('tid is merged into response body alongside existing data', async () => {
       const ws = new WebSocket(`ws://127.0.0.1:${port}/ws/gateway`);
       await new Promise<void>((resolve) => ws.once('open', () => resolve()));
-      ws.send(JSON.stringify({ type: 'AUTH', token: 'mock-jwt-token', facilityId: 'facility-1' }));
+      ws.send(JSON.stringify(authPayload('facility-1')));
       await waitForMessage(ws); // AUTH_OK
 
       const reqId = 'test-tid-7';
@@ -318,7 +351,7 @@ describe('WebsocketGatewayTransport', () => {
     it('AUTH_OK response includes ops_public_key', async () => {
       const ws = new WebSocket(`ws://127.0.0.1:${port}/ws/gateway`);
       await new Promise<void>((resolve) => ws.once('open', () => resolve()));
-      ws.send(JSON.stringify({ type: 'AUTH', token: 'mock-jwt-token', facilityId: 'facility-1' }));
+      ws.send(JSON.stringify(authPayload('facility-1')));
       const authOk = await waitForMessage(ws);
       expect(authOk.type).toBe('AUTH_OK');
       expect(authOk).toHaveProperty('ops_public_key');
@@ -329,7 +362,7 @@ describe('WebsocketGatewayTransport', () => {
     it('FIRMWARE_CHUNK_ACK is handled without error', async () => {
       const ws = new WebSocket(`ws://127.0.0.1:${port}/ws/gateway`);
       await new Promise<void>((resolve) => ws.once('open', () => resolve()));
-      ws.send(JSON.stringify({ type: 'AUTH', token: 'mock-jwt-token', facilityId: 'facility-1' }));
+      ws.send(JSON.stringify(authPayload('facility-1')));
       await waitForMessage(ws); // AUTH_OK
 
       ws.send(JSON.stringify({
@@ -347,7 +380,7 @@ describe('WebsocketGatewayTransport', () => {
     it('FIRMWARE_UPDATE_STATUS is handled and ACK is returned', async () => {
       const ws = new WebSocket(`ws://127.0.0.1:${port}/ws/gateway`);
       await new Promise<void>((resolve) => ws.once('open', () => resolve()));
-      ws.send(JSON.stringify({ type: 'AUTH', token: 'mock-jwt-token', facilityId: 'facility-1' }));
+      ws.send(JSON.stringify(authPayload('facility-1')));
       await waitForMessage(ws); // AUTH_OK
 
       ws.send(JSON.stringify({

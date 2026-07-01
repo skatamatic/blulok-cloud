@@ -498,9 +498,7 @@ export class WebsocketGatewayTransport implements GatewayTransport {
 
     const shouldClose =
       !previousGatewayId
-      || active.gatewayId === previousGatewayId
-      || active.gatewayId === undefined
-      || active.sessionRole === 'legacy';
+      || active.gatewayId === previousGatewayId;
 
     if (!shouldClose) {
       return;
@@ -815,21 +813,28 @@ export class WebsocketGatewayTransport implements GatewayTransport {
           ? String(msg.gatewayId)
           : undefined;
 
-        let boundGateway: { id: string } | null = null;
-        let gatewayModel: InstanceType<Awaited<typeof import('@/models/gateway.model')>['GatewayModel']> | null = null;
-        if (gatewayId) {
-          const { GatewayModel } = await import('@/models/gateway.model');
-          gatewayModel = new GatewayModel();
-          boundGateway = await gatewayModel.findByFacilityId(facilityId);
+        if (!gatewayId) {
+          logger.warn(`Gateway WS AUTH bad request (missing gatewayId) user=${decoded.userId} remote=${remote} facility=${facilityId}`);
+          safeSend(ws, { type: 'ERROR', code: 'AUTH_BAD_REQUEST', message: 'gatewayId required' });
+          return closeAndCleanup();
+        }
+        if (!isValidGatewayUuid(gatewayId)) {
+          logger.warn(`Gateway WS AUTH bad request (invalid gatewayId) user=${decoded.userId} remote=${remote} facility=${facilityId} gateway=${gatewayId}`);
+          safeSend(ws, { type: 'ERROR', code: 'AUTH_BAD_REQUEST', message: 'gatewayId must be a valid UUID' });
+          return closeAndCleanup();
         }
 
-        let sessionRole: GatewaySessionRole = 'legacy';
+        const { GatewayModel } = await import('@/models/gateway.model');
+        const gatewayModel = new GatewayModel();
+        const boundGateway = await gatewayModel.findByFacilityId(facilityId);
+
+        let sessionRole: GatewaySessionRole = 'active';
         let resolvedGatewayId = gatewayId;
         let autoRegistered = false;
 
-        const setActiveSession = (gid: string | undefined, role: GatewaySessionRole) => {
+        const setActiveSession = (gid: string, role: GatewaySessionRole) => {
           const existing = this.facilityToClient.get(facilityId);
-          if (existing && existing.ws !== ws && (existing.gatewayId === gid || existing.sessionRole === 'active' || !gid)) {
+          if (existing && existing.ws !== ws && (existing.gatewayId === gid || existing.sessionRole === 'active')) {
             try { existing.ws.close(4000, 'replaced'); } catch {}
           }
           const now = Date.now();
@@ -858,9 +863,8 @@ export class WebsocketGatewayTransport implements GatewayTransport {
           return true;
         };
 
-        if (gatewayId && gatewayModel) {
-          try {
-            if (boundGateway && gatewayId === boundGateway.id) {
+        try {
+          if (boundGateway && gatewayId === boundGateway.id) {
               // Known bound gateway reconnecting → active session.
               sessionRole = 'active';
               setActiveSession(gatewayId, 'active');
@@ -959,10 +963,6 @@ export class WebsocketGatewayTransport implements GatewayTransport {
             safeSend(ws, { type: 'ERROR', code: 'AUTH_FAILED', message: 'Gateway registration failed' });
             return closeAndCleanup();
           }
-        } else {
-          // Legacy connection (no gatewayId supplied).
-          setActiveSession(resolvedGatewayId, 'legacy');
-        }
 
         if (!authed) {
           return;
@@ -981,13 +981,13 @@ export class WebsocketGatewayTransport implements GatewayTransport {
             });
           } catch (err) {
             logger.warn(
-              `Gateway WS AUTH firmware seed persist failed facility=${facilityId} gateway=${resolvedGatewayId || 'legacy'}`,
+              `Gateway WS AUTH firmware seed persist failed facility=${facilityId} gateway=${resolvedGatewayId}`,
               err,
             );
           }
         }
 
-        if (sessionRole === 'active' || sessionRole === 'legacy') {
+        if (sessionRole === 'active') {
           this.notifyConnectionChange(facilityId, true, 'auth_ok', authed.lastActivityAt, decoded.userId, remote);
         }
         let ops_public_key_pem: string | undefined;
@@ -1002,7 +1002,7 @@ export class WebsocketGatewayTransport implements GatewayTransport {
           ops_public_key_jwk: Ed25519Service.getOpsPublicKeyJwk(),
           ops_public_key_pem,
         });
-        logger.info(`Gateway WS authenticated: facility=${facilityId} gateway=${resolvedGatewayId || 'legacy'} role=${sessionRole} user=${decoded.userId} remote=${remote}`);
+        logger.info(`Gateway WS authenticated: facility=${facilityId} gateway=${resolvedGatewayId} role=${sessionRole} user=${decoded.userId} remote=${remote}`);
         GatewayDebugService.getInstance().publish({
           kind: 'connection_opened',
           facilityId,
@@ -1021,7 +1021,7 @@ export class WebsocketGatewayTransport implements GatewayTransport {
             logger.warn(`Failed to resume gateway recovery for facility=${facilityId}`, err);
           });
         }).catch(() => {});
-        if (sessionRole === 'active' || sessionRole === 'legacy') {
+        if (sessionRole === 'active') {
           import('@/services/access-code.service').then(({ AccessCodeService }) => {
             AccessCodeService.getInstance().flushPendingPushForFacility(facilityId).catch((err) => {
               logger.warn(`Failed to flush access code outbox for facility=${facilityId}`, err);

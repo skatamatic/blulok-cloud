@@ -36,7 +36,7 @@ See also: [Gateway ↔ Cloud integration](./gateway-integration.md), [Facility p
 | Requirement | Why |
 |-------------|-----|
 | Generate + persist a **stable GUID** and send it as `AUTH.gatewayId` | Identity binding / swap detection / auto-registration |
-| Handle **`sessionRole`** in `AUTH_OK` | Know if you are `active`, `swap_candidate`, or `legacy` |
+| Handle **`sessionRole`** in `AUTH_OK` | Know if you are `active` or `swap_candidate` |
 | Implement **firmware OTA** ACK/status (existing) | Recovery phase 1 |
 | Implement **`INVENTORY_SNAPSHOT_*`** (new) | Recovery phase 2 |
 | **Do not** rely on inventory sync during recovery | Cloud returns **409** `recovery_in_progress` |
@@ -205,7 +205,7 @@ API: `POST /api/v1/gateways/:gatewayId/recovery/bypass` body `{ "confirm": true 
   "type": "AUTH_OK",
   "facilityId": "...",
   "gatewayId": "...",
-  "sessionRole": "active | swap_candidate | legacy",
+  "sessionRole": "active | swap_candidate",
   "autoRegistered": true,
   "ops_public_key": "...",
   "ops_public_key_jwk": { },
@@ -221,7 +221,6 @@ API: `POST /api/v1/gateways/:gatewayId/recovery/bypass` body `{ "confirm": true 
 |---------------|---------|
 | `active` | This `gatewayId` is the facility’s bound gateway; receives **operational** commands (locks, denylist, access codes) |
 | `swap_candidate` | Different `gatewayId` than bound; **parked** — receives **recovery push** messages only during recovery |
-| `legacy` | No `gatewayId` in AUTH (deprecated for new deployments) |
 
 **Swap candidate rejection:** `AUTH` fails with `AUTH_FORBIDDEN` if the gateway record’s `facility_id` points to a **different** facility.
 

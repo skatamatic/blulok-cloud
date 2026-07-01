@@ -1,7 +1,7 @@
 import type { ConnectionStatus } from '@protocol/ipc-channels';
 import type { GatewaySessionRole } from '@protocol/messages';
 
-export type GatewayBindingTone = 'bound' | 'swap' | 'legacy' | 'offline' | 'connecting' | 'error';
+export type GatewayBindingTone = 'bound' | 'swap' | 'offline' | 'connecting' | 'error';
 
 export type GatewayBindingDisplay = {
   label: string;
@@ -54,13 +54,6 @@ export function resolveGatewayBindingDisplay(
         tone: 'swap',
         description: 'Connected as a swap candidate. Complete swap recovery in the admin UI to bind this hardware.',
       };
-    case 'legacy':
-      return {
-        label: 'Legacy session',
-        shortLabel: 'Legacy',
-        tone: 'legacy',
-        description: 'Connected with a legacy session role.',
-      };
     default:
       return {
         label: 'Connected',
@@ -77,8 +70,6 @@ export function sessionBadgeClassName(tone: GatewayBindingTone): string {
       return 'session-badge session-badge-bound';
     case 'swap':
       return 'session-badge session-badge-swap';
-    case 'legacy':
-      return 'session-badge session-badge-legacy';
     case 'offline':
       return 'session-badge session-badge-offline';
     case 'connecting':
@@ -97,8 +88,6 @@ export function sessionPillClassName(tone: GatewayBindingTone): string {
       return 'status-pill status-pill-bound';
     case 'swap':
       return 'status-pill status-pill-swap';
-    case 'legacy':
-      return 'status-pill status-pill-legacy';
     case 'offline':
       return 'status-pill status-pill-offline';
     case 'connecting':
@@ -121,11 +110,10 @@ export function sidebarShowsSwapIcon(
 /** Sidebar list item — dot color encodes binding role when connected (not swap candidate). */
 export function sidebarStatusDotClass(
   connectionStatus: ConnectionStatus,
-  sessionRole?: GatewaySessionRole,
+  _sessionRole?: GatewaySessionRole,
 ): string {
   if (connectionStatus === 'disconnected') return 'gateway-sidebar-status-dot-offline';
   if (connectionStatus === 'connecting') return 'gateway-sidebar-status-dot-connecting';
   if (connectionStatus === 'error') return 'gateway-sidebar-status-dot-error';
-  if (sessionRole === 'legacy') return 'gateway-sidebar-status-dot-legacy';
   return 'gateway-sidebar-status-dot-bound';
 }

@@ -9,11 +9,11 @@ export type AuthMessage = {
   facilityId: string;
   /**
    * Gateway GUID — the device's stable, self-generated UUID (persisted across reboots).
-   * Required for swap/recovery identity binding. An unknown GUID is auto-registered:
-   * parked as an unbound swap candidate when the facility already has a bound gateway,
-   * or auto-bound as the active gateway when the facility has none (first install).
+   * Required on every AUTH. An unknown GUID is auto-registered: parked as an unbound
+   * swap candidate when the facility already has a bound gateway, or auto-bound as the
+   * active gateway when the facility has none (first install).
    */
-  gatewayId?: string;
+  gatewayId: string;
   /**
    * Running gateway firmware version reported on connect/reconnect.
    * Canonical seed for gateways.firmware_version — always overwrites the stored
@@ -22,7 +22,7 @@ export type AuthMessage = {
   firmware_version?: string;
 };
 
-export type GatewaySessionRole = 'active' | 'swap_candidate' | 'legacy';
+export type GatewaySessionRole = 'active' | 'swap_candidate';
 
 export type AuthOkMessage = {
   type: 'AUTH_OK';

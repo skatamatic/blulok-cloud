@@ -77,7 +77,6 @@ app.whenReady().then(async () => {
     undo: () => void gatewayManager.undo(),
     redo: () => void gatewayManager.redo(),
   });
-  createWindow();
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();

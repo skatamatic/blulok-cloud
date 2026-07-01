@@ -1066,6 +1066,181 @@ describe('DeviceSyncService', () => {
       expect(mockDeviceModel.bulkCreateAccessControlDevices).not.toHaveBeenCalled();
     });
 
+    it('does not reconcile admin override when two access_control devices share relay 1 (dual-keypad case)', async () => {
+      mockDeviceModel.findAccessControlDevices
+        .mockResolvedValueOnce([
+          {
+            id: 'ac-main-gate',
+            gateway_id: gatewayId,
+            device_serial: 'f759bd50-a70e-5bba-81c5-25e9a7c695c1',
+            relay_channel: 1,
+            name: 'Main Gate',
+            metadata: { adminIdentityOverride: true },
+            device_settings: {},
+          },
+        ] as unknown as AccessControlDevice[])
+        .mockResolvedValueOnce([
+          {
+            id: 'ac-main-gate',
+            gateway_id: gatewayId,
+            device_serial: 'f759bd50-a70e-5bba-81c5-25e9a7c695c1',
+            relay_channel: 1,
+            name: 'Main Gate',
+            metadata: { adminIdentityOverride: true },
+          },
+          {
+            id: 'ac-second',
+            gateway_id: gatewayId,
+            device_serial: '5b679d67-b018-5bea-857a-8c8b1d1e7306',
+            relay_channel: 1,
+            metadata: { createdFromGatewaySync: true },
+          },
+        ] as unknown as AccessControlDevice[]);
+      mockDeviceModel.updateAccessControlDevice.mockResolvedValue({} as AccessControlDevice);
+      mockDeviceModel.bulkCreateAccessControlDevices.mockResolvedValue(1);
+
+      const inventory = [
+        {
+          kind: 'access_control' as const,
+          access_id: 'f759bd50-a70e-5bba-81c5-25e9a7c695c1',
+          online: true,
+        },
+        {
+          kind: 'access_control' as const,
+          access_id: '5b679d67-b018-5bea-857a-8c8b1d1e7306',
+          online: false,
+        },
+      ];
+
+      const result = await deviceSyncService.syncAccessDeviceInventory(
+        gatewayId,
+        facilityId,
+        inventory,
+      );
+
+      expect(mockDeviceModel.updateAccessControlDevice).not.toHaveBeenCalled();
+      expect(result.added).toBe(1);
+      expect(mockDeviceModel.bulkCreateAccessControlDevices).toHaveBeenCalledWith([
+        expect.objectContaining({
+          device_serial: '5b679d67-b018-5bea-857a-8c8b1d1e7306',
+          relay_channel: 1,
+        }),
+      ]);
+    });
+
+    it('preserves admin override serial across consecutive syncs when two relay-1 keypads are reported', async () => {
+      const keypadA = 'f759bd50-a70e-5bba-81c5-25e9a7c695c1';
+      const keypadB = '5b679d67-b018-5bea-857a-8c8b1d1e7306';
+      const adminPlaceholderSerial = 'ADMIN-MAIN-GATE-PLACEHOLDER';
+      const inventory = [
+        { kind: 'access_control' as const, access_id: keypadA, online: true },
+        { kind: 'access_control' as const, access_id: keypadB, online: false },
+      ];
+
+      const overrideRow = {
+        id: 'ac-main-gate',
+        gateway_id: gatewayId,
+        device_serial: adminPlaceholderSerial,
+        relay_channel: 1,
+        name: 'Main Gate',
+        metadata: { adminIdentityOverride: true, manuallyAdded: true },
+      };
+      const syncedA = {
+        id: 'ac-a',
+        gateway_id: gatewayId,
+        device_serial: keypadA,
+        relay_channel: 1,
+        metadata: { createdFromGatewaySync: true },
+      };
+      const syncedB = {
+        id: 'ac-b',
+        gateway_id: gatewayId,
+        device_serial: keypadB,
+        relay_channel: 1,
+        metadata: { createdFromGatewaySync: true },
+      };
+
+      mockDeviceModel.findAccessControlDevices
+        .mockResolvedValueOnce([overrideRow] as unknown as AccessControlDevice[])
+        .mockResolvedValue([overrideRow, syncedA, syncedB] as unknown as AccessControlDevice[]);
+      mockDeviceModel.bulkCreateAccessControlDevices.mockResolvedValue(2);
+
+      const first = await deviceSyncService.syncAccessDeviceInventory(
+        gatewayId,
+        facilityId,
+        inventory,
+      );
+      expect(first.added).toBe(2);
+      expect(mockDeviceModel.updateAccessControlDevice).not.toHaveBeenCalled();
+
+      mockDeviceModel.updateAccessControlDevice.mockClear();
+
+      const second = await deviceSyncService.syncAccessDeviceInventory(
+        gatewayId,
+        facilityId,
+        inventory,
+      );
+      expect(second.added).toBe(0);
+      expect(mockDeviceModel.updateAccessControlDevice).not.toHaveBeenCalled();
+    });
+
+    it('auto-provisions both keypads when override placeholder serial matches neither incoming access_id', async () => {
+      mockDeviceModel.findAccessControlDevices.mockResolvedValue([
+        {
+          id: 'ac-main-gate',
+          gateway_id: gatewayId,
+          device_serial: 'ADMIN-PLACEHOLDER-SN',
+          relay_channel: 1,
+          name: 'Main Gate',
+          metadata: { adminIdentityOverride: true, manuallyAdded: true },
+        },
+      ] as unknown as AccessControlDevice[]);
+      mockDeviceModel.bulkCreateAccessControlDevices.mockResolvedValue(2);
+
+      const result = await deviceSyncService.syncAccessDeviceInventory(gatewayId, facilityId, [
+        { kind: 'access_control', access_id: 'KEYPAD-A-UUID', online: true },
+        { kind: 'access_control', access_id: 'KEYPAD-B-UUID', online: false },
+      ]);
+
+      expect(mockDeviceModel.updateAccessControlDevice).not.toHaveBeenCalled();
+      expect(result.added).toBe(2);
+      expect(result.skipped_manual).toBe(1);
+      expect(mockDeviceModel.bulkCreateAccessControlDevices).toHaveBeenCalledWith([
+        expect.objectContaining({ device_serial: 'KEYPAD-A-UUID', relay_channel: 1 }),
+        expect.objectContaining({ device_serial: 'KEYPAD-B-UUID', relay_channel: 1 }),
+      ]);
+    });
+
+    it('does not reconcile when two adminIdentityOverride rows exist on the same relay', async () => {
+      mockDeviceModel.findAccessControlDevices.mockResolvedValue([
+        {
+          id: 'ac-override-1',
+          gateway_id: gatewayId,
+          device_serial: 'OVERRIDE-1',
+          relay_channel: 2,
+          metadata: { adminIdentityOverride: true },
+        },
+        {
+          id: 'ac-override-2',
+          gateway_id: gatewayId,
+          device_serial: 'OVERRIDE-2',
+          relay_channel: 2,
+          metadata: { adminIdentityOverride: true },
+        },
+      ] as unknown as AccessControlDevice[]);
+      mockDeviceModel.bulkCreateAccessControlDevices.mockResolvedValue(1);
+
+      const result = await deviceSyncService.syncAccessDeviceInventory(gatewayId, facilityId, [
+        { kind: 'access_control', access_id: 'GATEWAY-REAL-SN', relay_channel: 2 },
+      ]);
+
+      expect(mockDeviceModel.updateAccessControlDevice).not.toHaveBeenCalled();
+      expect(result.added).toBe(1);
+      expect(mockDeviceModel.bulkCreateAccessControlDevices).toHaveBeenCalledWith([
+        expect.objectContaining({ device_serial: 'GATEWAY-REAL-SN', relay_channel: 2 }),
+      ]);
+    });
+
     it('should apply online and last_seen during access control inventory sync', async () => {
       mockDeviceModel.findAccessControlDevices.mockResolvedValue([
         {

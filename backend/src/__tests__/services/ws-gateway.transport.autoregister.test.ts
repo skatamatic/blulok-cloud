@@ -14,6 +14,7 @@ const mockFindByFacilityId = jest.fn();
 // Facilities prefixed with `bound-` already have a bound gateway; everything else is empty.
 const OTHER_FACILITY_GUID = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
 const EXISTING_UNBOUND_GUID = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+const BOUND_GATEWAY_ID = 'cccccccc-cccc-4ccc-8ccc-cccccccccc01';
 
 jest.mock('@/models/gateway.model', () => ({
   GatewayModel: jest.fn().mockImplementation(() => ({
@@ -67,10 +68,9 @@ async function openWs(port: number): Promise<WebSocket> {
   return ws;
 }
 
-async function auth(port: number, facilityId: string, gatewayId?: string): Promise<{ ws: WebSocket; reply: Record<string, unknown> }> {
+async function auth(port: number, facilityId: string, gatewayId: string): Promise<{ ws: WebSocket; reply: Record<string, unknown> }> {
   const ws = await openWs(port);
-  const payload: Record<string, string> = { type: 'AUTH', token: 'mock-jwt-token', facilityId };
-  if (gatewayId) payload.gatewayId = gatewayId;
+  const payload: Record<string, string> = { type: 'AUTH', token: 'mock-jwt-token', facilityId, gatewayId };
   ws.send(JSON.stringify(payload));
   const reply = await waitForMessage(ws);
   return { ws, reply };
@@ -102,7 +102,7 @@ describe('WebsocketGatewayTransport auto-registration', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     mockFindByFacilityId.mockImplementation(async (facilityId: string) =>
-      String(facilityId).startsWith('bound-') ? { id: `gw-bound-${facilityId}` } : null,
+      String(facilityId).startsWith('bound-') ? { id: BOUND_GATEWAY_ID } : null,
     );
     mockFindById.mockImplementation(async (id: string) => {
       if (id === OTHER_FACILITY_GUID) return { id, facility_id: 'someone-else' };
@@ -117,14 +117,14 @@ describe('WebsocketGatewayTransport auto-registration', () => {
     const facilityId = 'bound-fac-A';
     const newGuid = '11111111-1111-4111-8111-111111111111';
 
-    const bound = await auth(port, facilityId);
+    const bound = await auth(port, facilityId, BOUND_GATEWAY_ID);
     const { ws: swapWs, reply } = await auth(port, facilityId, newGuid);
 
     expect(reply.type).toBe('AUTH_OK');
     expect(reply.sessionRole).toBe('swap_candidate');
     expect(reply.autoRegistered).toBe(true);
     expect(mockCreateUnbound).toHaveBeenCalledWith(expect.objectContaining({ id: newGuid }));
-    expect(mockDetect).toHaveBeenCalledWith(facilityId, newGuid, `gw-bound-${facilityId}`);
+    expect(mockDetect).toHaveBeenCalledWith(facilityId, newGuid, BOUND_GATEWAY_ID);
     expect(mockLogActivity).toHaveBeenCalledWith(expect.objectContaining({
       entityType: 'gateway',
       metadata: expect.objectContaining({ autoRegistered: true, bound: false }),
@@ -214,7 +214,7 @@ describe('WebsocketGatewayTransport auto-registration', () => {
       '33333333-3333-4333-8333-333333333332',
       '33333333-3333-4333-8333-333333333333',
     ];
-    const live = await auth(port, facilityId);
+    const live = await auth(port, facilityId, BOUND_GATEWAY_ID);
     const parked: WebSocket[] = [];
     for (const guid of guids) {
       const { ws, reply } = await auth(port, facilityId, guid);

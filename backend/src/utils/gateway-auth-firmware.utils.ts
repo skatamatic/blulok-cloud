@@ -23,18 +23,15 @@ export function parseAuthFirmwareVersion(raw: unknown): string | null {
  */
 export async function persistAuthFirmwareSeed(params: {
   facilityId: string;
-  gatewayId?: string;
+  gatewayId: string;
   firmwareVersion: string | null;
 }): Promise<{ gatewayId: string } | null> {
   if (!params.firmwareVersion) return null;
 
-  const gatewayModel = new GatewayModel();
-  let gatewayId = params.gatewayId;
-  if (!gatewayId) {
-    const bound = await gatewayModel.findByFacilityId(params.facilityId);
-    gatewayId = bound?.id;
-  }
+  const gatewayId = params.gatewayId.trim();
   if (!gatewayId) return null;
+
+  const gatewayModel = new GatewayModel();
 
   await gatewayModel.update(gatewayId, { firmware_version: params.firmwareVersion });
   return { gatewayId };

@@ -35,13 +35,13 @@ export const GATEWAY_OUTBOUND_MESSAGE_TYPES = [
 export type GatewayInboundMessageType = (typeof GATEWAY_INBOUND_MESSAGE_TYPES)[number];
 export type GatewayOutboundMessageType = (typeof GATEWAY_OUTBOUND_MESSAGE_TYPES)[number];
 
-export type GatewaySessionRole = 'active' | 'swap_candidate' | 'legacy';
+export type GatewaySessionRole = 'active' | 'swap_candidate';
 
 export type AuthMessage = {
   type: 'AUTH';
   token: string;
   facilityId: string;
-  gatewayId?: string;
+  gatewayId: string;
   /** Running gateway firmware — canonical seed on the cloud gateways row. */
   firmware_version?: string;
 };

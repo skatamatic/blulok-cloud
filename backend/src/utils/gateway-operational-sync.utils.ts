@@ -44,15 +44,17 @@ export function assertBoundGatewayForOperationalSync(params: {
     };
   }
 
-  if (requestingGatewayId && boundGatewayId && requestingGatewayId !== boundGatewayId) {
-    return {
-      allowed: false,
-      reject: {
-        status: 403,
-        code: NOT_BOUND_GATEWAY_CODE,
-        message: 'Gateway is not the bound production unit for this facility',
-      },
-    };
+  if (sessionRole === 'active' && boundGatewayId) {
+    if (!requestingGatewayId || requestingGatewayId !== boundGatewayId) {
+      return {
+        allowed: false,
+        reject: {
+          status: 403,
+          code: NOT_BOUND_GATEWAY_CODE,
+          message: 'Gateway is not the bound production unit for this facility',
+        },
+      };
+    }
   }
 
   return { allowed: true };

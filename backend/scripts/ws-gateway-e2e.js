@@ -741,6 +741,7 @@ async function proxyWs(ws, id, method, path, { query, body } = {}) {
 }
 
 async function connectGatewayWsAndAuth(wsUrl, token, facilityId, gatewayId, authExtras = {}) {
+  if (!gatewayId) throw new Error('gatewayId required for gateway WS AUTH');
   const ws = new WebSocket(wsUrl);
   await new Promise((res, rej) => { ws.once('open', res); ws.once('error', rej); });
   ws.on('message', (data) => {
@@ -784,8 +785,7 @@ async function connectGatewayWsAndAuth(wsUrl, token, facilityId, gatewayId, auth
       }
     } catch {}
   });
-  const authMsg = { type: 'AUTH', token, facilityId };
-  if (gatewayId) authMsg.gatewayId = gatewayId;
+  const authMsg = { type: 'AUTH', token, facilityId, gatewayId };
   if (authExtras.firmware_version) authMsg.firmware_version = authExtras.firmware_version;
   if (VERBOSE) console.log('[WS ->]', JSON.stringify(authMsg));
   ws.send(JSON.stringify(authMsg));
@@ -1476,6 +1476,25 @@ async function resolveAccessControlDeviceIdBySerial(token, facilityId, accessId,
       && Number(d.relay_channel ?? 1) === Number(relayChannel),
   );
   return match?.id || null;
+}
+
+/** Fail fast when backend is still running pre-fix reconcile logic (dual-keypad thrash). */
+function assertNoAdminOverrideReconcileInInventoryResponse(resp, context) {
+  const data = resp.body?.data ?? {};
+  const entries = [
+    ...(Array.isArray(data.entries) ? data.entries : []),
+    ...(Array.isArray(data.access_control?.entries) ? data.access_control.entries : []),
+  ];
+  const reconciled = entries.filter((entry) =>
+    String(entry?.reason ?? '').includes('Admin identity override reconciled'),
+  );
+  if (reconciled.length > 0) {
+    throw new Error(
+      `${context}: unexpected adminIdentityOverride reconcile (${reconciled.length} entries). `
+      + 'Restart the backend dev server so the latest device-sync.service.ts is loaded. '
+      + `Entries: ${JSON.stringify(reconciled)}`,
+    );
+  }
 }
 
 function countDeviceDeletedCommands(filterFn) {
@@ -2276,7 +2295,7 @@ async function run() {
   notificationsWs = await connectNotificationsWs(token);
 
   // Connect gateway WS
-  let ws = await connectGatewayWsAndAuth(WS_URL, token, facilityId);
+  let ws = await connectGatewayWsAndAuth(WS_URL, token, facilityId, gatewayId);
   heading('Gateway WebSocket');
   ok('Gateway AUTH_OK');
 
@@ -3631,6 +3650,183 @@ async function run() {
     }
     ok('Access control inventory validation rejects missing access_id');
 
+    // ---- ADMIN IDENTITY OVERRIDE: single-keypad reconcile vs dual-keypad stability ----
+    heading('Access Control Admin Identity Override (inventory reconcile)');
+    const overrideTs = Date.now();
+    const overridePlaceholderSerial = `E2E-AC-OVERRIDE-PH-${overrideTs}`;
+    const overrideEditedSerial = `E2E-AC-OVERRIDE-EDIT-${overrideTs}`;
+    const dualKeypadA = `E2E-AC-DUAL-A-${overrideTs}`;
+    const dualKeypadB = `E2E-AC-DUAL-B-${overrideTs}`;
+    const singleReconcileSerial = `E2E-AC-SINGLE-REAL-${overrideTs}`;
+
+    step('Create admin Main Gate row and set adminIdentityOverride via metadata edit');
+    const mainGateCreateResp = await axios.post(
+      `${API_BASE}/devices/access-control`,
+      {
+        gateway_id: gatewayId,
+        name: 'E2E Main Gate Override',
+        device_serial: overridePlaceholderSerial,
+        relay_channel: 1,
+        device_type: 'gate',
+        location_description: 'Override reconcile e2e',
+        access_methods: ['keypad'],
+      },
+      { headers: { Authorization: `Bearer ${token}` } },
+    );
+    if (!mainGateCreateResp.data?.success || !mainGateCreateResp.data?.device?.id) {
+      throw new Error(`Main Gate create failed: ${JSON.stringify(mainGateCreateResp.data)}`);
+    }
+    const mainGateOverrideId = mainGateCreateResp.data.device.id;
+    const overrideEditResp = await axios.put(
+      `${API_BASE}/devices/access-control/${mainGateOverrideId}/metadata`,
+      {
+        device_serial: overrideEditedSerial,
+        relay_channel: 1,
+      },
+      { headers: { Authorization: `Bearer ${token}` } },
+    );
+    if (!overrideEditResp.data?.sideEffects?.identityChanged) {
+      throw new Error(
+        `Expected adminIdentityOverride metadata edit, got ${JSON.stringify(overrideEditResp.data)}`,
+      );
+    }
+    ok(`Main Gate override row ${mainGateOverrideId} serial=${overrideEditedSerial}`);
+
+    step('Dual-keypad inventory sync (Tulsi case): two access_id on relay 1 must not flip override serial');
+    const dualKeypadInventory = [
+      gwLockDevice({ lock_id: remainingSerial }),
+      gwLockDevice({ lock_id: inventorySerial1, lock_number: 201 }),
+      gwAccessDevice({ access_id: dualKeypadA, online: true }),
+      gwAccessDevice({ access_id: dualKeypadB, online: false }),
+      preservedDownstreamAccessControl(),
+    ];
+    const reqDualKeypadInv1 = `req-ac-override-dual-1-${overrideTs}`;
+    const respDualKeypadInv1 = await inventorySync(ws, facilityId, dualKeypadInventory, reqDualKeypadInv1);
+    if (respDualKeypadInv1.status !== 200 || !respDualKeypadInv1.body?.success) {
+      throw new Error(`Dual-keypad inventory sync failed: ${respDualKeypadInv1.status}`);
+    }
+    assertNoAdminOverrideReconcileInInventoryResponse(
+      respDualKeypadInv1,
+      'Dual-keypad inventory sync (first pass)',
+    );
+    const dualAc1 = respDualKeypadInv1.body?.data?.access_control;
+    if (!dualAc1 || (dualAc1.added ?? 0) < 2) {
+      throw new Error(`Expected >=2 access_control adds for dual keypads, got ${JSON.stringify(dualAc1)}`);
+    }
+
+    const mainGateAfterFirst = await axios.get(`${API_BASE}/devices/access-control/${mainGateOverrideId}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    const mainGateRowAfterFirst = mainGateAfterFirst.data?.device || mainGateAfterFirst.data;
+    const mainGateSerialAfterFirst = mainGateRowAfterFirst?.device_serial;
+    if (mainGateSerialAfterFirst !== overrideEditedSerial) {
+      throw new Error(
+        `Main Gate serial flipped after first dual-keypad sync: expected ${overrideEditedSerial}, got ${mainGateSerialAfterFirst}`,
+      );
+    }
+    const dualAId = await resolveAccessControlDeviceIdBySerial(token, facilityId, dualKeypadA, 1);
+    const dualBId = await resolveAccessControlDeviceIdBySerial(token, facilityId, dualKeypadB, 1);
+    if (!dualAId || !dualBId || dualAId === dualBId) {
+      throw new Error('Expected two distinct access_control rows for dual-keypad sync');
+    }
+    ok('Dual-keypad sync: override row stable; both gateway keypads auto-provisioned');
+
+    step('Repeat dual-keypad inventory sync — override serial must remain stable');
+    const reqDualKeypadInv2 = `req-ac-override-dual-2-${overrideTs}`;
+    const respDualKeypadInv2 = await inventorySync(ws, facilityId, dualKeypadInventory, reqDualKeypadInv2);
+    if (respDualKeypadInv2.status !== 200 || !respDualKeypadInv2.body?.success) {
+      throw new Error(`Second dual-keypad inventory sync failed: ${respDualKeypadInv2.status}`);
+    }
+    assertNoAdminOverrideReconcileInInventoryResponse(
+      respDualKeypadInv2,
+      'Dual-keypad inventory sync (second pass)',
+    );
+    const mainGateAfterSecond = await axios.get(`${API_BASE}/devices/access-control/${mainGateOverrideId}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    const mainGateRowAfterSecond = mainGateAfterSecond.data?.device || mainGateAfterSecond.data;
+    const mainGateSerialAfterSecond = mainGateRowAfterSecond?.device_serial;
+    if (mainGateSerialAfterSecond !== overrideEditedSerial) {
+      throw new Error(
+        `Main Gate serial flipped after second dual-keypad sync: expected ${overrideEditedSerial}, got ${mainGateSerialAfterSecond}`,
+      );
+    }
+    const dualAId2 = await resolveAccessControlDeviceIdBySerial(token, facilityId, dualKeypadA, 1);
+    const dualBId2 = await resolveAccessControlDeviceIdBySerial(token, facilityId, dualKeypadB, 1);
+    if (dualAId2 !== dualAId || dualBId2 !== dualBId) {
+      throw new Error('Dual-keypad device ids changed on second inventory sync');
+    }
+    ok('Repeated dual-keypad sync: no serial thrashing between gateway access_ids');
+
+    step('Single-keypad inventory sync reconciles admin override row in place');
+    const singleOverrideRelay = 6;
+    const singleOverrideCreate = await axios.post(
+      `${API_BASE}/devices/access-control`,
+      {
+        gateway_id: gatewayId,
+        name: 'E2E Side Door Override',
+        device_serial: `E2E-AC-SINGLE-PH-${overrideTs}`,
+        relay_channel: singleOverrideRelay,
+        device_type: 'door',
+        location_description: 'Single reconcile e2e',
+        access_methods: ['keypad'],
+      },
+      { headers: { Authorization: `Bearer ${token}` } },
+    );
+    const singleOverrideId = singleOverrideCreate.data?.device?.id;
+    if (!singleOverrideId) {
+      throw new Error('Single override device create failed');
+    }
+    await axios.put(
+      `${API_BASE}/devices/access-control/${singleOverrideId}/metadata`,
+      { device_serial: `E2E-AC-SINGLE-EDIT-${overrideTs}`, relay_channel: singleOverrideRelay },
+      { headers: { Authorization: `Bearer ${token}` } },
+    );
+
+    const singleReconcileInventory = [
+      gwLockDevice({ lock_id: remainingSerial }),
+      gwLockDevice({ lock_id: inventorySerial1, lock_number: 201 }),
+      gwAccessDevice({
+        access_id: singleReconcileSerial,
+        relay_channel: singleOverrideRelay,
+        device_type: 'door',
+      }),
+      gwAccessDevice({ access_id: dualKeypadA, online: true }),
+      gwAccessDevice({ access_id: dualKeypadB, online: false }),
+      preservedDownstreamAccessControl(),
+    ];
+    const reqSingleReconcile = `req-ac-override-single-${overrideTs}`;
+    const respSingleReconcile = await inventorySync(
+      ws,
+      facilityId,
+      singleReconcileInventory,
+      reqSingleReconcile,
+    );
+    if (respSingleReconcile.status !== 200 || !respSingleReconcile.body?.success) {
+      throw new Error(`Single-keypad reconcile inventory sync failed: ${respSingleReconcile.status}`);
+    }
+
+    const singleOverrideAfter = await axios.get(`${API_BASE}/devices/access-control/${singleOverrideId}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    const singleOverrideRowAfter = singleOverrideAfter.data?.device || singleOverrideAfter.data;
+    const singleSerialAfter = singleOverrideRowAfter?.device_serial;
+    if (singleSerialAfter !== singleReconcileSerial) {
+      throw new Error(
+        `Expected single-keypad reconcile to ${singleReconcileSerial}, got ${singleSerialAfter}`,
+      );
+    }
+    const reconciledId = await resolveAccessControlDeviceIdBySerial(
+      token,
+      facilityId,
+      singleReconcileSerial,
+      singleOverrideRelay,
+    );
+    if (reconciledId !== singleOverrideId) {
+      throw new Error('Single-keypad reconcile did not preserve stable cloud device UUID');
+    }
+    ok('Single-keypad sync reconciled admin override row to gateway access_id in place');
+
     // ---- NETWORK INFRA: bridge / friend_node on unified inventory endpoint ----
     heading('Network Infra Device Sync (bridge / friend_node)');
     const infraBridgeSerial = `E2E-BR-INV-${Date.now()}`;
@@ -4233,7 +4429,7 @@ async function run() {
       const cmd = normalizeCmd(msg);
       return !!cmd && cmd.cmd_type === 'DEVICE_DELETED' && cmd.lock_id === offlineDeleteSerial;
     }, 20000);
-    ws = await connectGatewayWsAndAuth(WS_URL, token, facilityId);
+    ws = await connectGatewayWsAndAuth(WS_URL, token, facilityId, created.gatewayId);
     const offlineDeleteCmd = normalizeCmd(await expectOfflineDeleteCmd);
     if (!offlineDeleteCmd?.nonce) throw new Error('Deferred DEVICE_DELETED missing nonce');
     ok('Deferred DEVICE_DELETED delivered on AUTH_OK outbox flush');
@@ -6390,7 +6586,7 @@ async function run() {
     try {
       ws.close(4000, 'facility-admin-coverage');
     } catch {}
-    let wsFacilityAdmin = await connectGatewayWsAndAuth(WS_URL, facilityAdmin.token, facilityId);
+    let wsFacilityAdmin = await connectGatewayWsAndAuth(WS_URL, facilityAdmin.token, facilityId, created.gatewayId);
     step('Facility admin proxying facility-scoped device list');
     const facDevices = await proxyWs(wsFacilityAdmin, 'fac-devices', 'GET', `/devices`, { query: { facility_id: facilityId, limit: 1 } });
     if (facDevices.status !== 200) throw new Error(`Facility admin proxy devices failed: ${facDevices.status}`);
@@ -6402,7 +6598,7 @@ async function run() {
     wsFacilityAdmin.close();
     wsFacilityAdmin = null;
     step('Reconnecting primary gateway session after facility admin coverage');
-    ws = await connectGatewayWsAndAuth(WS_URL, token, facilityId);
+    ws = await connectGatewayWsAndAuth(WS_URL, token, facilityId, created.gatewayId);
     ok('Gateway connection re-established for admin session');
 
     // Unshare user3 -> expect DENYLIST_ADD for sub=share2Id on unit lock + zone-linked app access_control
@@ -7899,7 +8095,7 @@ async function run() {
     ok(`Disconnected push ${resumePushId} failed as expected`);
 
     step('Reconnecting gateway websocket after abrupt disconnect');
-    ws = await connectGatewayWsAndAuth(WS_URL, token, facilityId);
+    ws = await connectGatewayWsAndAuth(WS_URL, token, facilityId, created.gatewayId);
     ok('Gateway re-authenticated after abrupt disconnect');
 
     step('Starting fresh delivery listener after reconnect');
@@ -8106,7 +8302,7 @@ async function run() {
       ok(`Bulk OTA gateway created: ${bulkGatewayId}`);
 
       step('Connecting fake gateway websocket for bulk OTA facility');
-      bulkWs = await connectGatewayWsAndAuth(WS_URL, token, bulkFacilityId);
+      bulkWs = await connectGatewayWsAndAuth(WS_URL, token, bulkFacilityId, bulkGatewayId);
       ok('Bulk OTA gateway authenticated on /ws/gateway');
 
       step(`Generating ${FIRMWARE_BULK_E2E_SIZE_BYTES / (1024 * 1024)}MB firmware binary`);
@@ -9191,7 +9387,7 @@ async function run() {
         && normalizeCodeRowsForDevice(cmd, keypadDeviceB).some((entry) => entry.code === offlineAdminCode)
       );
     }, 20000);
-    ws = await connectGatewayWsAndAuth(WS_URL, token, facilityId);
+    ws = await connectGatewayWsAndAuth(WS_URL, token, facilityId, created.gatewayId);
     const deferredOutboxCmd = normalizeCmd(await expectDeferredOutboxPush);
     assertAccessCodeUpdateCommand(deferredOutboxCmd, 'ACCESS_CODE_UPDATE (offline outbox reconnect)');
 
@@ -9414,6 +9610,7 @@ async function run() {
       throw new Error('Expected keypadDeviceB to resolve from device_group after group rotate');
     }
     ok('Scoped rotate endpoint validated for group scope across all schedule contexts');
+    const scopedRotateCompletedAt = Date.now();
 
     const originalConfigResp = await axios.get(
       `${API_BASE}/access-codes/config/${created.facilityId}`,
@@ -9424,16 +9621,52 @@ async function run() {
     accessCodeConfigFacilityId = created.facilityId;
 
     step('Configuring recurring rotation schedule to trigger in ~3 seconds');
-    const nowForSchedule = new Date();
+    // DB stores rotation_interval_hours as decimal(10,4) (~2.88s for 3/3600); use a safe margin.
+    const scheduledRotationIntervalMs = 3500;
     const scheduleConfiguredAt = Date.now();
+    const expectedRotatedContexts = new Set([null, ...rotationScheduleIds]);
+    await waitForAccessCodePushIdle(created.facilityAdminToken, created.facilityId);
+    const ensureGatewayWsSession = async (label) => {
+      const statusResp = await axios.get(
+        `${API_BASE}/gateways/status/${created.facilityId}`,
+        { headers: { Authorization: `Bearer ${token}` } },
+      );
+      const serverConnected = statusResp.data?.connected === true;
+      const clientOpen = ws.readyState === WebSocket.OPEN;
+      if (!serverConnected || !clientOpen) {
+        info(`Re-authenticating gateway WS before ${label} (serverConnected=${serverConnected}, clientOpen=${clientOpen})`);
+        ws = await connectGatewayWsAndAuth(WS_URL, token, facilityId, created.gatewayId);
+      }
+    };
+    await ensureGatewayWsSession('scheduled rotation test');
+    const scheduledRotationPredicate = (cmd) => {
+      if (cmd.cmd_type !== 'ACCESS_CODE_UPDATE' || !Array.isArray(cmd.codes)) return false;
+      const entriesA = normalizeCodeRowsForDevice(cmd, keypadDeviceA);
+      const scheduleSetA = new Set(entriesA.map((entry) => entry.schedule_id || null));
+      return Array.from(expectedRotatedContexts).every((scheduleId) => scheduleSetA.has(scheduleId));
+    };
+    // Register listener before config PUTs so a scheduler tick cannot deliver ACCESS_CODE_UPDATE
+    // between upsert and waitForCommand (missed-command race).
+    let expectScheduledRotation = waitForCommand(ws, scheduledRotationPredicate, 45000);
+    // Anchor at midnight so shouldRotate never blocks on "before anchor minute today".
+    // Set E2E_SCHEDULED_ROTATION_BROKEN_ANCHOR=1 to reproduce the original flaky anchor-at-now failure.
+    const scheduleAnchor = new Date();
+    const useBrokenAnchor = process.env.E2E_SCHEDULED_ROTATION_BROKEN_ANCHOR === '1';
+    const shortRotationHours = 3 / 3600;
+    const scopedCodesBeforeSchedule = new Map(
+      [...scopedRotateEntriesA, ...scopedRotateEntriesB].map((entry) => [
+        `${entry.device_id}:${entry.schedule_id || 'null'}`,
+        String(entry.code || ''),
+      ]),
+    );
     await axios.put(
       `${API_BASE}/access-codes/groups/${accessCodeGroupId}/config`,
       {
         is_enabled: true,
         digit_count: 6,
-        rotation_interval_hours: 3 / 3600, // 3 seconds
-        rotation_hour: nowForSchedule.getHours(),
-        rotation_minute: nowForSchedule.getMinutes(),
+        rotation_interval_hours: shortRotationHours,
+        rotation_hour: useBrokenAnchor ? scheduleAnchor.getHours() : 0,
+        rotation_minute: useBrokenAnchor ? scheduleAnchor.getMinutes() : 0,
       },
       { headers: { Authorization: `Bearer ${created.facilityAdminToken}` } },
     );
@@ -9442,25 +9675,46 @@ async function run() {
       {
         is_enabled: true,
         digit_count: 6,
-        rotation_interval_hours: 3 / 3600, // 3 seconds
-        rotation_hour: nowForSchedule.getHours(),
-        rotation_minute: nowForSchedule.getMinutes(),
+        rotation_interval_hours: shortRotationHours,
+        rotation_hour: useBrokenAnchor ? scheduleAnchor.getHours() : 0,
+        rotation_minute: useBrokenAnchor ? scheduleAnchor.getMinutes() : 0,
       },
       { headers: { Authorization: `Bearer ${created.facilityAdminToken}` } },
     );
     accessCodeConfigModified = true;
-    const expectedRotatedContexts = new Set([null, ...rotationScheduleIds]);
-    const expectScheduledRotation = waitForCommand(
-      ws,
-      (cmd) => {
-        if (cmd.cmd_type !== 'ACCESS_CODE_UPDATE' || !Array.isArray(cmd.codes)) return false;
-        const entriesA = normalizeCodeRowsForDevice(cmd, keypadDeviceA);
-        const scheduleSetA = new Set(entriesA.map((entry) => entry.schedule_id || null));
-        return Array.from(expectedRotatedContexts).every((scheduleId) => scheduleSetA.has(scheduleId));
+    const msSinceScopedRotate = Date.now() - scopedRotateCompletedAt;
+    if (msSinceScopedRotate < scheduledRotationIntervalMs) {
+      await delay(scheduledRotationIntervalMs - msSinceScopedRotate);
+    }
+    await ensureGatewayWsSession('scheduled rotation delivery');
+    const activeCodesAfterScheduleResp = await axios.get(
+      `${API_BASE}/access-codes`,
+      {
+        headers: { Authorization: `Bearer ${created.facilityAdminToken}` },
+        params: { facility_id: created.facilityId },
       },
-      12000,
     );
-    const scheduledRotationCmd = await expectScheduledRotation;
+    const activeCodesAfterSchedule = activeCodesAfterScheduleResp.data?.data || [];
+    const freshGroupCodesAfterSchedule = activeCodesAfterSchedule.filter((entry) =>
+      entry.scope_type === 'device_group' &&
+      entry.scope_id === accessCodeGroupId &&
+      new Date(entry.created_at).getTime() >= scheduleConfiguredAt,
+    );
+    const rotatedContextSetAfterSchedule = new Set(freshGroupCodesAfterSchedule.map((entry) => entry.schedule_id || null));
+    const schedulerRotatedDb = Array.from(expectedRotatedContexts).every((scheduleId) => rotatedContextSetAfterSchedule.has(scheduleId));
+    let scheduledRotationCmd;
+    if (schedulerRotatedDb) {
+      info('Scheduler created fresh group codes in DB; reconnecting gateway to AUTH_OK flush outbox');
+      gatewayWsEvents.length = 0;
+      const expectOutboxFlush = waitForGatewayEvent((msg) => {
+        const cmd = normalizeCmd(msg);
+        return cmd && scheduledRotationPredicate(cmd);
+      }, 20000);
+      ws = await connectGatewayWsAndAuth(WS_URL, token, facilityId, created.gatewayId);
+      scheduledRotationCmd = normalizeCmd(await expectOutboxFlush);
+    } else {
+      scheduledRotationCmd = await expectScheduledRotation;
+    }
     for (const scheduleId of expectedRotatedContexts) {
       const entryA = normalizeCodeRowsForDevice(scheduledRotationCmd, keypadDeviceA).find(
         (entry) => (entry.schedule_id || null) === scheduleId,
@@ -9471,36 +9725,22 @@ async function run() {
       if (!entryA || !entryB) {
         throw new Error(`Expected scheduled rotation command to include both grouped devices for context ${scheduleId || 'always-on'}`);
       }
+      const priorCodeA = scopedCodesBeforeSchedule.get(`${keypadDeviceA}:${scheduleId || 'null'}`);
+      const priorCodeB = scopedCodesBeforeSchedule.get(`${keypadDeviceB}:${scheduleId || 'null'}`);
+      if (!priorCodeA || !priorCodeB) {
+        throw new Error(`Missing scoped-rotate baseline code for context ${scheduleId || 'always-on'}`);
+      }
+      if (String(entryA.code || '') === priorCodeA) {
+        throw new Error(`Expected scheduled rotation to change keypadDeviceA code for context ${scheduleId || 'always-on'}`);
+      }
+      if (String(entryB.code || '') === priorCodeB) {
+        throw new Error(`Expected scheduled rotation to change keypadDeviceB code for context ${scheduleId || 'always-on'}`);
+      }
       if (scheduleId) {
         if (!entryA.schedule || entryA.schedule.facility_id !== created.facilityId || !Array.isArray(entryA.schedule.time_windows)) {
           throw new Error(`Expected scheduled rotation context ${scheduleId} to include serialized schedule for keypadDeviceA`);
         }
       }
-    }
-    let groupRotated = false;
-    for (let i = 0; i < 8; i += 1) {
-      const activeCodesResp = await axios.get(
-        `${API_BASE}/access-codes`,
-        {
-          headers: { Authorization: `Bearer ${created.facilityAdminToken}` },
-          params: { facility_id: created.facilityId },
-        },
-      );
-      const activeCodes = activeCodesResp.data?.data || [];
-      const freshGroupCodes = activeCodes.filter((entry) =>
-        entry.scope_type === 'device_group' &&
-        entry.scope_id === accessCodeGroupId &&
-        new Date(entry.created_at).getTime() >= scheduleConfiguredAt
-      );
-      const rotatedContextSet = new Set(freshGroupCodes.map((entry) => entry.schedule_id || null));
-      if (Array.from(expectedRotatedContexts).every((scheduleId) => rotatedContextSet.has(scheduleId))) {
-        groupRotated = true;
-        break;
-      }
-      await delay(1000);
-    }
-    if (!groupRotated) {
-      throw new Error('Expected scheduled rotation to create fresh device-group scope codes for all schedule contexts');
     }
     const effectiveAfterSchedule = await getEffectiveCodesMap();
     const scheduleEffectiveA = effectiveAfterSchedule.get(keypadDeviceA);

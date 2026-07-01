@@ -13,7 +13,7 @@ See also: [Firmware OTA Architecture](./firmware-ota-architecture.md).
 
 ## Identity binding
 
-Gateways send optional `gatewayId` (GUID from `gateways.id`) in the AUTH message:
+Gateways send required `gatewayId` (GUID from `gateways.id`) in the AUTH message:
 
 ```json
 { "type": "AUTH", "token": "…", "facilityId": "…", "gatewayId": "…" }
@@ -25,9 +25,9 @@ Transport behavior:
 |------|--------|
 | `gatewayId` matches bound facility gateway | Active session (replaces same-GUID connection only) |
 | `gatewayId` differs from bound gateway | Parked as **swap candidate** if `gateway.facility_id` is null or matches this facility; rejected otherwise |
-| No `gatewayId` (legacy) | Legacy active session (rollout compatibility) |
+| Missing or invalid `gatewayId` | **AUTH_BAD_REQUEST** |
 
-`AUTH_OK` includes `sessionRole`: `active`, `swap_candidate`, or `legacy`.
+`AUTH_OK` includes `sessionRole`: `active` or `swap_candidate`.
 
 ## Recovery state machine
 

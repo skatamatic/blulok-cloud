@@ -474,7 +474,9 @@ If the device reappears in inventory **before** tombstone delivery, cloud cancel
 
 Scenario: Admin created a placeholder access device on relay 2; gateway later reports the real keypad serial on that relay.
 
-When **exactly one** access row on that relay has `metadata.adminIdentityOverride: true`, the **first** gateway inventory item for that relay with a new `access_id` **updates that row in place** (serial reconciled) instead of creating a duplicate.
+When **exactly one** access row on that relay has `metadata.adminIdentityOverride: true`, and the gateway inventory payload contains **exactly one** `access_control` item on that relay, that item **updates the override row in place** (serial reconciled) instead of creating a duplicate.
+
+If the gateway reports **multiple** access devices on the same relay (e.g. two keypads both defaulting to relay 1), override reconciliation is **not** applied — each distinct `access_id` is auto-provisioned or matched to its existing row. This prevents a single admin placeholder (e.g. "Main Gate") from thrashing between serials when two hardware devices share a relay default.
 
 Gateway should send the real `access_id` as soon as the hardware identity is known.
 

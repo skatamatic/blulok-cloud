@@ -57,21 +57,9 @@ describe('gateway-auth-firmware.utils', () => {
       expect(mockFindByFacilityId).not.toHaveBeenCalled();
     });
 
-    it('resolves legacy session via facility bound gateway', async () => {
-      mockFindByFacilityId.mockResolvedValue({ id: 'gw-bound' });
-      const result = await persistAuthFirmwareSeed({
-        facilityId: 'fac-1',
-        firmwareVersion: '1.2.3',
-      });
-      expect(result).toEqual({ gatewayId: 'gw-bound' });
-      expect(mockFindByFacilityId).toHaveBeenCalledWith('fac-1');
-      expect(mockUpdate).toHaveBeenCalledWith('gw-bound', { firmware_version: '1.2.3' });
-    });
-
-    it('returns null when no gateway row exists', async () => {
-      mockFindByFacilityId.mockResolvedValue(null);
+    it('returns null when gatewayId is blank', async () => {
       await expect(
-        persistAuthFirmwareSeed({ facilityId: 'fac-1', firmwareVersion: '1.0.0' }),
+        persistAuthFirmwareSeed({ facilityId: 'fac-1', gatewayId: '  ', firmwareVersion: '1.0.0' }),
       ).resolves.toBeNull();
       expect(mockUpdate).not.toHaveBeenCalled();
     });

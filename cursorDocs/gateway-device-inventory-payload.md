@@ -408,7 +408,7 @@ Include `relay_channel` only when that keypad uses a non-default output (2–8).
 
 ### Admin identity override (reconcile)
 
-If an admin manually created a device on relay N with a placeholder serial and `metadata.adminIdentityOverride`, the **first** gateway inventory item for that relay with a new `access_id` updates that row in place (reason: `"Admin identity override reconciled to gateway inventory serial"`). This applies only when exactly **one** override device exists on that relay.
+If an admin manually created a device on relay N with a placeholder serial and `metadata.adminIdentityOverride`, a gateway inventory item for that relay with a new `access_id` updates that row in place (reason: `"Admin identity override reconciled to gateway inventory serial"`). This applies only when exactly **one** override device exists on that relay **and** the inventory payload contains exactly **one** `access_control` item on that relay. Multiple access devices on the same relay (e.g. two keypads both omitting `relay_channel`) are each matched or auto-provisioned by `access_id` — override reconciliation is skipped so a single admin row cannot thrash between serials.
 
 ---
 

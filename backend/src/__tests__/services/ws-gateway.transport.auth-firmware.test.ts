@@ -87,7 +87,7 @@ describe('WebsocketGatewayTransport AUTH firmware_version', () => {
     ws.close();
   });
 
-  it('persists firmware_version for legacy AUTH via facility bound gateway', async () => {
+  it('rejects AUTH without gatewayId', async () => {
     const ws = new WebSocket(`ws://127.0.0.1:${port}/ws/gateway`);
     await new Promise<void>((resolve) => ws.once('open', () => resolve()));
     ws.send(JSON.stringify({
@@ -97,15 +97,25 @@ describe('WebsocketGatewayTransport AUTH firmware_version', () => {
       firmware_version: '9.9.9',
     }));
     const reply = await waitForMessage(ws);
-    expect(reply.type).toBe('AUTH_OK');
-    expect(mockUpdate).toHaveBeenCalledWith('gw-bound', { firmware_version: '9.9.9' });
+    expect(reply.type).toBe('ERROR');
+    expect(reply.code).toBe('AUTH_BAD_REQUEST');
+    expect(mockUpdate).not.toHaveBeenCalled();
     ws.close();
   });
 
   it('skips persist when firmware_version is omitted', async () => {
+    const gatewayId = '11111111-1111-4111-8111-111111111111';
+    mockFindByFacilityId.mockResolvedValue({ id: gatewayId, status: 'offline', name: 'GW' });
+    mockFindById.mockResolvedValue({ id: gatewayId, facility_id: 'facility-1', status: 'offline' });
+
     const ws = new WebSocket(`ws://127.0.0.1:${port}/ws/gateway`);
     await new Promise<void>((resolve) => ws.once('open', () => resolve()));
-    ws.send(JSON.stringify({ type: 'AUTH', token: 'mock-jwt-token', facilityId: 'facility-1' }));
+    ws.send(JSON.stringify({
+      type: 'AUTH',
+      token: 'mock-jwt-token',
+      facilityId: 'facility-1',
+      gatewayId,
+    }));
     const reply = await waitForMessage(ws);
     expect(reply.type).toBe('AUTH_OK');
     expect(mockUpdate).not.toHaveBeenCalled();

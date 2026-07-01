@@ -34,7 +34,7 @@ The server **does not** authenticate using `?token=` on the WebSocket URL. After
   "type": "AUTH",
   "token": "<JWT from POST /api/v1/auth/login against THIS backend>",
   "facilityId": "<facility UUID from BluLok DB>",
-  "gatewayId": "<device's stable UUID — optional for legacy; required for swap/recovery identity>",
+  "gatewayId": "<device's stable UUID — required on every AUTH>",
   "firmware_version": "<running gateway firmware — optional; canonical seed for gateways.firmware_version>"
 }
 ```

@@ -281,7 +281,7 @@ export class SimulatedGateway {
   private canOperationalSyncNow(): boolean {
     const role = this.connection?.getAuthOk()?.sessionRole;
     if (role === 'swap_candidate') return false;
-    return role === 'active' || role === 'legacy' || role === undefined;
+    return role === 'active' || role === undefined;
   }
 
   private async waitForSnapshotIdle(timeoutMs = 30_000): Promise<void> {
@@ -352,7 +352,7 @@ export class SimulatedGateway {
         return;
       }
       const role = this.connection?.getAuthOk()?.sessionRole;
-      if (role === 'active' || role === 'legacy' || role === undefined) {
+      if (role === 'active' || role === undefined) {
         const sync = await retryOperationalSync(() => this.syncInventoryInternal());
         this.applyInventorySyncResult(sync, role, 'request');
         this.emitUpdate();

@@ -5,13 +5,15 @@ import { GatewayEventsService } from '@/services/gateway/gateway-events.service'
 import { WebsocketGatewayTransport } from '@/services/gateway/websocket-gateway.transport';
 
 const mockDetect = jest.fn().mockResolvedValue({ id: 'rec-1' });
+const BOUND_GATEWAY_ID = '10000000-0000-4000-8000-000000000001';
+const SWAP_GATEWAY_ID = '20000000-0000-4000-8000-000000000002';
 
 jest.mock('@/models/gateway.model', () => ({
   GatewayModel: jest.fn().mockImplementation(() => ({
-    findByFacilityId: jest.fn().mockResolvedValue({ id: 'gw-old' }),
+    findByFacilityId: jest.fn().mockResolvedValue({ id: '10000000-0000-4000-8000-000000000001' }),
     findById: jest.fn().mockImplementation(async (id: string) => {
-      if (id === 'gw-new') return { id: 'gw-new', facility_id: null };
-      if (id === 'gw-old') return { id: 'gw-old', facility_id: 'facility-1' };
+      if (id === '20000000-0000-4000-8000-000000000002') return { id: '20000000-0000-4000-8000-000000000002', facility_id: null };
+      if (id === '10000000-0000-4000-8000-000000000001') return { id: '10000000-0000-4000-8000-000000000001', facility_id: 'facility-1' };
       return null;
     }),
   })),
@@ -41,7 +43,7 @@ function waitForMessage(ws: WebSocket, timeoutMs = 3000): Promise<Record<string,
 async function authGatewayWs(
   port: number,
   facilityId: string,
-  gatewayId?: string,
+  gatewayId: string,
 ): Promise<WebSocket> {
   const ws = new WebSocket(`ws://127.0.0.1:${port}/ws/gateway`);
   await new Promise<void>((resolve, reject) => {
@@ -54,8 +56,7 @@ async function authGatewayWs(
       if (msg?.type === 'PING') ws.send(JSON.stringify({ type: 'PONG' }));
     } catch { /* ignore */ }
   });
-  const authPayload: Record<string, string> = { type: 'AUTH', token: 'mock-jwt-token', facilityId };
-  if (gatewayId) authPayload.gatewayId = gatewayId;
+  const authPayload: Record<string, string> = { type: 'AUTH', token: 'mock-jwt-token', facilityId, gatewayId };
   ws.send(JSON.stringify(authPayload));
   const authOk = await waitForMessage(ws);
   if (authOk?.type !== 'AUTH_OK') {
@@ -92,16 +93,16 @@ describe('WebsocketGatewayTransport recovery routing', () => {
   });
 
   it('parks swap candidate without replacing the bound gateway session', async () => {
-    const primaryWs = await authGatewayWs(port, 'facility-1');
-    const swapWs = await authGatewayWs(port, 'facility-1', 'gw-new');
+    const primaryWs = await authGatewayWs(port, 'facility-1', BOUND_GATEWAY_ID);
+    const swapWs = await authGatewayWs(port, 'facility-1', SWAP_GATEWAY_ID);
 
     expect(primaryWs.readyState).toBe(WebSocket.OPEN);
     expect(swapWs.readyState).toBe(WebSocket.OPEN);
-    expect(mockDetect).toHaveBeenCalledWith('facility-1', 'gw-new', 'gw-old');
+    expect(mockDetect).toHaveBeenCalledWith('facility-1', SWAP_GATEWAY_ID, BOUND_GATEWAY_ID);
 
     const candidates = transport.getSwapCandidatesForFacility('facility-1');
     expect(candidates).toEqual(expect.arrayContaining([
-      expect.objectContaining({ gatewayId: 'gw-new', connected: true }),
+      expect.objectContaining({ gatewayId: SWAP_GATEWAY_ID, connected: true }),
     ]));
 
     primaryWs.close();
@@ -109,10 +110,10 @@ describe('WebsocketGatewayTransport recovery routing', () => {
   });
 
   it('routes recovery push messages to swap candidate when armed', async () => {
-    const primaryWs = await authGatewayWs(port, 'facility-1');
-    const swapWs = await authGatewayWs(port, 'facility-1', 'gw-new');
+    const primaryWs = await authGatewayWs(port, 'facility-1', BOUND_GATEWAY_ID);
+    const swapWs = await authGatewayWs(port, 'facility-1', SWAP_GATEWAY_ID);
 
-    transport.setRecoveryPushTarget('facility-1', 'gw-new');
+    transport.setRecoveryPushTarget('facility-1', SWAP_GATEWAY_ID);
 
     const primaryMessages: unknown[] = [];
     const swapMessages: unknown[] = [];
@@ -136,15 +137,15 @@ describe('WebsocketGatewayTransport recovery routing', () => {
   });
 
   it('promotes swap candidate to active on finalizeRecoverySession', async () => {
-    const primaryWs = await authGatewayWs(port, 'facility-1');
-    const swapWs = await authGatewayWs(port, 'facility-1', 'gw-new');
+    const primaryWs = await authGatewayWs(port, 'facility-1', BOUND_GATEWAY_ID);
+    const swapWs = await authGatewayWs(port, 'facility-1', SWAP_GATEWAY_ID);
 
     const swapMessages: unknown[] = [];
     swapWs.on('message', (data) => {
       try { swapMessages.push(JSON.parse(data.toString())); } catch { /* ignore */ }
     });
 
-    transport.finalizeRecoverySession('facility-1', 'gw-new', 'gw-old');
+    transport.finalizeRecoverySession('facility-1', SWAP_GATEWAY_ID, BOUND_GATEWAY_ID);
 
     await new Promise((resolve) => setTimeout(resolve, 100));
 
@@ -170,10 +171,10 @@ describe('WebsocketGatewayTransport recovery routing', () => {
   });
 
   it('drops recovery push messages when swap candidate is offline', async () => {
-    const primaryWs = await authGatewayWs(port, 'facility-1');
-    const swapWs = await authGatewayWs(port, 'facility-1', 'gw-new');
+    const primaryWs = await authGatewayWs(port, 'facility-1', BOUND_GATEWAY_ID);
+    const swapWs = await authGatewayWs(port, 'facility-1', SWAP_GATEWAY_ID);
 
-    transport.setRecoveryPushTarget('facility-1', 'gw-new');
+    transport.setRecoveryPushTarget('facility-1', SWAP_GATEWAY_ID);
     swapWs.close();
     await new Promise((resolve) => setTimeout(resolve, 100));
 
@@ -191,10 +192,10 @@ describe('WebsocketGatewayTransport recovery routing', () => {
   });
 
   it('rejects inventory snapshot status from bound gateway when recovery push is armed', async () => {
-    const primaryWs = await authGatewayWs(port, 'facility-1');
-    const swapWs = await authGatewayWs(port, 'facility-1', 'gw-new');
+    const primaryWs = await authGatewayWs(port, 'facility-1', BOUND_GATEWAY_ID);
+    const swapWs = await authGatewayWs(port, 'facility-1', SWAP_GATEWAY_ID);
 
-    transport.setRecoveryPushTarget('facility-1', 'gw-new');
+    transport.setRecoveryPushTarget('facility-1', SWAP_GATEWAY_ID);
 
     primaryWs.send(JSON.stringify({
       type: 'INVENTORY_SNAPSHOT_STATUS',

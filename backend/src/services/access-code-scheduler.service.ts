@@ -206,6 +206,7 @@ export class AccessCodeSchedulerService {
     const nowMs = now.getTime();
     const facilityOnlineCache = new Map<string, boolean>();
     let discoveredOnlineFacility = false;
+    const rotatedFacilitiesThisRun = new Set<string>();
     const groups = await this.db('device_groups')
       .select('id', 'facility_id')
       .where('is_active', true);
@@ -244,11 +245,9 @@ export class AccessCodeSchedulerService {
       const hasTrackedOnlineFacilities = this.onlineFacilityIds.size > 0;
       let gatewayOnline = facilityOnlineCache.get(facilityId);
       if (gatewayOnline === undefined) {
-        gatewayOnline = hasTrackedOnlineFacilities
-          ? this.onlineFacilityIds.has(facilityId)
-          : this.accessCodes.isGatewayOnline(facilityId);
+        gatewayOnline = this.accessCodes.isGatewayOnline(facilityId);
         facilityOnlineCache.set(facilityId, gatewayOnline);
-        if (!hasTrackedOnlineFacilities && gatewayOnline) {
+        if (gatewayOnline) {
           this.onlineFacilityIds.add(facilityId);
           discoveredOnlineFacility = true;
         }
@@ -261,6 +260,7 @@ export class AccessCodeSchedulerService {
 
       try {
         await this.accessCodes.forceRotate(facilityId, 'device_group', groupId);
+        rotatedFacilitiesThisRun.add(facilityId);
         this.lastRunByGroup.set(groupId, now.getTime());
         this.clearRetryState(groupId);
         logger.info(`Access code rotation completed for group=${groupId} facility=${facilityId}`);
@@ -280,6 +280,15 @@ export class AccessCodeSchedulerService {
     if (this.outboxScanCounter >= ACCESS_CODE_PUSH_OUTBOX_SCAN_MS) {
       this.outboxScanCounter = 0;
       await this.accessCodes.processDueOutboxPushes();
+    }
+
+    for (const facilityId of rotatedFacilitiesThisRun) {
+      if (!this.accessCodes.isGatewayOnline(facilityId)) continue;
+      try {
+        await this.accessCodes.flushPendingPushForFacility(facilityId);
+      } catch (error) {
+        logger.warn(`Access code outbox flush after rotation failed for facility=${facilityId}`, error);
+      }
     }
 
     this.deviceDeletionOutboxScanCounter += this.CHECK_INTERVAL_MS;
