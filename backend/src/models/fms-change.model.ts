@@ -43,6 +43,7 @@ import { randomUUID } from 'crypto';
 import { DatabaseService } from '@/services/database.service';
 import { FMSChange, FMSChangeType, FMSChangeAction } from '@/types/fms.types';
 import { logger } from '@/utils/logger';
+import { isFmsChangePending } from '@/services/fms/fms-apply-order.utils';
 
 export class FMSChangeModel {
   private db: Knex;
@@ -124,6 +125,20 @@ export class FMSChangeModel {
   }
 
   /**
+   * Batch-fetch changes by ID (single query).
+   */
+  async findByIds(ids: string[]): Promise<FMSChange[]> {
+    if (ids.length === 0) return [];
+    try {
+      const rows = await this.db('fms_changes').whereIn('id', ids);
+      return rows.map((row) => this.mapToModel(row));
+    } catch (error) {
+      logger.error('Error fetching FMS changes by IDs:', error);
+      throw error;
+    }
+  }
+
+  /**
    * Get all changes for a sync log
    */
   async findBySyncLogId(
@@ -161,10 +176,11 @@ export class FMSChangeModel {
   }
 
   /**
-   * Get pending (unreviewed) changes for a sync log
+   * Get changes that still need review or re-apply (not applied, not rejected).
    */
   async findPendingBySyncLogId(syncLogId: string): Promise<FMSChange[]> {
-    return this.findBySyncLogId(syncLogId, { reviewed: false });
+    const changes = await this.findBySyncLogId(syncLogId);
+    return changes.filter((c) => isFmsChangePending(c));
   }
 
   /**
@@ -344,7 +360,7 @@ export class FMSChangeModel {
       const stats = {
         total: changes.length,
         reviewed: changes.filter(c => c.is_reviewed).length,
-        pending: changes.filter(c => !c.is_reviewed).length,
+        pending: changes.filter(c => isFmsChangePending(c)).length,
         accepted: changes.filter(c => c.is_accepted === true).length,
         rejected: changes.filter(c => c.is_accepted === false).length,
         byType: {} as Record<FMSChangeType, number>,

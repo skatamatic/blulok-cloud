@@ -21,6 +21,8 @@ jest.mock('@/services/fms.service', () => ({
   fmsService: {
     reviewChanges: jest.fn(),
     applyChanges: jest.fn(),
+    getPendingChanges: jest.fn().mockResolvedValue([]),
+    getSyncDetails: jest.fn().mockResolvedValue({ id: 'sync-123', sync_status: 'pending_review' }),
   },
 }));
 

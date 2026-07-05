@@ -2,7 +2,7 @@ import { createContext, useContext, useState, useCallback, useEffect, useRef, Re
 import { useWebSocket } from '@/contexts/WebSocketContext';
 import { FMSChange, FMSSyncResult } from '@/types/fms.types';
 
-export type SyncStep = 'connecting' | 'fetching' | 'detecting' | 'preparing' | 'complete' | 'cancelled';
+export type SyncStep = 'connecting' | 'fetching' | 'detecting' | 'preparing' | 'applying' | 'complete' | 'cancelled';
 
 function buildSyncSummaryFromChanges(changes: FMSChange[]): FMSSyncResult['summary'] {
   return changes.reduce(
@@ -159,6 +159,7 @@ export function FMSSyncProvider({ children }: { children: ReactNode }) {
       fetching: 40,
       detecting: 70,
       preparing: 90,
+      applying: 95,
       complete: 100,
       cancelled: 0,
     };
@@ -404,7 +405,7 @@ export function FMSSyncProvider({ children }: { children: ReactNode }) {
           return;
         }
 
-        if (step && ['connecting', 'fetching', 'detecting', 'preparing', 'complete', 'cancelled'].includes(step)) {
+        if (step && ['connecting', 'fetching', 'detecting', 'preparing', 'applying', 'complete', 'cancelled'].includes(step)) {
           updateStep(step as SyncStep);
         }
         if (percent !== undefined) {

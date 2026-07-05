@@ -207,6 +207,8 @@ export interface FMSChangeApplicationResult {
   changesApplied: number;
   changesFailed: number;
   errors: string[];
+  appliedChangeIds: string[];
+  failedChangeIds: string[];
   accessChanges: {
     usersCreated: string[];
     usersDeactivated: string[];
@@ -222,6 +224,10 @@ export interface FMSChangeApplicationResult {
 export interface FMSApplyContext {
   facilityId: string;
   performedBy: string;
+  /** Cached for the duration of a single apply batch */
+  config?: FMSConfiguration | null;
+  /** Cached unit external_id → mapping for the facility */
+  unitMappingsByExternalId?: Map<string, { internal_id: string; external_id: string; metadata?: Record<string, unknown> }>;
 }
 
 /** Storable Edge CloudEvents envelope (https://webhooks.storable.io/event-catalog) */

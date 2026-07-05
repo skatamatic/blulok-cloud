@@ -12,8 +12,19 @@ import { UserRole } from '@/types/auth.types';
 
 describe('FMSService.applyChanges — UNIT_UPDATED accounting', () => {
   function wireMocks(svc: any) {
+    const change = unitUpdatedChange();
     svc.changeModel = {
-      findById: jest.fn(),
+      findById: jest.fn().mockResolvedValue(change),
+      findByIds: jest.fn().mockResolvedValue([change]),
+      findBySyncLogId: jest.fn().mockResolvedValue([change]),
+      getStatsBySyncLogId: jest.fn().mockResolvedValue({
+        total: 1,
+        reviewed: 1,
+        pending: 0,
+        accepted: 1,
+        rejected: 0,
+        byType: {},
+      }),
       bulkMarkApplied: jest.fn().mockResolvedValue(1),
     };
     svc.syncLogModel = {
@@ -42,6 +53,7 @@ describe('FMSService.applyChanges — UNIT_UPDATED accounting', () => {
         internal_id: 'unit-int-1',
         external_id: 'ext-u',
       }),
+      findByFacility: jest.fn().mockResolvedValue([]),
       delete: jest.fn(),
       create: jest.fn(),
     };
@@ -91,7 +103,9 @@ describe('FMSService.applyChanges — UNIT_UPDATED accounting', () => {
   it('counts a successful UNIT_UPDATED exactly once and bulk-marks applied', async () => {
     const svc: any = FMSService.getInstance();
     wireMocks(svc);
-    svc.changeModel.findById.mockResolvedValue(unitUpdatedChange());
+    const appliedChange = { ...unitUpdatedChange(), applied_at: new Date() };
+    svc.changeModel.findByIds.mockResolvedValue([unitUpdatedChange()]);
+    svc.changeModel.findBySyncLogId.mockResolvedValue([appliedChange]);
 
     const result = await svc.applyChanges('sync-1', ['chg-1']);
 
@@ -99,7 +113,10 @@ describe('FMSService.applyChanges — UNIT_UPDATED accounting', () => {
     expect(result.changesFailed).toBe(0);
     expect(svc.changeModel.bulkMarkApplied).toHaveBeenCalledWith(['chg-1']);
     expect(svc.unitsService.updateUnit).toHaveBeenCalledTimes(1);
-    expect(svc.syncLogModel.update).toHaveBeenCalledWith('sync-1', { changes_applied: 1 });
+    expect(svc.syncLogModel.update).toHaveBeenCalledWith(
+      'sync-1',
+      expect.objectContaining({ changes_applied: 1 }),
+    );
   });
 
   it('does not bulkMarkApplied when updateUnit throws', async () => {
@@ -118,6 +135,9 @@ describe('FMSService.applyChanges — UNIT_UPDATED accounting', () => {
       ]),
     );
     expect(svc.changeModel.bulkMarkApplied).not.toHaveBeenCalled();
-    expect(svc.syncLogModel.update).toHaveBeenCalledWith('sync-1', { changes_applied: 0 });
+    expect(svc.syncLogModel.update).toHaveBeenCalledWith(
+      'sync-1',
+      expect.objectContaining({ changes_applied: 0 }),
+    );
   });
 });

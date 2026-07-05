@@ -58,6 +58,7 @@ import { FMSWebhookAuthMode } from '@/types/fms.types';
 import { UserRole } from '@/types/auth.types';
 import { logger } from '@/utils/logger';
 import { shouldAutoAcceptChanges } from './fms-auto-accept.utils';
+import { sortChangesForApply } from './fms-apply-order.utils';
 
 /**
  * FMS Integration Service Class
@@ -1133,6 +1134,8 @@ export class FMSService {
       changesApplied: 0,
       changesFailed: 0,
       errors: [],
+      appliedChangeIds: [],
+      failedChangeIds: [],
       accessChanges: {
         usersCreated: [],
         usersDeactivated: [],
@@ -1141,61 +1144,65 @@ export class FMSService {
       },
     };
 
-    // Get all changes to apply
-    const allChanges = await Promise.all(
-      changeIds.map(id => this.changeModel.findById(id))
-    );
+    const allChanges = await this.changeModel.findByIds(changeIds);
 
-    // Sort changes by priority to ensure dependencies are handled correctly:
-    // 1. Units first (UNIT_ADDED, UNIT_UPDATED) - must exist before assignments
-    // 2. Tenants second (TENANT_ADDED, TENANT_UPDATED, TENANT_REMOVED) - must exist before assignments
-    // 3. Tenant-unit assignments last (TENANT_UNIT_CHANGED) - requires both units and tenants to exist
-    const changeTypePriority = {
-      [FMSChangeType.UNIT_ADDED]: 1,
-      [FMSChangeType.UNIT_UPDATED]: 1,
-      [FMSChangeType.UNIT_REMOVED]: 1,
-      [FMSChangeType.UNIT_OVERLOCK_CHANGED]: 1,
-      [FMSChangeType.TENANT_ADDED]: 2,
-      [FMSChangeType.TENANT_UPDATED]: 2,
-      [FMSChangeType.TENANT_REMOVED]: 2,
-      [FMSChangeType.TENANT_UNIT_CHANGED]: 3,
-    };
-
-    const changes = allChanges
-      .filter(c => c !== null)
-      .sort((a, b) => {
-        const priorityA = changeTypePriority[a.change_type] || 999;
-        const priorityB = changeTypePriority[b.change_type] || 999;
-        return priorityA - priorityB;
-      });
+    const changes = sortChangesForApply(allChanges);
 
     // Load the sync log once and cache context for all sub-methods
     const syncLog = await this.syncLogModel.findById(syncLogId);
     if (!syncLog) throw new Error(`Sync log ${syncLogId} not found`);
 
+    const [config, unitMappings] = await Promise.all([
+      this.fmsConfigModel.findByFacilityId(syncLog.facility_id),
+      this.entityMappingModel.findByFacility(syncLog.facility_id, 'unit'),
+    ]);
+
     const ctx: FMSApplyContext = {
       facilityId: syncLog.facility_id,
       performedBy: syncLog.triggered_by_user_id || 'fms-system',
+      config,
+      unitMappingsByExternalId: new Map(unitMappings.map((m) => [m.external_id, m])),
     };
 
-    logger.info(`[FMS] Applying ${changes.length} changes in dependency order`, {
+    const totalChanges = changes.length;
+
+    logger.info(`[FMS] Applying ${totalChanges} changes in dependency order`, {
       fms_sync: true,
       sync_log_id: syncLogId,
       order: changes.map(c => c.change_type),
     });
 
+    this.broadcastFMSSyncProgress({
+      facilityId: ctx.facilityId,
+      syncLogId,
+      step: 'applying',
+      percent: 0,
+      message: `Applying 0 of ${totalChanges} changes…`,
+    });
+
     const appliedIds: string[] = [];
 
-    for (const change of changes) {
+    for (let index = 0; index < changes.length; index++) {
+      const change = changes[index];
       if (!change) continue;
 
       try {
         await this.applyChange(change, result, ctx);
         appliedIds.push(change.id);
         result.changesApplied++;
+
+        const completed = index + 1;
+        this.broadcastFMSSyncProgress({
+          facilityId: ctx.facilityId,
+          syncLogId,
+          step: 'applying',
+          percent: totalChanges > 0 ? Math.round((completed / totalChanges) * 100) : 100,
+          message: `Applying ${completed} of ${totalChanges}: ${change.change_type.replace(/_/g, ' ')}`,
+        });
       } catch (error) {
         logger.error(`Failed to apply change ${change.id}:`, error);
         result.changesFailed++;
+        result.failedChangeIds.push(change.id);
         result.errors.push(
           `Failed to apply ${change.change_type} for ${change.external_id}: ${
             error instanceof Error ? error.message : 'Unknown error'
@@ -1203,6 +1210,17 @@ export class FMSService {
         );
       }
     }
+
+    result.appliedChangeIds = appliedIds;
+    result.success = result.changesFailed === 0;
+
+    this.broadcastFMSSyncProgress({
+      facilityId: ctx.facilityId,
+      syncLogId,
+      step: 'applying',
+      percent: 100,
+      message: `Finished applying ${result.changesApplied} of ${totalChanges} changes`,
+    });
 
     if (appliedIds.length > 0) {
       await this.changeModel.bulkMarkApplied(appliedIds);
@@ -1235,6 +1253,8 @@ export class FMSService {
 
     if (stats.pending === 0 && syncLog.sync_status === FMSSyncStatus.PENDING_REVIEW) {
       update.sync_status = FMSSyncStatus.COMPLETED;
+    } else if (stats.pending > 0 && syncLog.sync_status === FMSSyncStatus.COMPLETED) {
+      update.sync_status = FMSSyncStatus.PENDING_REVIEW;
     }
 
     await this.syncLogModel.update(syncLogId, update);
@@ -1300,7 +1320,7 @@ export class FMSService {
     const tenantData = change.after_data as FMSTenant;
     const facilityId = ctx.facilityId;
     const performedBy = ctx.performedBy;
-    const config = await this.fmsConfigModel.findByFacilityId(facilityId);
+    const config = ctx.config ?? (await this.fmsConfigModel.findByFacilityId(facilityId));
 
     // Determine preferred login identifier: email (preferred) or normalized phone
     const rawEmail = tenantData.email?.trim() || '';
@@ -1391,23 +1411,22 @@ export class FMSService {
         requires_password_reset: true,
       }) as any;
 
-      // Trigger first-time invite notification
-      try {
-        const { FirstTimeUserService } = await import('@/services/first-time-user.service');
-        await FirstTimeUserService.getInstance().sendInvite(user);
-      } catch (e) {
-        logger.warn(`[FMS] Failed to send first-time invite for user ${user.id}:`, e);
-      }
+      // Trigger first-time invite notification (non-blocking — Twilio can be slow)
+      void import('@/services/first-time-user.service')
+        .then(({ FirstTimeUserService }) => FirstTimeUserService.getInstance().sendInvite(user))
+        .catch((e) => {
+          logger.warn(`[FMS] Failed to send first-time invite for user ${user.id}:`, e);
+        });
 
-    result.accessChanges.usersCreated.push(user.id);
-    logger.info(`[FMS] Created tenant user: ${user.email} (${user.id}) by ${performedBy}`, {
-      fms_sync: true,
-      sync_log_id: change.sync_log_id,
-      facility_id: facilityId,
-    });
+      result.accessChanges.usersCreated.push(user.id);
+      logger.info(`[FMS] Created tenant user: ${user.email} (${user.id}) by ${performedBy}`, {
+        fms_sync: true,
+        sync_log_id: change.sync_log_id,
+        facility_id: facilityId,
+      });
 
-    // Associate user with facility
-    await UserFacilityAssociationModel.addUserToFacility(user.id, facilityId);
+      // Associate user with facility
+      await UserFacilityAssociationModel.addUserToFacility(user.id, facilityId);
     }
 
     // Create or ensure FMS entity mapping (store phone in metadata since it's not in users table)
@@ -1442,9 +1461,12 @@ export class FMSService {
       });
     }
 
-    // PERFORMANCE FIX: Batch fetch all unit mappings and use bulk assignment
-    const unitMappings = await this.entityMappingModel.findByFacility(facilityId, 'unit');
-    const unitMappingsByExternalId = new Map(unitMappings.map(m => [m.external_id, m]));
+    // Use cached unit mappings when available (loaded once per apply batch)
+    const unitMappingsByExternalId =
+      ctx.unitMappingsByExternalId ??
+      new Map(
+        (await this.entityMappingModel.findByFacility(facilityId, 'unit')).map((m) => [m.external_id, m]),
+      );
     
     // Collect valid unit IDs for bulk assignment
     const validUnitIds: string[] = [];
@@ -1641,7 +1663,7 @@ export class FMSService {
     });
 
     // Update or create entity mapping for this tenant
-    const config = await this.fmsConfigModel.findByFacilityId(facilityId);
+    const config = ctx.config ?? (await this.fmsConfigModel.findByFacilityId(facilityId));
     const mapping = await this.entityMappingModel.findByInternalId(
       facilityId,
       'user',
@@ -1848,7 +1870,7 @@ export class FMSService {
       }
     }
 
-    const config = await this.fmsConfigModel.findByFacilityId(facilityId);
+    const config = ctx.config ?? (await this.fmsConfigModel.findByFacilityId(facilityId));
 
     // Check if this unit already exists (could happen with old pending changes from before the fix)
     // First check by FMS mapping

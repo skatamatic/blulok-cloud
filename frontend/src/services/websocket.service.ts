@@ -5,6 +5,7 @@ import {
   makeWebSocketSubscriptionKey,
   parseWebSocketSubscriptionKey,
 } from '@/utils/websocket-subscription.utils';
+import { isJwtExpired } from '@/utils/jwt.utils';
 
 class WebSocketService implements IWebSocketService {
   private ws: WebSocket | null = null;
@@ -36,6 +37,11 @@ class WebSocketService implements IWebSocketService {
       const token = localStorage.getItem('authToken');
 
       if (!token) {
+        return;
+      }
+
+      if (isJwtExpired(token)) {
+        console.warn('WebSocket: auth token expired — reconnect after signing in again');
         return;
       }
 
@@ -399,6 +405,10 @@ class WebSocketService implements IWebSocketService {
     if (!localStorage.getItem('authToken')) {
       return;
     }
+    const token = localStorage.getItem('authToken');
+    if (token && isJwtExpired(token)) {
+      return;
+    }
 
     this.reconnectAttempts++;
     const delay = Math.min(
@@ -592,6 +602,26 @@ class WebSocketService implements IWebSocketService {
       const { subscriptionType, filters } = parseWebSocketSubscriptionKey(subscriptionKey);
       this.unsubscribe(subscriptionType, filters);
     });
+  }
+
+  /** Close any open socket and connect with the latest auth token from localStorage. */
+  public forceReconnect(): void {
+    this.stopHeartbeat();
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+    if (this.ws) {
+      try {
+        this.ws.close(1000, 'Token refresh');
+      } catch {
+        /* ignore */
+      }
+      this.ws = null;
+    }
+    this.isConnected = false;
+    this.reconnectAttempts = 0;
+    this.connect();
   }
 
   public retryConnectionIfNeeded(): void {

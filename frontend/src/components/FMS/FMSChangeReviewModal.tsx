@@ -5,7 +5,7 @@
  * Allows the user to select and apply changes.
  */
 
-import { Fragment, useState } from 'react';
+import { Fragment, useState, useEffect, useRef, useCallback } from 'react';
 import { Dialog, Transition, Tab } from '@headlessui/react';
 import {
   XMarkIcon,
@@ -22,6 +22,7 @@ import {
   ClipboardDocumentCheckIcon,
   ShieldExclamationIcon,
   MagnifyingGlassIcon,
+  ArrowPathIcon,
 } from '@heroicons/react/24/outline';
 import {
   FMSChange,
@@ -32,6 +33,7 @@ import {
 } from '@/types/fms.types';
 import { fmsService } from '@/services/fms.service';
 import { useFMSSync } from '@/contexts/FMSSyncContext';
+import { useWebSocket } from '@/contexts/WebSocketContext';
 import { useToast } from '@/contexts/ToastContext';
 import { formatDateTime } from '@/utils/datetime.utils';
 
@@ -45,6 +47,41 @@ interface FMSChangeReviewModalProps {
 }
 
 type ChangeFilter = 'all' | 'added' | 'updated' | 'removed' | 'invalid';
+
+type ApplyProgressState = {
+  percent: number;
+  message?: string;
+  completed?: number;
+  total?: number;
+};
+
+function formatElapsed(seconds: number): string {
+  const mins = Math.floor(seconds / 60);
+  const secs = seconds % 60;
+  if (mins > 0) return `${mins}m ${secs}s`;
+  return `${secs}s`;
+}
+
+function estimateRemainingSeconds(elapsedSec: number, percent: number): number | null {
+  if (percent <= 0 || percent >= 100 || elapsedSec < 3) return null;
+  const totalEstimate = elapsedSec / (percent / 100);
+  return Math.max(0, Math.round(totalEstimate - elapsedSec));
+}
+
+function formatApplyErrors(errors: string[], changesFailed?: number, maxLines = 4): string {
+  if (errors.length === 0) {
+    if (changesFailed && changesFailed > 0) {
+      return `${changesFailed} change${changesFailed !== 1 ? 's' : ''} failed to apply.`;
+    }
+    return 'One or more changes could not be applied.';
+  }
+  const lines = errors.slice(0, maxLines);
+  let message = lines.join(' · ');
+  if (errors.length > maxLines) {
+    message += ` · …and ${errors.length - maxLines} more`;
+  }
+  return message;
+}
 
 type ChangeVisualStyle = {
   label: string;
@@ -248,14 +285,56 @@ export function FMSChangeReviewModal({
   syncResult,
   facilityName,
 }: FMSChangeReviewModalProps) {
-  const { hideReview, minimizeReview } = useFMSSync();
+  const { hideReview, minimizeReview, syncState, openPendingReview } = useFMSSync();
+  const { subscribe, unsubscribe } = useWebSocket();
   const { addToast } = useToast();
   const [selectedChanges, setSelectedChanges] = useState<Set<string>>(
     new Set(changes.filter((c) => c.is_valid !== false).map((c) => c.id)),
   );
   const [expandedChanges, setExpandedChanges] = useState<Set<string>>(new Set());
   const [applying, setApplying] = useState(false);
+  const [applyProgress, setApplyProgress] = useState<ApplyProgressState | null>(null);
+  const [applyElapsedSec, setApplyElapsedSec] = useState(0);
+  const applyProgressSubRef = useRef<string | null>(null);
+  const applyTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const [activeFilter, setActiveFilter] = useState<ChangeFilter>('all');
+
+  const clearApplyProgressSubscription = useCallback(() => {
+    if (applyProgressSubRef.current) {
+      unsubscribe(applyProgressSubRef.current);
+      applyProgressSubRef.current = null;
+    }
+  }, [unsubscribe]);
+
+  useEffect(() => {
+    if (!applying) {
+      if (applyTimerRef.current) {
+        clearInterval(applyTimerRef.current);
+        applyTimerRef.current = null;
+      }
+      setApplyElapsedSec(0);
+      return;
+    }
+
+    const startedAt = Date.now();
+    applyTimerRef.current = setInterval(() => {
+      setApplyElapsedSec(Math.floor((Date.now() - startedAt) / 1000));
+    }, 1000);
+
+    return () => {
+      if (applyTimerRef.current) {
+        clearInterval(applyTimerRef.current);
+        applyTimerRef.current = null;
+      }
+    };
+  }, [applying]);
+
+  useEffect(() => () => clearApplyProgressSubscription(), [clearApplyProgressSubscription]);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    setSelectedChanges(new Set(changes.filter((c) => c.is_valid !== false).map((c) => c.id)));
+  }, [changes, isOpen]);
 
   const toggleChange = (changeId: string) => {
     const change = changes.find((c) => c.id === changeId);
@@ -334,24 +413,62 @@ export function FMSChangeReviewModal({
     if (!syncResult) return;
 
     const changeIds = Array.from(selectedChanges);
+    const totalToApply = changeIds.length;
 
     try {
       setApplying(true);
+      setApplyProgress(
+        accepted
+          ? { percent: 0, message: `Preparing to apply ${totalToApply} change${totalToApply !== 1 ? 's' : ''}…`, completed: 0, total: totalToApply }
+          : null,
+      );
+
       await fmsService.reviewChanges(syncResult.syncLogId, changeIds, accepted);
 
       if (accepted) {
+        clearApplyProgressSubscription();
+        const facilityId = syncState.facilityId ?? undefined;
+        applyProgressSubRef.current = subscribe(
+          'fms_sync_progress',
+          (data: { syncLogId?: string; step?: string; percent?: number; message?: string }) => {
+            if (data.syncLogId && data.syncLogId !== syncResult.syncLogId) return;
+            if (data.step !== 'applying') return;
+            const percent = data.percent ?? 0;
+            const completed =
+              totalToApply > 0 ? Math.min(totalToApply, Math.round((percent / 100) * totalToApply)) : 0;
+            setApplyProgress({
+              percent,
+              message: data.message,
+              completed,
+              total: totalToApply,
+            });
+          },
+          undefined,
+          facilityId ? { facilityId } : undefined,
+        );
+
         const result = await fmsService.applyChanges(syncResult.syncLogId, changeIds);
+        clearApplyProgressSubscription();
 
         if (result.changesFailed > 0 || result.errors.length > 0) {
           addToast({
-            type: 'error',
-            title: 'Some Changes Failed',
-            message:
-              result.errors.length > 0
-                ? result.errors[0]
-                : `${result.changesFailed} change${result.changesFailed !== 1 ? 's' : ''} failed to apply`,
-            duration: 8000,
+            type: result.changesApplied > 0 ? 'warning' : 'error',
+            title: result.changesApplied > 0 ? 'Some Changes Failed' : 'Apply Failed',
+            message: formatApplyErrors(result.errors, result.changesFailed, 4),
+            duration: 12000,
           });
+
+          await onApply(changeIds);
+
+          if (syncState.facilityId && result.failedChangeIds && result.failedChangeIds.length > 0) {
+            try {
+              await openPendingReview(syncState.facilityId, syncResult.syncLogId, facilityName);
+            } catch {
+              /* pending list refresh is best-effort */
+            }
+          }
+
+          setApplyProgress(null);
           return;
         }
 
@@ -375,6 +492,7 @@ export function FMSChangeReviewModal({
         onClose();
       }
     } catch (error: unknown) {
+      clearApplyProgressSubscription();
       addToast({
         type: 'error',
         title: `Failed to ${accepted ? 'Apply' : 'Reject'} Changes`,
@@ -383,6 +501,7 @@ export function FMSChangeReviewModal({
       });
     } finally {
       setApplying(false);
+      setApplyProgress(null);
     }
   }
 
@@ -394,12 +513,16 @@ export function FMSChangeReviewModal({
     { key: 'invalid', label: 'Invalid', count: invalidCount, activeClass: 'text-amber-600 dark:text-amber-400' },
   ];
 
+  const applyPercent = applyProgress?.percent ?? 0;
+  const applyRemainingSec = estimateRemainingSeconds(applyElapsedSec, applyPercent);
+
   return (
     <Transition appear show={isOpen} as={Fragment}>
       <Dialog
         as="div"
         className="relative z-50"
         onClose={() => {
+          if (applying) return;
           hideReview();
           onClose();
         }}
@@ -427,7 +550,39 @@ export function FMSChangeReviewModal({
               leaveFrom="opacity-100 translate-y-0 scale-100"
               leaveTo="opacity-0 translate-y-2 scale-[0.98]"
             >
-              <Dialog.Panel className="flex w-full max-w-4xl max-h-[min(88vh,780px)] flex-col overflow-hidden rounded-2xl bg-white shadow-2xl ring-1 ring-black/5 dark:bg-gray-900 dark:ring-white/10">
+              <Dialog.Panel className="relative flex w-full max-w-4xl max-h-[min(88vh,780px)] flex-col overflow-hidden rounded-2xl bg-white shadow-2xl ring-1 ring-black/5 dark:bg-gray-900 dark:ring-white/10">
+                {applying && applyProgress && (
+                  <div
+                    className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-5 bg-white/90 px-8 backdrop-blur-sm dark:bg-gray-900/95"
+                    aria-live="polite"
+                    aria-busy="true"
+                  >
+                    <ArrowPathIcon className="h-10 w-10 animate-spin text-[#147FD4] dark:text-sky-400" />
+                    <div className="w-full max-w-md text-center">
+                      <p className="text-lg font-semibold text-gray-900 dark:text-white">Applying FMS changes</p>
+                      <p className="mt-1 text-sm text-gray-600 dark:text-gray-400">
+                        {applyProgress.message ??
+                          `Applying ${applyProgress.completed ?? 0} of ${applyProgress.total ?? filteredSelectedCount}…`}
+                      </p>
+                      <div className="mt-4 h-2.5 w-full overflow-hidden rounded-full bg-gray-200 dark:bg-gray-700">
+                        <div
+                          className="h-full rounded-full bg-[#147FD4] transition-all duration-300 ease-out dark:bg-sky-500"
+                          style={{ width: `${Math.max(2, applyPercent)}%` }}
+                        />
+                      </div>
+                      <div className="mt-3 flex flex-wrap items-center justify-center gap-x-4 gap-y-1 text-xs text-gray-500 dark:text-gray-400">
+                        <span>{applyPercent}% complete</span>
+                        <span>Elapsed {formatElapsed(applyElapsedSec)}</span>
+                        {applyRemainingSec != null && (
+                          <span>~{formatElapsed(applyRemainingSec)} remaining</span>
+                        )}
+                      </div>
+                      <p className="mt-4 text-xs text-gray-400 dark:text-gray-500">
+                        Large batches may take a minute. Please keep this window open.
+                      </p>
+                    </div>
+                  </div>
+                )}
                 {/* Header */}
                 <div className="relative shrink-0 border-b border-gray-200/80 px-5 pb-0 pt-5 dark:border-gray-700/80 sm:px-6">
                   <div className="flex items-start gap-3 pr-16">

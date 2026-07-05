@@ -203,6 +203,8 @@ export interface FMSChangeApplicationResult {
   changesApplied: number;
   changesFailed: number;
   errors: string[];
+  appliedChangeIds?: string[];
+  failedChangeIds?: string[];
   accessChanges: {
     usersCreated: string[];
     usersDeactivated: string[];

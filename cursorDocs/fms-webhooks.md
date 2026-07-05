@@ -93,6 +93,8 @@ When `autoAcceptWebhookChanges` is unset, it falls back to `autoAcceptChanges` f
 
 - **Dashboard FMS Sync widget**: shows an amber **N changes pending review** callout when `fms_sync_status` reports open pending changes; click opens the review modal.
 - **Facility → FMS Integration tab**: same banner on load when sync history has `changes_pending > 0`.
+- **Apply progress**: when accepting changes in the review modal, a full-panel overlay shows percent complete, operation count, elapsed time, and ETA via `fms_sync_progress` WebSocket events (`step: applying`). Bulk apply uses a 5-minute HTTP timeout; Twilio invites are sent asynchronously so they do not block the batch.
+- **Apply order**: changes apply in dependency order — unassignments and tenant removals run before unit status updates; assignments run after. Failed applies remain in the pending list until successfully applied.
 
 ## Overlock status
 

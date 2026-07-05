@@ -177,10 +177,11 @@ class FMSService {
     syncLogId: string,
     changeIds: string[]
   ): Promise<FMSChangeApplicationResult> {
-    const data = await apiService.post('/fms/changes/apply', {
-      syncLogId,
-      changeIds,
-    });
+    const data = await apiService.post(
+      '/fms/changes/apply',
+      { syncLogId, changeIds },
+      { timeout: 300_000 },
+    );
     
     return data.result;
   }

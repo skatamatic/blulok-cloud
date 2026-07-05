@@ -112,7 +112,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
           localStorage.setItem('authUser', JSON.stringify(user));
           dispatch({ type: 'LOGIN_SUCCESS', payload: { user, token } });
 
-          websocketService.retryConnectionIfNeeded();
+          websocketService.forceReconnect();
         } catch (error) {
           localStorage.removeItem('authToken');
           localStorage.removeItem('authUser');
@@ -151,7 +151,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
           payload: { user, token: response.token },
         });
 
-        websocketService.retryConnectionIfNeeded();
+        websocketService.forceReconnect();
       } else {
         dispatch({ type: 'LOGIN_FAILURE' });
       }
