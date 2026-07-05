@@ -121,6 +121,33 @@ export function FMSSyncProvider({ children }: { children: ReactNode }) {
     };
   }, []);
 
+  // Advance progress slowly while sync is active (covers HTTP-only sync when WebSocket is down).
+  useEffect(() => {
+    if (!syncState.isActive || syncState.showReviewModal) return;
+    if (syncState.currentStep === 'complete' || syncState.currentStep === 'cancelled') return;
+
+    const interval = setInterval(() => {
+      setSyncState((prev) => {
+        if (!prev.isActive || prev.showReviewModal || prev.progressPercentage >= 88) return prev;
+        const stepProgress: Record<SyncStep, number> = {
+          connecting: 20,
+          fetching: 40,
+          detecting: 70,
+          preparing: 90,
+          applying: 95,
+          complete: 100,
+          cancelled: 0,
+        };
+        const floor = stepProgress[prev.currentStep] ?? prev.progressPercentage;
+        const next = Math.min(88, Math.max(prev.progressPercentage + 1, floor));
+        if (next === prev.progressPercentage) return prev;
+        return { ...prev, progressPercentage: next };
+      });
+    }, 2500);
+
+    return () => clearInterval(interval);
+  }, [syncState.isActive, syncState.showReviewModal, syncState.currentStep]);
+
   const startSync = useCallback(
     (facilityId: string, facilityName: string): boolean => {
       if (syncInFlightFacilityRef.current) {

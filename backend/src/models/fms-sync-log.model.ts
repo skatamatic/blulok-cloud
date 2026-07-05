@@ -179,18 +179,21 @@ export class FMSSyncLogModel {
   }
 
   /**
-   * Open review batch: pending changes not yet applied/rejected (any trigger source).
+   * Open review batch on the latest sync log when it still has pending changes.
+   * Ignores older sync logs that still have stale pending counts.
    */
   async findOpenReviewSyncLog(facilityId: string): Promise<FMSSyncLog | null> {
     try {
-      const log = await this.db('fms_sync_logs')
+      const latest = await this.db('fms_sync_logs')
         .where({ facility_id: facilityId })
-        .where('changes_pending', '>', 0)
-        .whereNot({ sync_status: FMSSyncStatus.FAILED })
         .orderBy('created_at', 'desc')
         .first();
 
-      return log ? this.mapToModel(log) : null;
+      if (!latest) return null;
+      if (Number(latest.changes_pending ?? 0) <= 0) return null;
+      if (latest.sync_status === FMSSyncStatus.FAILED) return null;
+
+      return this.mapToModel(latest);
     } catch (error) {
       logger.error('Error fetching open review sync log:', error);
       throw error;

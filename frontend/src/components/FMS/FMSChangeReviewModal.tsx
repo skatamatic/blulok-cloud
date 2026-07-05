@@ -22,7 +22,6 @@ import {
   ClipboardDocumentCheckIcon,
   ShieldExclamationIcon,
   MagnifyingGlassIcon,
-  ArrowPathIcon,
 } from '@heroicons/react/24/outline';
 import {
   FMSChange,
@@ -36,6 +35,8 @@ import { useFMSSync } from '@/contexts/FMSSyncContext';
 import { useWebSocket } from '@/contexts/WebSocketContext';
 import { useToast } from '@/contexts/ToastContext';
 import { formatDateTime } from '@/utils/datetime.utils';
+import { notifyPendingReviewChanged } from '@/utils/fms-pending-review.utils';
+import { ApplyProgressOverlay } from '@/components/FMS/ApplyProgressOverlay';
 
 interface FMSChangeReviewModalProps {
   isOpen: boolean;
@@ -336,6 +337,19 @@ export function FMSChangeReviewModal({
     setSelectedChanges(new Set(changes.filter((c) => c.is_valid !== false).map((c) => c.id)));
   }, [changes, isOpen]);
 
+  // Client-side progress when WebSocket is unavailable during long apply requests.
+  useEffect(() => {
+    if (!applying) return;
+    const interval = setInterval(() => {
+      setApplyProgress((prev) => {
+        if (!prev) return prev;
+        const nextPercent = Math.min(92, Math.max(prev.percent, prev.percent + 2));
+        return { ...prev, percent: nextPercent };
+      });
+    }, 2500);
+    return () => clearInterval(interval);
+  }, [applying]);
+
   const toggleChange = (changeId: string) => {
     const change = changes.find((c) => c.id === changeId);
     if (change?.is_valid === false) return;
@@ -469,6 +483,7 @@ export function FMSChangeReviewModal({
           }
 
           setApplyProgress(null);
+          notifyPendingReviewChanged();
           return;
         }
 
@@ -480,6 +495,7 @@ export function FMSChangeReviewModal({
         });
 
         await onApply(changeIds);
+        notifyPendingReviewChanged();
         hideReview();
         onClose();
       } else {
@@ -513,10 +529,23 @@ export function FMSChangeReviewModal({
     { key: 'invalid', label: 'Invalid', count: invalidCount, activeClass: 'text-amber-600 dark:text-amber-400' },
   ];
 
-  const applyPercent = applyProgress?.percent ?? 0;
+  const applyPercent = applyProgress?.percent ?? (applying ? 3 : 0);
   const applyRemainingSec = estimateRemainingSeconds(applyElapsedSec, applyPercent);
+  const applyMessage =
+    applyProgress?.message ??
+    (applying
+      ? `Applying ${applyProgress?.completed ?? 0} of ${applyProgress?.total ?? filteredSelectedCount}…`
+      : '');
 
   return (
+    <>
+      <ApplyProgressOverlay
+        show={applying}
+        percent={applyPercent}
+        message={applyMessage}
+        elapsedSec={applyElapsedSec}
+        remainingSec={applyRemainingSec}
+      />
     <Transition appear show={isOpen} as={Fragment}>
       <Dialog
         as="div"
@@ -551,38 +580,6 @@ export function FMSChangeReviewModal({
               leaveTo="opacity-0 translate-y-2 scale-[0.98]"
             >
               <Dialog.Panel className="relative flex w-full max-w-4xl max-h-[min(88vh,780px)] flex-col overflow-hidden rounded-2xl bg-white shadow-2xl ring-1 ring-black/5 dark:bg-gray-900 dark:ring-white/10">
-                {applying && applyProgress && (
-                  <div
-                    className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-5 bg-white/90 px-8 backdrop-blur-sm dark:bg-gray-900/95"
-                    aria-live="polite"
-                    aria-busy="true"
-                  >
-                    <ArrowPathIcon className="h-10 w-10 animate-spin text-[#147FD4] dark:text-sky-400" />
-                    <div className="w-full max-w-md text-center">
-                      <p className="text-lg font-semibold text-gray-900 dark:text-white">Applying FMS changes</p>
-                      <p className="mt-1 text-sm text-gray-600 dark:text-gray-400">
-                        {applyProgress.message ??
-                          `Applying ${applyProgress.completed ?? 0} of ${applyProgress.total ?? filteredSelectedCount}…`}
-                      </p>
-                      <div className="mt-4 h-2.5 w-full overflow-hidden rounded-full bg-gray-200 dark:bg-gray-700">
-                        <div
-                          className="h-full rounded-full bg-[#147FD4] transition-all duration-300 ease-out dark:bg-sky-500"
-                          style={{ width: `${Math.max(2, applyPercent)}%` }}
-                        />
-                      </div>
-                      <div className="mt-3 flex flex-wrap items-center justify-center gap-x-4 gap-y-1 text-xs text-gray-500 dark:text-gray-400">
-                        <span>{applyPercent}% complete</span>
-                        <span>Elapsed {formatElapsed(applyElapsedSec)}</span>
-                        {applyRemainingSec != null && (
-                          <span>~{formatElapsed(applyRemainingSec)} remaining</span>
-                        )}
-                      </div>
-                      <p className="mt-4 text-xs text-gray-400 dark:text-gray-500">
-                        Large batches may take a minute. Please keep this window open.
-                      </p>
-                    </div>
-                  </div>
-                )}
                 {/* Header */}
                 <div className="relative shrink-0 border-b border-gray-200/80 px-5 pb-0 pt-5 dark:border-gray-700/80 sm:px-6">
                   <div className="flex items-start gap-3 pr-16">
@@ -870,5 +867,6 @@ export function FMSChangeReviewModal({
         </div>
       </Dialog>
     </Transition>
+    </>
   );
 }

@@ -5,11 +5,18 @@ jest.unmock('@/services/fms/fms.service');
 jest.mock('@/models/key-sharing.model', () => ({
   KeySharingModel: jest.fn(),
 }));
+jest.mock('@/models/user-facility-association.model', () => ({
+  UserFacilityAssociationModel: {
+    removeUserFromFacility: jest.fn().mockResolvedValue(1),
+  },
+}));
 
 import { FMSService } from '@/services/fms/fms.service';
 import { UserModel } from '@/models/user.model';
 import { KeySharingModel } from '@/models/key-sharing.model';
+import { UserFacilityAssociationModel } from '@/models/user-facility-association.model';
 import { UserRole } from '@/types/auth.types';
+import { FMS_MAPPING_REMOVED_AT_KEY } from '@/services/fms/fms-tenant-removal.utils';
 
 function emptyApplyResult() {
   return {
@@ -52,6 +59,13 @@ describe('FMSService.applyTenantRemoved', () => {
     svc.unitsService = {
       unassignTenant: jest.fn().mockResolvedValue(undefined),
     };
+    svc.entityMappingModel = {
+      findByInternalId: jest.fn().mockResolvedValue({
+        id: 'map-1',
+        metadata: { email: 't@example.com' },
+      }),
+      updateMetadata: jest.fn().mockResolvedValue(undefined),
+    };
 
     jest.spyOn(UserModel, 'findById').mockResolvedValue({
       id: 'tenant-1',
@@ -78,5 +92,10 @@ describe('FMSService.applyTenantRemoved', () => {
       }),
     );
     expect(result.accessChanges.accessRevoked).toEqual([{ userId: 'tenant-1', unitId: 'u-fac1' }]);
+    expect(UserFacilityAssociationModel.removeUserFromFacility).toHaveBeenCalledWith('tenant-1', 'fac-1');
+    expect(svc.entityMappingModel.updateMetadata).toHaveBeenCalledWith(
+      'map-1',
+      expect.objectContaining({ [FMS_MAPPING_REMOVED_AT_KEY]: expect.any(String) }),
+    );
   });
 });

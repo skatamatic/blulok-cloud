@@ -59,6 +59,11 @@ import { UserRole } from '@/types/auth.types';
 import { logger } from '@/utils/logger';
 import { shouldAutoAcceptChanges } from './fms-auto-accept.utils';
 import { sortChangesForApply } from './fms-apply-order.utils';
+import {
+  clearFmsMappingRemoved,
+  isFmsUserRemovedFromFacility,
+  stampFmsMappingRemoved,
+} from './fms-tenant-removal.utils';
 
 /**
  * FMS Integration Service Class
@@ -439,9 +444,13 @@ export class FMSService {
           changes.map(c => c.id)
         );
 
+        await this.refreshSyncLogChangeCounts(syncLog.id);
+
         await this.syncLogModel.update(syncLog.id, {
           changes_applied: applyResult.changesApplied,
-          sync_status: FMSSyncStatus.COMPLETED,
+          sync_status: applyResult.changesFailed > 0
+            ? FMSSyncStatus.PENDING_REVIEW
+            : FMSSyncStatus.COMPLETED,
         });
 
         await this.syncLogModel.markCompleted(syncLog.id, {
@@ -844,6 +853,20 @@ export class FMSService {
     for (const mapping of existingMappings) {
       if (!fmsTenantExtIds.has(mapping.external_id)) {
         const user = usersById.get(mapping.internal_id);
+        const facilityAssignmentCount =
+          assignmentsByTenantId.get(mapping.internal_id)?.length ?? 0;
+
+        if (isFmsUserRemovedFromFacility(mapping, user, facilityAssignmentCount)) {
+          logger.debug('[FMS] Skipping tenant_removed — already removed from this facility FMS', {
+            fms_sync: true,
+            sync_log_id: syncLogId,
+            facility_id: facilityId,
+            external_id: mapping.external_id,
+            internal_id: mapping.internal_id,
+          });
+          continue;
+        }
+
         if (user) {
           pendingInserts.push({
             sync_log_id: syncLogId,
@@ -1452,6 +1475,16 @@ export class FMSService {
       },
     });
     } else {
+      await this.entityMappingModel.updateMetadata(
+        existingMapping.id,
+        clearFmsMappingRemoved({
+          ...existingMapping.metadata,
+          email: tenantData.email,
+          phone: tenantData.phone,
+          leaseStartDate: tenantData.leaseStartDate,
+          leaseEndDate: tenantData.leaseEndDate,
+        }),
+      );
       logger.info(`[FMS] User entity mapping already exists for external_id ${tenantData.externalId}`, {
         fms_sync: true,
         sync_log_id: change.sync_log_id,
@@ -1609,6 +1642,20 @@ export class FMSService {
       });
     }
 
+    await UserFacilityAssociationModel.removeUserFromFacility(change.internal_id, facilityId);
+
+    const userMapping = await this.entityMappingModel.findByInternalId(
+      facilityId,
+      'user',
+      change.internal_id,
+    );
+    if (userMapping) {
+      await this.entityMappingModel.updateMetadata(
+        userMapping.id,
+        stampFmsMappingRemoved(userMapping.metadata),
+      );
+    }
+
     logger.info(`[FMS] Revoked tenant ${change.internal_id} access from ${assignments.length} unit(s) in facility ${facilityId}`, {
       fms_sync: true,
       sync_log_id: change.sync_log_id,
@@ -1673,7 +1720,7 @@ export class FMSService {
     if (mapping) {
       // Update existing mapping metadata
       await this.entityMappingModel.updateMetadata(mapping.id, {
-        ...mapping.metadata,
+        ...clearFmsMappingRemoved(mapping.metadata),
         email: tenantData.email,
         phone: tenantData.phone,
       });

@@ -149,7 +149,9 @@ export class UserModel extends BaseModel {
   public static async findByRoleMinimalForFacility(
     role: UserRole,
     facilityId: string,
-  ): Promise<Pick<User, 'id' | 'email' | 'phone_number' | 'first_name' | 'last_name' | 'login_identifier'>[]> {
+  ): Promise<
+    Pick<User, 'id' | 'email' | 'phone_number' | 'first_name' | 'last_name' | 'login_identifier' | 'is_active'>[]
+  > {
     return this.db('users')
       .join('user_facility_associations', 'users.id', 'user_facility_associations.user_id')
       .where('users.role', role)
@@ -161,6 +163,7 @@ export class UserModel extends BaseModel {
         'users.first_name',
         'users.last_name',
         'users.login_identifier',
+        'users.is_active',
       );
   }
 

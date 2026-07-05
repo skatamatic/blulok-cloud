@@ -29,10 +29,11 @@ import { ProviderConfigForm } from './ProviderConfigForm';
 import { FMSConfigSummary } from './FMSConfigSummary';
 import { useToast } from '@/contexts/ToastContext';
 import { useFMSSync } from '@/contexts/FMSSyncContext';
+import { useWebSocket } from '@/contexts/WebSocketContext';
 import { getFmsSyncAppliedColumnText } from '@/utils/fmsSyncLogDisplay';
 import { isFMSSyncInProgressError } from '@/utils/fms-sync.utils';
 import { formatDateTime } from '@/utils/datetime.utils';
-import { formatPendingReviewLabel } from '@/utils/fms-pending-review.utils';
+import { formatPendingReviewLabel, pickOpenPendingReviewLog, FMS_PENDING_REVIEW_CHANGED } from '@/utils/fms-pending-review.utils';
 
 interface FacilityFMSTabProps {
   facilityId: string;
@@ -78,6 +79,7 @@ export function FacilityFMSTab({
 }: FacilityFMSTabProps) {
   const { addToast } = useToast();
   const { canStartNewSync, startSync, completeSync, showReview, cancelSync, hasCompletedSync, openPendingReview, syncState } = useFMSSync();
+  const { subscribe, unsubscribe } = useWebSocket();
   const [config, setConfig] = useState<FMSConfiguration | null>(null);
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
@@ -94,6 +96,28 @@ export function FacilityFMSTab({
     loadConfig();
     loadSyncHistory();
   }, [facilityId]);
+
+  useEffect(() => {
+    const onPendingChanged = () => {
+      void loadSyncHistory();
+    };
+    window.addEventListener(FMS_PENDING_REVIEW_CHANGED, onPendingChanged);
+    return () => window.removeEventListener(FMS_PENDING_REVIEW_CHANGED, onPendingChanged);
+  }, [facilityId]);
+
+  useEffect(() => {
+    const subId = subscribe(
+      'fms_sync_status',
+      (data: { facilityId?: string }) => {
+        if (data?.facilityId === facilityId) {
+          void loadSyncHistory();
+        }
+      },
+      undefined,
+      { facilityId },
+    );
+    return () => unsubscribe(subId);
+  }, [facilityId, subscribe, unsubscribe]);
 
   const prevReviewOpenRef = useRef(false);
   useEffect(() => {
@@ -134,7 +158,7 @@ export function FacilityFMSTab({
     try {
       const history = await fmsService.getSyncHistory(facilityId, { limit: 10 });
       setSyncHistory(history.logs);
-      const openReview = history.logs.find((log) => log.changes_pending > 0);
+      const openReview = pickOpenPendingReviewLog(history.logs);
       if (openReview) {
         setPendingReviewCount(openReview.changes_pending);
         setPendingSyncLogId(openReview.id);
@@ -199,12 +223,6 @@ export function FacilityFMSTab({
 
       const result = await fmsService.triggerSync(facilityId);
       setSyncResult(result);
-
-      if (result.changesDetected && result.changesDetected.length > 0) {
-        setPendingReviewCount(result.changesDetected.length);
-        setPendingSyncLogId(result.syncLogId);
-        setPendingTriggeredBy('manual');
-      }
 
       if (!hasCompletedSync()) {
         if (result.changesDetected && result.changesDetected.length > 0) {

@@ -1,4 +1,4 @@
-import { formatPendingReviewLabel } from '@/utils/fms-pending-review.utils';
+import { formatPendingReviewLabel, pickOpenPendingReviewLog } from '@/utils/fms-pending-review.utils';
 
 describe('formatPendingReviewLabel', () => {
   it('formats singular and plural counts', () => {
@@ -9,5 +9,23 @@ describe('formatPendingReviewLabel', () => {
   it('includes trigger source when provided', () => {
     expect(formatPendingReviewLabel(2, 'webhook')).toBe('2 changes pending review (from webhook)');
     expect(formatPendingReviewLabel(2, 'manual')).toBe('2 changes pending review (from sync)');
+  });
+});
+
+describe('pickOpenPendingReviewLog', () => {
+  it('returns latest log when it has pending changes', () => {
+    const logs = [
+      { id: 'new', changes_pending: 3, sync_status: 'pending_review' },
+      { id: 'old', changes_pending: 5, sync_status: 'pending_review' },
+    ] as any[];
+    expect(pickOpenPendingReviewLog(logs)?.id).toBe('new');
+  });
+
+  it('returns null when latest sync has no pending (ignores older pending logs)', () => {
+    const logs = [
+      { id: 'new', changes_pending: 0, sync_status: 'completed' },
+      { id: 'old', changes_pending: 5, sync_status: 'pending_review' },
+    ] as any[];
+    expect(pickOpenPendingReviewLog(logs)).toBeNull();
   });
 });
