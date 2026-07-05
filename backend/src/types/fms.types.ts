@@ -49,6 +49,13 @@ export enum FMSChangeAction {
   UNASSIGN_UNIT = 'unassign_unit',
 }
 
+/** How inbound FMS webhooks authenticate to BluLok Cloud. */
+export enum FMSWebhookAuthMode {
+  HMAC = 'hmac',
+  NONE = 'none',
+  HEADER_SECRET = 'header_secret',
+}
+
 export interface FMSAuthConfig {
   type: FMSAuthType;
   credentials: {
@@ -81,7 +88,14 @@ export interface FMSProviderConfig {
     autoAcceptChanges: boolean;
     syncInterval?: number; // Minutes between automatic syncs
     webhookUrl?: string; // Our webhook URL for this facility
-    webhookSecret?: string; // Secret for webhook validation
+    /** hmac (default) | header_secret | none */
+    webhookAuthMode?: FMSWebhookAuthMode;
+    /** HMAC signing key or static header secret value */
+    webhookSecret?: string;
+    /** Header name for header_secret mode (default Authorization) */
+    webhookAuthHeader?: string;
+    /** Header name for hmac mode (default X-Storable-Signature) */
+    webhookSignatureHeader?: string;
   };
   customSettings?: Record<string, any>; // Provider-specific settings
 }

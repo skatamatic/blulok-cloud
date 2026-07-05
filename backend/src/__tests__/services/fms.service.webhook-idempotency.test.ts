@@ -13,6 +13,10 @@ function signBody(raw: Buffer): string {
   return crypto.createHmac('sha256', webhookSecret).update(raw).digest('hex');
 }
 
+function webhookHeaders(raw: Buffer): Record<string, string> {
+  return { 'X-Storable-Signature': signBody(raw) };
+}
+
 function tenantUpdatedEnvelope(eventId: string) {
   return {
     id: eventId,
@@ -127,7 +131,7 @@ describe('FMSService.handleWebhookEvent idempotency', () => {
     const result = await FMSService.getInstance().handleWebhookEvent(
       facilityId,
       raw,
-      signBody(raw)
+      webhookHeaders(raw)
     );
 
     expect(result.duplicate).toBe(true);
@@ -149,7 +153,7 @@ describe('FMSService.handleWebhookEvent idempotency', () => {
     const result = await FMSService.getInstance().handleWebhookEvent(
       facilityId,
       raw,
-      signBody(raw)
+      webhookHeaders(raw)
     );
 
     expect(deleteByExternalEventId).toHaveBeenCalledWith(facilityId, 'evt-retry');
@@ -162,7 +166,7 @@ describe('FMSService.handleWebhookEvent idempotency', () => {
 
     const raw = Buffer.from(JSON.stringify(tenantUpdatedEnvelope('evt-fail')));
     await expect(
-      FMSService.getInstance().handleWebhookEvent(facilityId, raw, signBody(raw))
+      FMSService.getInstance().handleWebhookEvent(facilityId, raw, webhookHeaders(raw))
     ).rejects.toThrow('DB unavailable');
 
     expect(deleteByExternalEventId).toHaveBeenCalledWith(facilityId, 'evt-fail');

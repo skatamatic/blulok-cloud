@@ -50,6 +50,11 @@ import {
   FMSSyncLog,
 } from '@/types/fms.types';
 import { StoredgeProvider } from './providers/storedge-provider';
+import {
+  validateFmsWebhookAuth,
+  type FmsWebhookAuthHeaders,
+} from './fms-webhook-auth';
+import { FMSWebhookAuthMode } from '@/types/fms.types';
 import { UserRole } from '@/types/auth.types';
 import { logger } from '@/utils/logger';
 
@@ -2225,7 +2230,7 @@ export class FMSService {
   public async handleWebhookEvent(
     facilityId: string,
     rawBody: Buffer,
-    signatureHeader: string | undefined
+    requestHeaders: FmsWebhookAuthHeaders
   ): Promise<{
     duplicate: boolean;
     message: string;
@@ -2247,8 +2252,19 @@ export class FMSService {
       throw new Error(`Provider ${config.provider_type} does not support webhooks`);
     }
 
-    if (!provider.validateWebhookRawBody(rawBody, signatureHeader)) {
-      throw new Error('Invalid webhook signature');
+    const authResult = validateFmsWebhookAuth(
+      config.config.syncSettings,
+      config.config.customSettings,
+      rawBody,
+      requestHeaders
+    );
+    if (!authResult.valid) {
+      throw new Error(authResult.error ?? 'Invalid webhook signature');
+    }
+    if (authResult.mode === FMSWebhookAuthMode.NONE) {
+      logger.warn('[FMS Webhook] Processing unauthenticated webhook (webhookAuthMode=none)', {
+        facilityId,
+      });
     }
 
     const payload = await provider.parseWebhookPayload(rawBody);

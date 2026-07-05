@@ -571,20 +571,47 @@ function signStoredgeWebhookBody(bodyString, secret) {
   return crypto.createHmac('sha256', secret).update(bodyString).digest('hex');
 }
 
-async function postFmsWebhook(facilityId, envelope, secret) {
+/**
+ * Post an FMS webhook. auth may be a legacy HMAC secret string or an options object:
+ * { mode: 'hmac'|'header_secret'|'none', secret?, authHeader?, bearer? }
+ */
+async function postFmsWebhook(facilityId, envelope, auth) {
   const body = JSON.stringify(envelope);
-  const sig = signStoredgeWebhookBody(body, secret);
+  const headers = { 'Content-Type': 'application/json' };
+
+  let authOptions = auth;
+  if (typeof authOptions === 'string') {
+    authOptions = { mode: 'hmac', secret: authOptions };
+  }
+  const mode = authOptions?.mode || 'hmac';
+  const secret = authOptions?.secret;
+
+  if (mode === 'hmac') {
+    if (!secret) throw new Error('postFmsWebhook hmac mode requires secret');
+    headers['X-Storable-Signature'] = signStoredgeWebhookBody(body, secret);
+  } else if (mode === 'header_secret') {
+    if (!secret) throw new Error('postFmsWebhook header_secret mode requires secret');
+    const headerName = authOptions.authHeader || 'Authorization';
+    headers[headerName] = authOptions.bearer === false ? secret : `Bearer ${secret}`;
+  } else if (mode !== 'none') {
+    throw new Error(`Unknown postFmsWebhook auth mode: ${mode}`);
+  }
+
   return axios.post(`${API_BASE}/fms/webhook/${facilityId}`, body, {
-    headers: {
-      'Content-Type': 'application/json',
-      'X-Storable-Signature': sig,
-    },
+    headers,
     transformRequest: [(data) => data],
     validateStatus: () => true,
   });
 }
 
-async function createFmsWebhookTestConfig(token, facilityId, { mockPort, extStoredgeFacId, webhookSecret, autoAccept }) {
+async function createFmsWebhookTestConfig(token, facilityId, {
+  mockPort,
+  extStoredgeFacId,
+  webhookSecret,
+  webhookAuthMode,
+  webhookAuthHeader,
+  autoAccept,
+}) {
   const res = await axios.post(`${API_BASE}/fms/config`, {
     facility_id: facilityId,
     provider_type: 'storedge',
@@ -601,7 +628,9 @@ async function createFmsWebhookTestConfig(token, facilityId, { mockPort, extStor
       },
       syncSettings: {
         autoAcceptChanges: Boolean(autoAccept),
-        webhookSecret,
+        ...(webhookSecret ? { webhookSecret } : {}),
+        ...(webhookAuthMode ? { webhookAuthMode } : {}),
+        ...(webhookAuthHeader ? { webhookAuthHeader } : {}),
       },
       customSettings: { facilityId: extStoredgeFacId },
     },
@@ -10952,6 +10981,134 @@ async function run() {
       throw new Error(`Expected 401 for bad webhook signature, got ${badSigRes.status}`);
     }
     ok('Bad webhook signature rejected (401)');
+
+    step('Header secret auth mode: accept matching Authorization, reject mismatch');
+    await axios.put(`${API_BASE}/fms/config/${whFacB.configId}`, {
+      provider_type: 'storedge',
+      is_enabled: true,
+      config: {
+        providerType: 'storedge',
+        baseUrl: `http://127.0.0.1:${whMockPort}`,
+        auth: { type: 'api_key', credentials: { apiKey: 'dev-key' } },
+        features: {
+          supportsTenantSync: true,
+          supportsUnitSync: true,
+          supportsWebhooks: true,
+          supportsRealtime: false,
+        },
+        syncSettings: {
+          autoAcceptChanges: false,
+          webhookAuthMode: 'header_secret',
+          webhookAuthHeader: 'Authorization',
+          webhookSecret,
+        },
+        customSettings: { facilityId: extFacB },
+      },
+    }, { headers: authHeaders(token) });
+
+    const headerAuthOk = await postFmsWebhook(
+      whFacB.facilityId,
+      {
+        id: `evt-wh-header-ok-${whTs}`,
+        type: 'com.storedge.tenant.updated.v1',
+        body: {
+          facility_id: extFacB,
+          tenant_id: extTenantB,
+          first_name: 'Header',
+          last_name: 'AuthOk',
+          email: whTenantEmailB,
+        },
+      },
+      { mode: 'header_secret', secret: webhookSecret, authHeader: 'Authorization' },
+    );
+    if (headerAuthOk.status !== 200) {
+      throw new Error(`Expected 200 for header_secret webhook, got ${headerAuthOk.status}`);
+    }
+
+    const headerAuthBad = await postFmsWebhook(
+      whFacB.facilityId,
+      {
+        id: `evt-wh-header-bad-${whTs}`,
+        type: 'com.storedge.tenant.updated.v1',
+        body: {
+          facility_id: extFacB,
+          tenant_id: extTenantB,
+          first_name: 'Header',
+          last_name: 'AuthBad',
+          email: whTenantEmailB,
+        },
+      },
+      { mode: 'header_secret', secret: 'wrong-header-secret', authHeader: 'Authorization' },
+    );
+    if (headerAuthBad.status !== 401) {
+      throw new Error(`Expected 401 for wrong header secret, got ${headerAuthBad.status}`);
+    }
+    ok('header_secret auth accepts Bearer Authorization and rejects wrong secret');
+
+    step('No-auth mode accepts webhooks without credentials');
+    await axios.put(`${API_BASE}/fms/config/${whFacB.configId}`, {
+      provider_type: 'storedge',
+      is_enabled: true,
+      config: {
+        providerType: 'storedge',
+        baseUrl: `http://127.0.0.1:${whMockPort}`,
+        auth: { type: 'api_key', credentials: { apiKey: 'dev-key' } },
+        features: {
+          supportsTenantSync: true,
+          supportsUnitSync: true,
+          supportsWebhooks: true,
+          supportsRealtime: false,
+        },
+        syncSettings: {
+          autoAcceptChanges: false,
+          webhookAuthMode: 'none',
+        },
+        customSettings: { facilityId: extFacB },
+      },
+    }, { headers: authHeaders(token) });
+
+    const noAuthRes = await postFmsWebhook(
+      whFacB.facilityId,
+      {
+        id: `evt-wh-no-auth-${whTs}`,
+        type: 'com.storedge.tenant.updated.v1',
+        body: {
+          facility_id: extFacB,
+          tenant_id: extTenantB,
+          first_name: 'No',
+          last_name: 'Auth',
+          email: whTenantEmailB,
+        },
+      },
+      { mode: 'none' },
+    );
+    if (noAuthRes.status !== 200) {
+      throw new Error(`Expected 200 for no-auth webhook, got ${noAuthRes.status}`);
+    }
+    ok('none auth mode accepts webhook without credentials');
+
+    // Restore HMAC auth on facility B before remaining webhook scenarios
+    await axios.put(`${API_BASE}/fms/config/${whFacB.configId}`, {
+      provider_type: 'storedge',
+      is_enabled: true,
+      config: {
+        providerType: 'storedge',
+        baseUrl: `http://127.0.0.1:${whMockPort}`,
+        auth: { type: 'api_key', credentials: { apiKey: 'dev-key' } },
+        features: {
+          supportsTenantSync: true,
+          supportsUnitSync: true,
+          supportsWebhooks: true,
+          supportsRealtime: false,
+        },
+        syncSettings: {
+          autoAcceptChanges: false,
+          webhookAuthMode: 'hmac',
+          webhookSecret,
+        },
+        customSettings: { facilityId: extFacB },
+      },
+    }, { headers: authHeaders(token) });
 
     step('Reject Storable facility_id mismatch for facility webhook URL');
     const mismatchRes = await postFmsWebhook(whFacA.facilityId, {

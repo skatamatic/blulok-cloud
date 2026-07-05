@@ -12,7 +12,7 @@ registerOpenApiOnly({
   tags: ['FMS'],
   summary: 'Webhook receiver for FMS events',
   description:
-    'Public Storable Edge CloudEvents receiver. Raw JSON body is required for HMAC signature verification (X-Storable-Signature, X-Webhook-Signature, or X-Signature).',
+    'Public FMS CloudEvents receiver. Auth mode is configured per facility (HMAC signature, shared header secret, or none).',
   security: 'none',
   params: fmsFacilityIdParamSchema,
   responses: {
@@ -41,16 +41,11 @@ router.post(
       return;
     }
 
-    const signatureHeader =
-      (req.headers['x-storable-signature'] as string | undefined) ??
-      (req.headers['x-webhook-signature'] as string | undefined) ??
-      (req.headers['x-signature'] as string | undefined);
-
     try {
       const result = await FMSService.getInstance().handleWebhookEvent(
         facilityId,
         rawBody,
-        signatureHeader
+        req.headers as Record<string, string | string[] | undefined>
       );
 
       if (result.duplicate) {

@@ -62,7 +62,7 @@ describe('POST /api/v1/fms/webhook/:facilityId', () => {
     expect(handleWebhookEvent).toHaveBeenCalledWith(
       facilityId,
       expect.any(Buffer),
-      'sig'
+      expect.objectContaining({ 'x-storable-signature': 'sig' })
     );
   });
 

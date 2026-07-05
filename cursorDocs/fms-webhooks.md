@@ -8,7 +8,40 @@ BluLok receives real-time updates from [Storable Edge CloudEvents](https://webho
 POST {API_BASE}/api/v1/fms/webhook/{blulokFacilityId}
 ```
 
-Configure the signing secret in the facility FMS tab (Storable Edge → **Webhook signing secret**). Leave the secret field blank when updating other settings to keep the existing value. Storable sends HMAC-SHA256 signatures; BluLok verifies the **raw JSON body** against the `X-Storable-Signature` header (configurable via `customSettings.webhookSignatureHeader`).
+Configure webhook security in the facility **FMS Integration** tab under **Webhook security**.
+
+## Webhook authentication modes
+
+Per-facility setting: `config.syncSettings.webhookAuthMode`
+
+| Mode | Config value | Use when |
+|------|--------------|----------|
+| **HMAC signature** (default) | `hmac` | Provider sends HMAC-SHA256 of the raw JSON body (e.g. `X-Storable-Signature`) |
+| **Shared secret in header** | `header_secret` | Provider only supports static custom headers (Storable Edge UI) |
+| **None** | `none` | Local/dev only — **not for production** |
+
+### HMAC mode (`hmac`)
+
+- Set **HMAC signing secret** in BluLok (shared with provider when available).
+- Optional **Signature header name** (default `X-Storable-Signature`).
+- BluLok verifies `HMAC-SHA256(secret, rawBody)` against the header (hex or `sha256=<hex>`).
+
+### Header secret mode (`header_secret`)
+
+- Generate a long random **Shared secret value** in BluLok.
+- Set **Auth header name** (default `Authorization`).
+- Configure the same header + value in the provider's webhook **custom headers** UI.
+- Supports plain secret or `Bearer <secret>`.
+
+### No auth mode (`none`)
+
+- Accepts any POST without credentials.
+- Logs a security warning on each delivery.
+- Intended for local testing only.
+
+Legacy configs without `webhookAuthMode` default to **HMAC** and require `webhookSecret` (same as before).
+
+**Storage:** Auth settings live in `fms_configurations.config` JSON (`syncSettings`); no dedicated DB columns or migration is required when adding new auth modes.
 
 ## Envelope format
 
@@ -56,6 +89,7 @@ All events use the same CloudEvents-style envelope:
 
 ## Security
 
-- Webhook route is **public** (no JWT); authenticity relies on HMAC secret.
+- Webhook route is **public** (no JWT); authenticity relies on configured auth mode (`hmac`, `header_secret`, or `none`).
+- **`none` mode must not be used in production** — anyone who knows the URL can inject events.
 - `body.facility_id` must match the configured Storable facility ID.
 - Facility must have FMS enabled.

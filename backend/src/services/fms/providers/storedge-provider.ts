@@ -10,7 +10,7 @@ import {
   StoredgeWebhookEventType,
 } from '@/types/fms.types';
 import { logger } from '@/utils/logger';
-import crypto from 'crypto';
+import { validateFmsWebhookAuth } from '../fms-webhook-auth';
 
 /**
  * StoreDge FMS Provider
@@ -249,36 +249,16 @@ export class StoredgeProvider extends BaseFMSProvider {
   }
 
   validateWebhookRawBody(rawBody: Buffer, signatureHeader: string | undefined): boolean {
-    const secret = this.config.syncSettings.webhookSecret?.trim();
-    if (!secret) {
-      this.logger.warn('Storedge webhook: no webhookSecret configured — rejecting unsigned delivery');
-      return false;
+    const headers: Record<string, string | undefined> = {};
+    if (signatureHeader) {
+      headers[this.getWebhookSignatureHeaderName()] = signatureHeader;
     }
-    if (!signatureHeader?.trim()) {
-      return false;
-    }
-
-    const expectedHex = crypto.createHmac('sha256', secret).update(rawBody).digest('hex');
-    const expectedPrefixed = `sha256=${expectedHex}`;
-
-    const candidates = [signatureHeader.trim(), signatureHeader.trim().replace(/^sha256=/i, '')];
-    for (const candidate of candidates) {
-      try {
-        const a = Buffer.from(candidate, candidate.length === 64 ? 'hex' : 'utf8');
-        const b = Buffer.from(expectedHex, 'hex');
-        if (a.length === b.length && crypto.timingSafeEqual(a, b)) {
-          return true;
-        }
-        const c = Buffer.from(expectedPrefixed);
-        const d = Buffer.from(signatureHeader.trim());
-        if (c.length === d.length && crypto.timingSafeEqual(c, d)) {
-          return true;
-        }
-      } catch {
-        // continue
-      }
-    }
-    return false;
+    return validateFmsWebhookAuth(
+      this.config.syncSettings,
+      this.config.customSettings,
+      rawBody,
+      headers
+    ).valid;
   }
 
   async validateWebhook(_payload: FMSWebhookPayload, signature: string): Promise<boolean> {

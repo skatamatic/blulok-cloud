@@ -48,6 +48,12 @@ export enum FMSChangeAction {
   UNASSIGN_UNIT = 'unassign_unit',
 }
 
+export enum FMSWebhookAuthMode {
+  HMAC = 'hmac',
+  NONE = 'none',
+  HEADER_SECRET = 'header_secret',
+}
+
 export interface FMSAuthConfig {
   type: FMSAuthType;
   credentials: {
@@ -80,7 +86,10 @@ export interface FMSProviderConfig {
     autoAcceptChanges: boolean;
     syncInterval?: number;
     webhookUrl?: string;
+    webhookAuthMode?: FMSWebhookAuthMode;
     webhookSecret?: string;
+    webhookAuthHeader?: string;
+    webhookSignatureHeader?: string;
   };
   customSettings?: Record<string, unknown>;
 }
