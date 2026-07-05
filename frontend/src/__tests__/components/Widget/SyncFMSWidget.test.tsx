@@ -115,6 +115,7 @@ const mockFMSSyncContext = {
   showReview: jest.fn(),
   hideReview: jest.fn(),
   minimizeReview: jest.fn(),
+  openPendingReview: jest.fn(),
 };
 
 const mockThemeContext = {
@@ -497,6 +498,43 @@ describe('SyncFMSWidget', () => {
       await waitFor(() => {
         expect(screen.getByText('Last Sync Successful')).toBeInTheDocument();
       });
+    });
+
+    it('shows pending review CTA and opens review modal on click', async () => {
+      mockWebSocketContext.subscribe.mockImplementation((topic, callback) => {
+        if (topic === 'fms_sync_status') {
+          callback({
+            facilities: [
+              {
+                facilityId: 'facility-1',
+                facilityName: 'Facility One',
+                lastSyncTime: '2024-01-01T10:00:00Z',
+                status: 'pending_review',
+                changesDetected: 2,
+                changesApplied: 0,
+                changesPending: 2,
+                pendingSyncLogId: 'sync-pending-1',
+                pendingTriggeredBy: 'webhook',
+              },
+            ],
+            lastUpdated: new Date().toISOString(),
+          });
+        }
+        return 'subscription-id';
+      });
+
+      renderWithProviders(<SyncFMSWidget {...defaultProps} />);
+
+      const cta = await screen.findByRole('button', {
+        name: /2 changes pending review \(from webhook\)/i,
+      });
+      fireEvent.click(cta);
+
+      expect(mockFMSSyncContext.openPendingReview).toHaveBeenCalledWith(
+        'facility-1',
+        'sync-pending-1',
+        'Facility One',
+      );
     });
 
     it('shows message when All Facilities is selected', async () => {

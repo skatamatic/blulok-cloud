@@ -4,7 +4,7 @@
  * Configuration, sync operations, and change review for facility FMS integration.
  */
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import {
   CloudIcon,
   CheckCircleIcon,
@@ -23,7 +23,6 @@ import {
   FMSConfiguration,
   FMSProviderType,
   FMSSyncResult,
-  FMSChange,
   FMSSyncLog,
 } from '@/types/fms.types';
 import { ProviderConfigForm } from './ProviderConfigForm';
@@ -33,6 +32,7 @@ import { useFMSSync } from '@/contexts/FMSSyncContext';
 import { getFmsSyncAppliedColumnText } from '@/utils/fmsSyncLogDisplay';
 import { isFMSSyncInProgressError } from '@/utils/fms-sync.utils';
 import { formatDateTime } from '@/utils/datetime.utils';
+import { formatPendingReviewLabel } from '@/utils/fms-pending-review.utils';
 
 interface FacilityFMSTabProps {
   facilityId: string;
@@ -77,13 +77,15 @@ export function FacilityFMSTab({
   canEditFMS = true,
 }: FacilityFMSTabProps) {
   const { addToast } = useToast();
-  const { canStartNewSync, startSync, completeSync, showReview, cancelSync, hasCompletedSync } = useFMSSync();
+  const { canStartNewSync, startSync, completeSync, showReview, cancelSync, hasCompletedSync, openPendingReview, syncState } = useFMSSync();
   const [config, setConfig] = useState<FMSConfiguration | null>(null);
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
   const [testing, setTesting] = useState(false);
   const [, setSyncResult] = useState<FMSSyncResult | null>(null);
-  const [pendingChanges, setPendingChanges] = useState<FMSChange[]>([]);
+  const [pendingReviewCount, setPendingReviewCount] = useState(0);
+  const [pendingSyncLogId, setPendingSyncLogId] = useState<string | null>(null);
+  const [pendingTriggeredBy, setPendingTriggeredBy] = useState<'manual' | 'automatic' | 'webhook' | null>(null);
   const [syncHistory, setSyncHistory] = useState<FMSSyncLog[]>([]);
   const [selectedProvider, setSelectedProvider] = useState<FMSProviderType | null>(null);
   const [configExpanded, setConfigExpanded] = useState(false);
@@ -92,6 +94,16 @@ export function FacilityFMSTab({
     loadConfig();
     loadSyncHistory();
   }, [facilityId]);
+
+  const prevReviewOpenRef = useRef(false);
+  useEffect(() => {
+    const wasOpen = prevReviewOpenRef.current;
+    prevReviewOpenRef.current = syncState.showReviewModal;
+    if (wasOpen && !syncState.showReviewModal) {
+      void loadSyncHistory();
+      void loadConfig();
+    }
+  }, [syncState.showReviewModal, facilityId]);
 
   const loadConfig = async () => {
     try {
@@ -122,6 +134,16 @@ export function FacilityFMSTab({
     try {
       const history = await fmsService.getSyncHistory(facilityId, { limit: 10 });
       setSyncHistory(history.logs);
+      const openReview = history.logs.find((log) => log.changes_pending > 0);
+      if (openReview) {
+        setPendingReviewCount(openReview.changes_pending);
+        setPendingSyncLogId(openReview.id);
+        setPendingTriggeredBy(openReview.triggered_by as 'manual' | 'automatic' | 'webhook');
+      } else {
+        setPendingReviewCount(0);
+        setPendingSyncLogId(null);
+        setPendingTriggeredBy(null);
+      }
     } catch (error) {
       console.error('Failed to load sync history:', error);
     }
@@ -178,9 +200,14 @@ export function FacilityFMSTab({
       const result = await fmsService.triggerSync(facilityId);
       setSyncResult(result);
 
+      if (result.changesDetected && result.changesDetected.length > 0) {
+        setPendingReviewCount(result.changesDetected.length);
+        setPendingSyncLogId(result.syncLogId);
+        setPendingTriggeredBy('manual');
+      }
+
       if (!hasCompletedSync()) {
         if (result.changesDetected && result.changesDetected.length > 0) {
-          setPendingChanges(result.changesDetected);
           completeSync(result.changesDetected, result);
           showReview();
           addToast({
@@ -527,18 +554,30 @@ export function FacilityFMSTab({
                     </div>
                   )}
 
-                  {pendingChanges.length > 0 && (
+                  {pendingReviewCount > 0 && pendingSyncLogId && (
                     <div className="mb-5 rounded-lg border border-yellow-200 dark:border-yellow-800/50 bg-yellow-50 dark:bg-yellow-900/20 p-4">
                       <div className="flex items-start justify-between gap-3">
                         <div className="flex gap-2 min-w-0">
                           <ExclamationTriangleIcon className="h-5 w-5 text-yellow-600 dark:text-yellow-400 shrink-0" />
                           <span className="text-sm font-medium text-yellow-800 dark:text-yellow-200">
-                            {pendingChanges.length} changes pending review
+                            {formatPendingReviewLabel(pendingReviewCount, pendingTriggeredBy)}
                           </span>
                         </div>
                         <button
                           type="button"
-                          onClick={() => showReview()}
+                          onClick={() => {
+                            void openPendingReview(facilityId, pendingSyncLogId, facilityName).catch(
+                              (error: unknown) => {
+                                addToast({
+                                  type: 'error',
+                                  title: 'Could not open review',
+                                  message:
+                                    error instanceof Error ? error.message : 'Please try again',
+                                });
+                                void loadSyncHistory();
+                              },
+                            );
+                          }}
                           className="text-sm font-medium text-yellow-700 dark:text-yellow-300 hover:text-yellow-900 dark:hover:text-yellow-100 whitespace-nowrap transition-colors"
                         >
                           Review Changes →

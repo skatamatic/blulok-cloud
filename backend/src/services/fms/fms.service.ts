@@ -57,6 +57,7 @@ import {
 import { FMSWebhookAuthMode } from '@/types/fms.types';
 import { UserRole } from '@/types/auth.types';
 import { logger } from '@/utils/logger';
+import { shouldAutoAcceptChanges } from './fms-auto-accept.utils';
 
 /**
  * FMS Integration Service Class
@@ -421,16 +422,17 @@ export class FMSService {
       });
 
       // Update sync log with results
+      const autoAccept = shouldAutoAcceptChanges(config.config.syncSettings, 'manual');
       await this.syncLogModel.update(syncLog.id, {
         changes_detected: changes.length,
         changes_pending: changes.length,
-        sync_status: config.config.syncSettings.autoAcceptChanges 
-          ? FMSSyncStatus.COMPLETED 
+        sync_status: autoAccept
+          ? FMSSyncStatus.COMPLETED
           : FMSSyncStatus.PENDING_REVIEW,
       });
 
       // Auto-accept and apply if configured
-      if (config.config.syncSettings.autoAcceptChanges && changes.length > 0) {
+      if (autoAccept && changes.length > 0) {
         const applyResult = await this.applyChanges(
           syncLog.id,
           changes.map(c => c.id)
@@ -447,6 +449,14 @@ export class FMSService {
           errors: applyResult.errors,
           warnings: [],
           changes_auto_applied: true,
+        });
+      } else if (changes.length > 0) {
+        await this.syncLogModel.markPendingReview(syncLog.id, {
+          tenants_synced: fmsTenants.length,
+          units_synced: fmsUnits.length,
+          errors: [],
+          warnings: [],
+          changes_auto_applied: false,
         });
       } else {
         await this.syncLogModel.markCompleted(syncLog.id, {
@@ -1198,13 +1208,37 @@ export class FMSService {
       await this.changeModel.bulkMarkApplied(appliedIds);
     }
 
-    await this.syncLogModel.update(syncLogId, {
-      changes_applied: result.changesApplied,
-    });
+    await this.refreshSyncLogChangeCounts(syncLogId);
 
     this.broadcastFMSSyncUpdate(ctx.facilityId);
 
     return result;
+  }
+
+  /**
+   * Reconcile sync log counters from fms_changes rows after review/apply.
+   * Clears pending_review status when no unreviewed changes remain.
+   */
+  private async refreshSyncLogChangeCounts(syncLogId: string): Promise<string | null> {
+    const syncLog = await this.syncLogModel.findById(syncLogId);
+    if (!syncLog) return null;
+
+    const stats = await this.changeModel.getStatsBySyncLogId(syncLogId);
+    const allChanges = await this.changeModel.findBySyncLogId(syncLogId);
+    const appliedCount = allChanges.filter((c) => c.applied_at != null).length;
+
+    const update: Parameters<FMSSyncLogModel['update']>[1] = {
+      changes_pending: stats.pending,
+      changes_rejected: stats.rejected,
+      changes_applied: appliedCount,
+    };
+
+    if (stats.pending === 0 && syncLog.sync_status === FMSSyncStatus.PENDING_REVIEW) {
+      update.sync_status = FMSSyncStatus.COMPLETED;
+    }
+
+    await this.syncLogModel.update(syncLogId, update);
+    return syncLog.facility_id;
   }
 
   /**
@@ -2280,7 +2314,7 @@ export class FMSService {
       await this.webhookEventModel.deleteByExternalEventId(facilityId, payload.externalEventId);
     }
 
-    const autoAccept = config.config.syncSettings.autoAcceptChanges;
+    const autoAccept = shouldAutoAcceptChanges(config.config.syncSettings, 'webhook');
     let syncLog: FMSSyncLog;
     let syncLogCreatedForEvent = false;
 
@@ -2353,6 +2387,14 @@ export class FMSService {
           errors: applyResult.errors,
           warnings: [],
           changes_auto_applied: true,
+        });
+      } else if (changes.length > 0) {
+        await this.syncLogModel.markPendingReview(syncLog.id, {
+          tenants_synced: 0,
+          units_synced: 0,
+          errors: [],
+          warnings: [],
+          changes_auto_applied: false,
         });
       } else {
         await this.syncLogModel.markCompleted(syncLog.id, {
@@ -2698,6 +2740,16 @@ export class FMSService {
     accepted: boolean
   ): Promise<void> {
     await this.changeModel.bulkReview(changeIds, accepted);
+
+    if (changeIds.length === 0) return;
+
+    const firstChange = await this.changeModel.findById(changeIds[0]!);
+    if (!firstChange) return;
+
+    const facilityId = await this.refreshSyncLogChangeCounts(firstChange.sync_log_id);
+    if (facilityId) {
+      this.broadcastFMSSyncUpdate(facilityId);
+    }
   }
 
   /**

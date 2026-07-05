@@ -161,6 +161,8 @@ export function FMSConfigSummary({
   const baseUrl = config.config?.baseUrl?.trim() || null;
   const externalFacilityId = getExternalFacilityId(config);
   const autoAccept = config.config?.syncSettings?.autoAcceptChanges ?? false;
+  const autoAcceptWebhook =
+    config.config?.syncSettings?.autoAcceptWebhookChanges ?? autoAccept;
 
   return (
     <div className="space-y-5">
@@ -237,6 +239,7 @@ export function FMSConfigSummary({
       )}
 
       {(autoAccept ||
+        autoAcceptWebhook ||
         config.config?.features?.supportsTenantSync !== false ||
         config.config?.features?.supportsUnitSync !== false) && (
         <div className="flex flex-wrap gap-2">
@@ -250,9 +253,14 @@ export function FMSConfigSummary({
               Unit sync
             </span>
           )}
+          {autoAcceptWebhook && (
+            <span className="inline-flex px-2.5 py-1 rounded-full text-xs font-medium bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-300">
+              Auto-apply webhooks
+            </span>
+          )}
           {autoAccept && (
             <span className="inline-flex px-2.5 py-1 rounded-full text-xs font-medium bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-300">
-              Auto-accept changes
+              Auto-apply manual sync
             </span>
           )}
         </div>

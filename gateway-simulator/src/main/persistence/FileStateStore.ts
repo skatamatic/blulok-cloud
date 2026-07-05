@@ -42,15 +42,13 @@ export type SimulatorSession = {
 };
 
 /** Admin session for listing/importing cloud users — independent of gateway setup login. */
+import type { AppState as IpcAppState } from '@protocol/ipc-channels';
+
 export type CatalogSession = SimulatorSession & {
   role: string;
 };
 
-export type AppState = {
-  activeInstanceId: string | null;
-  activeUserId?: string | null;
-  sidebarCatalog?: 'gateways' | 'users';
-};
+export type AppState = IpcAppState;
 
 export interface IStateStore {
   loadProfiles(): Promise<GatewayProfile[]>;

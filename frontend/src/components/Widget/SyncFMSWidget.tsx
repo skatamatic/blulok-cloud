@@ -24,6 +24,7 @@ import { DashboardFacilityScopePlaceholder } from '@/components/Widget/Dashboard
 import { DASHBOARD_SELECT_FACILITY_TITLE } from '@/constants/dashboard-facility-scope.constants';
 import { StatTinyContent } from '@/components/Widget/widget-content.utils';
 import { formatDateTime, formatRelativeTime } from '@/utils/datetime.utils';
+import { formatPendingReviewLabel } from '@/utils/fms-pending-review.utils';
 
 const FMS_SYNC_TINT_ACTIVE =
   'text-blue-600 dark:text-blue-400 bg-blue-100 dark:bg-blue-900/20';
@@ -75,9 +76,12 @@ interface FMSSyncStatus {
   facilityId: string;
   facilityName?: string;
   lastSyncTime: string | null;
-  status: 'completed' | 'failed' | 'partial' | 'never_synced' | 'not_configured';
+  status: 'completed' | 'failed' | 'partial' | 'pending_review' | 'never_synced' | 'not_configured';
   changesDetected?: number;
   changesApplied?: number;
+  changesPending?: number;
+  pendingSyncLogId?: string;
+  pendingTriggeredBy?: 'manual' | 'automatic' | 'webhook';
   errorMessage?: string;
 }
 
@@ -115,7 +119,7 @@ export const SyncFMSWidget: React.FC<SyncFMSWidgetProps> = ({
 }) => {
   const { authState } = useAuth();
   const { addToast } = useToast();
-  const { startSync, completeSync, canStartNewSync, cancelSync, hasCompletedSync } = useFMSSync();
+  const { startSync, completeSync, canStartNewSync, cancelSync, hasCompletedSync, openPendingReview } = useFMSSync();
   const { selectedFacilityId, facilities, isLoading: facilitiesLoading } = useGlobalFacility();
   const { size, handleSizeChange } = useWidgetSizeState(
     currentSize,
@@ -503,6 +507,7 @@ export const SyncFMSWidget: React.FC<SyncFMSWidgetProps> = ({
       case 'failed':
         return <ExclamationTriangleIcon className="h-5 w-5 text-red-500" />;
       case 'partial':
+      case 'pending_review':
         return <ExclamationTriangleIcon className="h-5 w-5 text-yellow-500" />;
       default:
         return <ServerIcon className="h-5 w-5 text-gray-500" />;
@@ -517,11 +522,37 @@ export const SyncFMSWidget: React.FC<SyncFMSWidgetProps> = ({
       case 'failed':
         return 'text-red-700 dark:text-red-300 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800';
       case 'partial':
+      case 'pending_review':
         return 'text-yellow-800 dark:text-yellow-200 bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800';
       case 'never_synced':
         return 'text-gray-700 dark:text-gray-300 bg-gray-50 dark:bg-gray-700/50 border border-gray-200 dark:border-gray-600';
       default:
         return 'text-gray-700 dark:text-gray-300 bg-gray-50 dark:bg-gray-700/50 border border-gray-200 dark:border-gray-600';
+    }
+  };
+
+  const pendingReviewLabel = (status: FMSSyncStatus): string | null => {
+    if (!status.changesPending || status.changesPending <= 0 || !status.pendingSyncLogId) {
+      return null;
+    }
+    return formatPendingReviewLabel(status.changesPending, status.pendingTriggeredBy);
+  };
+
+  const handleOpenPendingReview = async (status: FMSSyncStatus) => {
+    if (!status.pendingSyncLogId || !effectiveFacilityId) return;
+    try {
+      await openPendingReview(
+        effectiveFacilityId,
+        status.pendingSyncLogId,
+        getFacilityName(effectiveFacilityId),
+      );
+    } catch (err) {
+      console.error('Failed to open pending review:', err);
+      addToast({
+        type: 'error',
+        title: 'Could not open review',
+        message: err instanceof Error ? err.message : 'Please try again',
+      });
     }
   };
 
@@ -627,6 +658,16 @@ export const SyncFMSWidget: React.FC<SyncFMSWidgetProps> = ({
             />
           ) : (
             <>
+          {currentFacilityStatus && pendingReviewLabel(currentFacilityStatus) && (
+            <button
+              type="button"
+              onClick={() => void handleOpenPendingReview(currentFacilityStatus)}
+              className="w-full rounded-lg border border-amber-300/70 bg-amber-50 px-3 py-2 text-left text-xs font-medium text-amber-900 transition-colors hover:bg-amber-100 dark:border-amber-700/50 dark:bg-amber-950/30 dark:text-amber-100 dark:hover:bg-amber-950/50"
+            >
+              {pendingReviewLabel(currentFacilityStatus)}
+              <span className="ml-1 text-amber-700 dark:text-amber-300">→ Review</span>
+            </button>
+          )}
           {size === 'small' && !effectiveFacilityId && (
             <p className="text-xs text-gray-500 dark:text-gray-400 text-center px-2">
               Select a facility to sync
@@ -654,7 +695,9 @@ export const SyncFMSWidget: React.FC<SyncFMSWidgetProps> = ({
                           ? 'Failed'
                           : currentFacilityStatus.status === 'never_synced'
                             ? 'Never sync'
-                            : 'Partial'}
+                            : currentFacilityStatus.status === 'pending_review'
+                              ? 'Review needed'
+                              : 'Partial'}
                     </div>
                     <div className="truncate text-xs text-gray-500 dark:text-gray-400">
                       {currentFacilityStatus.lastSyncTime
@@ -715,7 +758,9 @@ export const SyncFMSWidget: React.FC<SyncFMSWidgetProps> = ({
                     <span className="text-sm font-medium">
                       {currentFacilityStatus.status === 'completed' ? 'Last Sync Successful' :
                        currentFacilityStatus.status === 'failed' ? 'Last Sync Failed' :
-                       currentFacilityStatus.status === 'never_synced' ? 'Never Synced' : 'Partial Sync'}
+                       currentFacilityStatus.status === 'never_synced' ? 'Never Synced' :
+                       currentFacilityStatus.status === 'pending_review' ? 'Changes Pending Review' :
+                       'Partial Sync'}
                     </span>
                   </div>
                 </div>

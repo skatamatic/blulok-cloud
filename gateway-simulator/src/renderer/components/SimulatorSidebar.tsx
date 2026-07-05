@@ -1,9 +1,10 @@
 import { useMemo } from 'react';
-import type { GatewayInstanceState } from '@protocol/ipc-channels';
+import type { GatewayInstanceState, SidebarCatalog } from '@protocol/ipc-channels';
 import type { UserInstanceState } from '@protocol/user-simulator-state';
 import {
   ArrowPathIcon,
   ChevronDoubleLeftIcon,
+  BoltIcon,
   Cog6ToothIcon,
   PlusIcon,
   UserIcon,
@@ -19,8 +20,8 @@ import {
 import { groupGatewaysByFacility } from '../utils/gateway-sidebar.utils';
 
 type Props = {
-  catalog: 'gateways' | 'users';
-  onCatalogChange: (catalog: 'gateways' | 'users') => void;
+  catalog: SidebarCatalog;
+  onCatalogChange: (catalog: SidebarCatalog) => void;
   instances: GatewayInstanceState[];
   users: UserInstanceState[];
   activeGatewayId: string | null;
@@ -150,10 +151,26 @@ export function SimulatorSidebar({
             >
               Users <span className="catalog-tab-count">{users.length}</span>
             </button>
+            <button
+              type="button"
+              className={`catalog-tab ${catalog === 'webhooks' ? 'is-active' : ''}`}
+              onClick={() => onCatalogChange('webhooks')}
+            >
+              Webhooks
+            </button>
           </div>
         )}
 
-        <nav className="gateway-sidebar-nav" aria-label={catalog === 'gateways' ? 'Simulated gateways' : 'Simulated users'}>
+        <nav
+          className="gateway-sidebar-nav"
+          aria-label={
+            catalog === 'gateways'
+              ? 'Simulated gateways'
+              : catalog === 'users'
+                ? 'Simulated users'
+                : 'FMS webhooks'
+          }
+        >
           {catalog === 'gateways' &&
             gatewayGroups.map((group) => (
               <section
@@ -208,6 +225,14 @@ export function SimulatorSidebar({
           {catalog === 'users' && !users.length && (
             <p className="gateway-sidebar-empty">No users yet</p>
           )}
+          {catalog === 'webhooks' && !collapsed && (
+            <div className="px-3 py-4 text-center">
+              <BoltIcon className="mx-auto mb-2 h-6 w-6 text-primary-500" aria-hidden />
+              <p className="text-xs leading-relaxed text-gray-500 dark:text-gray-400">
+                Simulate FMS webhook deliveries in the main panel. Sign in with an authorized account to load configs.
+              </p>
+            </div>
+          )}
         </nav>
 
         <div className="gateway-sidebar-footer">
@@ -221,6 +246,7 @@ export function SimulatorSidebar({
             <Cog6ToothIcon className="h-4 w-4 shrink-0" aria-hidden />
             <span className="gateway-sidebar-preferences-label">Preferences</span>
           </button>
+          {catalog !== 'webhooks' && (
           <button
             type="button"
             onClick={catalog === 'gateways' ? onAddGateway : onAddUser}
@@ -233,6 +259,7 @@ export function SimulatorSidebar({
               {catalog === 'gateways' ? 'Add gateway' : 'Import user'}
             </span>
           </button>
+          )}
         </div>
       </aside>
       {!collapsed && (

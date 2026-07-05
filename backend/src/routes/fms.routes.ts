@@ -62,7 +62,9 @@ import {
   fmsSyncHistoryQuerySchema,
   reviewFmsChangesSchema,
   applyFmsChangesSchema,
+  fmsConfigListQuerySchema,
   fmsConfigResponseSchema,
+  fmsConfigListResponseSchema,
   fmsConfigCreateResponseSchema,
   fmsConfigMutationResponseSchema,
   fmsConnectionTestResponseSchema,
@@ -125,6 +127,59 @@ registerPost(
       success: true,
       message: 'FMS configuration created successfully',
       config: fmsConfig,
+    });
+  }),
+);
+
+registerGet(
+  router,
+  '/config',
+  {
+    openApiPath: `${MOUNT}/config`,
+    tags: ['FMS'],
+    summary: 'List FMS configurations',
+    description:
+      'Returns FMS configs visible to the caller. FACILITY_ADMIN is scoped to assigned facilities. Use webhooks_only to filter webhook-enabled integrations.',
+    security: 'bearer',
+    query: fmsConfigListQuerySchema,
+    responses: {
+      200: fmsConfigListResponseSchema,
+      403: errorEnvelopeSchema,
+    },
+  },
+  requireRoles([UserRole.ADMIN, UserRole.DEV_ADMIN, UserRole.FACILITY_ADMIN]),
+  asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+    const user = req.user!;
+    const query = req.query as {
+      webhooks_only?: boolean;
+      is_enabled?: boolean;
+      provider_type?: string;
+    };
+    const webhooksOnly = query.webhooks_only === true;
+    const isEnabled = query.is_enabled;
+    const providerType = query.provider_type;
+
+    const facilityIds =
+      user.role === UserRole.FACILITY_ADMIN ? user.facilityIds : undefined;
+
+    if (user.role === UserRole.FACILITY_ADMIN && !facilityIds?.length) {
+      res.json({ success: true, configs: [] });
+      return;
+    }
+
+    let configs = await getFMSConfigModel().findAllWithFacilities({
+      is_enabled: isEnabled,
+      provider_type: providerType as import('@/types/fms.types').FMSProviderType | undefined,
+      facility_ids: facilityIds,
+    });
+
+    if (webhooksOnly) {
+      configs = configs.filter((c) => c.config?.features?.supportsWebhooks === true);
+    }
+
+    res.json({
+      success: true,
+      configs,
     });
   }),
 );

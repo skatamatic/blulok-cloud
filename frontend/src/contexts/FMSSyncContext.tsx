@@ -4,6 +4,44 @@ import { FMSChange, FMSSyncResult } from '@/types/fms.types';
 
 export type SyncStep = 'connecting' | 'fetching' | 'detecting' | 'preparing' | 'complete' | 'cancelled';
 
+function buildSyncSummaryFromChanges(changes: FMSChange[]): FMSSyncResult['summary'] {
+  return changes.reduce(
+    (acc, change) => {
+      switch (change.change_type) {
+        case 'tenant_added':
+          acc.tenantsAdded++;
+          break;
+        case 'tenant_removed':
+          acc.tenantsRemoved++;
+          break;
+        case 'tenant_updated':
+          acc.tenantsUpdated++;
+          break;
+        case 'unit_added':
+          acc.unitsAdded++;
+          break;
+        case 'unit_removed':
+          acc.unitsRemoved++;
+          break;
+        case 'unit_updated':
+          acc.unitsUpdated++;
+          break;
+      }
+      return acc;
+    },
+    {
+      tenantsAdded: 0,
+      tenantsRemoved: 0,
+      tenantsUpdated: 0,
+      unitsAdded: 0,
+      unitsRemoved: 0,
+      unitsUpdated: 0,
+      errors: [] as string[],
+      warnings: [] as string[],
+    },
+  );
+}
+
 /**
  * Minimum time (ms) each progress step is shown in the UI.
  * Prevents flash-of-content when the backend completes steps faster than a human can read.
@@ -37,6 +75,7 @@ interface FMSSyncContextType {
   hideReview: () => void;
   minimizeReview: () => void;
   applyChanges: () => Promise<void>;
+  openPendingReview: (facilityId: string, syncLogId: string, facilityName?: string) => Promise<void>;
   isSyncActive: () => boolean;
   canStartNewSync: () => boolean;
   hasCompletedSync: () => boolean;
@@ -331,41 +370,7 @@ export function FMSSyncProvider({ children }: { children: ReactNode }) {
               pendingCount: pendingChanges.length,
             });
 
-            const summary = pendingChanges.reduce(
-              (acc, change) => {
-                switch (change.change_type) {
-                  case 'tenant_added':
-                    acc.tenantsAdded++;
-                    break;
-                  case 'tenant_removed':
-                    acc.tenantsRemoved++;
-                    break;
-                  case 'tenant_updated':
-                    acc.tenantsUpdated++;
-                    break;
-                  case 'unit_added':
-                    acc.unitsAdded++;
-                    break;
-                  case 'unit_removed':
-                    acc.unitsRemoved++;
-                    break;
-                  case 'unit_updated':
-                    acc.unitsUpdated++;
-                    break;
-                }
-                return acc;
-              },
-              {
-                tenantsAdded: 0,
-                tenantsRemoved: 0,
-                tenantsUpdated: 0,
-                unitsAdded: 0,
-                unitsRemoved: 0,
-                unitsUpdated: 0,
-                errors: [] as string[],
-                warnings: [] as string[],
-              }
-            );
+            const summary = buildSyncSummaryFromChanges(pendingChanges);
 
             const syncResult: FMSSyncResult = {
               success: latestSync.sync_status === 'completed',
@@ -456,10 +461,42 @@ export function FMSSyncProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const applyChanges = useCallback(async () => {
-    // This would be implemented to call the actual apply changes API
-    // For now, just hide the review modal
     hideReview();
   }, [hideReview]);
+
+  const openPendingReview = useCallback(
+    async (facilityId: string, syncLogId: string, facilityName?: string) => {
+      const { fmsService } = await import('../services/fms.service');
+      const pendingChanges = await fmsService.getPendingChanges(syncLogId);
+      if (pendingChanges.length === 0) {
+        throw new Error('No pending changes remain for review');
+      }
+
+      const latestSync = await fmsService.getSyncDetails(syncLogId);
+      const syncResult: FMSSyncResult = {
+        success: latestSync.sync_status !== 'failed',
+        syncLogId: latestSync.id,
+        changesDetected: pendingChanges,
+        summary: buildSyncSummaryFromChanges(pendingChanges),
+        requiresReview: true,
+      };
+
+      activeSyncLogIdRef.current = syncLogId;
+      setSyncState({
+        isActive: false,
+        isMinimized: false,
+        currentStep: 'complete',
+        facilityId,
+        facilityName: facilityName ?? null,
+        syncLogId,
+        progressPercentage: 100,
+        pendingChanges,
+        syncResult,
+        showReviewModal: pendingChanges.length > 0,
+      });
+    },
+    [],
+  );
 
   const isSyncActive = useCallback(() => {
     return syncState.isActive;
@@ -490,6 +527,7 @@ export function FMSSyncProvider({ children }: { children: ReactNode }) {
     hideReview,
     minimizeReview,
     applyChanges,
+    openPendingReview,
     isSyncActive,
     canStartNewSync,
     hasCompletedSync,

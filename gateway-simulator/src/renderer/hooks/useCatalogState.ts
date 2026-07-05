@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback } from 'react';
-import type { GatewayInstanceState, HydrateResponse } from '@protocol/ipc-channels';
+import type { GatewayInstanceState, HydrateResponse, SidebarCatalog } from '@protocol/ipc-channels';
 import type { UserInstanceState } from '@protocol/user-simulator-state';
 
 export function useCatalogState() {
@@ -7,13 +7,15 @@ export function useCatalogState() {
   const [users, setUsers] = useState<UserInstanceState[]>([]);
   const [activeGatewayId, setActiveGatewayIdState] = useState<string | null>(null);
   const [activeUserId, setActiveUserIdState] = useState<string | null>(null);
-  const [sidebarCatalog, setSidebarCatalogState] = useState<'gateways' | 'users'>('gateways');
+  const [sidebarCatalog, setSidebarCatalogState] = useState<SidebarCatalog>('gateways');
+  const [webhookSimulatorPrefs, setWebhookSimulatorPrefs] = useState<HydrateResponse['webhookSimulator']>();
   const [hydrated, setHydrated] = useState(false);
 
   const applyHydrate = useCallback((result: HydrateResponse) => {
     setInstances(result.instances);
     setUsers(result.users);
     setSidebarCatalogState(result.sidebarCatalog);
+    setWebhookSimulatorPrefs(result.webhookSimulator);
     if (result.activeInstanceId && result.instances.some((g) => g.id === result.activeInstanceId)) {
       setActiveGatewayIdState(result.activeInstanceId);
     } else if (result.instances.length) {
@@ -44,7 +46,7 @@ export function useCatalogState() {
     void window.simulator.setSidebarCatalog('users');
   };
 
-  const setSidebarCatalog = (catalog: 'gateways' | 'users') => {
+  const setSidebarCatalog = (catalog: SidebarCatalog) => {
     setSidebarCatalogState(catalog);
     void window.simulator.setSidebarCatalog(catalog);
   };
@@ -103,6 +105,7 @@ export function useCatalogState() {
     activeGateway,
     activeUser,
     sidebarCatalog,
+    webhookSimulatorPrefs,
     setInstances,
     setUsers,
     setActiveGatewayId,

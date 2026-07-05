@@ -187,10 +187,22 @@ export function registerIpcHandlers(): void {
     await gatewayManager.setActiveUser(id);
     return { ok: true };
   });
-  ipcMain.handle(IPC.SET_SIDEBAR_CATALOG, async (_e, catalog: 'gateways' | 'users') => {
+  ipcMain.handle(IPC.SET_SIDEBAR_CATALOG, async (_e, catalog: import('@protocol/ipc-channels').SidebarCatalog) => {
     await gatewayManager.setSidebarCatalog(catalog);
     return { ok: true };
   });
+  ipcMain.handle(IPC.LIST_FMS_WEBHOOK_TARGETS, async () => gatewayManager.listFmsWebhookTargets());
+  ipcMain.handle(
+    IPC.SEND_FMS_WEBHOOK,
+    async (_e, req: import('@protocol/ipc-channels').SendFmsWebhookRequest) => gatewayManager.sendFmsWebhook(req),
+  );
+  ipcMain.handle(
+    IPC.SAVE_WEBHOOK_SIMULATOR_STATE,
+    async (_e, prefs: NonNullable<import('@protocol/ipc-channels').AppState['webhookSimulator']>) => {
+      await gatewayManager.saveWebhookSimulatorState(prefs);
+      return { ok: true };
+    },
+  );
   ipcMain.handle(
     IPC.ADD_USER_DEVICE,
     async (_e, userId: string, req?: import('@protocol/user-simulator-state').AddUserDeviceRequest) => {

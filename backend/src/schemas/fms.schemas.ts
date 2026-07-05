@@ -49,9 +49,37 @@ export const applyFmsChangesSchema = Joi.object({
   changeIds: Joi.array().items(Joi.string()).required(),
 });
 
+export const fmsConfigListQuerySchema = paginationQuerySchema.keys({
+  webhooks_only: Joi.boolean().truthy('true').falsy('false').optional(),
+  is_enabled: Joi.boolean().truthy('true').falsy('false').optional(),
+  provider_type: Joi.string()
+    .valid(...FMS_PROVIDER_TYPES)
+    .optional(),
+});
+
 export const fmsConfigResponseSchema = Joi.object({
   success: Joi.boolean().valid(true).required(),
   config: Joi.object().required(),
+});
+
+export const fmsConfigListResponseSchema = Joi.object({
+  success: Joi.boolean().valid(true).required(),
+  configs: Joi.array()
+    .items(
+      Joi.object({
+        id: Joi.string().required(),
+        facility_id: Joi.string().required(),
+        facility_name: Joi.string().allow(null).optional(),
+        provider_type: Joi.string().required(),
+        is_enabled: Joi.boolean().required(),
+        config: Joi.object().required(),
+        last_sync_at: Joi.date().allow(null).optional(),
+        last_sync_status: Joi.string().allow(null).optional(),
+        created_at: Joi.date().optional(),
+        updated_at: Joi.date().optional(),
+      }),
+    )
+    .required(),
 });
 
 export const fmsConfigCreateResponseSchema = Joi.object({

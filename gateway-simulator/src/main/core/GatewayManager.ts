@@ -1,9 +1,15 @@
 import { randomUUID } from 'crypto';
 import { app } from 'electron';
-import type { AppState, CreateGatewayRequest, GatewayInstanceState, GatewayLogEvent, GatewayUpdatedEvent, HydrateResponse, SessionSummary, CatalogSessionSummary, SimulateAccessEventRequest } from '@protocol/ipc-channels';
+import type { AppState, CreateGatewayRequest, GatewayInstanceState, GatewayLogEvent, GatewayUpdatedEvent, HydrateResponse, SessionSummary, CatalogSessionSummary, SimulateAccessEventRequest, FmsWebhookTargetSummary, SendFmsWebhookRequest, SendFmsWebhookResponse, SidebarCatalog } from '@protocol/ipc-channels';
+import { postFmsWebhook, resolveWebhookAuthFromTarget } from '@protocol/fms-webhook-sender.utils';
+import {
+  mapFmsConfigToWebhookTarget,
+  toPublicWebhookTargetSummary,
+  type InternalFmsWebhookTarget,
+} from '../fms/fms-webhook-target.utils';
 import { normalizeBehavior } from '@protocol/ipc-channels';
 import { backendClient, BackendClient } from '../auth/BackendClient';
-import { isCatalogAdminRole } from '../auth/catalog-session.utils';
+import { isCatalogAdminRole, isCloudApiSessionRole, isFmsWebhookRole } from '../auth/catalog-session.utils';
 import { SimulatedGateway } from './SimulatedGateway';
 import { FileStateStore, emptyProfile, type GatewayProfile } from '../persistence/FileStateStore';
 import type { BrowserWindow } from 'electron';
@@ -57,6 +63,8 @@ export class GatewayManager {
   private readonly history = new SimulatorHistory();
   private applyingHistory = false;
   private readonly userManager: UserManager;
+  /** Main-process cache of webhook targets (includes secrets). Populated by listFmsWebhookTargets. */
+  private fmsWebhookTargetsByFacility = new Map<string, InternalFmsWebhookTarget>();
 
   constructor(options: GatewayManagerOptions = {}) {
     this.store = options.store ?? new FileStateStore(app.getPath('userData'));
@@ -143,9 +151,71 @@ export class GatewayManager {
     await this.store.saveAppState({ ...appState, activeUserId: id });
   }
 
-  async setSidebarCatalog(catalog: 'gateways' | 'users'): Promise<void> {
+  async setSidebarCatalog(catalog: SidebarCatalog): Promise<void> {
     const appState = await this.store.loadAppState();
     await this.store.saveAppState({ ...appState, sidebarCatalog: catalog });
+  }
+
+  async saveWebhookSimulatorState(prefs: NonNullable<AppState['webhookSimulator']>): Promise<void> {
+    const appState = await this.store.loadAppState();
+    await this.store.saveAppState({
+      ...appState,
+      webhookSimulator: { ...appState.webhookSimulator, ...prefs },
+    });
+  }
+
+  async listFmsWebhookTargets(): Promise<FmsWebhookTargetSummary[]> {
+    await this.requireFmsWebhookSession();
+    const configs = await this.catalogApi.listFmsConfigs({ webhooksOnly: true });
+    const backendUrl = this.catalogApi.getBackendUrl();
+
+    this.fmsWebhookTargetsByFacility.clear();
+    return configs.map((record) => {
+      const internal = mapFmsConfigToWebhookTarget(record, backendUrl);
+      this.fmsWebhookTargetsByFacility.set(internal.facilityId, internal);
+      return toPublicWebhookTargetSummary(internal);
+    });
+  }
+
+  async sendFmsWebhook(req: SendFmsWebhookRequest): Promise<SendFmsWebhookResponse> {
+    await this.requireFmsWebhookSession();
+    const target = await this.resolveInternalWebhookTarget(req.facilityId);
+
+    if (!target.isEnabled) {
+      throw new Error('FMS integration is disabled for this facility');
+    }
+    if (!target.authReady) {
+      throw new Error('Webhook auth is not configured — add a signing secret in FMS settings');
+    }
+
+    const auth = req.authOverride ?? resolveWebhookAuthFromTarget(target);
+
+    const result = await postFmsWebhook(
+      globalThis.fetch.bind(globalThis),
+      target.webhookUrl,
+      req.body,
+      auth,
+      req.extraHeaders ?? {},
+    );
+
+    return {
+      status: result.status,
+      ok: result.ok,
+      body: result.body,
+      rawBody: result.rawBody,
+    };
+  }
+
+  private async resolveInternalWebhookTarget(facilityId: string): Promise<InternalFmsWebhookTarget> {
+    let target = this.fmsWebhookTargetsByFacility.get(facilityId);
+    if (target) return target;
+
+    await this.listFmsWebhookTargets();
+    target = this.fmsWebhookTargetsByFacility.get(facilityId);
+    if (!target) {
+      throw new Error(`No webhook-enabled FMS config found for facility ${facilityId}`);
+    }
+    return target;
   }
 
   async createUser(req: CreateUserRequest): Promise<UserInstanceState> {
@@ -162,12 +232,12 @@ export class GatewayManager {
     limit?: number;
     offset?: number;
   }): Promise<{ users: CloudUserSummary[]; total: number }> {
-    this.requireCatalogAdminSession();
+    await this.requireCatalogAdminSession();
     return this.catalogApi.listUsers({ limit: 200, ...options });
   }
 
   async importCloudUser(req: ImportCloudUserRequest): Promise<UserInstanceState> {
-    this.requireCatalogAdminSession();
+    await this.requireCatalogAdminSession();
     let state!: UserInstanceState;
     await this.recordUndoable('Import user', async () => {
       state = await this.userManager.importCloudUser(req);
@@ -184,19 +254,20 @@ export class GatewayManager {
         email: stored.email,
         role: stored.role,
         canImportUsers: isCatalogAdminRole(stored.role),
+        canSimulateFmsWebhooks: isFmsWebhookRole(stored.role),
       };
     }
     if (this.catalogApi.getToken()) {
-      return { available: true, canImportUsers: false };
+      return { available: true, canImportUsers: false, canSimulateFmsWebhooks: false };
     }
     return { available: false };
   }
 
   async loginCatalogSession(req: import('@protocol/ipc-channels').LoginRequest): Promise<import('@protocol/ipc-channels').LoginResponse> {
     const result = await this.catalogApi.login(req);
-    if (!isCatalogAdminRole(result.user.role)) {
+    if (!isCloudApiSessionRole(result.user.role)) {
       this.catalogApi.restoreSession('', '');
-      throw new Error('Admin or Dev Admin account required to import users');
+      throw new Error('Admin, Dev Admin, or Facility Admin account required');
     }
     await this.store.saveCatalogSession({
       backendUrl: req.backendUrl.replace(/\/+$/, ''),
@@ -211,11 +282,26 @@ export class GatewayManager {
   async clearCatalogSession(): Promise<void> {
     await this.store.clearCatalogSession();
     this.catalogApi.restoreSession('', '');
+    this.fmsWebhookTargetsByFacility.clear();
   }
 
-  private requireCatalogAdminSession(): void {
+  private async requireCatalogAdminSession(): Promise<void> {
+    const stored = await this.store.loadCatalogSession();
     if (!this.catalogApi.getToken()) {
       throw new Error('Sign in as Admin or Dev Admin to import users');
+    }
+    if (!stored?.role || !isCatalogAdminRole(stored.role)) {
+      throw new Error('Sign in as Admin or Dev Admin to import users');
+    }
+  }
+
+  private async requireFmsWebhookSession(): Promise<void> {
+    const stored = await this.store.loadCatalogSession();
+    if (!this.catalogApi.getToken()) {
+      throw new Error('Sign in as Admin, Dev Admin, or Facility Admin to simulate webhooks');
+    }
+    if (!stored?.role || !isFmsWebhookRole(stored.role)) {
+      throw new Error('Sign in as Admin, Dev Admin, or Facility Admin to simulate webhooks');
     }
   }
 
@@ -839,6 +925,7 @@ export class GatewayManager {
       activeInstanceId: appState.activeInstanceId,
       activeUserId: appState.activeUserId ?? null,
       sidebarCatalog: appState.sidebarCatalog ?? 'gateways',
+      webhookSimulator: appState.webhookSimulator,
     };
   }
 

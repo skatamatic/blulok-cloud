@@ -179,6 +179,25 @@ export class FMSSyncLogModel {
   }
 
   /**
+   * Open review batch: pending changes not yet applied/rejected (any trigger source).
+   */
+  async findOpenReviewSyncLog(facilityId: string): Promise<FMSSyncLog | null> {
+    try {
+      const log = await this.db('fms_sync_logs')
+        .where({ facility_id: facilityId })
+        .where('changes_pending', '>', 0)
+        .whereNot({ sync_status: FMSSyncStatus.FAILED })
+        .orderBy('created_at', 'desc')
+        .first();
+
+      return log ? this.mapToModel(log) : null;
+    } catch (error) {
+      logger.error('Error fetching open review sync log:', error);
+      throw error;
+    }
+  }
+
+  /**
    * Open webhook review batch: pending changes not yet applied/rejected.
    * Used to coalesce multiple inbound webhooks into one review/apply cycle.
    */
@@ -256,6 +275,22 @@ export class FMSSyncLogModel {
       });
     } catch (error) {
       logger.error('Error marking sync as completed:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Mark sync as awaiting operator review (changes still pending).
+   */
+  async markPendingReview(id: string, summary?: any): Promise<void> {
+    try {
+      await this.update(id, {
+        sync_status: FMSSyncStatus.PENDING_REVIEW,
+        completed_at: new Date(),
+        sync_summary: summary,
+      });
+    } catch (error) {
+      logger.error('Error marking sync as pending review:', error);
       throw error;
     }
   }

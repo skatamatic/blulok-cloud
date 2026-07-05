@@ -20,6 +20,7 @@ export type {
   CloudUserDetail,
   CloudUserDeviceRecord,
   CloudUserSummary,
+  FmsConfigRecord,
   MintUserSessionResult,
 } from './backend-api.types';
 export type { FetchFn } from './authenticated-api.client';
@@ -169,6 +170,15 @@ export class BackendClient {
     const gateway = data.gateway ?? (data as unknown as GatewayRecordDetail);
     if (!gateway?.id) throw new Error('Gateway update response missing record');
     return gateway;
+  }
+
+  async listFmsConfigs(options?: { webhooksOnly?: boolean }): Promise<import('./backend-api.types').FmsConfigRecord[]> {
+    const params = new URLSearchParams();
+    if (options?.webhooksOnly) params.set('webhooks_only', 'true');
+    const qs = params.toString();
+    const path = qs ? `${API_PATHS.fmsConfigs}?${qs}` : API_PATHS.fmsConfigs;
+    const data = await this.api.get<{ configs?: import('./backend-api.types').FmsConfigRecord[] }>(path);
+    return data.configs ?? [];
   }
 }
 

@@ -40,6 +40,7 @@ interface FmsWebhookSecurityFieldsProps {
   webhookSignatureHeader: string;
   onWebhookSignatureHeaderChange: (value: string) => void;
   autoAccept: boolean;
+  autoAcceptWebhook?: boolean;
 }
 
 export function FmsWebhookSecurityFields({
@@ -54,7 +55,9 @@ export function FmsWebhookSecurityFields({
   webhookSignatureHeader,
   onWebhookSignatureHeaderChange,
   autoAccept,
+  autoAcceptWebhook,
 }: FmsWebhookSecurityFieldsProps) {
+  const webhookAutoAccept = autoAcceptWebhook ?? autoAccept;
   const webhookUrl = `${getApiBaseUrl() || (typeof window !== 'undefined' ? window.location.origin : '')}/api/v1/fms/webhook/${facilityId}`;
 
   return (
@@ -93,9 +96,9 @@ export function FmsWebhookSecurityFields({
                 Anyone who knows your facility webhook URL can inject fake FMS events. Use only for
                 local/dev testing behind a firewall or tunnel — never in production.
               </p>
-              {autoAccept && (
+              {webhookAutoAccept && (
                 <p className="font-medium">
-                  Auto-accept is enabled: forged webhooks would apply immediately without review.
+                  Webhook auto-apply is enabled: forged webhooks would apply immediately without review.
                 </p>
               )}
             </div>

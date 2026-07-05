@@ -84,6 +84,7 @@ export interface FMSProviderConfig {
   };
   syncSettings: {
     autoAcceptChanges: boolean;
+    autoAcceptWebhookChanges?: boolean;
     syncInterval?: number;
     webhookUrl?: string;
     webhookAuthMode?: FMSWebhookAuthMode;

@@ -85,7 +85,10 @@ export interface FMSProviderConfig {
     supportsRealtime: boolean;
   };
   syncSettings: {
+    /** Auto-apply changes from full / manual sync (and future scheduled sync). */
     autoAcceptChanges: boolean;
+    /** Auto-apply changes from inbound webhooks. Falls back to autoAcceptChanges when unset. */
+    autoAcceptWebhookChanges?: boolean;
     syncInterval?: number; // Minutes between automatic syncs
     webhookUrl?: string; // Our webhook URL for this facility
     /** hmac (default) | header_secret | none */

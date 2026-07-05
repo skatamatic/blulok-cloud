@@ -13,6 +13,7 @@ import { RemoveGatewayDialog } from './components/RemoveGatewayDialog';
 import { SetupWizard } from './components/SetupWizard';
 import { GatewayPanel } from './components/GatewayPanel';
 import { UserPanel, ImportUserForm } from './components/UserPanel';
+import { WebhookSimulatorPanel } from './components/WebhookSimulatorPanel';
 import { PreferencesModal } from './components/PreferencesModal';
 import { AppStatusBar } from './components/AppStatusBar';
 import { AppStartupSplash } from './components/AppStartupSplash';
@@ -58,6 +59,7 @@ export function App() {
     activeGateway,
     activeUser,
     sidebarCatalog,
+    webhookSimulatorPrefs,
     setInstances,
     setUsers,
     setActiveGatewayId,
@@ -195,6 +197,7 @@ export function App() {
 
   const bulkBusyLabel = bulkBusy || connecting;
   const showEmpty = !showSetup && !showCreateUser && hydrated &&
+    sidebarCatalog !== 'webhooks' &&
     ((sidebarCatalog === 'gateways' && !instances.length) || (sidebarCatalog === 'users' && !users.length));
 
   return (
@@ -335,10 +338,19 @@ export function App() {
               <UserPanel user={activeUser} gateways={instances} onRefresh={refresh} />
             </div>
           )}
+
+          {!showSetup && !showCreateUser && sidebarCatalog === 'webhooks' && (
+            <div className="min-h-0 flex-1 overflow-y-auto">
+              <WebhookSimulatorPanel
+                initialFacilityId={webhookSimulatorPrefs?.selectedFacilityId}
+                initialTemplateId={webhookSimulatorPrefs?.selectedTemplateId}
+              />
+            </div>
+          )}
         </main>
       </div>
 
-      <AppStatusBar gateway={activeGateway} />
+      {sidebarCatalog === 'gateways' && <AppStatusBar gateway={activeGateway} />}
     </div>
       ) : null}
     </>

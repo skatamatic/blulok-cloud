@@ -76,7 +76,18 @@ const api = {
   updateUser: (id: string, patch: import('@protocol/user-simulator-state').UpdateUserRequest) =>
     ipcRenderer.invoke(IPC.UPDATE_USER, id, patch),
   setActiveUser: (id: string | null) => ipcRenderer.invoke(IPC.SET_ACTIVE_USER, id),
-  setSidebarCatalog: (catalog: 'gateways' | 'users') => ipcRenderer.invoke(IPC.SET_SIDEBAR_CATALOG, catalog),
+  setSidebarCatalog: (catalog: import('@protocol/ipc-channels').SidebarCatalog) =>
+    ipcRenderer.invoke(IPC.SET_SIDEBAR_CATALOG, catalog),
+  listFmsWebhookTargets: () =>
+    ipcRenderer.invoke(IPC.LIST_FMS_WEBHOOK_TARGETS) as Promise<
+      import('@protocol/ipc-channels').FmsWebhookTargetSummary[]
+    >,
+  sendFmsWebhook: (req: import('@protocol/ipc-channels').SendFmsWebhookRequest) =>
+    ipcRenderer.invoke(IPC.SEND_FMS_WEBHOOK, req) as Promise<
+      import('@protocol/ipc-channels').SendFmsWebhookResponse
+    >,
+  saveWebhookSimulatorState: (prefs: NonNullable<import('@protocol/ipc-channels').AppState['webhookSimulator']>) =>
+    ipcRenderer.invoke(IPC.SAVE_WEBHOOK_SIMULATOR_STATE, prefs),
   addUserDevice: (userId: string, req?: import('@protocol/user-simulator-state').AddUserDeviceRequest) =>
     ipcRenderer.invoke(IPC.ADD_USER_DEVICE, userId, req),
   removeUserDevice: (userId: string, deviceId: string) => ipcRenderer.invoke(IPC.REMOVE_USER_DEVICE, userId, deviceId),

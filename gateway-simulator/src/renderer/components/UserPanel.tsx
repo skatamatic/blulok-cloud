@@ -6,15 +6,13 @@ import {
 } from '@heroicons/react/24/outline';
 import type { GatewayInstanceState } from '@protocol/ipc-channels';
 import type { CloudUserSummary, UserInstanceState } from '@protocol/user-simulator-state';
-import { DEFAULT_BACKEND_URL } from '@protocol/constants';
 import type { CatalogSessionSummary } from '@protocol/ipc-channels';
 import { useToast } from '../contexts/ToastContext';
 import { errorMessage } from '../utils/error-message.utils';
 import { PanelSection } from './PanelSection';
-import { DevQuickLoginButtons } from './DevQuickLoginButtons';
+import { CloudApiLoginCard } from './CloudApiLoginCard';
 import { UserDeviceCard } from './UserDeviceCard';
 import { DEV_CATALOG_LOGIN_ACCOUNTS } from '../config/devTestAccounts';
-import type { DevQuickLoginAccount } from '../config/devTestAccounts';
 
 type Props = {
   user: UserInstanceState;
@@ -221,24 +219,12 @@ export function ImportUserForm({
   const [loading, setLoading] = useState(false);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [catalogSession, setCatalogSession] = useState<CatalogSessionSummary | null>(null);
-  const [backendUrl, setBackendUrl] = useState(DEFAULT_BACKEND_URL);
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
-  const [loginBusy, setLoginBusy] = useState(false);
-  const [showLoginForm, setShowLoginForm] = useState(false);
 
   const importedSet = useMemo(() => new Set(importedCloudUserIds), [importedCloudUserIds]);
   const canImport = Boolean(catalogSession?.canImportUsers);
 
-  const refreshCatalogSession = () =>
-    void window.simulator.getCatalogSession().then((session) => {
-      setCatalogSession(session);
-      if (session.backendUrl) setBackendUrl(session.backendUrl);
-      setShowLoginForm(!session.canImportUsers);
-    });
-
   useEffect(() => {
-    refreshCatalogSession();
+    void window.simulator.getCatalogSession().then(setCatalogSession);
   }, []);
 
   useEffect(() => {
@@ -260,44 +246,6 @@ export function ImportUserForm({
     }, 250);
     return () => clearTimeout(timer);
   }, [search, canImport, toast]);
-
-  const handleLogin = async (creds?: { email: string; password: string }) => {
-    const loginEmail = creds?.email ?? email;
-    const loginPassword = creds?.password ?? password;
-    if (!loginEmail.trim() || !loginPassword) {
-      toast.error('Email and password required');
-      return;
-    }
-    setLoginBusy(true);
-    try {
-      await window.simulator.loginCatalog({
-        backendUrl: backendUrl.trim(),
-        email: loginEmail.trim(),
-        password: loginPassword,
-      });
-      setEmail(loginEmail.trim());
-      setPassword('');
-      setShowLoginForm(false);
-      refreshCatalogSession();
-      toast.success('Signed in');
-    } catch (err) {
-      toast.error('Sign in failed', errorMessage(err));
-    } finally {
-      setLoginBusy(false);
-    }
-  };
-
-  const handleQuickLogin = (account: DevQuickLoginAccount) => {
-    setEmail(account.email);
-    setPassword(account.password);
-    void handleLogin({ email: account.email, password: account.password });
-  };
-
-  const handleSignOut = async () => {
-    await window.simulator.clearCatalogSession();
-    setShowLoginForm(true);
-    refreshCatalogSession();
-  };
 
   const importUser = async (cloudUser: CloudUserSummary) => {
     setBusyId(cloudUser.id);
@@ -324,52 +272,15 @@ export function ImportUserForm({
         This is separate from your gateway setup login.
       </p>
 
-      {canImport && !showLoginForm && catalogSession?.email && (
-        <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-gray-200 bg-gray-50 px-3 py-2.5 dark:border-gray-700 dark:bg-gray-900/50">
-          <div className="min-w-0">
-            <p className="text-sm font-medium truncate">{catalogSession.email}</p>
-            <p className="text-xs text-gray-500">{catalogSession.role?.replace('_', ' ')}</p>
-          </div>
-          <button type="button" className="btn-secondary text-sm" onClick={() => void handleSignOut()}>
-            Sign out
-          </button>
-        </div>
-      )}
-
-      {(!canImport || showLoginForm) && (
-        <div className="mb-6 space-y-3 rounded-lg border border-gray-200 p-4 dark:border-gray-700">
-          <h3 className="text-sm font-semibold">Admin sign in</h3>
-          <div>
-            <label className="label">Backend URL</label>
-            <input className="input" value={backendUrl} onChange={(e) => setBackendUrl(e.target.value)} />
-          </div>
-          <div>
-            <label className="label">Email</label>
-            <input className="input" type="email" value={email} onChange={(e) => setEmail(e.target.value)} />
-          </div>
-          <div>
-            <label className="label">Password</label>
-            <input
-              className="input"
-              type="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') void handleLogin();
-              }}
-            />
-          </div>
-          <button type="button" className="btn-primary" disabled={loginBusy} onClick={() => void handleLogin()}>
-            {loginBusy ? 'Signing in…' : 'Sign in'}
-          </button>
-          <DevQuickLoginButtons
-            backendUrl={backendUrl}
-            disabled={loginBusy}
-            accounts={DEV_CATALOG_LOGIN_ACCOUNTS}
-            onSelect={handleQuickLogin}
-          />
-        </div>
-      )}
+      <div className="mb-6">
+        <CloudApiLoginCard
+          capability="import"
+          title="Admin sign in"
+          description="Admin or Dev Admin required to browse and import cloud users."
+          quickLoginAccounts={DEV_CATALOG_LOGIN_ACCOUNTS}
+          onSessionChange={setCatalogSession}
+        />
+      </div>
 
       {canImport && (
         <>

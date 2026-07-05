@@ -196,4 +196,18 @@ describe('BackendClient', () => {
     expect(res.user.email).toBeNull();
     expect(res.opsPublicKeyB64).toBeUndefined();
   });
+
+  it('listFmsConfigs requests webhooks_only filter', async () => {
+    const fetchFn = vi.fn().mockResolvedValue(
+      jsonResponse({
+        configs: [{ id: 'c1', facility_id: 'f1', provider_type: 'storedge', is_enabled: true, config: {} }],
+      }),
+    );
+    const client = new BackendClient(fetchFn);
+    client.restoreSession('http://127.0.0.1:3000', 'tok');
+    const configs = await client.listFmsConfigs({ webhooksOnly: true });
+    expect(configs).toHaveLength(1);
+    expect(String(fetchFn.mock.calls[0][0])).toContain('webhooks_only=true');
+    expect(String(fetchFn.mock.calls[0][0])).toContain(API_PATHS.fmsConfigs);
+  });
 });

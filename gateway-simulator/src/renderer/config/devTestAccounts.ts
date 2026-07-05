@@ -17,3 +17,8 @@ export const DEV_QUICK_LOGIN_ACCOUNTS: DevQuickLoginAccount[] = [
 export const DEV_CATALOG_LOGIN_ACCOUNTS = DEV_QUICK_LOGIN_ACCOUNTS.filter((a) =>
   ['Admin', 'Dev Admin'].includes(a.label),
 );
+
+/** Accounts suitable for FMS webhook simulation. */
+export const DEV_WEBHOOK_LOGIN_ACCOUNTS = DEV_QUICK_LOGIN_ACCOUNTS.filter((a) =>
+  ['Admin', 'Dev Admin', 'Facility Admin'].includes(a.label),
+);

@@ -36,3 +36,22 @@ export type MintUserSessionResult = {
   user: { id: string; email: string | null; firstName: string; lastName: string; role: string };
   opsPublicKeyB64?: string;
 };
+
+export type FmsConfigRecord = {
+  id: string;
+  facility_id: string;
+  facility_name?: string | null;
+  provider_type: string;
+  is_enabled: boolean;
+  config: {
+    providerType?: string;
+    customSettings?: { facilityId?: string };
+    features?: { supportsWebhooks?: boolean };
+    syncSettings?: {
+      webhookAuthMode?: 'hmac' | 'header_secret' | 'none';
+      webhookSecret?: string;
+      webhookAuthHeader?: string;
+      webhookSignatureHeader?: string;
+    };
+  };
+};

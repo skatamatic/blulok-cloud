@@ -7,4 +7,6 @@ export const API_PATHS = {
   users: '/users',
   user: (userId: string) => `/users/${userId}`,
   simulatorUserSession: '/dev/simulator/user-session',
+  fmsConfigs: '/fms/config',
+  fmsWebhook: (facilityId: string) => `/fms/webhook/${facilityId}`,
 } as const;

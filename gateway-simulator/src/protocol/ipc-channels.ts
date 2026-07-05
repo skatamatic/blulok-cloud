@@ -114,6 +114,11 @@ export const IPC = {
   UPDATE_USER: 'sim:update-user',
   SET_ACTIVE_USER: 'sim:set-active-user',
   SET_SIDEBAR_CATALOG: 'sim:set-sidebar-catalog',
+
+  // FMS webhook simulation
+  LIST_FMS_WEBHOOK_TARGETS: 'sim:list-fms-webhook-targets',
+  SEND_FMS_WEBHOOK: 'sim:send-fms-webhook',
+  SAVE_WEBHOOK_SIMULATOR_STATE: 'sim:save-webhook-simulator-state',
   ADD_USER_DEVICE: 'sim:add-user-device',
   REMOVE_USER_DEVICE: 'sim:remove-user-device',
   LOGIN_USER: 'sim:login-user',
@@ -182,6 +187,8 @@ export type CatalogSessionSummary = {
   role?: string;
   /** True when signed in as admin or dev_admin — required for user import. */
   canImportUsers?: boolean;
+  /** True when signed in as admin, dev_admin, or facility_admin — required for FMS webhooks. */
+  canSimulateFmsWebhooks?: boolean;
 };
 
 export type GatewayRecordDetail = {
@@ -257,10 +264,53 @@ export type GatewayInstanceState = {
   reconnectAt?: number;
 };
 
+export type SidebarCatalog = 'gateways' | 'users' | 'webhooks';
+
+export type FmsWebhookTargetSummary = {
+  configId: string;
+  facilityId: string;
+  facilityName: string | null;
+  providerType: string;
+  isEnabled: boolean;
+  webhookUrl: string;
+  externalFacilityId: string;
+  /** True when config.customSettings.facilityId is set (required for Storable). */
+  hasExternalFacilityId: boolean;
+  authMode: 'hmac' | 'header_secret' | 'none';
+  /** False when HMAC/header_secret mode is configured without a secret. */
+  authReady: boolean;
+  webhookAuthHeader?: string;
+  webhookSignatureHeader?: string;
+};
+
+export type SendFmsWebhookRequest = {
+  facilityId: string;
+  body: unknown;
+  extraHeaders?: Record<string, string>;
+  authOverride?: {
+    mode: 'hmac' | 'header_secret' | 'none';
+    secret?: string;
+    authHeader?: string;
+    signatureHeader?: string;
+    bearer?: boolean;
+  };
+};
+
+export type SendFmsWebhookResponse = {
+  status: number;
+  ok: boolean;
+  body: unknown;
+  rawBody: string;
+};
+
 export type AppState = {
   activeInstanceId: string | null;
   activeUserId?: string | null;
-  sidebarCatalog?: 'gateways' | 'users';
+  sidebarCatalog?: SidebarCatalog;
+  webhookSimulator?: {
+    selectedFacilityId?: string;
+    selectedTemplateId?: string;
+  };
 };
 
 export type HydrateResponse = {
@@ -268,7 +318,8 @@ export type HydrateResponse = {
   users: import('./user-simulator-state').UserInstanceState[];
   activeInstanceId: string | null;
   activeUserId: string | null;
-  sidebarCatalog: 'gateways' | 'users';
+  sidebarCatalog: SidebarCatalog;
+  webhookSimulator?: AppState['webhookSimulator'];
 };
 
 export type GatewayUpdatedEvent = {

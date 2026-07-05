@@ -28,6 +28,7 @@ export function ProviderConfigForm({
   const [formData, setFormData] = useState<Record<string, any>>({});
   const [saving, setSaving] = useState(false);
   const [autoAccept, setAutoAccept] = useState(false);
+  const [autoAcceptWebhook, setAutoAcceptWebhook] = useState(false);
   const [webhookAuthMode, setWebhookAuthMode] = useState<FMSWebhookAuthMode>(FMSWebhookAuthMode.HMAC);
   const [webhookSecret, setWebhookSecret] = useState('');
   const [hasStoredWebhookSecret, setHasStoredWebhookSecret] = useState(false);
@@ -62,6 +63,11 @@ export function ProviderConfigForm({
 
       if (config.syncSettings?.autoAcceptChanges !== undefined) {
         setAutoAccept(config.syncSettings.autoAcceptChanges);
+      }
+      if (config.syncSettings?.autoAcceptWebhookChanges !== undefined) {
+        setAutoAcceptWebhook(config.syncSettings.autoAcceptWebhookChanges);
+      } else {
+        setAutoAcceptWebhook(config.syncSettings?.autoAcceptChanges ?? false);
       }
       setWebhookAuthMode(config.syncSettings?.webhookAuthMode ?? FMSWebhookAuthMode.HMAC);
       setHasStoredWebhookSecret(Boolean(config.syncSettings?.webhookSecret));
@@ -119,6 +125,7 @@ export function ProviderConfigForm({
         },
         syncSettings: {
           autoAcceptChanges: autoAccept,
+          autoAcceptWebhookChanges: autoAcceptWebhook,
           webhookAuthMode,
           ...(webhookAuthHeader.trim() ? { webhookAuthHeader: webhookAuthHeader.trim() } : {}),
           ...(webhookSignatureHeader.trim()
@@ -204,24 +211,43 @@ export function ProviderConfigForm({
           onWebhookAuthHeaderChange={setWebhookAuthHeader}
           webhookSignatureHeader={webhookSignatureHeader}
           onWebhookSignatureHeaderChange={setWebhookSignatureHeader}
-          autoAccept={autoAccept}
+          autoAccept={autoAcceptWebhook}
+          autoAcceptWebhook={autoAcceptWebhook}
         />
       )}
 
-      <div className="flex items-start gap-3 pt-4 border-t border-gray-200 dark:border-gray-700">
-        <input
-          type="checkbox"
-          id="autoAccept"
-          checked={autoAccept}
-          onChange={(e) => setAutoAccept(e.target.checked)}
-          className="mt-0.5 h-4 w-4 text-primary-600 focus:ring-primary-500 border-gray-300 rounded"
-        />
-        <label htmlFor="autoAccept" className="block text-sm text-gray-700 dark:text-gray-300">
-          Automatically accept and apply all changes
-          <span className="block text-xs text-gray-500 dark:text-gray-400 mt-0.5">
-            Not recommended for production
-          </span>
-        </label>
+      <div className="space-y-3 pt-4 border-t border-gray-200 dark:border-gray-700">
+        <p className="text-sm font-medium text-gray-900 dark:text-white">Change review</p>
+        <div className="flex items-start gap-3">
+          <input
+            type="checkbox"
+            id="autoAcceptWebhook"
+            checked={autoAcceptWebhook}
+            onChange={(e) => setAutoAcceptWebhook(e.target.checked)}
+            className="mt-0.5 h-4 w-4 text-primary-600 focus:ring-primary-500 border-gray-300 rounded"
+          />
+          <label htmlFor="autoAcceptWebhook" className="block text-sm text-gray-700 dark:text-gray-300">
+            Auto-apply webhook events
+            <span className="block text-xs text-gray-500 dark:text-gray-400 mt-0.5">
+              Realtime FMS webhooks apply immediately without review.
+            </span>
+          </label>
+        </div>
+        <div className="flex items-start gap-3">
+          <input
+            type="checkbox"
+            id="autoAccept"
+            checked={autoAccept}
+            onChange={(e) => setAutoAccept(e.target.checked)}
+            className="mt-0.5 h-4 w-4 text-primary-600 focus:ring-primary-500 border-gray-300 rounded"
+          />
+          <label htmlFor="autoAccept" className="block text-sm text-gray-700 dark:text-gray-300">
+            Auto-apply full / manual sync
+            <span className="block text-xs text-gray-500 dark:text-gray-400 mt-0.5">
+              Manual syncs apply all detected changes without review. Not recommended for production.
+            </span>
+          </label>
+        </div>
       </div>
 
       <div className="flex justify-end pt-2">
