@@ -56,13 +56,6 @@ type ApplyProgressState = {
   total?: number;
 };
 
-function formatElapsed(seconds: number): string {
-  const mins = Math.floor(seconds / 60);
-  const secs = seconds % 60;
-  if (mins > 0) return `${mins}m ${secs}s`;
-  return `${secs}s`;
-}
-
 function estimateRemainingSeconds(elapsedSec: number, percent: number): number | null {
   if (percent <= 0 || percent >= 100 || elapsedSec < 3) return null;
   const totalEstimate = elapsedSec / (percent / 100);
