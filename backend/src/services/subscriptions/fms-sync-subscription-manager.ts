@@ -1,5 +1,6 @@
 import { WebSocket } from 'ws';
 import { UserRole } from '@/types/auth.types';
+import { FMSWebhookFeedItem } from '@/types/fms.types';
 import { BaseSubscriptionManager, SubscriptionClient } from './base-subscription-manager';
 import { FMSSyncLogModel } from '@/models/fms-sync-log.model';
 import { FMSConfigurationModel } from '@/models/fms-configuration.model';
@@ -230,10 +231,10 @@ export class FMSSyncSubscriptionManager extends BaseSubscriptionManager {
   }
 
   /**
-   * Broadcast FMS sync status update to all subscribed clients
-   * This should be called whenever an FMS sync completes
+   * Broadcast FMS sync status update to all subscribed clients.
+   * Optionally includes a webhook feed item when a webhook was just processed.
    */
-  public async broadcastUpdate(facilityId?: string): Promise<void> {
+  public async broadcastUpdate(facilityId?: string, webhookEvent?: FMSWebhookFeedItem): Promise<void> {
     try {
       // Get all active FMS sync status subscriptions
       const activeSubscriptions = Array.from(this.watchers.keys());
@@ -277,7 +278,8 @@ export class FMSSyncSubscriptionManager extends BaseSubscriptionManager {
                   data: {
                     facilities: syncStatuses,
                     lastUpdated: new Date().toISOString(),
-                    updatedFacilityId: facilityId, // Indicate which facility was updated (if specific)
+                    updatedFacilityId: facilityId,
+                    ...(webhookEvent ? { webhookEvent } : {}),
                   },
                   timestamp: new Date().toISOString()
                 }));

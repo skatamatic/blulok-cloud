@@ -71,6 +71,8 @@ import {
   fmsSyncResponseSchema,
   fmsSyncCancelResponseSchema,
   fmsSyncHistoryResponseSchema,
+  fmsWebhookEventsQuerySchema,
+  fmsWebhookEventsResponseSchema,
   fmsSyncLogResponseSchema,
   fmsPendingChangesResponseSchema,
   fmsReviewChangesResponseSchema,
@@ -497,6 +499,46 @@ registerGet(
       success: true,
       logs: result.logs,
       total: result.total,
+    });
+  }),
+);
+
+registerGet(
+  router,
+  '/webhooks/:facilityId/events',
+  {
+    openApiPath: `${MOUNT}/webhooks/{facilityId}/events`,
+    tags: ['FMS'],
+    summary: 'Get recent FMS webhook events for a facility',
+    security: 'bearer',
+    params: fmsFacilityIdParamSchema,
+    query: fmsWebhookEventsQuerySchema,
+    responses: {
+      200: fmsWebhookEventsResponseSchema,
+      403: errorEnvelopeSchema,
+    },
+  },
+  requireRoles([UserRole.ADMIN, UserRole.DEV_ADMIN, UserRole.FACILITY_ADMIN]),
+  asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+    const user = req.user!;
+    const { facilityId } = req.params;
+    const limit = req.query.limit ? parseInt(String(req.query.limit), 10) : 5;
+
+    if (user.role === UserRole.FACILITY_ADMIN) {
+      if (!user.facilityIds?.includes(facilityId)) {
+        res.status(403).json({
+          success: false,
+          message: 'Access denied to this facility',
+        });
+        return;
+      }
+    }
+
+    const events = await FMSService.getInstance().getRecentWebhookEvents(facilityId, limit);
+
+    res.json({
+      success: true,
+      events,
     });
   }),
 );

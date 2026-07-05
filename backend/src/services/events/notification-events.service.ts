@@ -38,6 +38,7 @@ export interface NotificationCreatedEvent extends NotificationEvent {
   eventType: 'created';
   title: string;
   message: string;
+  metadata?: Record<string, unknown> | null;
 }
 
 /**

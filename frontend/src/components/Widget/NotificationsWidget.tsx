@@ -6,6 +6,7 @@ import {
   ChevronDownIcon,
   SignalSlashIcon,
   ShieldExclamationIcon,
+  CloudIcon,
 } from '@heroicons/react/24/outline';
 import {
   ExclamationTriangleIcon as ExclamationTriangleIconSolid,
@@ -83,6 +84,14 @@ function NotificationToneIcon({
     ) : (
       <CheckCircleIconSolid className={iconClass} aria-hidden />
     );
+  }
+
+  if (
+    notificationType === 'fms_webhook_received' ||
+    notificationType === 'fms_sync_complete' ||
+    notificationType === 'fms_sync_failed'
+  ) {
+    return <CloudIcon className={iconClass} aria-hidden />;
   }
 
   return isRead ? (
@@ -488,9 +497,9 @@ export const NotificationsWidget: React.FC<NotificationsWidgetProps> = ({
             priority: String(data.priority ?? 'normal'),
             isRead: false,
             readAt: null,
-            reference: null,
+            reference: (data.reference as UserNotificationApi['reference']) ?? null,
             facilityId: (data.facilityId as string) ?? null,
-            metadata: null,
+            metadata: (data.metadata as Record<string, unknown> | null) ?? null,
             createdAt: String(data.timestamp ?? new Date().toISOString()),
           };
           if (!matchesScope(apiRow)) break;

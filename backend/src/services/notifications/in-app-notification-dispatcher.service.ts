@@ -21,6 +21,8 @@ export type FacilityAlertPayload = Omit<CreateNotificationOptions, 'userId'> & {
 
   excludeUserIds?: string[];
 
+  roles?: UserRole[];
+
 };
 
 
@@ -44,6 +46,8 @@ const DEDUP_MINUTES: Partial<Record<InAppNotificationType, number>> = {
   fms_sync_complete: 5,
 
   fms_sync_failed: 15,
+
+  fms_webhook_received: 1,
 
   backend_error: 15,
 
@@ -91,9 +95,12 @@ export class InAppNotificationDispatcher {
 
   public async notifyFacilityOperators(payload: FacilityAlertPayload): Promise<void> {
 
-    const { excludeUserIds, facilityId, ...notification } = payload;
+    const { excludeUserIds, facilityId, roles, ...notification } = payload;
 
-    const userIds = await this.audienceService.resolveFacilityOperators(facilityId, { excludeUserIds });
+    const userIds = await this.audienceService.resolveFacilityOperators(facilityId, {
+      excludeUserIds,
+      roles,
+    });
 
     const dedupMinutes = DEDUP_MINUTES[payload.type];
 
@@ -270,6 +277,50 @@ export class InAppNotificationDispatcher {
       excludeUserIds: excludeUserId ? [excludeUserId] : undefined,
 
       expiresInDays: 30,
+
+    });
+
+  }
+
+
+
+  public async notifyFmsWebhookReceived(
+
+    facilityId: string,
+
+    facilityName: string,
+
+    webhookEventId: string,
+
+    summaryText: string,
+
+    outcomeText: string,
+
+    metadata: Record<string, unknown>,
+
+  ): Promise<void> {
+
+    await this.notifyFacilityOperators({
+
+      type: 'fms_webhook_received',
+
+      title: 'FMS Webhook Received',
+
+      message: `${facilityName}: ${summaryText}. ${outcomeText}`,
+
+      priority: 'low',
+
+      referenceType: 'fms_webhook',
+
+      referenceId: webhookEventId,
+
+      facilityId,
+
+      metadata,
+
+      roles: [UserRole.ADMIN, UserRole.DEV_ADMIN, UserRole.FACILITY_ADMIN],
+
+      expiresInDays: 14,
 
     });
 

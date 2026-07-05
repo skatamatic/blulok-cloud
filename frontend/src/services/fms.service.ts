@@ -12,6 +12,7 @@ import {
   FMSChange,
   FMSSyncLog,
   FMSChangeApplicationResult,
+  FMSWebhookFeedItem,
 } from '@/types/fms.types';
 
 class FMSService {
@@ -123,6 +124,21 @@ class FMSService {
     return {
       logs: data.logs || [],
       total: data.total || 0,
+    };
+  }
+
+  /**
+   * Get recent webhook events for the facility FMS feed
+   */
+  async getWebhookEvents(
+    facilityId: string,
+    options?: { limit?: number },
+  ): Promise<{ events: FMSWebhookFeedItem[] }> {
+    const params = new URLSearchParams();
+    if (options?.limit) params.append('limit', options.limit.toString());
+    const data = await apiService.get(`/fms/webhooks/${facilityId}/events?${params.toString()}`);
+    return {
+      events: data.events || [],
     };
   }
 

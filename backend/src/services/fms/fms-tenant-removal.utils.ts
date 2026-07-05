@@ -1,6 +1,12 @@
 /** Metadata flag set when a tenant was removed from this facility's FMS and the change was applied. */
 export const FMS_MAPPING_REMOVED_AT_KEY = 'removed_from_fms_at';
 
+export function isFmsMappingMarkedRemoved(
+  metadata: Record<string, unknown> | null | undefined,
+): boolean {
+  return Boolean(metadata?.[FMS_MAPPING_REMOVED_AT_KEY]);
+}
+
 export function isFmsUserRemovedFromFacility(
   mapping: { metadata?: Record<string, unknown> | null | undefined },
   user: { is_active?: boolean } | null | undefined,

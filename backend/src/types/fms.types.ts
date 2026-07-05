@@ -269,6 +269,22 @@ export interface FMSWebhookPayload {
   data: Record<string, unknown>;
 }
 
+/** Recent webhook activity pushed over WS and shown in the FMS tab feed. */
+export interface FMSWebhookFeedItem {
+  id: string;
+  facilityId: string;
+  eventType: string;
+  externalEventId: string;
+  receivedAt: string;
+  summary: Record<string, unknown>;
+  summaryText: string;
+  changesDetected: number;
+  changesApplied: number;
+  autoApplied: boolean;
+  requiresReview: boolean;
+  syncLogId: string;
+}
+
 export interface StoredgeTenantEventBody {
   company_id: string;
   facility_id: string;

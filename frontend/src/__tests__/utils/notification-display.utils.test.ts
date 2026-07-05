@@ -3,6 +3,7 @@ import {
   deriveActionRequired,
   filterNotificationsForViewer,
   getNotificationCardVisual,
+  getNotificationDetailLines,
   getNotificationUrgencyBadge,
   mapApiNotificationToDashboardView,
 } from '@/utils/notification-display.utils';
@@ -41,6 +42,36 @@ describe('notification-display.utils', () => {
     expect(v.actionRequired).toBe(true);
     expect(v.displayType).toBe('error');
     expect(v.tone).toBe('error');
+  });
+
+  it('maps fms_webhook_received to info tone', () => {
+    const v = mapApiNotificationToDashboardView(
+      api({
+        type: 'fms_webhook_received',
+        priority: 'low',
+        title: 'FMS Webhook Received',
+        message: '621 Sandbox: Tenant Updated · alex@example.com. 1 change(s) pending review.',
+      }),
+    );
+    expect(v.tone).toBe('info');
+    expect(v.actionRequired).toBe(false);
+  });
+
+  it('formats webhook payload metadata for expanded details', () => {
+    const lines = getNotificationDetailLines(
+      mapApiNotificationToDashboardView(
+        api({
+          type: 'fms_webhook_received',
+          message: 'Webhook received',
+          metadata: {
+            eventType: 'tenant.updated',
+            payload: { tenant_id: 'ten-1', email: 'alex@example.com' },
+          },
+        }),
+      ),
+    );
+    expect(lines.some((line) => line.includes('Webhook payload:'))).toBe(true);
+    expect(lines.some((line) => line.includes('tenant_id: ten-1'))).toBe(true);
   });
 
   it('filterNotificationsForViewer hides backend_error from non-dev admins', () => {

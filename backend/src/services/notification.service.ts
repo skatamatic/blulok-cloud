@@ -125,6 +125,7 @@ export class NotificationService {
         : undefined,
       title: notification.title,
       message: notification.message,
+      metadata: notification.metadata ?? null,
     });
 
     return this.formatNotification(notification);

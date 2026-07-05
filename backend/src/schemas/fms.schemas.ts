@@ -118,6 +118,15 @@ export const fmsSyncHistoryResponseSchema = Joi.object({
   total: Joi.number().integer().required(),
 });
 
+export const fmsWebhookEventsQuerySchema = paginationQuerySchema.keys({
+  limit: Joi.number().integer().min(1).max(20).optional(),
+});
+
+export const fmsWebhookEventsResponseSchema = Joi.object({
+  success: Joi.boolean().valid(true).required(),
+  events: Joi.array().items(Joi.object()).required(),
+});
+
 export const fmsSyncLogResponseSchema = Joi.object({
   success: Joi.boolean().valid(true).required(),
   syncLog: Joi.object().required(),

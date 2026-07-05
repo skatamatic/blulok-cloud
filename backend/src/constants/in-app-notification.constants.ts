@@ -17,6 +17,7 @@ export const IN_APP_NOTIFICATION_TYPES = [
   'general',
   'fms_sync_complete',
   'fms_sync_failed',
+  'fms_webhook_received',
   'device_low_battery',
   'gateway_offline',
   'gateway_restored',

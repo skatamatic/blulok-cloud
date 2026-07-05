@@ -170,6 +170,21 @@ export interface FMSSyncLog {
   updated_at: string;
 }
 
+export interface FMSWebhookFeedItem {
+  id: string;
+  facilityId: string;
+  eventType: string;
+  externalEventId: string;
+  receivedAt: string;
+  summary: Record<string, unknown>;
+  summaryText: string;
+  changesDetected: number;
+  changesApplied: number;
+  autoApplied: boolean;
+  requiresReview: boolean;
+  syncLogId: string;
+}
+
 // API Response types
 export interface FMSConfigResponse {
   success: boolean;

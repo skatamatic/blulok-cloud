@@ -11,6 +11,7 @@ export interface FMSWebhookEventRecord {
   received_at: Date;
   processed_at?: Date | null;
   sync_log_id?: string | null;
+  event_summary?: Record<string, unknown> | null;
 }
 
 export class FMSWebhookEventModel {
@@ -70,12 +71,29 @@ export class FMSWebhookEventModel {
     }
   }
 
-  async markProcessed(id: string, syncLogId: string): Promise<void> {
+  async markProcessed(id: string, syncLogId: string, eventSummary?: Record<string, unknown>): Promise<void> {
     await this.db('fms_webhook_events')
       .where({ id })
       .update({
         processed_at: this.db.fn.now(),
         sync_log_id: syncLogId,
+        ...(eventSummary ? { event_summary: JSON.stringify(eventSummary) } : {}),
       });
+  }
+
+  async findRecentByFacility(facilityId: string, limit = 5): Promise<FMSWebhookEventRecord[]> {
+    const rows = await this.db('fms_webhook_events')
+      .where({ facility_id: facilityId })
+      .whereNotNull('processed_at')
+      .orderBy('received_at', 'desc')
+      .limit(limit);
+
+    return rows.map((row) => ({
+      ...row,
+      event_summary:
+        typeof row.event_summary === 'string'
+          ? JSON.parse(row.event_summary)
+          : row.event_summary ?? null,
+    })) as FMSWebhookEventRecord[];
   }
 }

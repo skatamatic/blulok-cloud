@@ -253,6 +253,7 @@ export class NotificationSubscriptionManager extends BaseSubscriptionManager {
                 priority: event.priority,
                 facilityId: event.facilityId,
                 reference: event.reference,
+                metadata: event.metadata ?? null,
                 timestamp: event.timestamp.toISOString(),
               },
               timestamp: new Date().toISOString(),

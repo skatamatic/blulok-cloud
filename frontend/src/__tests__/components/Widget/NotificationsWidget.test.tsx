@@ -327,4 +327,46 @@ describe('NotificationsWidget', () => {
     await waitFor(() => expect(screen.getByText('Security')).toBeInTheDocument());
     expect(screen.queryByRole('button', { name: /Hide Read/i })).not.toBeInTheDocument();
   });
+
+  it('shows fms_webhook_received notifications from websocket events', async () => {
+    mockGetNotifications.mockResolvedValueOnce({
+      success: true,
+      notifications: [],
+      total: 0,
+      unreadCount: 0,
+      limit: 50,
+      offset: 0,
+    });
+
+    let wsHandler: ((data: unknown) => void) | undefined;
+    mockSubscribe.mockImplementation((_type, handler) => {
+      wsHandler = handler;
+      return 'sub-1';
+    });
+
+    renderWithProviders(<NotificationsWidget id="w1" title="Notifications" initialSize="large" />);
+    await waitFor(() => expect(mockSubscribe).toHaveBeenCalled());
+
+    wsHandler?.({
+      eventType: 'notification_created',
+      payload: {
+        notificationId: 'wh-1',
+        type: 'fms_webhook_received',
+        title: 'FMS Webhook Received',
+        message: '621 Sandbox: Tenant Updated · alex@example.com. 1 change(s) pending review.',
+        priority: 'low',
+        facilityId: 'fac-123',
+        metadata: {
+          eventType: 'tenant.updated',
+          payload: { tenant_id: 'ten-1', email: 'alex@example.com' },
+        },
+        timestamp: new Date().toISOString(),
+      },
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText('FMS Webhook Received')).toBeInTheDocument();
+      expect(screen.getByText(/alex@example.com/)).toBeInTheDocument();
+    });
+  });
 });

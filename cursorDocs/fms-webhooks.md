@@ -95,7 +95,8 @@ When `autoAcceptWebhookChanges` is unset, it falls back to `autoAcceptChanges` f
 - **Facility → FMS Integration tab**: same banner on load when sync history has `changes_pending > 0`.
 - **Apply progress**: when accepting changes in the review modal, a full-panel overlay shows percent complete, operation count, elapsed time, and ETA via `fms_sync_progress` WebSocket events (`step: applying`). Bulk apply uses a 5-minute HTTP timeout; Twilio invites are sent asynchronously so they do not block the batch.
 - **Apply order**: changes apply in dependency order — unassignments and tenant removals run before unit status updates; assignments run after. Failed applies remain in the pending list until successfully applied.
-- **Tenant removal**: applying `tenant_removed` stamps the facility's FMS entity mapping with `metadata.removed_from_fms_at`, removes the user–facility association, and skips re-detection on later syncs. Tenants who return in FMS clear the stamp when added/updated again.
+- **Tenant removal**: applying `tenant_removed` stamps the facility's FMS entity mapping with `metadata.removed_from_fms_at`, removes the user–facility association, and skips re-detection on later syncs. When the tenant reappears in FMS, sync emits a restore/update change (even if profile fields are unchanged), apply clears the stamp, re-adds the facility association, and reactivates the user if they were deactivated by removal.
+- **Webhook realtime UX**: each processed webhook sends a facility-scoped in-app notification (`fms_webhook_received`, low priority) to admin/dev_admin/facility_admin roles, and broadcasts `fms_sync_status_update` with a `webhookEvent` payload. The facility FMS tab keeps the last 5 webhook entries (auto-applied vs pending review).
 
 ## Overlock status
 

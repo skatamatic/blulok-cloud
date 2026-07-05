@@ -1,6 +1,7 @@
 import {
   clearFmsMappingRemoved,
   FMS_MAPPING_REMOVED_AT_KEY,
+  isFmsMappingMarkedRemoved,
   isFmsUserRemovedFromFacility,
   stampFmsMappingRemoved,
 } from '@/services/fms/fms-tenant-removal.utils';
@@ -20,6 +21,11 @@ describe('fms-tenant-removal.utils', () => {
     expect(isFmsUserRemovedFromFacility({ metadata: {} }, { is_active: false }, 0)).toBe(true);
     expect(isFmsUserRemovedFromFacility({ metadata: {} }, { is_active: false }, 1)).toBe(false);
     expect(isFmsUserRemovedFromFacility({ metadata: {} }, { is_active: true }, 0)).toBe(false);
+  });
+
+  it('detects explicit removal stamp on mapping metadata', () => {
+    expect(isFmsMappingMarkedRemoved({})).toBe(false);
+    expect(isFmsMappingMarkedRemoved({ [FMS_MAPPING_REMOVED_AT_KEY]: '2026-01-01T00:00:00.000Z' })).toBe(true);
   });
 
   it('stamps and clears removal metadata', () => {

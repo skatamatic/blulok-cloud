@@ -47,6 +47,7 @@ import {
   FMSApplyContext,
   FMSConfiguration,
   FMSWebhookPayload,
+  FMSWebhookFeedItem,
   FMSSyncLog,
 } from '@/types/fms.types';
 import { StoredgeProvider } from './providers/storedge-provider';
@@ -61,9 +62,14 @@ import { shouldAutoAcceptChanges } from './fms-auto-accept.utils';
 import { sortChangesForApply } from './fms-apply-order.utils';
 import {
   clearFmsMappingRemoved,
+  isFmsMappingMarkedRemoved,
   isFmsUserRemovedFromFacility,
   stampFmsMappingRemoved,
 } from './fms-tenant-removal.utils';
+import {
+  describeFmsWebhookOutcome,
+  summarizeFmsWebhookPayload,
+} from './fms-webhook-summary.utils';
 
 /**
  * FMS Integration Service Class
@@ -820,14 +826,21 @@ export class FMSService {
         
         let currentPhone: string | undefined;
         if (mapping) currentPhone = mapping.metadata?.phone as string | undefined;
+
+        const needsFmsRestore = Boolean(mapping && isFmsMappingMarkedRemoved(mapping.metadata));
         
         const hasInfoChanges = 
           user.first_name !== fmsTenant.firstName ||
           user.last_name !== fmsTenant.lastName ||
           currentPhone !== fmsTenant.phone;
 
-        if (hasInfoChanges) {
-          logger.debug(`[FMS] Tenant ${fmsTenant.email} has info changes`, { sync_log_id: syncLogId });
+        if (needsFmsRestore || hasInfoChanges) {
+          logger.debug(
+            needsFmsRestore
+              ? `[FMS] Tenant ${fmsTenant.email} restored in FMS`
+              : `[FMS] Tenant ${fmsTenant.email} has info changes`,
+            { sync_log_id: syncLogId },
+          );
           pendingInserts.push({
             sync_log_id: syncLogId,
             change_type: FMSChangeType.TENANT_UPDATED,
@@ -837,7 +850,9 @@ export class FMSService {
             before_data: { firstName: user.first_name, lastName: user.last_name, phone: currentPhone },
             after_data: fmsTenant,
             required_actions: [FMSChangeAction.UPDATE_USER],
-            impact_summary: `Updated tenant info for: ${fmsTenant.email || 'no email'}`,
+            impact_summary: needsFmsRestore && !hasInfoChanges
+              ? `Tenant restored in FMS: ${fmsTenant.email || 'no email'}`
+              : `Updated tenant info for: ${fmsTenant.email || 'no email'}`,
             is_valid: isValid,
             validation_errors: validationErrors,
           });
@@ -1331,8 +1346,56 @@ export class FMSService {
   }
 
   /**
+   * Reverse tenant_removed side effects when FMS brings the tenant back.
+   * Restores facility access and reactivates the user when the mapping is stamped removed.
+   */
+  private async restoreFmsTenantIfMarkedRemoved(
+    userId: string,
+    facilityId: string,
+    ctx: {
+      mapping?: { id: string; metadata?: Record<string, unknown> | null } | null;
+      performedBy: string;
+      syncLogId: string;
+    },
+  ): Promise<boolean> {
+    const mapping =
+      ctx.mapping ??
+      (await this.entityMappingModel.findByInternalId(facilityId, 'user', userId));
+
+    if (!mapping || !isFmsMappingMarkedRemoved(mapping.metadata)) {
+      return false;
+    }
+
+    const userFacilities = await UserFacilityAssociationModel.getUserFacilityIds(userId);
+    if (!userFacilities.includes(facilityId)) {
+      await UserFacilityAssociationModel.addUserToFacility(userId, facilityId);
+      logger.info('[FMS] Restored facility association for tenant returning from FMS', {
+        fms_sync: true,
+        sync_log_id: ctx.syncLogId,
+        facility_id: facilityId,
+        user_id: userId,
+        performed_by: ctx.performedBy,
+      });
+    }
+
+    const user = (await UserModel.findById(userId)) as User | undefined;
+    if (user && user.is_active === false) {
+      await UserModel.activateUser(userId);
+      logger.info('[FMS] Reactivated tenant previously removed from FMS', {
+        fms_sync: true,
+        sync_log_id: ctx.syncLogId,
+        facility_id: facilityId,
+        user_id: userId,
+        performed_by: ctx.performedBy,
+      });
+    }
+
+    return true;
+  }
+
+  /**
    * Apply tenant added change
-   * 
+   *
    * SECURITY: Only creates users with TENANT role. FMS never creates admin/maintenance users.
    */
   private async applyTenantAdded(
@@ -1475,6 +1538,11 @@ export class FMSService {
       },
     });
     } else {
+      await this.restoreFmsTenantIfMarkedRemoved(user.id, facilityId, {
+        mapping: existingMapping,
+        performedBy,
+        syncLogId: change.sync_log_id,
+      });
       await this.entityMappingModel.updateMetadata(
         existingMapping.id,
         clearFmsMappingRemoved({
@@ -1697,7 +1765,19 @@ export class FMSService {
       throw new Error(`Security violation: FMS can only modify TENANT users, found ${(user as any).role}`);
     }
 
-    // SECURITY: Validate user is associated with this facility
+    const mapping = await this.entityMappingModel.findByInternalId(
+      facilityId,
+      'user',
+      change.internal_id,
+    );
+
+    await this.restoreFmsTenantIfMarkedRemoved(change.internal_id, facilityId, {
+      mapping,
+      performedBy,
+      syncLogId: change.sync_log_id,
+    });
+
+    // SECURITY: Validate user is associated with this facility (restored above if returning from FMS)
     const userFacilities = await UserFacilityAssociationModel.getUserFacilityIds(change.internal_id);
     if (!userFacilities.includes(facilityId)) {
       throw new Error(`Security violation: User ${change.internal_id} is not associated with facility ${facilityId}`);
@@ -1711,11 +1791,6 @@ export class FMSService {
 
     // Update or create entity mapping for this tenant
     const config = ctx.config ?? (await this.fmsConfigModel.findByFacilityId(facilityId));
-    const mapping = await this.entityMappingModel.findByInternalId(
-      facilityId,
-      'user',
-      change.internal_id
-    );
     
     if (mapping) {
       // Update existing mapping metadata
@@ -1779,6 +1854,23 @@ export class FMSService {
     };
 
     if (change.after_data && actionData.action === 'assign_unit') {
+      const tenantMapping = await this.entityMappingModel.findByInternalId(
+        facilityId,
+        'user',
+        tenantInternalId,
+      );
+      await this.restoreFmsTenantIfMarkedRemoved(tenantInternalId, facilityId, {
+        mapping: tenantMapping,
+        performedBy,
+        syncLogId: change.sync_log_id,
+      });
+      if (tenantMapping) {
+        await this.entityMappingModel.updateMetadata(
+          tenantMapping.id,
+          clearFmsMappingRemoved(tenantMapping.metadata),
+        );
+      }
+
       const unitId = await this.resolveUnitInternalId(facilityId, {
         unitId: actionData.unitId,
         externalUnitId: actionData.externalUnitId,
@@ -2416,6 +2508,8 @@ export class FMSService {
     });
 
     try {
+      const { summary, summaryText } = summarizeFmsWebhookPayload(payload);
+
       const pendingInserts = await this.buildWebhookChanges(
         facilityId,
         syncLog.id,
@@ -2475,8 +2569,37 @@ export class FMSService {
         });
       }
 
-      await this.webhookEventModel.markProcessed(webhookRecord.id, syncLog.id);
-      this.broadcastFMSSyncUpdate(facilityId);
+      await this.webhookEventModel.markProcessed(
+        webhookRecord.id,
+        syncLog.id,
+        {
+          ...summary,
+          summaryText,
+          changesDetected: changes.length,
+          changesApplied,
+          autoApplied: autoAccept && changes.length > 0,
+          requiresReview: !autoAccept && changes.length > 0,
+        },
+      );
+
+      const webhookFeedItem = this.buildWebhookFeedItem(
+        webhookRecord.id,
+        facilityId,
+        payload,
+        syncLog.id,
+        {
+          summary,
+          summaryText,
+          changesDetected: changes.length,
+          changesApplied,
+          autoApplied: autoAccept && changes.length > 0,
+          requiresReview: !autoAccept && changes.length > 0,
+          receivedAt: webhookRecord.received_at,
+        },
+      );
+
+      void this.notifyFmsWebhookReceived(facilityId, payload, webhookFeedItem);
+      this.broadcastFMSSyncUpdate(facilityId, webhookFeedItem);
 
       return {
         duplicate: false,
@@ -2495,6 +2618,120 @@ export class FMSService {
         });
       }
       throw error;
+    }
+  }
+
+  /**
+   * Recent webhook events for the facility FMS tab feed.
+   */
+  public async getRecentWebhookEvents(facilityId: string, limit = 5): Promise<FMSWebhookFeedItem[]> {
+    const records = await this.webhookEventModel.findRecentByFacility(facilityId, limit);
+    return records.map((record) => this.mapWebhookRecordToFeedItem(record));
+  }
+
+  private mapWebhookRecordToFeedItem(record: {
+    id: string;
+    facility_id: string;
+    external_event_id: string;
+    event_type: string;
+    received_at: Date;
+    sync_log_id?: string | null;
+    event_summary?: Record<string, unknown> | null;
+  }): FMSWebhookFeedItem {
+    const eventSummary = record.event_summary ?? {};
+    const changesDetected = Number(eventSummary.changesDetected ?? 0);
+    const changesApplied = Number(eventSummary.changesApplied ?? 0);
+    const autoApplied = eventSummary.autoApplied === true;
+    const requiresReview = eventSummary.requiresReview === true;
+    const summaryText =
+      typeof eventSummary.summaryText === 'string'
+        ? eventSummary.summaryText
+        : record.event_type.replace(/\./g, ' ');
+
+    return {
+      id: record.id,
+      facilityId: record.facility_id,
+      eventType: record.event_type,
+      externalEventId: record.external_event_id,
+      receivedAt: record.received_at.toISOString(),
+      summary: eventSummary,
+      summaryText,
+      changesDetected,
+      changesApplied,
+      autoApplied,
+      requiresReview,
+      syncLogId: record.sync_log_id ?? '',
+    };
+  }
+
+  private buildWebhookFeedItem(
+    webhookRecordId: string,
+    facilityId: string,
+    payload: FMSWebhookPayload,
+    syncLogId: string,
+    ctx: {
+      summary: Record<string, unknown>;
+      summaryText: string;
+      changesDetected: number;
+      changesApplied: number;
+      autoApplied: boolean;
+      requiresReview: boolean;
+      receivedAt: Date;
+    },
+  ): FMSWebhookFeedItem {
+    return {
+      id: webhookRecordId,
+      facilityId,
+      eventType: payload.event_type,
+      externalEventId: payload.externalEventId,
+      receivedAt: ctx.receivedAt.toISOString(),
+      summary: ctx.summary,
+      summaryText: ctx.summaryText,
+      changesDetected: ctx.changesDetected,
+      changesApplied: ctx.changesApplied,
+      autoApplied: ctx.autoApplied,
+      requiresReview: ctx.requiresReview,
+      syncLogId,
+    };
+  }
+
+  private async notifyFmsWebhookReceived(
+    facilityId: string,
+    payload: FMSWebhookPayload,
+    webhookFeedItem: FMSWebhookFeedItem,
+  ): Promise<void> {
+    try {
+      const { InAppNotificationDispatcher } = await import(
+        '@/services/notifications/in-app-notification-dispatcher.service'
+      );
+      const { DatabaseService } = await import('@/services/database.service');
+      const row = await DatabaseService.getInstance()
+        .connection('facilities')
+        .where('id', facilityId)
+        .first('name');
+      const facilityName = (row?.name as string | undefined) || 'Facility';
+      const dispatcher = InAppNotificationDispatcher.getInstance();
+      const outcomeText = describeFmsWebhookOutcome({
+        changesDetected: webhookFeedItem.changesDetected,
+        autoApplied: webhookFeedItem.autoApplied,
+        requiresReview: webhookFeedItem.requiresReview,
+      });
+
+      await dispatcher.notifyFmsWebhookReceived(
+        facilityId,
+        facilityName,
+        webhookFeedItem.id,
+        webhookFeedItem.summaryText,
+        outcomeText,
+        {
+          eventType: payload.event_type,
+          externalEventId: payload.externalEventId,
+          payload: payload.data,
+          ...webhookFeedItem.summary,
+        },
+      );
+    } catch (err) {
+      logger.error('[FMS] Failed to send webhook notification:', err);
     }
   }
 
@@ -2826,7 +3063,7 @@ export class FMSService {
    * 
    * This notifies all subscribed clients when an FMS sync completes or fails
    */
-  private broadcastFMSSyncUpdate(facilityId: string): void {
+  private broadcastFMSSyncUpdate(facilityId: string, webhookEvent?: FMSWebhookFeedItem): void {
     try {
       // Lazy import to avoid circular dependencies
       const { WebSocketService } = require('../websocket.service');
@@ -2838,7 +3075,7 @@ export class FMSService {
         if (fmsSyncManager) {
           // Broadcast update asynchronously (don't block the sync operation)
           setImmediate(() => {
-            fmsSyncManager.broadcastUpdate(facilityId).catch((error: Error) => {
+            fmsSyncManager.broadcastUpdate(facilityId, webhookEvent).catch((error: Error) => {
               logger.error('Failed to broadcast FMS sync update:', error);
             });
           });

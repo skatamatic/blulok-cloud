@@ -141,15 +141,36 @@ function formatMetadataEntries(metadata: Record<string, unknown> | null | undefi
   if (!metadata || typeof metadata !== 'object') {
     return [];
   }
-  return Object.entries(metadata)
-    .filter(([, value]) => value !== undefined && value !== null && value !== '')
-    .map(([key, value]) => {
-      const rendered =
-        typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean'
-          ? String(value)
-          : JSON.stringify(value);
-      return `${key}: ${rendered}`;
-    });
+
+  const lines: string[] = [];
+  for (const [key, value] of Object.entries(metadata)) {
+    if (value === undefined || value === null || value === '') {
+      continue;
+    }
+    if (key === 'payload' && typeof value === 'object' && !Array.isArray(value)) {
+      lines.push('Webhook payload:');
+      for (const [payloadKey, payloadValue] of Object.entries(value as Record<string, unknown>)) {
+        if (payloadValue === undefined || payloadValue === null || payloadValue === '') {
+          continue;
+        }
+        const rendered =
+          typeof payloadValue === 'string' ||
+          typeof payloadValue === 'number' ||
+          typeof payloadValue === 'boolean'
+            ? String(payloadValue)
+            : JSON.stringify(payloadValue);
+        lines.push(`  ${payloadKey}: ${rendered}`);
+      }
+      continue;
+    }
+
+    const rendered =
+      typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean'
+        ? String(value)
+        : JSON.stringify(value);
+    lines.push(`${key}: ${rendered}`);
+  }
+  return lines;
 }
 
 export function getNotificationDetailLines(

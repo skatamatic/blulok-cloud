@@ -24,9 +24,11 @@ import {
   FMSProviderType,
   FMSSyncResult,
   FMSSyncLog,
+  FMSWebhookFeedItem,
 } from '@/types/fms.types';
 import { ProviderConfigForm } from './ProviderConfigForm';
 import { FMSConfigSummary } from './FMSConfigSummary';
+import { FMSWebhookFeed } from './FMSWebhookFeed';
 import { useToast } from '@/contexts/ToastContext';
 import { useFMSSync } from '@/contexts/FMSSyncContext';
 import { useWebSocket } from '@/contexts/WebSocketContext';
@@ -34,6 +36,7 @@ import { getFmsSyncAppliedColumnText } from '@/utils/fmsSyncLogDisplay';
 import { isFMSSyncInProgressError } from '@/utils/fms-sync.utils';
 import { formatDateTime } from '@/utils/datetime.utils';
 import { formatPendingReviewLabel, pickOpenPendingReviewLog, FMS_PENDING_REVIEW_CHANGED } from '@/utils/fms-pending-review.utils';
+import { FMS_WEBHOOK_FEED_LIMIT, mergeWebhookFeed } from '@/utils/fms-webhook-feed.utils';
 
 interface FacilityFMSTabProps {
   facilityId: string;
@@ -89,12 +92,14 @@ export function FacilityFMSTab({
   const [pendingSyncLogId, setPendingSyncLogId] = useState<string | null>(null);
   const [pendingTriggeredBy, setPendingTriggeredBy] = useState<'manual' | 'automatic' | 'webhook' | null>(null);
   const [syncHistory, setSyncHistory] = useState<FMSSyncLog[]>([]);
+  const [webhookFeed, setWebhookFeed] = useState<FMSWebhookFeedItem[]>([]);
   const [selectedProvider, setSelectedProvider] = useState<FMSProviderType | null>(null);
   const [configExpanded, setConfigExpanded] = useState(false);
 
   useEffect(() => {
     loadConfig();
     loadSyncHistory();
+    loadWebhookFeed();
   }, [facilityId]);
 
   useEffect(() => {
@@ -108,10 +113,14 @@ export function FacilityFMSTab({
   useEffect(() => {
     const subId = subscribe(
       'fms_sync_status',
-      (data: { facilityId?: string }) => {
-        if (data?.facilityId === facilityId) {
-          void loadSyncHistory();
+      (data: { updatedFacilityId?: string; webhookEvent?: FMSWebhookFeedItem }) => {
+        if (data?.updatedFacilityId !== facilityId && data?.webhookEvent?.facilityId !== facilityId) {
+          return;
         }
+        if (data?.webhookEvent) {
+          setWebhookFeed((prev) => mergeWebhookFeed(prev, data.webhookEvent!));
+        }
+        void loadSyncHistory();
       },
       undefined,
       { facilityId },
@@ -170,6 +179,17 @@ export function FacilityFMSTab({
       }
     } catch (error) {
       console.error('Failed to load sync history:', error);
+    }
+  };
+
+  const loadWebhookFeed = async () => {
+    try {
+      const { events } = await fmsService.getWebhookEvents(facilityId, {
+        limit: FMS_WEBHOOK_FEED_LIMIT,
+      });
+      setWebhookFeed(events);
+    } catch (error) {
+      console.error('Failed to load webhook feed:', error);
     }
   };
 
@@ -268,6 +288,7 @@ export function FacilityFMSTab({
     ? (getProviderMetadata(config.provider_type)?.name ?? null)
     : null;
   const showSyncPanel = Boolean(config?.is_enabled);
+  const showWebhookFeed = Boolean(config?.config?.features?.supportsWebhooks);
 
   if (loading) {
     return (
@@ -461,6 +482,21 @@ export function FacilityFMSTab({
               )}
             </div>
           </div>
+
+          {showWebhookFeed && (
+          <div className={`${cardClass} overflow-hidden`}>
+            <div className="px-6 py-5 border-b border-gray-200 dark:border-gray-700">
+              <h3 className="text-base font-semibold text-gray-900 dark:text-white">Recent Webhooks</h3>
+              <p className="mt-0.5 text-sm text-gray-500 dark:text-gray-400">
+                Last {FMS_WEBHOOK_FEED_LIMIT} inbound FMS webhook events for this facility
+              </p>
+            </div>
+            <FMSWebhookFeed
+              events={webhookFeed}
+              onReviewPending={(syncLogId) => openPendingReview(facilityId, syncLogId, facilityName)}
+            />
+          </div>
+          )}
 
           {/* Sync history */}
           <div className={`${cardClass} overflow-hidden`}>
