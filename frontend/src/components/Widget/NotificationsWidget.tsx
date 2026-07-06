@@ -28,6 +28,7 @@ import {
   filterNotificationsForViewer,
   getNotificationCardVisual,
   getNotificationDetailLines,
+  getNotificationStructuredDetails,
   formatNotificationTimestamp,
   getNotificationUrgencyBadge,
   mapApiNotificationToDashboardView,
@@ -120,8 +121,11 @@ const NotificationCard: React.FC<{
 }) => {
   const expandable = notificationMessageNeedsExpansion(notification.message);
   const detailLines = getNotificationDetailLines(notification);
+  const structuredDetails = getNotificationStructuredDetails(notification);
   const visual = getNotificationCardVisual(notification);
   const urgencyBadge = getNotificationUrgencyBadge(notification);
+  const hasExpandableDetails =
+    structuredDetails != null || detailLines.length > 1 || expandable;
 
   return (
     <motion.div
@@ -180,7 +184,7 @@ const NotificationCard: React.FC<{
                   <span className="inline-flex h-1.5 w-1.5 rounded-full bg-[#147FD4] shrink-0" aria-hidden />
                 )}
               </div>
-              {(expandable || detailLines.length > 1 || !notification.isRead) && (
+              {(hasExpandableDetails || !notification.isRead) && (
                 <motion.span
                   animate={{ rotate: expanded ? 180 : 0 }}
                   transition={{ duration: 0.2 }}
@@ -215,22 +219,42 @@ const NotificationCard: React.FC<{
                   >
                     {notification.message}
                   </p>
-                  {detailLines.length > 1 && (
+                  {structuredDetails ? (
                     <div className="rounded-lg border border-gray-100 bg-white/70 px-2.5 py-2 dark:border-gray-700/80 dark:bg-gray-900/50">
                       <p className="text-[10px] font-semibold uppercase tracking-wide text-gray-400 dark:text-gray-500">
                         Details
                       </p>
-                      <ul className="mt-1 space-y-0.5">
-                        {detailLines.slice(1).map((line) => (
-                          <li
-                            key={line}
-                            className="text-[11px] text-gray-600 dark:text-gray-400 break-words font-mono"
-                          >
-                            {line}
-                          </li>
+                      <dl className="mt-1.5 space-y-1.5">
+                        {structuredDetails.map((row) => (
+                          <div key={row.label} className="flex gap-2 text-[11px] leading-snug">
+                            <dt className="shrink-0 w-[72px] font-medium text-gray-500 dark:text-gray-400">
+                              {row.label}
+                            </dt>
+                            <dd className="min-w-0 flex-1 text-gray-700 dark:text-gray-200 break-words">
+                              {row.value}
+                            </dd>
+                          </div>
                         ))}
-                      </ul>
+                      </dl>
                     </div>
+                  ) : (
+                    detailLines.length > 1 && (
+                      <div className="rounded-lg border border-gray-100 bg-white/70 px-2.5 py-2 dark:border-gray-700/80 dark:bg-gray-900/50">
+                        <p className="text-[10px] font-semibold uppercase tracking-wide text-gray-400 dark:text-gray-500">
+                          Details
+                        </p>
+                        <ul className="mt-1 space-y-0.5">
+                          {detailLines.slice(1).map((line) => (
+                            <li
+                              key={line}
+                              className="text-[11px] text-gray-600 dark:text-gray-400 break-words font-mono"
+                            >
+                              {line}
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    )
                   )}
                 </div>
               </motion.div>

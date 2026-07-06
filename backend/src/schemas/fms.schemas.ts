@@ -49,6 +49,11 @@ export const applyFmsChangesSchema = Joi.object({
   changeIds: Joi.array().items(Joi.string()).required(),
 });
 
+export const dismissFmsChangesSchema = Joi.object({
+  syncLogId: Joi.string().required(),
+  changeIds: Joi.array().items(Joi.string()).optional(),
+});
+
 export const fmsConfigListQuerySchema = paginationQuerySchema.keys({
   webhooks_only: Joi.boolean().truthy('true').falsy('false').optional(),
   is_enabled: Joi.boolean().truthy('true').falsy('false').optional(),
@@ -141,6 +146,12 @@ export const fmsPendingChangesResponseSchema = Joi.object({
 export const fmsReviewChangesResponseSchema = Joi.object({
   success: Joi.boolean().valid(true).required(),
   message: Joi.string().required(),
+});
+
+export const fmsDismissChangesResponseSchema = Joi.object({
+  success: Joi.boolean().valid(true).required(),
+  message: Joi.string().required(),
+  dismissed: Joi.number().integer().required(),
 });
 
 export const fmsApplyChangesResponseSchema = Joi.object({

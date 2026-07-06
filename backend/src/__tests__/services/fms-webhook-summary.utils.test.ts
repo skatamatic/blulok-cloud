@@ -1,4 +1,5 @@
 import {
+  buildFmsUpdatePushNotification,
   describeFmsWebhookOutcome,
   summarizeFmsWebhookPayload,
 } from '@/services/fms/fms-webhook-summary.utils';
@@ -45,5 +46,34 @@ describe('fms-webhook-summary.utils', () => {
         requiresReview: true,
       }),
     ).toBe('1 change(s) pending review.');
+  });
+
+  it('describes partial auto-apply with remaining review', () => {
+    expect(
+      describeFmsWebhookOutcome({
+        changesDetected: 3,
+        changesApplied: 1,
+        autoApplied: false,
+        requiresReview: true,
+      }),
+    ).toBe('1 auto-applied, 2 need review.');
+  });
+
+  it('builds user-friendly FMS update push notification copy', () => {
+    const content = buildFmsUpdatePushNotification({
+      facilityName: 'Kyle Test Facility',
+      eventType: 'unit.created',
+      payloadData: { unit_id: 'unit-demo-001' },
+      changesDetected: 1,
+      changesApplied: 0,
+      autoApplied: false,
+      requiresReview: true,
+    });
+    expect(content.title).toBe('FMS Update Push');
+    expect(content.message).toContain('Kyle Test Facility');
+    expect(content.message).toContain('unit created');
+    expect(content.message).toContain('needs your review');
+    expect(content.subjectLabel).toBe('Unit unit-demo-001');
+    expect(content.statusLabel).toBe('Needs your review');
   });
 });

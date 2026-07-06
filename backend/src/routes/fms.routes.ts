@@ -62,6 +62,7 @@ import {
   fmsSyncHistoryQuerySchema,
   reviewFmsChangesSchema,
   applyFmsChangesSchema,
+  dismissFmsChangesSchema,
   fmsConfigListQuerySchema,
   fmsConfigResponseSchema,
   fmsConfigListResponseSchema,
@@ -76,6 +77,7 @@ import {
   fmsSyncLogResponseSchema,
   fmsPendingChangesResponseSchema,
   fmsReviewChangesResponseSchema,
+  fmsDismissChangesResponseSchema,
   fmsApplyChangesResponseSchema,
 } from '@/schemas/fms.schemas';
 import { errorEnvelopeSchema } from '@/openapi/common-schemas';
@@ -757,6 +759,60 @@ registerPost(
         error: error instanceof Error ? error.message : 'Unknown error',
       });
     }
+  }),
+);
+
+registerPost(
+  router,
+  '/changes/dismiss',
+  {
+    openApiPath: `${MOUNT}/changes/dismiss`,
+    tags: ['FMS'],
+    summary: 'Dismiss pending FMS changes from review',
+    description:
+      'Marks invalid or failed changes as rejected so they leave the pending review queue. Omit changeIds to dismiss all dismissible pending changes for the sync log.',
+    security: 'bearer',
+    body: dismissFmsChangesSchema,
+    responses: {
+      200: fmsDismissChangesResponseSchema,
+      403: errorEnvelopeSchema,
+      404: errorEnvelopeSchema,
+    },
+  },
+  requireRoles([UserRole.ADMIN, UserRole.DEV_ADMIN, UserRole.FACILITY_ADMIN]),
+  asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+    const user = req.user!;
+    const { syncLogId, changeIds } = req.body;
+
+    const syncLog = await getSyncLogModel().findById(syncLogId);
+    if (!syncLog) {
+      res.status(404).json({
+        success: false,
+        message: 'Sync log not found',
+      });
+      return;
+    }
+
+    if (user.role === UserRole.FACILITY_ADMIN) {
+      if (!user.facilityIds?.includes(syncLog.facility_id)) {
+        res.status(403).json({
+          success: false,
+          message: 'Access denied to this facility',
+        });
+        return;
+      }
+    }
+
+    const { dismissed } = await getFMSService().dismissChanges(syncLogId, changeIds);
+
+    res.json({
+      success: true,
+      message:
+        dismissed === 0
+          ? 'No dismissible changes found'
+          : `${dismissed} change(s) dismissed`,
+      dismissed,
+    });
   }),
 );
 

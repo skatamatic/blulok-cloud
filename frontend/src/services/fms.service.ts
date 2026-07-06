@@ -201,6 +201,20 @@ class FMSService {
     
     return data.result;
   }
+
+  /**
+   * Dismiss pending changes (invalid or failed apply). Omit changeIds to dismiss all dismissible pending.
+   */
+  async dismissChanges(
+    syncLogId: string,
+    changeIds?: string[],
+  ): Promise<{ dismissed: number }> {
+    const data = await apiService.post('/fms/changes/dismiss', {
+      syncLogId,
+      ...(changeIds && changeIds.length > 0 ? { changeIds } : {}),
+    });
+    return { dismissed: data.dismissed ?? 0 };
+  }
 }
 
 export const fmsService = new FMSService();

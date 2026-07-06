@@ -78,7 +78,7 @@ All events use the same CloudEvents-style envelope:
 3. When **autoAcceptWebhookChanges** is off (or unset and **autoAcceptChanges** is off), consecutive webhooks append pending changes to the same open webhook sync log (`changes_pending > 0`) so operators can review/apply one batch.
 4. Create or reuse `fms_sync_logs` (`triggered_by = webhook`).
 5. Insert `fms_changes` rows (same review/apply pipeline as manual sync).
-6. If **autoAcceptWebhookChanges** is enabled (or legacy **autoAcceptChanges** when the webhook flag is unset), apply immediately; otherwise changes appear in the **FMS Sync** dashboard widget and Facility FMS tab as **pending review** — click to open the existing change review modal.
+6. If **autoAcceptWebhookChanges** is enabled (or legacy **autoAcceptChanges** when the webhook flag is unset), **valid** changes are reviewed and applied immediately. Invalid payloads and apply failures stay in the manual review queue (`sync_status = pending_review`, amber UI badges). Partial success shows e.g. “1 applied · 2 need review” in the webhook feed.
 
 ### Change review settings (`config.syncSettings`)
 
@@ -95,8 +95,9 @@ When `autoAcceptWebhookChanges` is unset, it falls back to `autoAcceptChanges` f
 - **Facility → FMS Integration tab**: same banner on load when sync history has `changes_pending > 0`.
 - **Apply progress**: when accepting changes in the review modal, a full-panel overlay shows percent complete, operation count, elapsed time, and ETA via `fms_sync_progress` WebSocket events (`step: applying`). Bulk apply uses a 5-minute HTTP timeout; Twilio invites are sent asynchronously so they do not block the batch.
 - **Apply order**: changes apply in dependency order — unassignments and tenant removals run before unit status updates; assignments run after. Failed applies remain in the pending list until successfully applied.
+- **Dismiss changes**: invalid payloads and failed applies can be dismissed individually or in bulk from the review modal (`POST /api/v1/fms/changes/dismiss`). Dismissed changes leave the pending review queue without being applied.
 - **Tenant removal**: applying `tenant_removed` stamps the facility's FMS entity mapping with `metadata.removed_from_fms_at`, removes the user–facility association, and skips re-detection on later syncs. When the tenant reappears in FMS, sync emits a restore/update change (even if profile fields are unchanged), apply clears the stamp, re-adds the facility association, and reactivates the user if they were deactivated by removal.
-- **Webhook realtime UX**: each processed webhook sends a facility-scoped in-app notification (`fms_webhook_received`) to admin/dev_admin/facility_admin roles — low priority when auto-applied/no changes, high priority (Action Required) when review is pending — and broadcasts `fms_sync_status_update` with a facility-scoped `webhookEvent` payload. The facility FMS tab keeps the last 5 webhook entries and live-reconciles stale pending-review badges after apply. Auto-accept that fails partial apply marks `pending_review` (not completed) and does not claim auto-applied.
+- **Webhook realtime UX**: each processed FMS update push sends a facility-scoped in-app notification (`fms_webhook_received`, titled **FMS Update Push**) to admin/dev_admin/facility_admin roles — low priority when auto-applied/no changes, high priority (Action Required) when review is pending — with user-friendly detail rows (update type, subject, status) instead of raw IDs. Broadcasts `fms_sync_status_update` with a facility-scoped `webhookEvent` payload. The facility FMS tab keeps the last 5 webhook entries and live-reconciles stale pending-review badges after apply. Auto-accept that fails partial apply marks `pending_review` (not completed) and does not claim auto-applied.
 
 ## Overlock status
 
@@ -152,3 +153,13 @@ Additional custom headers can be added in the Headers tab and are merged with au
 
 Template definitions live in `gateway-simulator/src/protocol/fms-webhook-templates.ts`.
 
+### `unit.created` testing notes
+
+Storable's [`com.storedge.unit.created.v1`](https://webhooks.storable.io/event-catalog/docs/events/com.storedge.unit.created/1) webhook body contains only `unit_id` (plus facility/company IDs) — no unit name, type, or size. BluLok **must fetch the full unit** from the FMS API before creating the change.
+
+When testing with the simulator against a **Storedge** facility:
+
+- Replace the default `unit-demo-001` placeholder with a **real unit UUID** from your Storable facility (create the unit in Storable first, or copy an existing unit's ID from a manual sync).
+- If the unit does not exist in FMS, the change appears under **Invalid** with *Could not fetch unit … from FMS API*.
+
+For **simulated** or **generic REST** flat webhooks, you can include inline `unit_number` / `unit_type` fields in the payload when API lookup is unavailable.

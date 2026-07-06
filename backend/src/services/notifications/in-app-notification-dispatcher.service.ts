@@ -242,6 +242,50 @@ export class InAppNotificationDispatcher {
 
 
 
+  public async notifyFmsSyncPendingReview(
+
+    facilityId: string,
+
+    facilityName: string,
+
+    syncLogId: string,
+
+    pendingCount: number,
+
+    changesDetected: number,
+
+    excludeUserId?: string,
+
+  ): Promise<void> {
+
+    await this.notifyFacilityOperators({
+
+      type: 'fms_sync_complete',
+
+      title: 'FMS Changes Need Review',
+
+      message: `FMS sync for ${facilityName}: ${pendingCount} change(s) need manual review${changesDetected > pendingCount ? ` (${changesDetected - pendingCount} auto-applied)` : ''}.`,
+
+      priority: 'high',
+
+      referenceType: 'fms_sync',
+
+      referenceId: syncLogId,
+
+      facilityId,
+
+      metadata: { changesDetected, pendingCount, requiresReview: true },
+
+      excludeUserIds: excludeUserId ? [excludeUserId] : undefined,
+
+      expiresInDays: 30,
+
+    });
+
+  }
+
+
+
   public async notifyFmsSyncFailed(
 
     facilityId: string,
@@ -292,23 +336,59 @@ export class InAppNotificationDispatcher {
 
     webhookEventId: string,
 
-    summaryText: string,
+    eventType: string,
 
-    outcomeText: string,
+    payloadData: Record<string, unknown>,
 
-    metadata: Record<string, unknown>,
+    outcome: {
+
+      changesDetected: number;
+
+      changesApplied: number;
+
+      autoApplied: boolean;
+
+      requiresReview: boolean;
+
+      syncLogId?: string;
+
+    },
 
     priority: 'low' | 'normal' | 'high' | 'urgent' = 'low',
 
   ): Promise<void> {
 
+    const { buildFmsUpdatePushNotification } = await import(
+
+      '@/services/fms/fms-webhook-summary.utils'
+
+    );
+
+    const content = buildFmsUpdatePushNotification({
+
+      facilityName,
+
+      eventType,
+
+      payloadData,
+
+      changesDetected: outcome.changesDetected,
+
+      changesApplied: outcome.changesApplied,
+
+      autoApplied: outcome.autoApplied,
+
+      requiresReview: outcome.requiresReview,
+
+    });
+
     await this.notifyFacilityOperators({
 
       type: 'fms_webhook_received',
 
-      title: 'FMS Webhook Received',
+      title: content.title,
 
-      message: `${facilityName}: ${summaryText}. ${outcomeText}`,
+      message: content.message,
 
       priority,
 
@@ -318,7 +398,29 @@ export class InAppNotificationDispatcher {
 
       facilityId,
 
-      metadata,
+      metadata: {
+
+        facilityName,
+
+        eventType,
+
+        eventLabel: content.eventLabel,
+
+        subjectLabel: content.subjectLabel,
+
+        statusLabel: content.statusLabel,
+
+        changesDetected: outcome.changesDetected,
+
+        changesApplied: outcome.changesApplied,
+
+        autoApplied: outcome.autoApplied,
+
+        requiresReview: outcome.requiresReview,
+
+        syncLogId: outcome.syncLogId,
+
+      },
 
       roles: [UserRole.ADMIN, UserRole.DEV_ADMIN, UserRole.FACILITY_ADMIN],
 

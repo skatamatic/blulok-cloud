@@ -38,6 +38,18 @@ describe('fms-webhook-feed.utils', () => {
     expect(getWebhookFeedOutcomeLabel(makeEvent('1'))).toBe('Pending review');
   });
 
+  it('labels partial auto-apply outcomes', () => {
+    expect(
+      getWebhookFeedOutcomeLabel({
+        ...makeEvent('1'),
+        changesDetected: 3,
+        changesApplied: 1,
+        requiresReview: true,
+        autoApplied: false,
+      }),
+    ).toBe('1 applied · 2 need review');
+  });
+
   it('clears stale requiresReview when open pending log is gone', () => {
     const events = [makeEvent('1'), { ...makeEvent('2'), requiresReview: false, autoApplied: true }];
     const reconciled = reconcileWebhookFeedReview(events, null);

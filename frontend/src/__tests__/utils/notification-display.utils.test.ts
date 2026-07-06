@@ -4,6 +4,7 @@ import {
   filterNotificationsForViewer,
   getNotificationCardVisual,
   getNotificationDetailLines,
+  getNotificationStructuredDetails,
   getNotificationUrgencyBadge,
   mapApiNotificationToDashboardView,
 } from '@/utils/notification-display.utils';
@@ -50,41 +51,59 @@ describe('notification-display.utils', () => {
         type: 'fms_webhook_received',
         priority: 'low',
         title: 'FMS Webhook Received',
-        message: '621 Sandbox: Tenant Updated · alex@example.com. No changes detected.',
+        message: '621 Sandbox received a unit created update. Changes were applied automatically.',
       }),
     );
+    expect(v.title).toBe('FMS Update Push');
     expect(v.tone).toBe('info');
     expect(v.actionRequired).toBe(false);
   });
 
-  it('marks pending-review webhooks as action required via high priority', () => {
+  it('marks pending-review FMS update pushes as action required via high priority', () => {
     const v = mapApiNotificationToDashboardView(
       api({
         type: 'fms_webhook_received',
         priority: 'high',
         title: 'FMS Webhook Received',
-        message: '621 Sandbox: Tenant Updated. 1 change(s) pending review.',
+        message: '621 Sandbox received a unit created update. 1 change needs your review.',
       }),
     );
+    expect(v.title).toBe('FMS Update Push');
     expect(v.actionRequired).toBe(true);
     expect(v.tone).toBe('warning');
   });
 
-  it('formats webhook payload metadata for expanded details', () => {
-    const lines = getNotificationDetailLines(
-      mapApiNotificationToDashboardView(
-        api({
-          type: 'fms_webhook_received',
-          message: 'Webhook received',
-          metadata: {
-            eventType: 'tenant.updated',
-            payload: { tenant_id: 'ten-1', email: 'alex@example.com' },
-          },
-        }),
-      ),
+  it('formats FMS update push details without technical ids', () => {
+    const view = mapApiNotificationToDashboardView(
+      api({
+        type: 'fms_webhook_received',
+        message:
+          'Kyle Test Facility received a unit created update. 1 change needs your review. (Unit unit-demo-001)',
+        metadata: {
+          facilityName: 'Kyle Test Facility',
+          eventType: 'unit.created',
+          eventLabel: 'Unit created',
+          subjectLabel: 'Unit unit-demo-001',
+          statusLabel: 'Needs your review',
+          changesDetected: 1,
+          changesApplied: 0,
+          requiresReview: true,
+        },
+      }),
     );
-    expect(lines.some((line) => line.includes('Webhook payload:'))).toBe(true);
-    expect(lines.some((line) => line.includes('tenant_id: ten-1'))).toBe(true);
+    const lines = getNotificationDetailLines(view);
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toContain('Kyle Test Facility');
+
+    const rows = getNotificationStructuredDetails(view);
+    expect(rows).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ label: 'Update type', value: 'Unit created' }),
+        expect.objectContaining({ label: 'Subject', value: 'Unit unit-demo-001' }),
+        expect.objectContaining({ label: 'Status', value: 'Needs your review' }),
+      ]),
+    );
+    expect(JSON.stringify(rows)).not.toContain('syncLogId');
   });
 
   it('filterNotificationsForViewer hides backend_error from non-dev admins', () => {

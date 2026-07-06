@@ -76,6 +76,8 @@ describe('POST /api/v1/fms/webhook/:facilityId auth modes (integration)', () => 
   const markProcessed = jest.fn();
   const syncLogCreate = jest.fn();
   const syncLogUpdate = jest.fn();
+  const syncLogMarkCompleted = jest.fn();
+  const syncLogMarkPendingReview = jest.fn();
   const changeCreate = jest.fn();
   const findByExternalId = jest.fn();
   const findOpenWebhookReviewSyncLog = jest.fn();
@@ -94,7 +96,7 @@ describe('POST /api/v1/fms/webhook/:facilityId auth modes (integration)', () => 
       processed_at: null,
       sync_log_id: 'sync-auth',
     }));
-    syncLogCreate.mockResolvedValue({ id: 'sync-auth' });
+    syncLogCreate.mockResolvedValue({ id: 'sync-auth', changes_detected: 0, changes_pending: 0 });
     findByExternalId.mockResolvedValue({ internal_id: 'user-int', external_id: 'tenant-ext-99' });
     findOpenWebhookReviewSyncLog.mockResolvedValue(null);
     changeCreate.mockImplementation(async (insert: { external_id: string }) => ({
@@ -117,7 +119,8 @@ describe('POST /api/v1/fms/webhook/:facilityId auth modes (integration)', () => 
     (svc as unknown as { syncLogModel: Record<string, jest.Mock> }).syncLogModel = {
       create: syncLogCreate,
       update: syncLogUpdate,
-      markCompleted: jest.fn(),
+      markCompleted: syncLogMarkCompleted,
+      markPendingReview: syncLogMarkPendingReview,
       findOpenWebhookReviewSyncLog,
     };
     (svc as unknown as { changeModel: { create: typeof changeCreate } }).changeModel = {
@@ -127,6 +130,10 @@ describe('POST /api/v1/fms/webhook/:facilityId auth modes (integration)', () => 
       findByExternalId,
     };
     (svc as unknown as { broadcastFMSSyncUpdate: jest.Mock }).broadcastFMSSyncUpdate = jest.fn();
+    (svc as unknown as { getFacilityName: jest.Mock }).getFacilityName = jest
+      .fn()
+      .mockResolvedValue('Test Facility');
+    (svc as unknown as { notifyFmsWebhookReceived: jest.Mock }).notifyFmsWebhookReceived = jest.fn();
   });
 
   it('accepts HMAC mode with valid X-Storable-Signature', async () => {

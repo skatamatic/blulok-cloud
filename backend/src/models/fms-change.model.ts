@@ -444,8 +444,11 @@ export class FMSChangeModel {
         ? JSON.parse(record.required_actions)
         : record.required_actions,
       impact_summary: record.impact_summary,
-      is_reviewed: record.is_reviewed,
-      is_accepted: record.is_accepted,
+      is_reviewed: record.is_reviewed === true || record.is_reviewed === 1,
+      is_accepted:
+        record.is_accepted === null || record.is_accepted === undefined
+          ? undefined
+          : record.is_accepted === true || record.is_accepted === 1,
       applied_at: record.applied_at,
       created_at: record.created_at,
       is_valid: isValidBoolean,

@@ -33,6 +33,10 @@ export function getWebhookFeedOutcomeLabel(item: FMSWebhookFeedItem): string {
     return 'Auto-applied';
   }
   if (item.requiresReview) {
+    if (item.changesApplied > 0) {
+      const needsReview = Math.max(0, item.changesDetected - item.changesApplied);
+      return `${item.changesApplied} applied · ${needsReview} need review`;
+    }
     return 'Pending review';
   }
   return `${item.changesApplied}/${item.changesDetected} applied`;

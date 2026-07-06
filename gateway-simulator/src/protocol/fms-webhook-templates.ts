@@ -213,7 +213,14 @@ const ledgerBodyFields: WebhookTemplateField[] = [
 
 const unitIdBodyFields: WebhookTemplateField[] = [
   { key: 'facilityId', label: 'Facility ID (external)', path: 'body.facility_id', type: 'text', required: true },
-  { key: 'unitId', label: 'Unit ID', path: 'body.unit_id', type: 'text', required: true },
+  {
+    key: 'unitId',
+    label: 'Unit ID',
+    path: 'body.unit_id',
+    type: 'text',
+    required: true,
+    placeholder: 'Storable unit UUID (must exist in FMS)',
+  },
 ];
 
 const flatTenantFields: WebhookTemplateField[] = [
@@ -231,6 +238,8 @@ const flatLedgerFields: WebhookTemplateField[] = [
 
 const flatUnitFields: WebhookTemplateField[] = [
   { key: 'unitId', label: 'Unit ID', path: 'data.unit_id', type: 'text', required: true },
+  { key: 'unitNumber', label: 'Unit number', path: 'data.unit_number', type: 'text' },
+  { key: 'unitType', label: 'Unit type', path: 'data.unit_type', type: 'text' },
 ];
 
 export const FMS_WEBHOOK_TEMPLATES: WebhookEventTemplate[] = [
@@ -302,6 +311,8 @@ export const FMS_WEBHOOK_TEMPLATES: WebhookEventTemplate[] = [
   })),
   flatTemplate('flat-unit-created', 'Unit created', 'unit.created', flatUnitFields, () => ({
     unit_id: 'unit-demo-001',
+    unit_number: 'A-101',
+    unit_type: 'storage',
   })),
   flatTemplate('flat-unit-deleted', 'Unit deleted', 'unit.deleted', flatUnitFields, () => ({
     unit_id: 'unit-demo-001',

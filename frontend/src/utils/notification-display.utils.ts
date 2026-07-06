@@ -1,7 +1,14 @@
 import type { UserNotificationApi } from '@/types/notifications.types';
 import { formatNotificationTimestamp } from '@/utils/datetime.utils';
+import {
+  getFmsUpdatePushDetailRows,
+  normalizeFmsUpdatePushMessage,
+  normalizeFmsUpdatePushTitle,
+  type FmsUpdatePushDetailRow,
+} from '@/utils/fms-update-push-notification.utils';
 
 export { formatNotificationTimestamp };
+export type { FmsUpdatePushDetailRow };
 
 /** Types that always imply follow-up (aligned with product rules; tune in one place). */
 const ACTION_REQUIRED_TYPES = new Set([
@@ -179,6 +186,10 @@ export function getNotificationDetailLines(
     'message' | 'notificationType' | 'priority' | 'reference' | 'metadata' | 'facilityId'
   >,
 ): string[] {
+  if (notification.notificationType === 'fms_webhook_received') {
+    return [notification.message];
+  }
+
   const lines: string[] = [notification.message];
   lines.push(`Type · ${notification.notificationType}`);
   lines.push(`Priority · ${notification.priority}`);
@@ -190,6 +201,17 @@ export function getNotificationDetailLines(
   }
   lines.push(...formatMetadataEntries(notification.metadata ?? null));
   return lines;
+}
+
+/** Structured detail rows for notification types that support rich layout. */
+export function getNotificationStructuredDetails(
+  notification: Pick<DashboardNotificationView, 'notificationType' | 'metadata'>,
+): FmsUpdatePushDetailRow[] | null {
+  if (notification.notificationType !== 'fms_webhook_received') {
+    return null;
+  }
+  const rows = getFmsUpdatePushDetailRows(notification.metadata ?? null);
+  return rows.length > 0 ? rows : null;
 }
 
 export function notificationMessageNeedsExpansion(message: string, maxPreviewLength = 96): boolean {
@@ -349,10 +371,14 @@ export function mapApiNotificationToDashboardView(
 ): DashboardNotificationView & { displayType: 'info' | 'warning' | 'error' | 'success' } {
   const actionRequired = deriveActionRequired(n.type, n.priority);
   const tone = mapApiTypeToTone(n.type, n.priority);
+  const title =
+    n.type === 'fms_webhook_received' ? normalizeFmsUpdatePushTitle(n.title) : n.title;
+  const message =
+    n.type === 'fms_webhook_received' ? normalizeFmsUpdatePushMessage(n.message) : n.message;
   return {
     id: n.id,
-    title: n.title,
-    message: n.message,
+    title,
+    message,
     notificationType: n.type,
     priority: n.priority,
     tone,

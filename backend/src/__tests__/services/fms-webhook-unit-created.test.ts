@@ -1,10 +1,10 @@
-/** Real FMSService — tests webhook retry semantics after failed deliveries. */
+/** FMSService unit.created webhook resolution */
 jest.unmock('@/services/fms/fms.service');
 
 import crypto from 'crypto';
 import { FMSService } from '@/services/fms/fms.service';
 import { StoredgeProvider } from '@/services/fms/providers/storedge-provider';
-import { FMSProviderType, FMSAuthType, FMSSyncStatus } from '@/types/fms.types';
+import { FMSProviderType, FMSAuthType, FMSChangeType } from '@/types/fms.types';
 
 const facilityId = '550e8400-e29b-41d4-a716-446655440011';
 const webhookSecret = 'test-webhook-secret';
@@ -17,21 +17,18 @@ function webhookHeaders(raw: Buffer): Record<string, string> {
   return { 'X-Storable-Signature': signBody(raw) };
 }
 
-function tenantUpdatedEnvelope(eventId: string) {
+function unitCreatedEnvelope(eventId: string, unitId: string) {
   return {
     id: eventId,
-    type: 'com.storedge.tenant.updated.v1',
+    type: 'com.storedge.unit.created.v1',
     body: {
       facility_id: 'ext-fac',
-      tenant_id: 'tenant-ext-1',
-      email: 'tenant@example.com',
-      first_name: 'Test',
-      last_name: 'Tenant',
+      unit_id: unitId,
     },
   };
 }
 
-describe('FMSService.handleWebhookEvent idempotency', () => {
+describe('FMSService unit.created webhook', () => {
   const findByExternalEventId = jest.fn();
   const deleteByExternalEventId = jest.fn();
   const createWebhookRecord = jest.fn();
@@ -44,10 +41,14 @@ describe('FMSService.handleWebhookEvent idempotency', () => {
   const changeCreate = jest.fn();
   const findByExternalId = jest.fn();
   const findOpenWebhookReviewSyncLog = jest.fn();
+  let fetchUnitSpy: jest.SpyInstance;
 
   beforeEach(() => {
     jest.clearAllMocks();
+    jest.useFakeTimers();
     (FMSService as unknown as { instance?: unknown }).instance = undefined;
+
+    fetchUnitSpy = jest.spyOn(StoredgeProvider.prototype, 'fetchUnit');
 
     findByFacilityId.mockResolvedValue({
       id: 'cfg-1',
@@ -77,7 +78,7 @@ describe('FMSService.handleWebhookEvent idempotency', () => {
       id: 'wh-1',
       facility_id: facilityId,
       external_event_id: data.external_event_id,
-      event_type: 'tenant.updated',
+      event_type: 'unit.created',
       received_at: new Date(),
       processed_at: null,
       sync_log_id: 'sync-1',
@@ -85,7 +86,7 @@ describe('FMSService.handleWebhookEvent idempotency', () => {
     syncLogCreate.mockResolvedValue({ id: 'sync-1', changes_detected: 0, changes_pending: 0 });
     findByExternalId.mockResolvedValue(null);
     findOpenWebhookReviewSyncLog.mockResolvedValue(null);
-    changeCreate.mockImplementation(async (insert: { external_id: string }) => ({
+    changeCreate.mockImplementation(async (insert: Record<string, unknown>) => ({
       id: 'change-1',
       ...insert,
     }));
@@ -116,70 +117,56 @@ describe('FMSService.handleWebhookEvent idempotency', () => {
       findByExternalId,
     };
     (svc as unknown as { broadcastFMSSyncUpdate: jest.Mock }).broadcastFMSSyncUpdate = jest.fn();
-    (svc as unknown as { getFacilityName: jest.Mock }).getFacilityName = jest
-      .fn()
-      .mockResolvedValue('Test Facility');
+    (svc as unknown as { getFacilityName: jest.Mock }).getFacilityName = jest.fn().mockResolvedValue('Test Facility');
     (svc as unknown as { notifyFmsWebhookReceived: jest.Mock }).notifyFmsWebhookReceived = jest.fn();
   });
 
-  it('returns duplicate only for successfully processed events', async () => {
-    findByExternalEventId.mockResolvedValue({
-      id: 'wh-old',
-      facility_id: facilityId,
-      external_event_id: 'evt-done',
-      event_type: 'tenant.updated',
-      received_at: new Date(),
-      processed_at: new Date(),
-      sync_log_id: 'sync-old',
-    });
-
-    const raw = Buffer.from(JSON.stringify(tenantUpdatedEnvelope('evt-done')));
-    const result = await FMSService.getInstance().handleWebhookEvent(
-      facilityId,
-      raw,
-      webhookHeaders(raw)
-    );
-
-    expect(result.duplicate).toBe(true);
-    expect(syncLogCreate).not.toHaveBeenCalled();
+  afterEach(() => {
+    fetchUnitSpy.mockRestore();
+    jest.useRealTimers();
   });
 
-  it('deletes failed in-flight record and retries processing', async () => {
-    findByExternalEventId.mockResolvedValue({
-      id: 'wh-stale',
-      facility_id: facilityId,
-      external_event_id: 'evt-retry',
-      event_type: 'tenant.updated',
-      received_at: new Date(),
-      processed_at: null,
-      sync_log_id: 'sync-stale',
-    });
+  it('marks change invalid when Storedge unit cannot be fetched from FMS API', async () => {
+    fetchUnitSpy.mockResolvedValue(null);
+    const envelope = unitCreatedEnvelope('evt-unit-invalid', 'unit-demo-001');
+    const raw = Buffer.from(JSON.stringify(envelope));
 
-    const raw = Buffer.from(JSON.stringify(tenantUpdatedEnvelope('evt-retry')));
-    const result = await FMSService.getInstance().handleWebhookEvent(
-      facilityId,
-      raw,
-      webhookHeaders(raw)
+    const promise = FMSService.getInstance().handleWebhookEvent(facilityId, raw, webhookHeaders(raw));
+    await jest.runAllTimersAsync();
+    await promise;
+
+    expect(fetchUnitSpy).toHaveBeenCalledTimes(3);
+    expect(changeCreate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        change_type: FMSChangeType.UNIT_ADDED,
+        external_id: 'unit-demo-001',
+        is_valid: false,
+        validation_errors: [
+          expect.stringContaining('Could not fetch unit unit-demo-001 from FMS API'),
+        ],
+      }),
     );
-
-    expect(deleteByExternalEventId).toHaveBeenCalledWith(facilityId, 'evt-retry');
-    expect(result.duplicate).toBe(false);
-    expect(markProcessed).toHaveBeenCalled();
   });
 
-  it('removes webhook record when processing throws so Storable can retry', async () => {
-    changeCreate.mockRejectedValueOnce(new Error('DB unavailable'));
+  it('creates valid change when unit is fetched from FMS API', async () => {
+    fetchUnitSpy.mockResolvedValue({
+      externalId: 'real-unit-uuid',
+      unitNumber: 'B-205',
+      unitType: 'storage',
+      status: 'available',
+    });
+    const envelope = unitCreatedEnvelope('evt-unit-valid', 'real-unit-uuid');
+    const raw = Buffer.from(JSON.stringify(envelope));
 
-    const raw = Buffer.from(JSON.stringify(tenantUpdatedEnvelope('evt-fail')));
-    await expect(
-      FMSService.getInstance().handleWebhookEvent(facilityId, raw, webhookHeaders(raw))
-    ).rejects.toThrow('DB unavailable');
+    await FMSService.getInstance().handleWebhookEvent(facilityId, raw, webhookHeaders(raw));
 
-    expect(deleteByExternalEventId).toHaveBeenCalledWith(facilityId, 'evt-fail');
-    expect(syncLogUpdate).toHaveBeenCalledWith(
-      'sync-1',
-      expect.objectContaining({ sync_status: FMSSyncStatus.FAILED })
+    expect(changeCreate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        change_type: FMSChangeType.UNIT_ADDED,
+        external_id: 'real-unit-uuid',
+        is_valid: true,
+        after_data: expect.objectContaining({ unitNumber: 'B-205' }),
+      }),
     );
-    expect(markProcessed).not.toHaveBeenCalled();
   });
 });

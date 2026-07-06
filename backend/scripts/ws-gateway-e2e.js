@@ -657,6 +657,20 @@ async function fmsSyncApplyFilteredChanges(token, facilityId, filterFn) {
   return syncLogId;
 }
 
+async function ensureTenantAssignedToUnit(token, unitId, tenantEmail) {
+  const usersRes = await axios.get(`${API_BASE}/users`, {
+    headers: authHeaders(token),
+    params: { search: tenantEmail },
+  });
+  const tenantUser = (usersRes.data?.users || usersRes.data || []).find(
+    (u) => (u.email || '').toLowerCase() === tenantEmail.toLowerCase(),
+  );
+  if (!tenantUser?.id) {
+    throw new Error(`Tenant user ${tenantEmail} not found after FMS sync`);
+  }
+  await assignTenantToUnit(token, unitId, tenantUser.id, true);
+}
+
 async function setupFmsWebhookFacility(token, {
   label,
   mockPort,
@@ -664,6 +678,7 @@ async function setupFmsWebhookFacility(token, {
   extUnitId,
   extTenantId,
   unitNumber,
+  tenantEmail,
   webhookSecret,
   autoAccept = false,
   trackExtraFacilityIds,
@@ -689,6 +704,9 @@ async function setupFmsWebhookFacility(token, {
   });
   const unit = await findUnitByNumber(token, facilityId, unitNumber);
   if (!unit?.id) throw new Error(`Webhook facility ${label}: unit ${unitNumber} not found after FMS sync`);
+  if (tenantEmail) {
+    await ensureTenantAssignedToUnit(token, unit.id, tenantEmail);
+  }
   return { facilityId, configId, unitId: unit.id, extStoredgeFacId, extUnitId, extTenantId, unitNumber };
 }
 
@@ -10949,6 +10967,7 @@ async function run() {
       extUnitId: extUnitA,
       extTenantId: extTenantA,
       unitNumber: whUnitNumberA,
+      tenantEmail: whTenantEmailA,
       webhookSecret,
       autoAccept: false,
       trackExtraFacilityIds: created.extraFacilityIds,
@@ -10960,6 +10979,7 @@ async function run() {
       extUnitId: extUnitB,
       extTenantId: extTenantB,
       unitNumber: whUnitNumberB,
+      tenantEmail: whTenantEmailB,
       webhookSecret,
       autoAccept: false,
       trackExtraFacilityIds: created.extraFacilityIds,
@@ -11273,7 +11293,9 @@ async function run() {
       body: { facility_id: extFacA, unit_id: extUnitA },
     }, webhookSecret);
     if (autoOverlockRes.status !== 200 || !autoOverlockRes.data?.changesApplied) {
-      throw new Error('Auto-accept overlock webhook did not apply changes');
+      throw new Error(
+        `Auto-accept overlock webhook did not apply changes: status=${autoOverlockRes.status} body=${JSON.stringify(autoOverlockRes.data)}`,
+      );
     }
     const unitAutoOver = (await axios.get(`${API_BASE}/units/${whFacA.unitId}`, {
       headers: authHeaders(token),

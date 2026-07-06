@@ -14,6 +14,9 @@ jest.mock('@/services/fms.service', () => ({
   fmsService: {
     reviewChanges: jest.fn(),
     applyChanges: jest.fn(),
+    dismissChanges: jest.fn(),
+    getPendingChanges: jest.fn().mockResolvedValue([]),
+    getSyncDetails: jest.fn().mockResolvedValue({ id: 'sync-123', sync_status: 'pending_review' }),
   },
 }));
 
@@ -27,10 +30,25 @@ jest.mock('@/contexts/ToastContext', () => ({
 
 import { useToast } from '@/contexts/ToastContext';
 
+// Mock the WebSocket context
+jest.mock('@/contexts/WebSocketContext', () => ({
+  WebSocketProvider: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
+  useWebSocket: () => ({
+    subscribe: jest.fn(() => 'sub-id'),
+    unsubscribe: jest.fn(),
+    isConnected: false,
+  }),
+}));
+
 // Mock the useFMSSync hook
 const mockUseFMSSyncReturn = {
   hideReview: jest.fn(),
   minimizeReview: jest.fn(),
+  openPendingReview: jest.fn(),
+  syncState: {
+    facilityId: 'facility-1',
+    facilityName: 'Test Facility',
+  },
 };
 
 jest.mock('@/contexts/FMSSyncContext', () => ({

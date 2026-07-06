@@ -365,7 +365,7 @@ describe('NotificationsWidget', () => {
     });
 
     await waitFor(() => {
-      expect(screen.getByText('FMS Webhook Received')).toBeInTheDocument();
+      expect(screen.getByText('FMS Update Push')).toBeInTheDocument();
       expect(screen.getByText(/alex@example.com/)).toBeInTheDocument();
     });
   });

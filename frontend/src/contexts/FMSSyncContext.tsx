@@ -401,7 +401,7 @@ export function FMSSyncProvider({ children }: { children: ReactNode }) {
             const summary = buildSyncSummaryFromChanges(pendingChanges);
 
             const syncResult: FMSSyncResult = {
-              success: latestSync.sync_status === 'completed',
+              success: latestSync.sync_status !== 'failed',
               syncLogId: latestSync.id,
               changesDetected: pendingChanges,
               summary,

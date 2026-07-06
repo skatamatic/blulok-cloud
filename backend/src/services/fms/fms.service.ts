@@ -59,7 +59,7 @@ import { FMSWebhookAuthMode } from '@/types/fms.types';
 import { UserRole } from '@/types/auth.types';
 import { logger } from '@/utils/logger';
 import { shouldAutoAcceptChanges } from './fms-auto-accept.utils';
-import { sortChangesForApply } from './fms-apply-order.utils';
+import { isFmsChangeDismissible, isFmsChangePending, partitionChangesForAutoApply, resolveFmsAutoApplyOutcome, sortChangesForApply } from './fms-apply-order.utils';
 import {
   clearFmsMappingRemoved,
   isFmsMappingMarkedRemoved,
@@ -67,7 +67,6 @@ import {
   stampFmsMappingRemoved,
 } from './fms-tenant-removal.utils';
 import {
-  describeFmsWebhookOutcome,
   summarizeFmsWebhookPayload,
 } from './fms-webhook-summary.utils';
 
@@ -438,34 +437,33 @@ export class FMSService {
       await this.syncLogModel.update(syncLog.id, {
         changes_detected: changes.length,
         changes_pending: changes.length,
-        sync_status: autoAccept
-          ? FMSSyncStatus.COMPLETED
-          : FMSSyncStatus.PENDING_REVIEW,
+        sync_status: FMSSyncStatus.PENDING_REVIEW,
       });
 
-      // Auto-accept and apply if configured
+      let pendingReviewCount = changes.length;
+
+      // Auto-accept and apply valid changes; invalid/failed rows stay in manual review
       if (autoAccept && changes.length > 0) {
-        const applyResult = await this.applyChanges(
-          syncLog.id,
-          changes.map(c => c.id)
-        );
+        const outcome = await this.autoAcceptAndApplyChanges(syncLog.id, changes);
+        pendingReviewCount = outcome.pendingCount;
 
-        await this.refreshSyncLogChangeCounts(syncLog.id);
-
-        await this.syncLogModel.update(syncLog.id, {
-          changes_applied: applyResult.changesApplied,
-          sync_status: applyResult.changesFailed > 0
-            ? FMSSyncStatus.PENDING_REVIEW
-            : FMSSyncStatus.COMPLETED,
-        });
-
-        await this.syncLogModel.markCompleted(syncLog.id, {
-          tenants_synced: fmsTenants.length,
-          units_synced: fmsUnits.length,
-          errors: applyResult.errors,
-          warnings: [],
-          changes_auto_applied: true,
-        });
+        if (outcome.requiresReview) {
+          await this.syncLogModel.markPendingReview(syncLog.id, {
+            tenants_synced: fmsTenants.length,
+            units_synced: fmsUnits.length,
+            errors: outcome.applyErrors,
+            warnings: [],
+            changes_auto_applied: outcome.changesApplied > 0,
+          });
+        } else {
+          await this.syncLogModel.markCompleted(syncLog.id, {
+            tenants_synced: fmsTenants.length,
+            units_synced: fmsUnits.length,
+            errors: outcome.applyErrors,
+            warnings: [],
+            changes_auto_applied: true,
+          });
+        }
       } else if (changes.length > 0) {
         await this.syncLogModel.markPendingReview(syncLog.id, {
           tenants_synced: fmsTenants.length,
@@ -485,9 +483,10 @@ export class FMSService {
       }
 
       // Update config last sync time
+      const finalSyncLog = await this.syncLogModel.findById(syncLog.id);
       await this.fmsConfigModel.update(config.id, {
         last_sync_at: new Date(),
-        last_sync_status: FMSSyncStatus.COMPLETED,
+        last_sync_status: finalSyncLog?.sync_status ?? FMSSyncStatus.COMPLETED,
       });
 
       // Broadcast FMS sync status update via WebSocket
@@ -500,10 +499,18 @@ export class FMSService {
         syncLogId: syncLog.id,
         step: 'complete',
         percent: 100,
-        message: 'Sync complete',
+        message: pendingReviewCount > 0 ? 'Sync complete — review required' : 'Sync complete',
       });
 
-      void this.notifyFmsSyncOutcome(facilityId, syncLog.id, changes.length, userId, false);
+      void this.notifyFmsSyncOutcome(
+        facilityId,
+        syncLog.id,
+        changes.length,
+        userId,
+        false,
+        undefined,
+        pendingReviewCount,
+      );
 
       return result;
     } catch (error) {
@@ -554,6 +561,7 @@ export class FMSService {
     triggeredByUserId: string | undefined,
     failed: boolean,
     errorMessage?: string,
+    pendingReviewCount?: number,
   ): Promise<void> {
     try {
       const { InAppNotificationDispatcher } = await import('@/services/notifications/in-app-notification-dispatcher.service');
@@ -571,6 +579,15 @@ export class FMSService {
           facilityName,
           syncLogId,
           errorMessage || 'Sync failed',
+          triggeredByUserId,
+        );
+      } else if (pendingReviewCount && pendingReviewCount > 0) {
+        await dispatcher.notifyFmsSyncPendingReview(
+          facilityId,
+          facilityName,
+          syncLogId,
+          pendingReviewCount,
+          changesDetected,
           triggeredByUserId,
         );
       } else {
@@ -2447,6 +2464,46 @@ export class FMSService {
   }
 
   /**
+   * Auto-accept valid changes only; leave invalid or failed rows in manual review.
+   */
+  private async autoAcceptAndApplyChanges(
+    syncLogId: string,
+    changes: FMSChange[],
+  ): Promise<ReturnType<typeof resolveFmsAutoApplyOutcome>> {
+    const { autoAppliable } = partitionChangesForAutoApply(changes);
+
+    let applyResult: FMSChangeApplicationResult = {
+      success: true,
+      changesApplied: 0,
+      changesFailed: 0,
+      errors: [],
+      appliedChangeIds: [],
+      failedChangeIds: [],
+      accessChanges: {
+        usersCreated: [],
+        usersDeactivated: [],
+        accessGranted: [],
+        accessRevoked: [],
+      },
+    };
+
+    if (autoAppliable.length > 0) {
+      const autoIds = autoAppliable.map((c) => c.id);
+      await this.reviewChanges(autoIds, true);
+      applyResult = await this.applyChanges(syncLogId, autoIds);
+    }
+
+    await this.refreshSyncLogChangeCounts(syncLogId);
+    const stats = await this.changeModel.getStatsBySyncLogId(syncLogId);
+
+    return resolveFmsAutoApplyOutcome({
+      totalChanges: changes.length,
+      applyResult,
+      pendingCount: stats.pending,
+    });
+  }
+
+  /**
    * Process an inbound FMS webhook (Storable Edge CloudEvents).
    */
   public async handleWebhookEvent(
@@ -2559,26 +2616,21 @@ export class FMSService {
       let requiresReview = false;
 
       if (autoAccept && changes.length > 0) {
-        const applyResult = await this.applyChanges(
-          syncLog.id,
-          changes.map((c) => c.id),
-        );
-        changesApplied = applyResult.changesApplied;
-        changesFailed = applyResult.changesFailed;
-        applyErrors = applyResult.errors;
-        autoApplied = changesFailed === 0 && changesApplied === changes.length;
-        requiresReview = changesFailed > 0;
+        const outcome = await this.autoAcceptAndApplyChanges(syncLog.id, changes);
+        changesApplied = outcome.changesApplied;
+        changesFailed = outcome.changesFailed;
+        applyErrors = outcome.applyErrors;
+        autoApplied = outcome.autoApplied;
+        requiresReview = outcome.requiresReview;
 
         await this.syncLogModel.update(syncLog.id, {
           changes_detected: priorDetected + changes.length,
           changes_applied: Number(syncLog.changes_applied ?? 0) + changesApplied,
-          changes_pending: requiresReview
-            ? priorPending + changesFailed
-            : priorPending,
           sync_status: requiresReview
             ? FMSSyncStatus.PENDING_REVIEW
             : FMSSyncStatus.COMPLETED,
         });
+        await this.refreshSyncLogChangeCounts(syncLog.id);
 
         if (requiresReview) {
           await this.syncLogModel.markPendingReview(syncLog.id, {
@@ -2586,7 +2638,7 @@ export class FMSService {
             units_synced: 0,
             errors: applyErrors,
             warnings: [],
-            changes_auto_applied: false,
+            changes_auto_applied: changesApplied > 0,
           });
         } else {
           await this.syncLogModel.markCompleted(syncLog.id, {
@@ -2685,15 +2737,33 @@ export class FMSService {
    */
   public async getRecentWebhookEvents(facilityId: string, limit = 5): Promise<FMSWebhookFeedItem[]> {
     const records = await this.webhookEventModel.findRecentByFacility(facilityId, limit);
-    const openReview = await this.syncLogModel.findOpenReviewSyncLog(facilityId);
-    const openReviewLogId =
-      openReview && openReview.changes_pending > 0 ? openReview.id : null;
+    const syncLogIds = [
+      ...new Set(
+        records
+          .map((record) => record.sync_log_id)
+          .filter((id): id is string => typeof id === 'string' && id.length > 0),
+      ),
+    ];
+
+    const pendingCountBySyncLog = new Map<string, number>();
+    await Promise.all(
+      syncLogIds.map(async (syncLogId) => {
+        const pending = await this.changeModel.findPendingBySyncLogId(syncLogId);
+        pendingCountBySyncLog.set(syncLogId, pending.length);
+      }),
+    );
 
     return records.map((record) => {
       const item = this.toWebhookFeedItem(record);
-      if (item.requiresReview && item.syncLogId && item.syncLogId !== openReviewLogId) {
+      if (!item.requiresReview || !item.syncLogId) {
+        return item;
+      }
+
+      const pendingCount = pendingCountBySyncLog.get(item.syncLogId) ?? 0;
+      if (pendingCount === 0) {
         return { ...item, requiresReview: false };
       }
+
       return item;
     });
   }
@@ -2758,27 +2828,19 @@ export class FMSService {
       );
       const facilityName = await this.getFacilityName(facilityId);
       const dispatcher = InAppNotificationDispatcher.getInstance();
-      const outcomeText = describeFmsWebhookOutcome({
-        changesDetected: webhookFeedItem.changesDetected,
-        autoApplied: webhookFeedItem.autoApplied,
-        requiresReview: webhookFeedItem.requiresReview,
-      });
 
       await dispatcher.notifyFmsWebhookReceived(
         facilityId,
         facilityName,
         webhookFeedItem.id,
-        webhookFeedItem.summaryText,
-        outcomeText,
+        payload.event_type,
+        payload.data ?? {},
         {
-          eventType: payload.event_type,
-          externalEventId: payload.externalEventId,
-          payload: payload.data,
-          syncLogId: webhookFeedItem.syncLogId,
           changesDetected: webhookFeedItem.changesDetected,
           changesApplied: webhookFeedItem.changesApplied,
           autoApplied: webhookFeedItem.autoApplied,
           requiresReview: webhookFeedItem.requiresReview,
+          syncLogId: webhookFeedItem.syncLogId,
         },
         webhookFeedItem.requiresReview ? 'high' : 'low',
       );
@@ -2887,16 +2949,16 @@ export class FMSService {
 
         let unitMapping = await resolveUnitMapping(unitExternalId);
         if (!unitMapping) {
-          const fetchedUnit = await provider.fetchUnit(unitExternalId);
-          if (fetchedUnit) {
+          const resolved = await this.resolveWebhookUnit(provider, { unit_id: unitExternalId });
+          if (resolved.unit) {
             inserts.push({
               sync_log_id: syncLogId,
               change_type: FMSChangeType.UNIT_ADDED,
               entity_type: 'unit',
-              external_id: fetchedUnit.externalId,
-              after_data: fetchedUnit,
+              external_id: resolved.unit.externalId,
+              after_data: resolved.unit,
               required_actions: [FMSChangeAction.ADD_ACCESS],
-              impact_summary: `Create unit ${fetchedUnit.unitNumber} before move-in`,
+              impact_summary: `Create unit ${resolved.unit.unitNumber} before move-in`,
               is_valid: true,
             });
           }
@@ -2961,9 +3023,9 @@ export class FMSService {
         break;
       }
       case 'unit.created': {
-        const unitExternalId = String(data.unit_id);
-        const fetchedUnit = await provider.fetchUnit(unitExternalId);
-        if (!fetchedUnit) {
+        const resolved = await this.resolveWebhookUnit(provider, data);
+        const unitExternalId = String(data.unit_id ?? '');
+        if (!resolved.unit) {
           inserts.push({
             sync_log_id: syncLogId,
             change_type: FMSChangeType.UNIT_ADDED,
@@ -2973,17 +3035,17 @@ export class FMSService {
             required_actions: [FMSChangeAction.ADD_ACCESS],
             impact_summary: `Create unit ${unitExternalId} from webhook`,
             is_valid: false,
-            validation_errors: [`Could not fetch unit ${unitExternalId} from FMS API`],
+            validation_errors: resolved.validationErrors ?? [`Could not fetch unit ${unitExternalId} from FMS API`],
           });
         } else {
           inserts.push({
             sync_log_id: syncLogId,
             change_type: FMSChangeType.UNIT_ADDED,
             entity_type: 'unit',
-            external_id: fetchedUnit.externalId,
-            after_data: fetchedUnit,
+            external_id: resolved.unit.externalId,
+            after_data: resolved.unit,
             required_actions: [FMSChangeAction.ADD_ACCESS],
-            impact_summary: `Create unit ${fetchedUnit.unitNumber} from webhook`,
+            impact_summary: `Create unit ${resolved.unit.unitNumber} from webhook`,
             is_valid: true,
           });
         }
@@ -3050,6 +3112,100 @@ export class FMSService {
     };
   }
 
+  /**
+   * Storable unit.created webhooks only include unit_id — fetch full unit details from the FMS API.
+   * Retries briefly in case the unit is not yet readable after creation. Non-Storable flat webhooks
+   * may include inline unit fields when the API lookup is unavailable (simulated/generic providers).
+   */
+  private async resolveWebhookUnit(
+    provider: BaseFMSProvider,
+    data: Record<string, unknown>,
+  ): Promise<{ unit: FMSUnit | null; validationErrors?: string[] }> {
+    const unitExternalId = String(data.unit_id ?? '');
+    if (!unitExternalId) {
+      return { unit: null, validationErrors: ['Webhook payload missing unit_id'] };
+    }
+
+    const maxAttempts = 3;
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+      const fetched = await provider.fetchUnit(unitExternalId);
+      if (fetched) {
+        return { unit: fetched };
+      }
+      if (attempt < maxAttempts - 1) {
+        await new Promise((resolve) => setTimeout(resolve, 500));
+      }
+    }
+
+    if (!(provider instanceof StoredgeProvider)) {
+      const fromBody = this.mapGenericUnitBody(data);
+      const bodyErrors = this.validateUnitBodyData(fromBody);
+      if (bodyErrors.length === 0) {
+        return { unit: fromBody };
+      }
+    }
+
+    const storedgeHint = provider instanceof StoredgeProvider
+      ? ' Storable unit.created webhooks only include unit_id — use a unit UUID that exists in your FMS facility.'
+      : '';
+    return {
+      unit: null,
+      validationErrors: [`Could not fetch unit ${unitExternalId} from FMS API.${storedgeHint}`],
+    };
+  }
+
+  private mapGenericUnitBody(data: Record<string, unknown>): FMSUnit {
+    const unitNumber =
+      data.unit_number != null
+        ? String(data.unit_number)
+        : data.unitNumber != null
+          ? String(data.unitNumber)
+          : data.name != null
+            ? String(data.name)
+            : '';
+
+    return {
+      externalId: String(data.unit_id ?? data.externalId ?? ''),
+      unitNumber,
+      unitType:
+        data.unit_type != null
+          ? String(data.unit_type)
+          : data.unitType != null
+            ? String(data.unitType)
+            : undefined,
+      size: data.size != null ? String(data.size) : undefined,
+      status: this.normalizeUnitStatus(data.status),
+      tenantId: data.tenant_id != null ? String(data.tenant_id) : undefined,
+      monthlyRate:
+        typeof data.monthly_rate === 'number'
+          ? data.monthly_rate
+          : typeof data.monthlyRate === 'number'
+            ? data.monthlyRate
+            : undefined,
+    };
+  }
+
+  private normalizeUnitStatus(status: unknown): FMSUnit['status'] {
+    if (status === 'occupied' || status === 'maintenance' || status === 'reserved' || status === 'available') {
+      return status;
+    }
+    if (status === 'vacant') {
+      return 'available';
+    }
+    return 'available';
+  }
+
+  private validateUnitBodyData(unit: FMSUnit): string[] {
+    const errors: string[] = [];
+    if (!unit.externalId) {
+      errors.push('Unit must have an external ID');
+    }
+    if (!unit.unitNumber) {
+      errors.push('Unit must have a unit number in webhook payload or via FMS API');
+    }
+    return errors;
+  }
+
   private validateTenantData(tenant: FMSTenant): string[] {
     const errors: string[] = [];
     if (!tenant.email && !tenant.phone) {
@@ -3090,7 +3246,9 @@ export class FMSService {
       syncLogId,
       changesDetected: changes,
       summary,
-      requiresReview: !syncLog.sync_summary || changes.some(c => !c.is_reviewed),
+      requiresReview:
+        syncLog.sync_status === FMSSyncStatus.PENDING_REVIEW ||
+        (syncLog.changes_pending ?? 0) > 0,
     };
   }
 
@@ -3129,6 +3287,44 @@ export class FMSService {
     if (facilityId) {
       this.broadcastFMSSyncUpdate(facilityId);
     }
+  }
+
+  /**
+   * Dismiss pending changes from review (invalid payloads or failed applies).
+   * When changeIds is omitted, all dismissible pending changes for the sync log are cleared.
+   */
+  public async dismissChanges(
+    syncLogId: string,
+    changeIds?: string[],
+  ): Promise<{ dismissed: number }> {
+    const syncLog = await this.syncLogModel.findById(syncLogId);
+    if (!syncLog) {
+      throw new Error('Sync log not found');
+    }
+
+    let idsToDismiss: string[];
+    if (changeIds && changeIds.length > 0) {
+      const changes = await this.changeModel.findByIds(changeIds);
+      idsToDismiss = changes
+        .filter((c) => c.sync_log_id === syncLogId && isFmsChangePending(c))
+        .map((c) => c.id);
+    } else {
+      const pending = await this.changeModel.findPendingBySyncLogId(syncLogId);
+      idsToDismiss = pending.filter((c) => isFmsChangeDismissible(c)).map((c) => c.id);
+    }
+
+    if (idsToDismiss.length === 0) {
+      return { dismissed: 0 };
+    }
+
+    await this.changeModel.bulkReview(idsToDismiss, false);
+
+    const facilityId = await this.refreshSyncLogChangeCounts(syncLogId);
+    if (facilityId) {
+      this.broadcastFMSSyncUpdate(facilityId);
+    }
+
+    return { dismissed: idsToDismiss.length };
   }
 
   /**

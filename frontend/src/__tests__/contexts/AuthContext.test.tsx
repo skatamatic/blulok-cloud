@@ -19,6 +19,7 @@ jest.mock('@/services/api.service', () => ({
 jest.mock('@/services/websocket.service', () => ({
   websocketService: {
     retryConnectionIfNeeded: jest.fn(),
+    forceReconnect: jest.fn(),
     disconnect: jest.fn(),
     onScopeUpdate: jest.fn(() => () => {}),
   },
@@ -82,7 +83,7 @@ describe('AuthProvider', () => {
 
     expect(screen.getByTestId('authed').textContent).toBe('yes');
     expect(mockApi.verifyToken).toHaveBeenCalled();
-    expect(mockWs.retryConnectionIfNeeded).toHaveBeenCalled();
+    expect(mockWs.forceReconnect).toHaveBeenCalled();
   });
 
   it('clears storage and unauthenticates when verifyToken fails', async () => {
@@ -137,7 +138,7 @@ describe('AuthProvider', () => {
     await waitFor(() => {
       expect(mockApi.login).toHaveBeenCalledWith({ identifier: 'a@b.com', password: 'x' });
       expect(localStorage.getItem('authToken')).toBe('new-tok');
-      expect(mockWs.retryConnectionIfNeeded).toHaveBeenCalled();
+      expect(mockWs.forceReconnect).toHaveBeenCalled();
     });
 
     expect(screen.getByTestId('can-users').textContent).toBe('u');

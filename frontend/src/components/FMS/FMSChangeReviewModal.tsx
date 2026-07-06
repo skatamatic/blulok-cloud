@@ -22,6 +22,7 @@ import {
   ClipboardDocumentCheckIcon,
   ShieldExclamationIcon,
   MagnifyingGlassIcon,
+  TrashIcon,
 } from '@heroicons/react/24/outline';
 import {
   FMSChange,
@@ -36,6 +37,11 @@ import { useWebSocket } from '@/contexts/WebSocketContext';
 import { useToast } from '@/contexts/ToastContext';
 import { formatDateTime } from '@/utils/datetime.utils';
 import { notifyPendingReviewChanged } from '@/utils/fms-pending-review.utils';
+import {
+  countDismissibleChanges,
+  getDismissibleChangeIds,
+  isFmsChangeDismissible,
+} from '@/utils/fms-change-dismiss.utils';
 import { ApplyProgressOverlay } from '@/components/FMS/ApplyProgressOverlay';
 
 interface FMSChangeReviewModalProps {
@@ -285,6 +291,7 @@ export function FMSChangeReviewModal({
   const [selectedChanges, setSelectedChanges] = useState<Set<string>>(
     new Set(changes.filter((c) => c.is_valid !== false).map((c) => c.id)),
   );
+  const [reviewChanges, setReviewChanges] = useState<FMSChange[]>(changes);
   const [expandedChanges, setExpandedChanges] = useState<Set<string>>(new Set());
   const [applying, setApplying] = useState(false);
   const [applyProgress, setApplyProgress] = useState<ApplyProgressState | null>(null);
@@ -327,6 +334,7 @@ export function FMSChangeReviewModal({
 
   useEffect(() => {
     if (!isOpen) return;
+    setReviewChanges(changes);
     setSelectedChanges(new Set(changes.filter((c) => c.is_valid !== false).map((c) => c.id)));
   }, [changes, isOpen]);
 
@@ -344,9 +352,6 @@ export function FMSChangeReviewModal({
   }, [applying]);
 
   const toggleChange = (changeId: string) => {
-    const change = changes.find((c) => c.id === changeId);
-    if (change?.is_valid === false) return;
-
     const next = new Set(selectedChanges);
     if (next.has(changeId)) next.delete(changeId);
     else next.add(changeId);
@@ -360,13 +365,13 @@ export function FMSChangeReviewModal({
     setExpandedChanges(next);
   };
 
-  const addedCount = changes.filter(
+  const addedCount = reviewChanges.filter(
     (c) =>
       c.is_valid !== false &&
       (c.change_type === FMSChangeType.TENANT_ADDED || c.change_type === FMSChangeType.UNIT_ADDED),
   ).length;
 
-  const updatedCount = changes.filter(
+  const updatedCount = reviewChanges.filter(
     (c) =>
       c.is_valid !== false &&
       (c.change_type === FMSChangeType.TENANT_UPDATED ||
@@ -375,13 +380,14 @@ export function FMSChangeReviewModal({
         c.change_type === FMSChangeType.UNIT_OVERLOCK_CHANGED),
   ).length;
 
-  const removedCount = changes.filter(
+  const removedCount = reviewChanges.filter(
     (c) => c.is_valid !== false && c.change_type === FMSChangeType.TENANT_REMOVED,
   ).length;
 
-  const invalidCount = changes.filter((c) => c.is_valid === false).length;
+  const invalidCount = reviewChanges.filter((c) => c.is_valid === false).length;
+  const dismissibleCount = countDismissibleChanges(reviewChanges);
 
-  const filteredChanges = changes.filter((change) => {
+  const filteredChanges = reviewChanges.filter((change) => {
     const valid = change.is_valid !== false;
 
     if (activeFilter === 'all') return true;
@@ -405,9 +411,16 @@ export function FMSChangeReviewModal({
   });
 
   const filteredSelectedCount = filteredChanges.filter((c) => selectedChanges.has(c.id)).length;
+  const changesToApply = (activeFilter === 'all' ? reviewChanges : filteredChanges).filter(
+    (c) => selectedChanges.has(c.id) && c.is_valid !== false,
+  );
+  const applySelectedCount = changesToApply.length;
+  const dismissSelectedCount = reviewChanges.filter(
+    (c) => selectedChanges.has(c.id) && isFmsChangeDismissible(c),
+  ).length;
 
   const selectAll = () => {
-    setSelectedChanges(new Set(filteredChanges.filter((c) => c.is_valid !== false).map((c) => c.id)));
+    setSelectedChanges(new Set(filteredChanges.map((c) => c.id)));
   };
 
   const selectNone = () => {
@@ -416,23 +429,71 @@ export function FMSChangeReviewModal({
 
   const titleSuffix = facilityName ? ` — ${facilityName}` : '';
 
-  async function handleReview(accepted: boolean) {
-    if (!syncResult) return;
-
-    const changeIds = Array.from(selectedChanges);
-    const totalToApply = changeIds.length;
+  async function handleDismiss(changeIds: string[]) {
+    if (!syncResult || changeIds.length === 0) return;
 
     try {
       setApplying(true);
-      setApplyProgress(
-        accepted
-          ? { percent: 0, message: `Preparing to apply ${totalToApply} change${totalToApply !== 1 ? 's' : ''}…`, completed: 0, total: totalToApply }
-          : null,
-      );
+      const { dismissed } = await fmsService.dismissChanges(syncResult.syncLogId, changeIds);
+      if (dismissed === 0) {
+        addToast({
+          type: 'warning',
+          title: 'Nothing to dismiss',
+          message: 'Those changes are no longer pending review.',
+          duration: 6000,
+        });
+        return;
+      }
 
-      await fmsService.reviewChanges(syncResult.syncLogId, changeIds, accepted);
+      const remaining = reviewChanges.filter((c) => !changeIds.includes(c.id));
+      setReviewChanges(remaining);
+      setSelectedChanges(new Set(remaining.filter((c) => c.is_valid !== false).map((c) => c.id)));
+      notifyPendingReviewChanged();
 
-      if (accepted) {
+      addToast({
+        type: 'info',
+        title: 'Changes dismissed',
+        message: `${dismissed} change${dismissed !== 1 ? 's' : ''} removed from review`,
+        duration: 6000,
+      });
+
+      if (remaining.length === 0) {
+        hideReview();
+        onClose();
+      }
+    } catch (error: unknown) {
+      addToast({
+        type: 'error',
+        title: 'Failed to dismiss changes',
+        message: error instanceof Error ? error.message : 'An unexpected error occurred',
+        duration: 8000,
+      });
+    } finally {
+      setApplying(false);
+    }
+  }
+
+  async function handleDismissAll() {
+    await handleDismiss(getDismissibleChangeIds(reviewChanges));
+  }
+
+  async function handleReview() {
+    if (!syncResult) return;
+
+    const changeIds = changesToApply.map((c) => c.id);
+    const totalToApply = changeIds.length;
+    if (totalToApply === 0) return;
+
+    try {
+      setApplying(true);
+      setApplyProgress({
+        percent: 0,
+        message: `Preparing to apply ${totalToApply} change${totalToApply !== 1 ? 's' : ''}…`,
+        completed: 0,
+        total: totalToApply,
+      });
+
+      await fmsService.reviewChanges(syncResult.syncLogId, changeIds, true);
         clearApplyProgressSubscription();
         const facilityId = syncState.facilityId ?? undefined;
         applyProgressSubRef.current = subscribe(
@@ -473,6 +534,10 @@ export function FMSChangeReviewModal({
             } catch {
               /* pending list refresh is best-effort */
             }
+          } else {
+            const remaining = reviewChanges.filter((c) => !result.appliedChangeIds?.includes(c.id));
+            setReviewChanges(remaining);
+            setSelectedChanges(new Set(remaining.filter((c) => c.is_valid !== false).map((c) => c.id)));
           }
 
           setApplyProgress(null);
@@ -491,20 +556,11 @@ export function FMSChangeReviewModal({
         notifyPendingReviewChanged();
         hideReview();
         onClose();
-      } else {
-        addToast({
-          type: 'info',
-          title: 'Changes Rejected',
-          message: `${changeIds.length} change${changeIds.length !== 1 ? 's' : ''} rejected`,
-        });
-        hideReview();
-        onClose();
-      }
     } catch (error: unknown) {
       clearApplyProgressSubscription();
       addToast({
         type: 'error',
-        title: `Failed to ${accepted ? 'Apply' : 'Reject'} Changes`,
+        title: 'Failed to Apply Changes',
         message: error instanceof Error ? error.message : 'An unexpected error occurred',
         duration: 8000,
       });
@@ -515,7 +571,7 @@ export function FMSChangeReviewModal({
   }
 
   const tabItems: { key: ChangeFilter; label: string; count: number; activeClass: string }[] = [
-    { key: 'all', label: 'All Changes', count: changes.length, activeClass: 'text-gray-900 dark:text-white' },
+    { key: 'all', label: 'All Changes', count: reviewChanges.length, activeClass: 'text-gray-900 dark:text-white' },
     { key: 'added', label: 'Added', count: addedCount, activeClass: 'text-emerald-600 dark:text-emerald-400' },
     { key: 'updated', label: 'Updated', count: updatedCount, activeClass: 'text-[#147FD4] dark:text-sky-400' },
     { key: 'removed', label: 'Removed', count: removedCount, activeClass: 'text-rose-600 dark:text-rose-400' },
@@ -584,7 +640,7 @@ export function FMSChangeReviewModal({
                         Review FMS Changes
                         <span className="font-normal text-gray-500 dark:text-gray-400">
                           {' '}
-                          ({changes.length} detected){titleSuffix}
+                          ({reviewChanges.length} detected){titleSuffix}
                         </span>
                       </Dialog.Title>
                       <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
@@ -649,6 +705,33 @@ export function FMSChangeReviewModal({
                   </div>
                 </div>
 
+                {dismissibleCount > 0 && (
+                  <div className="shrink-0 border-b border-amber-200/60 bg-amber-50/90 px-5 py-3 dark:border-amber-800/40 dark:bg-amber-950/25 sm:px-6">
+                    <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                      <div className="flex gap-2.5">
+                        <ExclamationTriangleIcon className="mt-0.5 h-5 w-5 shrink-0 text-amber-600 dark:text-amber-400" />
+                        <div>
+                          <p className="text-sm font-semibold text-amber-900 dark:text-amber-100">
+                            {dismissibleCount} change{dismissibleCount !== 1 ? 's' : ''} could not be applied
+                          </p>
+                          <p className="mt-0.5 text-xs text-amber-800/90 dark:text-amber-300/90">
+                            Invalid or failed changes remain in review until you dismiss them.
+                          </p>
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => void handleDismissAll()}
+                        disabled={applying}
+                        className="inline-flex shrink-0 items-center justify-center gap-1.5 rounded-lg border border-amber-300/80 bg-white px-3 py-2 text-sm font-medium text-amber-900 transition-colors hover:bg-amber-100 disabled:opacity-50 dark:border-amber-700/60 dark:bg-amber-950/40 dark:text-amber-100 dark:hover:bg-amber-900/40"
+                      >
+                        <TrashIcon className="h-4 w-4" />
+                        Dismiss all ({dismissibleCount})
+                      </button>
+                    </div>
+                  </div>
+                )}
+
                 {/* Scrollable body */}
                 <div className="status-area-scrollbar min-h-0 flex-1 overflow-y-auto overscroll-contain px-5 py-4 sm:px-6">
                   {filteredChanges.length === 0 ? (
@@ -667,22 +750,25 @@ export function FMSChangeReviewModal({
                         const isExpanded = expandedChanges.has(change.id);
                         const isSelected = selectedChanges.has(change.id);
                         const isInvalid = change.is_valid === false;
+                        const canDismiss = isFmsChangeDismissible(change);
 
                         return (
                           <div
                             key={change.id}
                             data-testid="fms-change-card"
-                            onClick={() => !isInvalid && toggleChange(change.id)}
-                            className={`group relative overflow-hidden rounded-xl border transition-all duration-200 ${
+                            onClick={() => toggleChange(change.id)}
+                            className={`group relative overflow-hidden rounded-xl border transition-all duration-200 cursor-pointer ${
                               isInvalid
-                                ? 'cursor-not-allowed border-amber-200/80 bg-amber-50/50 dark:border-amber-800/60 dark:bg-amber-950/20'
-                                : 'cursor-pointer'
+                                ? 'border-amber-200/80 bg-amber-50/50 dark:border-amber-800/60 dark:bg-amber-950/20'
+                                : ''
                             } ${
-                              isSelected && !isInvalid
-                                ? 'border-[#147FD4]/40 bg-[#147FD4]/[0.04] shadow-sm ring-1 ring-[#147FD4]/25 dark:border-sky-500/40 dark:bg-sky-500/5 dark:ring-sky-500/20'
+                              isSelected
+                                ? isInvalid
+                                  ? 'border-amber-400/60 bg-amber-50 shadow-sm ring-1 ring-amber-400/30 dark:border-amber-600/50 dark:bg-amber-950/30 dark:ring-amber-600/20'
+                                  : 'border-[#147FD4]/40 bg-[#147FD4]/[0.04] shadow-sm ring-1 ring-[#147FD4]/25 dark:border-sky-500/40 dark:bg-sky-500/5 dark:ring-sky-500/20'
                                 : !isInvalid
                                   ? 'border-gray-200/90 bg-gray-50/50 hover:border-gray-300 hover:bg-white dark:border-gray-700/80 dark:bg-gray-800/30 dark:hover:border-gray-600 dark:hover:bg-gray-800/60'
-                                  : ''
+                                  : 'hover:border-amber-300 dark:hover:border-amber-700'
                             } border-l-[3px] ${isInvalid ? 'border-l-amber-500' : style.accent}`}
                           >
                             <div className="flex gap-3 p-3.5 sm:p-4">
@@ -723,9 +809,38 @@ export function FMSChangeReviewModal({
                                             Validation details not available.
                                           </p>
                                         )}
+                                        {canDismiss && (
+                                          <button
+                                            type="button"
+                                            onClick={(e) => {
+                                              e.stopPropagation();
+                                              void handleDismiss([change.id]);
+                                            }}
+                                            disabled={applying}
+                                            className="mt-2 inline-flex items-center gap-1 text-xs font-medium text-amber-900 underline-offset-2 hover:underline disabled:opacity-50 dark:text-amber-200"
+                                          >
+                                            <TrashIcon className="h-3.5 w-3.5" />
+                                            Dismiss
+                                          </button>
+                                        )}
                                       </div>
                                     </div>
                                   </div>
+                                )}
+
+                                {!isInvalid && canDismiss && !isExpanded && (
+                                  <button
+                                    type="button"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      void handleDismiss([change.id]);
+                                    }}
+                                    disabled={applying}
+                                    className="mt-2 inline-flex items-center gap-1 text-xs font-medium text-rose-600 hover:text-rose-700 disabled:opacity-50 dark:text-rose-400"
+                                  >
+                                    <TrashIcon className="h-3.5 w-3.5" />
+                                    Dismiss failed change
+                                  </button>
                                 )}
 
                                 {change.required_actions && change.required_actions.length > 0 && (
@@ -785,17 +900,17 @@ export function FMSChangeReviewModal({
                                   )}
                                 </button>
 
-                                {!isInvalid && (
-                                  <div
-                                    className={`flex h-5 w-5 items-center justify-center rounded-full border transition-all ${
-                                      isSelected
-                                        ? 'border-[#147FD4] bg-[#147FD4] text-white dark:border-sky-500 dark:bg-sky-500'
-                                        : 'border-gray-300 bg-white dark:border-gray-600 dark:bg-gray-800 group-hover:border-[#147FD4]/60'
-                                    }`}
-                                  >
-                                    {isSelected && <CheckIcon className="h-3 w-3" strokeWidth={3} />}
-                                  </div>
-                                )}
+                                <div
+                                  className={`flex h-5 w-5 items-center justify-center rounded-full border transition-all ${
+                                    isSelected
+                                      ? isInvalid
+                                        ? 'border-amber-500 bg-amber-500 text-white dark:border-amber-400 dark:bg-amber-400'
+                                        : 'border-[#147FD4] bg-[#147FD4] text-white dark:border-sky-500 dark:bg-sky-500'
+                                      : 'border-gray-300 bg-white dark:border-gray-600 dark:bg-gray-800 group-hover:border-[#147FD4]/60'
+                                  }`}
+                                >
+                                  {isSelected && <CheckIcon className="h-3 w-3" strokeWidth={3} />}
+                                </div>
                               </div>
                             </div>
                           </div>
@@ -834,24 +949,44 @@ export function FMSChangeReviewModal({
                       </div>
                     </div>
 
-                    <button
-                      type="button"
-                      onClick={() => handleReview(true)}
-                      disabled={applying || filteredSelectedCount === 0}
-                      className="btn-primary w-full gap-2 rounded-lg sm:w-auto"
-                    >
-                      {applying ? (
-                        <>
-                          <span className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-white/30 border-t-white" />
-                          Applying...
-                        </>
-                      ) : (
-                        <>
-                          <CheckIcon className="h-4 w-4" />
-                          Accept & Apply ({filteredSelectedCount})
-                        </>
+                    <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row">
+                      {dismissSelectedCount > 0 && (
+                        <button
+                          type="button"
+                          onClick={() =>
+                            void handleDismiss(
+                              reviewChanges
+                                .filter((c) => selectedChanges.has(c.id) && isFmsChangeDismissible(c))
+                                .map((c) => c.id),
+                            )
+                          }
+                          disabled={applying}
+                          className="inline-flex w-full items-center justify-center gap-2 rounded-lg border border-gray-300 bg-white px-4 py-2.5 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-50 disabled:opacity-50 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-200 dark:hover:bg-gray-750 sm:w-auto"
+                        >
+                          <TrashIcon className="h-4 w-4" />
+                          Dismiss ({dismissSelectedCount})
+                        </button>
                       )}
-                    </button>
+
+                      <button
+                        type="button"
+                        onClick={() => void handleReview()}
+                        disabled={applying || applySelectedCount === 0}
+                        className="btn-primary w-full gap-2 rounded-lg sm:w-auto"
+                      >
+                        {applying ? (
+                          <>
+                            <span className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-white/30 border-t-white" />
+                            Applying...
+                          </>
+                        ) : (
+                          <>
+                            <CheckIcon className="h-4 w-4" />
+                            Accept & Apply ({applySelectedCount})
+                          </>
+                        )}
+                      </button>
+                    </div>
                   </div>
                 </div>
               </Dialog.Panel>

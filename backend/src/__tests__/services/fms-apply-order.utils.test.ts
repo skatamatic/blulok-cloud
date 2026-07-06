@@ -1,7 +1,11 @@
 import {
   getFmsChangeApplyPhase,
   getTenantUnitChangeAction,
+  isFmsChangeAutoAppliable,
+  isFmsChangeDismissible,
   isFmsChangePending,
+  partitionChangesForAutoApply,
+  resolveFmsAutoApplyOutcome,
   sortChangesForApply,
 } from '@/services/fms/fms-apply-order.utils';
 import { FMSChange, FMSChangeType } from '@/types/fms.types';
@@ -101,6 +105,63 @@ describe('fms-apply-order.utils', () => {
       expect(isFmsChangePending({ applied_at: null, is_reviewed: true, is_accepted: false })).toBe(
         false,
       );
+    });
+
+    it('treats MySQL 0/1 review flags as booleans', () => {
+      expect(isFmsChangePending({ applied_at: null, is_reviewed: 1, is_accepted: 0 })).toBe(false);
+      expect(
+        isFmsChangePending({ applied_at: null, is_reviewed: 1, is_accepted: 1 }),
+      ).toBe(true);
+    });
+  });
+
+  describe('isFmsChangeDismissible', () => {
+    it('identifies invalid and failed applies', () => {
+      expect(isFmsChangeDismissible({ is_valid: false })).toBe(true);
+      expect(isFmsChangeDismissible({ is_reviewed: true, is_accepted: true })).toBe(true);
+      expect(isFmsChangeDismissible({ is_reviewed: false, is_valid: true })).toBe(false);
+      expect(isFmsChangeDismissible({ applied_at: new Date(), is_valid: false })).toBe(false);
+    });
+
+    it('treats MySQL 0/1 review flags as booleans', () => {
+      expect(isFmsChangeDismissible({ is_reviewed: 1, is_accepted: 1 })).toBe(true);
+      expect(isFmsChangeDismissible({ is_valid: 0 })).toBe(true);
+    });
+  });
+
+  describe('auto-apply partitioning', () => {
+    it('excludes invalid changes from auto-apply batch', () => {
+      const changes = [
+        { id: '1', is_valid: true },
+        { id: '2', is_valid: false },
+        { id: '3', is_valid: 0 },
+      ];
+      expect(isFmsChangeAutoAppliable(changes[0]!)).toBe(true);
+      expect(isFmsChangeAutoAppliable(changes[1]!)).toBe(false);
+      const { autoAppliable, manualReview } = partitionChangesForAutoApply(changes);
+      expect(autoAppliable.map((c) => c.id)).toEqual(['1']);
+      expect(manualReview.map((c) => c.id)).toEqual(['2', '3']);
+    });
+
+    it('requires review when pending rows remain after auto-apply', () => {
+      const outcome = resolveFmsAutoApplyOutcome({
+        totalChanges: 3,
+        applyResult: { changesApplied: 1, changesFailed: 1, errors: ['boom'] },
+        pendingCount: 2,
+      });
+      expect(outcome.requiresReview).toBe(true);
+      expect(outcome.autoApplied).toBe(false);
+      expect(outcome.pendingCount).toBe(2);
+    });
+
+    it('marks fully auto-applied batch as autoApplied', () => {
+      const outcome = resolveFmsAutoApplyOutcome({
+        totalChanges: 2,
+        applyResult: { changesApplied: 2, changesFailed: 0, errors: [] },
+        pendingCount: 0,
+      });
+      expect(outcome.autoApplied).toBe(true);
+      expect(outcome.requiresReview).toBe(false);
     });
   });
 });

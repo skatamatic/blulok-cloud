@@ -79,10 +79,82 @@ export function sortChangesForApply(changes: FMSChange[]): FMSChange[] {
 /** A change still needs operator action: not applied, and not explicitly rejected. */
 export function isFmsChangePending(change: {
   applied_at?: Date | string | null;
-  is_reviewed?: boolean;
-  is_accepted?: boolean | null;
+  is_reviewed?: boolean | number | null;
+  is_accepted?: boolean | number | null;
 }): boolean {
   if (change.applied_at != null) return false;
-  if (change.is_reviewed && change.is_accepted === false) return false;
+  const reviewed = change.is_reviewed === true || change.is_reviewed === 1;
+  const rejected = change.is_accepted === false || change.is_accepted === 0;
+  if (reviewed && rejected) return false;
   return true;
+}
+
+/**
+ * Changes the operator can clear from the review queue without applying:
+ * invalid payloads, or accepted changes that failed to apply.
+ */
+export function isFmsChangeDismissible(change: {
+  applied_at?: Date | string | null;
+  is_valid?: boolean | number | null;
+  is_reviewed?: boolean | number | null;
+  is_accepted?: boolean | number | null;
+}): boolean {
+  if (change.applied_at != null) return false;
+  if (change.is_valid === false || change.is_valid === 0) return true;
+  const reviewed = change.is_reviewed === true || change.is_reviewed === 1;
+  const accepted = change.is_accepted === true || change.is_accepted === 1;
+  if (reviewed && accepted) return true;
+  return false;
+}
+
+/** Valid changes eligible for auto-accept; invalid payloads always need manual review. */
+export function isFmsChangeAutoAppliable(change: {
+  is_valid?: boolean | number | null;
+}): boolean {
+  return change.is_valid !== false && change.is_valid !== 0;
+}
+
+export function partitionChangesForAutoApply<T extends { is_valid?: boolean | number | null }>(
+  changes: T[],
+): { autoAppliable: T[]; manualReview: T[] } {
+  const autoAppliable: T[] = [];
+  const manualReview: T[] = [];
+  for (const change of changes) {
+    if (isFmsChangeAutoAppliable(change)) {
+      autoAppliable.push(change);
+    } else {
+      manualReview.push(change);
+    }
+  }
+  return { autoAppliable, manualReview };
+}
+
+export type FmsAutoApplyOutcome = {
+  changesApplied: number;
+  changesFailed: number;
+  applyErrors: string[];
+  requiresReview: boolean;
+  autoApplied: boolean;
+  pendingCount: number;
+};
+
+/** Derive webhook/sync auto-apply flags from apply results and remaining pending rows. */
+export function resolveFmsAutoApplyOutcome(options: {
+  totalChanges: number;
+  applyResult: { changesApplied: number; changesFailed: number; errors: string[] };
+  pendingCount: number;
+}): FmsAutoApplyOutcome {
+  const { totalChanges, applyResult, pendingCount } = options;
+  const requiresReview = pendingCount > 0;
+  const autoApplied =
+    !requiresReview && totalChanges > 0 && applyResult.changesFailed === 0;
+
+  return {
+    changesApplied: applyResult.changesApplied,
+    changesFailed: applyResult.changesFailed,
+    applyErrors: applyResult.errors,
+    requiresReview,
+    autoApplied,
+    pendingCount,
+  };
 }
