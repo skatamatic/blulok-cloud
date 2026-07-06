@@ -44,17 +44,30 @@ describe('notification-display.utils', () => {
     expect(v.tone).toBe('error');
   });
 
-  it('maps fms_webhook_received to info tone', () => {
+  it('maps fms_webhook_received to info tone when informational', () => {
     const v = mapApiNotificationToDashboardView(
       api({
         type: 'fms_webhook_received',
         priority: 'low',
         title: 'FMS Webhook Received',
-        message: '621 Sandbox: Tenant Updated · alex@example.com. 1 change(s) pending review.',
+        message: '621 Sandbox: Tenant Updated · alex@example.com. No changes detected.',
       }),
     );
     expect(v.tone).toBe('info');
     expect(v.actionRequired).toBe(false);
+  });
+
+  it('marks pending-review webhooks as action required via high priority', () => {
+    const v = mapApiNotificationToDashboardView(
+      api({
+        type: 'fms_webhook_received',
+        priority: 'high',
+        title: 'FMS Webhook Received',
+        message: '621 Sandbox: Tenant Updated. 1 change(s) pending review.',
+      }),
+    );
+    expect(v.actionRequired).toBe(true);
+    expect(v.tone).toBe('warning');
   });
 
   it('formats webhook payload metadata for expanded details', () => {

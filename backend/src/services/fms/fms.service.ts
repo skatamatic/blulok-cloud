@@ -827,9 +827,15 @@ export class FMSService {
         let currentPhone: string | undefined;
         if (mapping) currentPhone = mapping.metadata?.phone as string | undefined;
 
-        const needsFmsRestore = Boolean(mapping && isFmsMappingMarkedRemoved(mapping.metadata));
-        
-        const hasInfoChanges = 
+        const facilityAssignmentCount =
+          assignmentsByTenantId.get(user.id)?.length ?? 0;
+        const needsFmsRestore = isFmsUserRemovedFromFacility(
+          mapping,
+          user,
+          facilityAssignmentCount,
+        );
+
+        const hasInfoChanges =
           user.first_name !== fmsTenant.firstName ||
           user.last_name !== fmsTenant.lastName ||
           currentPhone !== fmsTenant.phone;
@@ -872,6 +878,13 @@ export class FMSService {
           assignmentsByTenantId.get(mapping.internal_id)?.length ?? 0;
 
         if (isFmsUserRemovedFromFacility(mapping, user, facilityAssignmentCount)) {
+          // Heal legacy removals so later restores detect the stamp consistently.
+          if (!isFmsMappingMarkedRemoved(mapping.metadata)) {
+            await this.entityMappingModel.updateMetadata(
+              mapping.id,
+              stampFmsMappingRemoved(mapping.metadata),
+            );
+          }
           logger.debug('[FMS] Skipping tenant_removed — already removed from this facility FMS', {
             fms_sync: true,
             sync_log_id: syncLogId,
@@ -1347,27 +1360,38 @@ export class FMSService {
 
   /**
    * Reverse tenant_removed side effects when FMS brings the tenant back.
-   * Restores facility access and reactivates the user when the mapping is stamped removed.
+   * Handles stamped mappings and legacy inactive tenants with no facility association.
    */
-  private async restoreFmsTenantIfMarkedRemoved(
+  private async restoreFmsTenantAccess(
     userId: string,
     facilityId: string,
     ctx: {
       mapping?: { id: string; metadata?: Record<string, unknown> | null } | null;
       performedBy: string;
       syncLogId: string;
+      /** When true, always restore inactive users / missing facility association (TENANT_ADDED). */
+      force?: boolean;
     },
   ): Promise<boolean> {
     const mapping =
       ctx.mapping ??
       (await this.entityMappingModel.findByInternalId(facilityId, 'user', userId));
 
-    if (!mapping || !isFmsMappingMarkedRemoved(mapping.metadata)) {
+    const user = (await UserModel.findById(userId)) as User | undefined;
+    const userFacilities = await UserFacilityAssociationModel.getUserFacilityIds(userId);
+    const hasFacility = userFacilities.includes(facilityId);
+    // Treat missing facility association as zero assignments for shared removed-detection logic.
+    const facilityAssignmentCount = hasFacility ? 1 : 0;
+
+    const needsRestore =
+      ctx.force === true ||
+      isFmsUserRemovedFromFacility(mapping, user, facilityAssignmentCount);
+
+    if (!needsRestore) {
       return false;
     }
 
-    const userFacilities = await UserFacilityAssociationModel.getUserFacilityIds(userId);
-    if (!userFacilities.includes(facilityId)) {
+    if (!hasFacility) {
       await UserFacilityAssociationModel.addUserToFacility(userId, facilityId);
       logger.info('[FMS] Restored facility association for tenant returning from FMS', {
         fms_sync: true,
@@ -1378,7 +1402,6 @@ export class FMSService {
       });
     }
 
-    const user = (await UserModel.findById(userId)) as User | undefined;
     if (user && user.is_active === false) {
       await UserModel.activateUser(userId);
       logger.info('[FMS] Reactivated tenant previously removed from FMS', {
@@ -1480,8 +1503,6 @@ export class FMSService {
         user = existingUser;
       }
 
-      // Ensure facility association
-      await UserFacilityAssociationModel.addUserToFacility(user.id, facilityId);
     } else {
       // SECURITY: Create user with TENANT role ONLY (FMS never creates admin/maintenance)
       // Backfill fields: login_identifier and phone_number
@@ -1524,24 +1545,30 @@ export class FMSService {
     );
 
     if (!existingMapping) {
-    await this.entityMappingModel.create({
-      facility_id: facilityId,
-      entity_type: 'user',
-      external_id: tenantData.externalId,
-      internal_id: user.id,
-      provider_type: config?.provider_type || 'generic_rest',
-      metadata: {
-        email: tenantData.email,
-        phone: tenantData.phone, // Store phone in metadata
-        leaseStartDate: tenantData.leaseStartDate,
-        leaseEndDate: tenantData.leaseEndDate,
-      },
-    });
+      await this.restoreFmsTenantAccess(user.id, facilityId, {
+        performedBy,
+        syncLogId: change.sync_log_id,
+        force: true,
+      });
+      await this.entityMappingModel.create({
+        facility_id: facilityId,
+        entity_type: 'user',
+        external_id: tenantData.externalId,
+        internal_id: user.id,
+        provider_type: config?.provider_type || 'generic_rest',
+        metadata: {
+          email: tenantData.email,
+          phone: tenantData.phone,
+          leaseStartDate: tenantData.leaseStartDate,
+          leaseEndDate: tenantData.leaseEndDate,
+        },
+      });
     } else {
-      await this.restoreFmsTenantIfMarkedRemoved(user.id, facilityId, {
+      await this.restoreFmsTenantAccess(user.id, facilityId, {
         mapping: existingMapping,
         performedBy,
         syncLogId: change.sync_log_id,
+        force: true,
       });
       await this.entityMappingModel.updateMetadata(
         existingMapping.id,
@@ -1771,7 +1798,7 @@ export class FMSService {
       change.internal_id,
     );
 
-    await this.restoreFmsTenantIfMarkedRemoved(change.internal_id, facilityId, {
+    await this.restoreFmsTenantAccess(change.internal_id, facilityId, {
       mapping,
       performedBy,
       syncLogId: change.sync_log_id,
@@ -1859,7 +1886,7 @@ export class FMSService {
         'user',
         tenantInternalId,
       );
-      await this.restoreFmsTenantIfMarkedRemoved(tenantInternalId, facilityId, {
+      await this.restoreFmsTenantAccess(tenantInternalId, facilityId, {
         mapping: tenantMapping,
         performedBy,
         syncLogId: change.sync_log_id,
@@ -2525,33 +2552,58 @@ export class FMSService {
       const priorDetected = Number(syncLog.changes_detected ?? 0);
       const priorPending = Number(syncLog.changes_pending ?? 0);
 
-      await this.syncLogModel.update(syncLog.id, {
-        changes_detected: priorDetected + changes.length,
-        changes_pending: autoAccept ? priorPending : priorPending + changes.length,
-        sync_status: autoAccept
-          ? FMSSyncStatus.COMPLETED
-          : FMSSyncStatus.PENDING_REVIEW,
-      });
-
       let changesApplied = 0;
+      let changesFailed = 0;
+      let applyErrors: string[] = [];
+      let autoApplied = false;
+      let requiresReview = false;
+
       if (autoAccept && changes.length > 0) {
         const applyResult = await this.applyChanges(
           syncLog.id,
-          changes.map((c) => c.id)
+          changes.map((c) => c.id),
         );
         changesApplied = applyResult.changesApplied;
+        changesFailed = applyResult.changesFailed;
+        applyErrors = applyResult.errors;
+        autoApplied = changesFailed === 0 && changesApplied === changes.length;
+        requiresReview = changesFailed > 0;
+
         await this.syncLogModel.update(syncLog.id, {
-          changes_applied: changesApplied,
-          sync_status: FMSSyncStatus.COMPLETED,
+          changes_detected: priorDetected + changes.length,
+          changes_applied: Number(syncLog.changes_applied ?? 0) + changesApplied,
+          changes_pending: requiresReview
+            ? priorPending + changesFailed
+            : priorPending,
+          sync_status: requiresReview
+            ? FMSSyncStatus.PENDING_REVIEW
+            : FMSSyncStatus.COMPLETED,
         });
-        await this.syncLogModel.markCompleted(syncLog.id, {
-          tenants_synced: 0,
-          units_synced: 0,
-          errors: applyResult.errors,
-          warnings: [],
-          changes_auto_applied: true,
-        });
+
+        if (requiresReview) {
+          await this.syncLogModel.markPendingReview(syncLog.id, {
+            tenants_synced: 0,
+            units_synced: 0,
+            errors: applyErrors,
+            warnings: [],
+            changes_auto_applied: false,
+          });
+        } else {
+          await this.syncLogModel.markCompleted(syncLog.id, {
+            tenants_synced: 0,
+            units_synced: 0,
+            errors: applyErrors,
+            warnings: [],
+            changes_auto_applied: true,
+          });
+        }
       } else if (changes.length > 0) {
+        requiresReview = true;
+        await this.syncLogModel.update(syncLog.id, {
+          changes_detected: priorDetected + changes.length,
+          changes_pending: priorPending + changes.length,
+          sync_status: FMSSyncStatus.PENDING_REVIEW,
+        });
         await this.syncLogModel.markPendingReview(syncLog.id, {
           tenants_synced: 0,
           units_synced: 0,
@@ -2560,6 +2612,10 @@ export class FMSService {
           changes_auto_applied: false,
         });
       } else {
+        await this.syncLogModel.update(syncLog.id, {
+          changes_detected: priorDetected,
+          sync_status: FMSSyncStatus.COMPLETED,
+        });
         await this.syncLogModel.markCompleted(syncLog.id, {
           tenants_synced: 0,
           units_synced: 0,
@@ -2569,34 +2625,30 @@ export class FMSService {
         });
       }
 
+      const eventSummary = {
+        ...summary,
+        summaryText,
+        changesDetected: changes.length,
+        changesApplied,
+        autoApplied,
+        requiresReview,
+      };
+
       await this.webhookEventModel.markProcessed(
         webhookRecord.id,
         syncLog.id,
-        {
-          ...summary,
-          summaryText,
-          changesDetected: changes.length,
-          changesApplied,
-          autoApplied: autoAccept && changes.length > 0,
-          requiresReview: !autoAccept && changes.length > 0,
-        },
+        eventSummary,
       );
 
-      const webhookFeedItem = this.buildWebhookFeedItem(
-        webhookRecord.id,
-        facilityId,
-        payload,
-        syncLog.id,
-        {
-          summary,
-          summaryText,
-          changesDetected: changes.length,
-          changesApplied,
-          autoApplied: autoAccept && changes.length > 0,
-          requiresReview: !autoAccept && changes.length > 0,
-          receivedAt: webhookRecord.received_at,
-        },
-      );
+      const webhookFeedItem = this.toWebhookFeedItem({
+        id: webhookRecord.id,
+        facility_id: facilityId,
+        external_event_id: payload.externalEventId,
+        event_type: payload.event_type,
+        received_at: webhookRecord.received_at,
+        sync_log_id: syncLog.id,
+        event_summary: eventSummary,
+      });
 
       void this.notifyFmsWebhookReceived(facilityId, payload, webhookFeedItem);
       this.broadcastFMSSyncUpdate(facilityId, webhookFeedItem);
@@ -2607,7 +2659,7 @@ export class FMSService {
         syncLogId: syncLog.id,
         changesDetected: changes.length,
         changesApplied,
-        requiresReview: !autoAccept && changes.length > 0,
+        requiresReview,
       };
     } catch (error) {
       await this.webhookEventModel.deleteByExternalEventId(facilityId, payload.externalEventId);
@@ -2617,24 +2669,41 @@ export class FMSService {
           error_message: error instanceof Error ? error.message : 'Webhook processing failed',
         });
       }
+      void this.notifyFmsWebhookFailure(
+        facilityId,
+        payload,
+        error instanceof Error ? error.message : 'Webhook processing failed',
+      );
+      this.broadcastFMSSyncUpdate(facilityId);
       throw error;
     }
   }
 
   /**
    * Recent webhook events for the facility FMS tab feed.
+   * Live-reconciles stale requiresReview flags against open pending review logs.
    */
   public async getRecentWebhookEvents(facilityId: string, limit = 5): Promise<FMSWebhookFeedItem[]> {
     const records = await this.webhookEventModel.findRecentByFacility(facilityId, limit);
-    return records.map((record) => this.mapWebhookRecordToFeedItem(record));
+    const openReview = await this.syncLogModel.findOpenReviewSyncLog(facilityId);
+    const openReviewLogId =
+      openReview && openReview.changes_pending > 0 ? openReview.id : null;
+
+    return records.map((record) => {
+      const item = this.toWebhookFeedItem(record);
+      if (item.requiresReview && item.syncLogId && item.syncLogId !== openReviewLogId) {
+        return { ...item, requiresReview: false };
+      }
+      return item;
+    });
   }
 
-  private mapWebhookRecordToFeedItem(record: {
+  private toWebhookFeedItem(record: {
     id: string;
     facility_id: string;
     external_event_id: string;
     event_type: string;
-    received_at: Date;
+    received_at: Date | string;
     sync_log_id?: string | null;
     event_summary?: Record<string, unknown> | null;
   }): FMSWebhookFeedItem {
@@ -2648,12 +2717,17 @@ export class FMSService {
         ? eventSummary.summaryText
         : record.event_type.replace(/\./g, ' ');
 
+    const receivedAt =
+      record.received_at instanceof Date
+        ? record.received_at.toISOString()
+        : new Date(record.received_at).toISOString();
+
     return {
       id: record.id,
       facilityId: record.facility_id,
       eventType: record.event_type,
       externalEventId: record.external_event_id,
-      receivedAt: record.received_at.toISOString(),
+      receivedAt,
       summary: eventSummary,
       summaryText,
       changesDetected,
@@ -2664,35 +2738,13 @@ export class FMSService {
     };
   }
 
-  private buildWebhookFeedItem(
-    webhookRecordId: string,
-    facilityId: string,
-    payload: FMSWebhookPayload,
-    syncLogId: string,
-    ctx: {
-      summary: Record<string, unknown>;
-      summaryText: string;
-      changesDetected: number;
-      changesApplied: number;
-      autoApplied: boolean;
-      requiresReview: boolean;
-      receivedAt: Date;
-    },
-  ): FMSWebhookFeedItem {
-    return {
-      id: webhookRecordId,
-      facilityId,
-      eventType: payload.event_type,
-      externalEventId: payload.externalEventId,
-      receivedAt: ctx.receivedAt.toISOString(),
-      summary: ctx.summary,
-      summaryText: ctx.summaryText,
-      changesDetected: ctx.changesDetected,
-      changesApplied: ctx.changesApplied,
-      autoApplied: ctx.autoApplied,
-      requiresReview: ctx.requiresReview,
-      syncLogId,
-    };
+  private async getFacilityName(facilityId: string): Promise<string> {
+    const { DatabaseService } = await import('@/services/database.service');
+    const row = await DatabaseService.getInstance()
+      .connection('facilities')
+      .where('id', facilityId)
+      .first('name');
+    return (row?.name as string | undefined) || 'Facility';
   }
 
   private async notifyFmsWebhookReceived(
@@ -2704,12 +2756,7 @@ export class FMSService {
       const { InAppNotificationDispatcher } = await import(
         '@/services/notifications/in-app-notification-dispatcher.service'
       );
-      const { DatabaseService } = await import('@/services/database.service');
-      const row = await DatabaseService.getInstance()
-        .connection('facilities')
-        .where('id', facilityId)
-        .first('name');
-      const facilityName = (row?.name as string | undefined) || 'Facility';
+      const facilityName = await this.getFacilityName(facilityId);
       const dispatcher = InAppNotificationDispatcher.getInstance();
       const outcomeText = describeFmsWebhookOutcome({
         changesDetected: webhookFeedItem.changesDetected,
@@ -2727,11 +2774,37 @@ export class FMSService {
           eventType: payload.event_type,
           externalEventId: payload.externalEventId,
           payload: payload.data,
-          ...webhookFeedItem.summary,
+          syncLogId: webhookFeedItem.syncLogId,
+          changesDetected: webhookFeedItem.changesDetected,
+          changesApplied: webhookFeedItem.changesApplied,
+          autoApplied: webhookFeedItem.autoApplied,
+          requiresReview: webhookFeedItem.requiresReview,
         },
+        webhookFeedItem.requiresReview ? 'high' : 'low',
       );
     } catch (err) {
       logger.error('[FMS] Failed to send webhook notification:', err);
+    }
+  }
+
+  private async notifyFmsWebhookFailure(
+    facilityId: string,
+    payload: FMSWebhookPayload,
+    errorMessage: string,
+  ): Promise<void> {
+    try {
+      const { InAppNotificationDispatcher } = await import(
+        '@/services/notifications/in-app-notification-dispatcher.service'
+      );
+      const facilityName = await this.getFacilityName(facilityId);
+      await InAppNotificationDispatcher.getInstance().notifyFmsSyncFailed(
+        facilityId,
+        facilityName,
+        payload.externalEventId,
+        `Webhook ${payload.event_type} failed: ${errorMessage}`,
+      );
+    } catch (err) {
+      logger.error('[FMS] Failed to send webhook failure notification:', err);
     }
   }
 

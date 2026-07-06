@@ -2,6 +2,7 @@ import {
   FMS_WEBHOOK_FEED_LIMIT,
   getWebhookFeedOutcomeLabel,
   mergeWebhookFeed,
+  reconcileWebhookFeedReview,
 } from '@/utils/fms-webhook-feed.utils';
 import { FMSWebhookFeedItem } from '@/types/fms.types';
 
@@ -35,5 +36,22 @@ describe('fms-webhook-feed.utils', () => {
 
   it('labels pending review outcomes', () => {
     expect(getWebhookFeedOutcomeLabel(makeEvent('1'))).toBe('Pending review');
+  });
+
+  it('clears stale requiresReview when open pending log is gone', () => {
+    const events = [makeEvent('1'), { ...makeEvent('2'), requiresReview: false, autoApplied: true }];
+    const reconciled = reconcileWebhookFeedReview(events, null);
+    expect(reconciled[0]?.requiresReview).toBe(false);
+    expect(reconciled[1]?.requiresReview).toBe(false);
+  });
+
+  it('keeps requiresReview only for the open pending sync log', () => {
+    const events = [
+      { ...makeEvent('1'), syncLogId: 'sync-open' },
+      { ...makeEvent('2'), syncLogId: 'sync-done' },
+    ];
+    const reconciled = reconcileWebhookFeedReview(events, 'sync-open');
+    expect(reconciled[0]?.requiresReview).toBe(true);
+    expect(reconciled[1]?.requiresReview).toBe(false);
   });
 });

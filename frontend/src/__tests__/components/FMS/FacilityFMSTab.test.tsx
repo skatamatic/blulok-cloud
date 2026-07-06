@@ -26,6 +26,7 @@ describe('FacilityFMSTab', () => {
     // Default mocks
     mockFmsService.getConfig.mockResolvedValue(null);
     mockFmsService.getSyncHistory.mockResolvedValue({ logs: [], total: 0 });
+    mockFmsService.getWebhookEvents.mockResolvedValue({ events: [] });
   });
 
   const renderComponent = (isDevMode = false, canEditFMS = true) => {

@@ -11191,6 +11191,43 @@ async function run() {
     }
     ok('Manual review: deny overlock, accept tenant updates in one apply batch');
 
+    step('Webhook feed + in-app notification records for operators');
+    const webhookFeedRes = await axios.get(
+      `${API_BASE}/fms/webhooks/${whFacA.facilityId}/events?limit=5`,
+      { headers: authHeaders(token) },
+    );
+    if (webhookFeedRes.status !== 200) {
+      throw new Error(`Expected webhook feed 200, got ${webhookFeedRes.status}`);
+    }
+    const webhookFeedEvents = webhookFeedRes.data?.events || [];
+    if (webhookFeedEvents.length < 1) {
+      throw new Error('Expected at least one webhook feed event after batch delivery');
+    }
+    const hasTenantUpdateFeed = webhookFeedEvents.some(
+      (e) => e.eventType === 'tenant.updated' || String(e.summaryText || '').toLowerCase().includes('tenant'),
+    );
+    if (!hasTenantUpdateFeed) {
+      throw new Error('Webhook feed missing tenant update event summaries');
+    }
+    // After review/apply, live-reconciled feed should not keep a stuck pending-review CTA.
+    const stalePending = webhookFeedEvents.some(
+      (e) => e.requiresReview === true && e.syncLogId === batchSyncLogId,
+    );
+    if (stalePending) {
+      throw new Error('Webhook feed still shows requiresReview for fully reviewed sync log');
+    }
+    const webhookNotifsRes = await axios.get(`${API_BASE}/notifications`, {
+      headers: authHeaders(token),
+      params: { limit: 50, includeExpired: true },
+    });
+    const webhookNotifs = (webhookNotifsRes.data?.notifications || []).filter(
+      (n) => n.type === 'fms_webhook_received',
+    );
+    if (webhookNotifs.length < 1) {
+      throw new Error('Expected fms_webhook_received in-app notification for facility operators');
+    }
+    ok('Webhook feed and fms_webhook_received notifications available to operators');
+
     step('Cross-facility isolation: webhook on B must not change unit A');
     const unitABeforeBWebhook = (await axios.get(`${API_BASE}/units/${whFacA.unitId}`, {
       headers: authHeaders(token),

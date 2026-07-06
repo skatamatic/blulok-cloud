@@ -7,7 +7,22 @@ export function mergeWebhookFeed(
   incoming: FMSWebhookFeedItem,
 ): FMSWebhookFeedItem[] {
   const next = [incoming, ...existing.filter((item) => item.id !== incoming.id)];
+  next.sort(
+    (a, b) => new Date(b.receivedAt).getTime() - new Date(a.receivedAt).getTime(),
+  );
   return next.slice(0, FMS_WEBHOOK_FEED_LIMIT);
+}
+
+/** Clear stale pending-review badges once the open review log is gone or changed. */
+export function reconcileWebhookFeedReview(
+  events: FMSWebhookFeedItem[],
+  openPendingSyncLogId: string | null,
+): FMSWebhookFeedItem[] {
+  return events.map((event) => {
+    if (!event.requiresReview) return event;
+    if (openPendingSyncLogId && event.syncLogId === openPendingSyncLogId) return event;
+    return { ...event, requiresReview: false };
+  });
 }
 
 export function getWebhookFeedOutcomeLabel(item: FMSWebhookFeedItem): string {

@@ -19,6 +19,7 @@ describe('fms-tenant-removal.utils', () => {
 
   it('detects legacy removed tenants as inactive with no facility assignments', () => {
     expect(isFmsUserRemovedFromFacility({ metadata: {} }, { is_active: false }, 0)).toBe(true);
+    expect(isFmsUserRemovedFromFacility(null, { is_active: false }, 0)).toBe(true);
     expect(isFmsUserRemovedFromFacility({ metadata: {} }, { is_active: false }, 1)).toBe(false);
     expect(isFmsUserRemovedFromFacility({ metadata: {} }, { is_active: true }, 0)).toBe(false);
   });

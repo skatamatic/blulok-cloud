@@ -298,6 +298,8 @@ export class InAppNotificationDispatcher {
 
     metadata: Record<string, unknown>,
 
+    priority: 'low' | 'normal' | 'high' | 'urgent' = 'low',
+
   ): Promise<void> {
 
     await this.notifyFacilityOperators({
@@ -308,7 +310,7 @@ export class InAppNotificationDispatcher {
 
       message: `${facilityName}: ${summaryText}. ${outcomeText}`,
 
-      priority: 'low',
+      priority,
 
       referenceType: 'fms_webhook',
 

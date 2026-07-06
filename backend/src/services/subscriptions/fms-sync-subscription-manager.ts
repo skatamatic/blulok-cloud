@@ -230,6 +230,16 @@ export class FMSSyncSubscriptionManager extends BaseSubscriptionManager {
     return statuses;
   }
 
+  private canReceiveFacilityWebhook(client: SubscriptionClient, eventFacilityId: string): boolean {
+    if (client.userRole === UserRole.ADMIN || client.userRole === UserRole.DEV_ADMIN) {
+      return true;
+    }
+    if (client.userRole === UserRole.FACILITY_ADMIN) {
+      return (client.facilityIds || []).includes(eventFacilityId);
+    }
+    return false;
+  }
+
   /**
    * Broadcast FMS sync status update to all subscribed clients.
    * Optionally includes a webhook feed item when a webhook was just processed.
@@ -267,6 +277,12 @@ export class FMSSyncSubscriptionManager extends BaseSubscriptionManager {
 
         const syncStatuses = userSyncData.get(userKey);
         const watchers = this.watchers.get(subscriptionId);
+
+        // Only attach webhook payload when the subscriber may access that facility.
+        const scopedWebhookEvent =
+          webhookEvent && this.canReceiveFacilityWebhook(client, webhookEvent.facilityId)
+            ? webhookEvent
+            : undefined;
         
         if (watchers) {
           watchers.forEach(ws => {
@@ -279,7 +295,7 @@ export class FMSSyncSubscriptionManager extends BaseSubscriptionManager {
                     facilities: syncStatuses,
                     lastUpdated: new Date().toISOString(),
                     updatedFacilityId: facilityId,
-                    ...(webhookEvent ? { webhookEvent } : {}),
+                    ...(scopedWebhookEvent ? { webhookEvent: scopedWebhookEvent } : {}),
                   },
                   timestamp: new Date().toISOString()
                 }));

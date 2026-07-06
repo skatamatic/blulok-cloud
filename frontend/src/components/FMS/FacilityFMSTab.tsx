@@ -4,7 +4,7 @@
  * Configuration, sync operations, and change review for facility FMS integration.
  */
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import {
   CloudIcon,
   CheckCircleIcon,
@@ -36,7 +36,11 @@ import { getFmsSyncAppliedColumnText } from '@/utils/fmsSyncLogDisplay';
 import { isFMSSyncInProgressError } from '@/utils/fms-sync.utils';
 import { formatDateTime } from '@/utils/datetime.utils';
 import { formatPendingReviewLabel, pickOpenPendingReviewLog, FMS_PENDING_REVIEW_CHANGED } from '@/utils/fms-pending-review.utils';
-import { FMS_WEBHOOK_FEED_LIMIT, mergeWebhookFeed } from '@/utils/fms-webhook-feed.utils';
+import {
+  FMS_WEBHOOK_FEED_LIMIT,
+  mergeWebhookFeed,
+  reconcileWebhookFeedReview,
+} from '@/utils/fms-webhook-feed.utils';
 
 interface FacilityFMSTabProps {
   facilityId: string;
@@ -93,50 +97,10 @@ export function FacilityFMSTab({
   const [pendingTriggeredBy, setPendingTriggeredBy] = useState<'manual' | 'automatic' | 'webhook' | null>(null);
   const [syncHistory, setSyncHistory] = useState<FMSSyncLog[]>([]);
   const [webhookFeed, setWebhookFeed] = useState<FMSWebhookFeedItem[]>([]);
+  const [webhookFeedError, setWebhookFeedError] = useState<string | null>(null);
   const [selectedProvider, setSelectedProvider] = useState<FMSProviderType | null>(null);
   const [configExpanded, setConfigExpanded] = useState(false);
-
-  useEffect(() => {
-    loadConfig();
-    loadSyncHistory();
-    loadWebhookFeed();
-  }, [facilityId]);
-
-  useEffect(() => {
-    const onPendingChanged = () => {
-      void loadSyncHistory();
-    };
-    window.addEventListener(FMS_PENDING_REVIEW_CHANGED, onPendingChanged);
-    return () => window.removeEventListener(FMS_PENDING_REVIEW_CHANGED, onPendingChanged);
-  }, [facilityId]);
-
-  useEffect(() => {
-    const subId = subscribe(
-      'fms_sync_status',
-      (data: { updatedFacilityId?: string; webhookEvent?: FMSWebhookFeedItem }) => {
-        if (data?.updatedFacilityId !== facilityId && data?.webhookEvent?.facilityId !== facilityId) {
-          return;
-        }
-        if (data?.webhookEvent) {
-          setWebhookFeed((prev) => mergeWebhookFeed(prev, data.webhookEvent!));
-        }
-        void loadSyncHistory();
-      },
-      undefined,
-      { facilityId },
-    );
-    return () => unsubscribe(subId);
-  }, [facilityId, subscribe, unsubscribe]);
-
-  const prevReviewOpenRef = useRef(false);
-  useEffect(() => {
-    const wasOpen = prevReviewOpenRef.current;
-    prevReviewOpenRef.current = syncState.showReviewModal;
-    if (wasOpen && !syncState.showReviewModal) {
-      void loadSyncHistory();
-      void loadConfig();
-    }
-  }, [syncState.showReviewModal, facilityId]);
+  const webhookLoadSeqRef = useRef(0);
 
   const loadConfig = async () => {
     try {
@@ -172,10 +136,12 @@ export function FacilityFMSTab({
         setPendingReviewCount(openReview.changes_pending);
         setPendingSyncLogId(openReview.id);
         setPendingTriggeredBy(openReview.triggered_by as 'manual' | 'automatic' | 'webhook');
+        setWebhookFeed((prev) => reconcileWebhookFeedReview(prev, openReview.id));
       } else {
         setPendingReviewCount(0);
         setPendingSyncLogId(null);
         setPendingTriggeredBy(null);
+        setWebhookFeed((prev) => reconcileWebhookFeedReview(prev, null));
       }
     } catch (error) {
       console.error('Failed to load sync history:', error);
@@ -183,15 +149,86 @@ export function FacilityFMSTab({
   };
 
   const loadWebhookFeed = async () => {
+    const seq = ++webhookLoadSeqRef.current;
     try {
       const { events } = await fmsService.getWebhookEvents(facilityId, {
         limit: FMS_WEBHOOK_FEED_LIMIT,
       });
+      if (seq !== webhookLoadSeqRef.current) return;
+      setWebhookFeedError(null);
       setWebhookFeed(events);
     } catch (error) {
+      if (seq !== webhookLoadSeqRef.current) return;
       console.error('Failed to load webhook feed:', error);
+      setWebhookFeedError('Could not load recent webhooks');
     }
   };
+
+  const handleReviewPending = useCallback(
+    async (syncLogId: string) => {
+      try {
+        await openPendingReview(facilityId, syncLogId, facilityName);
+      } catch (error: unknown) {
+        const message =
+          error instanceof Error ? error.message : 'Could not open pending review';
+        addToast({
+          type: 'error',
+          title: 'Review Unavailable',
+          message,
+        });
+        void loadSyncHistory();
+        void loadWebhookFeed();
+      }
+    },
+    [openPendingReview, facilityId, facilityName, addToast],
+  );
+
+  useEffect(() => {
+    setWebhookFeed([]);
+    setWebhookFeedError(null);
+    webhookLoadSeqRef.current += 1;
+    void loadConfig();
+    void loadSyncHistory();
+    void loadWebhookFeed();
+  }, [facilityId]);
+
+  useEffect(() => {
+    const onPendingChanged = () => {
+      void loadSyncHistory();
+      void loadWebhookFeed();
+    };
+    window.addEventListener(FMS_PENDING_REVIEW_CHANGED, onPendingChanged);
+    return () => window.removeEventListener(FMS_PENDING_REVIEW_CHANGED, onPendingChanged);
+  }, [facilityId]);
+
+  useEffect(() => {
+    const subId = subscribe(
+      'fms_sync_status',
+      (data: { updatedFacilityId?: string; webhookEvent?: FMSWebhookFeedItem }) => {
+        if (data?.updatedFacilityId !== facilityId && data?.webhookEvent?.facilityId !== facilityId) {
+          return;
+        }
+        if (data?.webhookEvent?.facilityId === facilityId) {
+          setWebhookFeed((prev) => mergeWebhookFeed(prev, data.webhookEvent!));
+        }
+        void loadSyncHistory();
+      },
+      undefined,
+      { facilityId },
+    );
+    return () => unsubscribe(subId);
+  }, [facilityId, subscribe, unsubscribe]);
+
+  const prevReviewOpenRef = useRef(false);
+  useEffect(() => {
+    const wasOpen = prevReviewOpenRef.current;
+    prevReviewOpenRef.current = syncState.showReviewModal;
+    if (wasOpen && !syncState.showReviewModal) {
+      void loadSyncHistory();
+      void loadWebhookFeed();
+      void loadConfig();
+    }
+  }, [syncState.showReviewModal, facilityId]);
 
   const handleTestConnection = async () => {
     if (!config) return;
@@ -485,16 +522,33 @@ export function FacilityFMSTab({
 
           {showWebhookFeed && (
           <div className={`${cardClass} overflow-hidden`}>
-            <div className="px-6 py-5 border-b border-gray-200 dark:border-gray-700">
-              <h3 className="text-base font-semibold text-gray-900 dark:text-white">Recent Webhooks</h3>
-              <p className="mt-0.5 text-sm text-gray-500 dark:text-gray-400">
-                Last {FMS_WEBHOOK_FEED_LIMIT} inbound FMS webhook events for this facility
-              </p>
+            <div className="px-6 py-5 border-b border-gray-200 dark:border-gray-700 flex items-start justify-between gap-3">
+              <div>
+                <h3 className="text-base font-semibold text-gray-900 dark:text-white">Recent Webhooks</h3>
+                <p className="mt-0.5 text-sm text-gray-500 dark:text-gray-400">
+                  Last {FMS_WEBHOOK_FEED_LIMIT} inbound FMS webhook events for this facility
+                </p>
+              </div>
+              {webhookFeedError && (
+                <button
+                  type="button"
+                  onClick={() => void loadWebhookFeed()}
+                  className="text-xs font-medium text-primary-600 dark:text-primary-400 hover:underline shrink-0"
+                >
+                  Retry
+                </button>
+              )}
             </div>
-            <FMSWebhookFeed
-              events={webhookFeed}
-              onReviewPending={(syncLogId) => openPendingReview(facilityId, syncLogId, facilityName)}
-            />
+            {webhookFeedError ? (
+              <p className="px-6 py-8 text-sm text-rose-600 dark:text-rose-400 text-center">
+                {webhookFeedError}
+              </p>
+            ) : (
+              <FMSWebhookFeed
+                events={webhookFeed}
+                onReviewPending={(syncLogId) => void handleReviewPending(syncLogId)}
+              />
+            )}
           </div>
           )}
 
