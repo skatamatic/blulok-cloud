@@ -3,6 +3,25 @@ export type StatusUnreachableReason =
   | 'gateway_maintenance'
   | 'gateway_error';
 
+export type BluLokDeviceStatus = 'online' | 'offline' | 'low_battery' | 'error';
+export type AccessControlReportedStatus = 'online' | 'offline' | 'error' | 'maintenance';
+
+export function normalizeBluLokDeviceStatus(value: string | null | undefined): BluLokDeviceStatus {
+  if (value === 'online' || value === 'offline' || value === 'low_battery' || value === 'error') {
+    return value;
+  }
+  return 'offline';
+}
+
+export function normalizeAccessControlReportedStatus(
+  value: string | null | undefined,
+): AccessControlReportedStatus {
+  if (value === 'online' || value === 'offline' || value === 'error' || value === 'maintenance') {
+    return value;
+  }
+  return 'offline';
+}
+
 const REASON_LABELS: Record<StatusUnreachableReason, string> = {
   gateway_offline: 'Gateway offline — device unreachable',
   gateway_maintenance: 'Gateway in maintenance — device unreachable',

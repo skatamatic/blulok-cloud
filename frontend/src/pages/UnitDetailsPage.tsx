@@ -7,7 +7,6 @@ import { DeviceAssignmentModal } from '@/components/Devices/DeviceAssignmentModa
 import {
   HomeIcon,
   CheckCircleIcon,
-  ExclamationTriangleIcon,
   ClockIcon,
   WrenchScrewdriverIcon,
   BuildingOfficeIcon,
@@ -26,10 +25,10 @@ import {
 import { ConfirmDialog } from '@/components/Common/ConfirmDialog';
 import { detailsBtnDangerSm, detailsBtnSecondarySm, detailsTabCountBadgeClass, detailsUnlockButtonClass } from '@/components/Common/details-page.styles';
 import {
-  deviceStatusColors,
   lockStatusColors,
   unitStatusColors,
 } from '@/utils/statusBadge.utils';
+import { normalizeBluLokDeviceStatus } from '@/utils/device-reachability.utils';
 import { UnitDetailsOverview, type UnitDetailsTab } from '@/components/Units/UnitDetailsOverview';
 import type { UnitAccessGroupRef } from '@/utils/device-group-membership.utils';
 import { loadAccessGroupRefsForBlulokLock } from '@/utils/access-groups-load.utils';
@@ -104,14 +103,6 @@ const statusIcons = {
   maintenance: WrenchScrewdriverIcon,
   reserved: ClockIcon
 };
-
-const deviceStatusIcons = {
-  online: CheckCircleIcon,
-  offline: ExclamationTriangleIcon,
-  error: ExclamationTriangleIcon,
-  low_battery: ExclamationTriangleIcon
-};
-
 
 function getUnitTabFromSearch(search: string): UnitDetailsTab {
   const tab = new URLSearchParams(search).get('tab');
@@ -208,16 +199,19 @@ export default function UnitDetailsPage() {
     const deviceUpdate = rows[0];
     setUnit((prev) => {
       if (!prev?.blulok_device) return prev;
-      return {
-        ...prev,
-        device_status: (deviceUpdate.device_status ??
-          prev.device_status ??
-          prev.blulok_device.device_status) as NonNullable<UnitDetails['device_status']>,
-        reported_device_status:
-          deviceUpdate.reported_device_status ??
+      const nextReported = normalizeBluLokDeviceStatus(
+        deviceUpdate.reported_device_status ??
           prev.reported_device_status ??
           prev.blulok_device.reported_device_status ??
           prev.blulok_device.device_status,
+      );
+      const nextDeviceStatus = normalizeBluLokDeviceStatus(
+        deviceUpdate.device_status ?? prev.device_status ?? prev.blulok_device.device_status,
+      );
+      return {
+        ...prev,
+        device_status: nextDeviceStatus,
+        reported_device_status: nextReported,
         status_unreachable_reason:
           deviceUpdate.status_unreachable_reason !== undefined
             ? deviceUpdate.status_unreachable_reason
@@ -227,13 +221,8 @@ export default function UnitDetailsPage() {
           lock_status: (deviceUpdate.lock_status || prev.blulok_device.lock_status) as NonNullable<
             UnitDetails['blulok_device']
           >['lock_status'],
-          device_status: (deviceUpdate.device_status || prev.blulok_device.device_status) as NonNullable<
-            UnitDetails['blulok_device']
-          >['device_status'],
-          reported_device_status:
-            deviceUpdate.reported_device_status ??
-            prev.blulok_device.reported_device_status ??
-            prev.blulok_device.device_status,
+          device_status: nextDeviceStatus,
+          reported_device_status: nextReported,
           status_unreachable_reason:
             deviceUpdate.status_unreachable_reason !== undefined
               ? deviceUpdate.status_unreachable_reason
@@ -570,8 +559,6 @@ export default function UnitDetailsPage() {
         unitId={unitId}
         statusColors={statusColors}
         lockStatusColors={lockStatusColors}
-        deviceStatusColors={deviceStatusColors}
-        deviceStatusIcons={deviceStatusIcons}
         canManageUnits={canManageUnits}
         canManageOverlock={canManageUnits}
         overlockSaving={overlockSaving}

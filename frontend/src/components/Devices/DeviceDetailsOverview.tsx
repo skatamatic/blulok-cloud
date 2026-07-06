@@ -1,7 +1,6 @@
 import { Link } from 'react-router-dom';
 import {
   ArrowTopRightOnSquareIcon,
-  CheckCircleIcon,
   ExclamationTriangleIcon,
   LockClosedIcon,
   LockOpenIcon,
@@ -33,7 +32,6 @@ import { AccessGroupMembershipOverview } from '@/components/AccessCodes/AccessGr
 import { withReturnPath } from '@/hooks/useBackNavigation';
 import type { UnitAccessGroupRef } from '@/utils/device-group-membership.utils';
 import {
-  deviceStatusColors,
   lockStatusColors,
   unitStatusColors,
   statusBadgeSmClass,
@@ -52,6 +50,7 @@ import type { Location } from 'react-router-dom';
 type DeviceCategory = 'blulok' | 'access_control';
 type LockStatus = 'locked' | 'unlocked' | 'locking' | 'unlocking' | 'error' | 'maintenance' | 'unknown';
 type DeviceStatus = 'online' | 'offline' | 'low_battery' | 'error';
+type AccessControlReportedStatus = 'online' | 'offline' | 'error' | 'maintenance';
 
 export interface DeviceDetailsOverviewData {
   id: string;
@@ -74,7 +73,7 @@ export interface DeviceDetailsOverviewData {
   lock_status: LockStatus;
   device_status: DeviceStatus;
   reported_device_status?: DeviceStatus;
-  reported_status?: DeviceStatus;
+  reported_status?: AccessControlReportedStatus;
   status_unreachable_reason?: string | null;
   battery_level?: number;
   signal_strength?: number;
@@ -107,13 +106,6 @@ export interface DenylistEntryOverview {
     last_name: string | null;
   };
 }
-
-const deviceStatusIcons: Record<DeviceStatus, typeof CheckCircleIcon> = {
-  online: CheckCircleIcon,
-  offline: ExclamationTriangleIcon,
-  low_battery: ExclamationTriangleIcon,
-  error: ExclamationTriangleIcon,
-};
 
 const sourceLabels: Record<DenylistEntryOverview['source'], string> = {
   user_deactivation: 'User Deactivated',

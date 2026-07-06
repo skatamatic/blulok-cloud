@@ -35,6 +35,7 @@ export interface UseLockDeviceRealtimeParams {
    * When using debouncedRefresh, subscribe to granular device_status (default true).
    * Set false for unit-list tabs that only need units_update.
    */
+  subscribeDeviceStatusForRefresh?: boolean;
   /**
    * When true (default), also subscribe to `gateway_status` and debounce refresh on
    * connect/disconnect so list/detail pages reload when reachability coercion changes

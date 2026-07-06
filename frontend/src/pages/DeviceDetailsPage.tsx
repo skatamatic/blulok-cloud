@@ -14,6 +14,10 @@ import { resolveLockTimeoutMsForFacility } from '@/utils/facilityLockTimeout.uti
 import { useGlobalFacility } from '@/contexts/GlobalFacilityContext';
 import { useLockDeviceRealtime } from '@/hooks/useLockDeviceRealtime';
 import type { LockDeviceSnapshot } from '@/utils/deviceStatusWs.utils';
+import {
+  normalizeAccessControlReportedStatus,
+  normalizeBluLokDeviceStatus,
+} from '@/utils/device-reachability.utils';
 import { ConfirmModal } from '@/components/Modal/ConfirmModal';
 import { usePromptDialog } from '@/hooks/usePromptDialog';
 import { EditDeviceMetadataModal } from '@/components/Devices/EditDeviceMetadataModal';
@@ -275,8 +279,9 @@ export default function DeviceDetailsPage() {
                 displayName: deviceUpdate.name,
               }
             : prev.device_settings;
-      const nextReportedDeviceStatus =
-        deviceUpdate.reported_device_status ?? prev.reported_device_status ?? prev.device_status;
+      const nextReportedDeviceStatus = normalizeBluLokDeviceStatus(
+        deviceUpdate.reported_device_status ?? prev.reported_device_status ?? prev.device_status,
+      );
       return {
         ...prev,
         ...(deviceUpdate.name !== undefined ? { name: deviceUpdate.name } : {}),
@@ -287,11 +292,11 @@ export default function DeviceDetailsPage() {
           ? { device_settings: nextDeviceSettings }
           : {}),
         lock_status: (deviceUpdate.lock_status ?? prev.lock_status) as DeviceDetails['lock_status'],
-        device_status: (deviceUpdate.device_status ?? prev.device_status) as DeviceDetails['device_status'],
+        device_status: normalizeBluLokDeviceStatus(deviceUpdate.device_status ?? prev.device_status),
         reported_device_status: nextReportedDeviceStatus,
         ...(deviceCategory === 'access_control' && deviceUpdate.reported_device_status != null
           ? {
-              reported_status: deviceUpdate.reported_device_status as DeviceDetails['reported_status'],
+              reported_status: normalizeAccessControlReportedStatus(deviceUpdate.reported_device_status),
             }
           : {}),
         status_unreachable_reason:
@@ -387,7 +392,7 @@ export default function DeviceDetailsPage() {
           facility_name: ac.facility_name || String(ac.facility_id ?? ''),
           lock_status: ac.is_locked ? 'locked' : 'unlocked',
           device_status: mapAccessControlStatusToDeviceStatus(ac.status),
-          reported_status: (ac.reported_status ?? ac.status) as DeviceDetails['reported_status'],
+          reported_status: normalizeAccessControlReportedStatus(ac.reported_status ?? ac.status),
           status_unreachable_reason: ac.status_unreachable_reason ?? null,
           last_activity: ac.last_activity,
           firmware_version:

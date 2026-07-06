@@ -2,7 +2,6 @@ import { Link } from 'react-router-dom';
 import {
   ArrowPathIcon,
   ArrowTopRightOnSquareIcon,
-  CheckCircleIcon,
   CpuChipIcon,
   ExclamationTriangleIcon,
   LockClosedIcon,
@@ -68,6 +67,7 @@ export interface UnitDetailsOverviewData {
   facility_name: string;
   description?: string;
   features?: string[];
+  device_status?: DeviceStatus;
   created_at: string;
   updated_at: string;
   reported_device_status?: DeviceStatus;
@@ -116,8 +116,6 @@ interface UnitDetailsOverviewProps {
   unitId?: string;
   statusColors: Record<UnitStatus, string>;
   lockStatusColors: Record<string, string>;
-  deviceStatusColors: Record<DeviceStatus, string>;
-  deviceStatusIcons: Record<DeviceStatus, typeof ExclamationTriangleIcon>;
   canManageUnits: boolean;
   canManageOverlock?: boolean;
   overlockSaving?: boolean;
@@ -161,8 +159,6 @@ export function UnitDetailsOverview({
   location,
   statusColors,
   lockStatusColors,
-  deviceStatusColors,
-  deviceStatusIcons,
   canManageUnits,
   canManageOverlock = false,
   overlockSaving = false,

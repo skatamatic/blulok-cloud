@@ -57,6 +57,10 @@ export interface AccessControlDevice {
   device_serial: string;
   relay_channel: number;
   status: 'online' | 'offline' | 'error' | 'maintenance';
+  /** Last-reported status from gateway telemetry (before reachability coercion). */
+  reported_status?: 'online' | 'offline' | 'error' | 'maintenance';
+  /** Set when effective status was coerced offline due to gateway reachability. */
+  status_unreachable_reason?: string | null;
   is_locked: boolean;
   /** When true, cloud may send remote lock (CLOSE). Default false — unlock-only from cloud. */
   supports_remote_lock?: boolean;
