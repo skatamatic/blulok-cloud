@@ -35,6 +35,8 @@ export interface UserNotificationApi {
   priority: string;
   isRead: boolean;
   readAt: string | null;
+  /** Hidden from the dashboard notifications widget (soft-deleted) */
+  isHidden?: boolean;
   reference: { type: string; id: string } | null;
   facilityId: string | null;
   metadata: Record<string, unknown> | null;

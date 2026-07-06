@@ -67,7 +67,7 @@ registerGet(
   },
   asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
     const user = req.user!;
-    const { type, priority, isRead, facilityId, includeExpired, limit, offset } = req.query;
+    const { type, priority, isRead, facilityId, includeExpired, includeHidden, limit, offset } = req.query;
 
     const service = NotificationService.getInstance();
 
@@ -83,6 +83,7 @@ registerGet(
         facilityId: facilityId as string | undefined,
         facilityIds: !facilityId && !AuthService.canAccessAllFacilities(user.role) ? user.facilityIds : undefined,
         includeExpired: parseQueryBoolean(includeExpired),
+        includeHidden: parseQueryBoolean(includeHidden),
         limit: Number(limit) || 50,
         offset: Number(offset) || 0,
       },

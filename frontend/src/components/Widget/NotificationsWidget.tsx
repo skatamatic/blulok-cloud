@@ -7,6 +7,7 @@ import {
   SignalSlashIcon,
   ShieldExclamationIcon,
   CloudIcon,
+  TrashIcon,
 } from '@heroicons/react/24/outline';
 import {
   ExclamationTriangleIcon as ExclamationTriangleIconSolid,
@@ -43,6 +44,31 @@ import {
 } from '@/utils/widget-layout.utils';
 
 type DisplayNotification = ReturnType<typeof mapApiNotificationToDashboardView>;
+type NotificationFilter = 'all' | 'unread' | 'actionRequired' | 'includingHidden';
+
+function FilterMenuButton({
+  active,
+  onClick,
+  children,
+}: {
+  active: boolean;
+  onClick: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`w-full px-3 py-2 text-left text-sm rounded ${
+        active
+          ? 'bg-primary-50 text-primary-700 dark:bg-primary-900/20 dark:text-primary-400'
+          : 'text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700'
+      }`}
+    >
+      {children}
+    </button>
+  );
+}
 
 function NotificationToneIcon({
   tone,
@@ -108,7 +134,9 @@ const NotificationCard: React.FC<{
   compact: boolean;
   index: number;
   facilityLabel?: string | null;
+  readOnly?: boolean;
   onToggle: () => void;
+  onHide?: () => void;
   formatTimestamp: (timestamp: Date, compact?: boolean) => string;
 }> = ({
   notification,
@@ -116,7 +144,9 @@ const NotificationCard: React.FC<{
   compact,
   index,
   facilityLabel,
+  readOnly,
   onToggle,
+  onHide,
   formatTimestamp,
 }) => {
   const expandable = notificationMessageNeedsExpansion(notification.message);
@@ -135,7 +165,9 @@ const NotificationCard: React.FC<{
       transition={{ delay: index * 0.05, duration: 0.3 }}
       className={`relative overflow-hidden border rounded-xl transition-all duration-200 group hover:shadow-md ${
         compact ? 'p-2.5 pl-3' : 'p-3.5 pl-4'
-      } ${visual.card} ${expanded ? visual.expandedRing : ''}`}
+      } ${visual.card} ${expanded ? visual.expandedRing : ''} ${
+        notification.isHidden ? 'opacity-60 saturate-75' : ''
+      }`}
     >
       <span
         className={`absolute inset-y-0 left-0 w-1 rounded-l-xl ${visual.accentBar} ${
@@ -178,6 +210,11 @@ const NotificationCard: React.FC<{
                     className={`inline-flex items-center rounded-full px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide ${urgencyBadge.className}`}
                   >
                     {urgencyBadge.label}
+                  </span>
+                )}
+                {notification.isHidden && (
+                  <span className="inline-flex items-center rounded-full px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide bg-gray-200 text-gray-600 dark:bg-gray-700 dark:text-gray-300">
+                    Hidden
                   </span>
                 )}
                 {!notification.isRead && !urgencyBadge && (
@@ -275,6 +312,20 @@ const NotificationCard: React.FC<{
                   {facilityLabel}
                 </span>
               )}
+              {!readOnly && !notification.isHidden && onHide && (
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onHide();
+                  }}
+                  className="no-drag rounded-md p-1 text-gray-400 opacity-60 transition-all hover:bg-gray-100 hover:text-red-600 hover:opacity-100 group-hover:opacity-100 dark:hover:bg-gray-700 dark:hover:text-red-400"
+                  aria-label="Hide notification"
+                  title="Hide from widget"
+                >
+                  <TrashIcon className={compact ? 'h-3.5 w-3.5' : 'h-4 w-4'} />
+                </button>
+              )}
             </div>
           </div>
         </div>
@@ -315,6 +366,7 @@ function toApiNotification(
     message: String(r.message ?? ''),
     priority: String(r.priority ?? 'normal'),
     isRead: Boolean(r.isRead ?? r.is_read),
+    isHidden: Boolean(r.isHidden ?? r.is_hidden ?? r.is_deleted),
     readAt: (r.readAt ?? r.read_at) as string | null,
     reference: (r.reference as UserNotificationApi['reference']) ?? null,
     facilityId: (r.facilityId ?? r.facility_id) as string | null,
@@ -351,7 +403,7 @@ export const NotificationsWidget: React.FC<NotificationsWidgetProps> = ({
   const [isLoading, setIsLoading] = useState(true);
   const [isLoadingMore, setIsLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [filter, setFilter] = useState<'all' | 'unread' | 'actionRequired'>('all');
+  const [filter, setFilter] = useState<NotificationFilter>('all');
   const [expandedIds, setExpandedIds] = useState<Set<string>>(() => new Set());
 
   const markAsRead = useCallback(
@@ -425,6 +477,8 @@ export const NotificationsWidget: React.FC<NotificationsWidgetProps> = ({
     });
   }, [matchesScope, viewerRole]);
 
+  const includeHiddenInFetch = filter === 'includingHidden';
+
   const loadNotifications = useCallback(
     async (opts?: { silent?: boolean; append?: boolean; offset?: number }) => {
       const silent = opts?.silent === true;
@@ -441,6 +495,7 @@ export const NotificationsWidget: React.FC<NotificationsWidgetProps> = ({
         const response = await apiService.getNotifications({
           facilityId: facilityFilter,
           includeExpired: true,
+          includeHidden: includeHiddenInFetch,
           limit: NOTIFICATION_PAGE_SIZE,
           offset,
         });
@@ -486,7 +541,41 @@ export const NotificationsWidget: React.FC<NotificationsWidgetProps> = ({
         }
       }
     },
-    [facilityFilter, matchesScope, visibleForViewer]
+    [facilityFilter, includeHiddenInFetch, matchesScope, visibleForViewer]
+  );
+
+  const hideNotification = useCallback(
+    async (notificationId: string) => {
+      setExpandedIds((prev) => {
+        if (!prev.has(notificationId)) return prev;
+        const next = new Set(prev);
+        next.delete(notificationId);
+        return next;
+      });
+
+      const showHidden = filter === 'includingHidden';
+      setRows((prev) => {
+        if (showHidden) {
+          return prev.map((n) =>
+            n.id === notificationId ? { ...n, isHidden: true, isRead: true } : n,
+          );
+        }
+        return prev.filter((n) => n.id !== notificationId);
+      });
+
+      try {
+        await apiService.deleteNotification(notificationId);
+      } catch (e) {
+        console.error('Hide notification failed', e);
+        addToast({
+          type: 'error',
+          title: 'Could not hide notification',
+          message: 'Try again in a moment.',
+        });
+        void loadNotifications({ silent: true, offset: 0 });
+      }
+    },
+    [addToast, filter, loadNotifications],
   );
 
   useEffect(() => {
@@ -496,7 +585,7 @@ export const NotificationsWidget: React.FC<NotificationsWidgetProps> = ({
     setLoadedOffset(0);
     setIsLoading(true);
     void loadNotifications({ offset: 0 });
-  }, [facilityFilter, matchesScope, loadNotifications]);
+  }, [facilityFilter, includeHiddenInFetch, matchesScope, loadNotifications]);
 
   const handleWs = useCallback(
     (message: WsNotificationEvent) => {
@@ -557,14 +646,20 @@ export const NotificationsWidget: React.FC<NotificationsWidgetProps> = ({
         case 'notification_deleted': {
           const nid = data?.notificationId as string | undefined;
           if (!nid) break;
-          setRows((prev) => prev.filter((r) => r.id !== nid));
+          if (filter === 'includingHidden') {
+            setRows((prev) =>
+              prev.map((r) => (r.id === nid ? { ...r, isHidden: true, isRead: true } : r)),
+            );
+          } else {
+            setRows((prev) => prev.filter((r) => r.id !== nid));
+          }
           break;
         }
         default:
           break;
       }
     },
-    [matchesScope, mergeById, viewerRole]
+    [filter, matchesScope, mergeById, viewerRole]
   );
 
   useWebSocketSubscription('notifications', (data) => handleWs(data as WsNotificationEvent), {
@@ -596,6 +691,9 @@ export const NotificationsWidget: React.FC<NotificationsWidgetProps> = ({
 
   const filteredNotifications = useMemo(() => {
     return rows.filter((notification) => {
+      if (notification.isHidden && filter !== 'includingHidden') {
+        return false;
+      }
       if (filter === 'unread') {
         return !notification.isRead || expandedIds.has(notification.id);
       }
@@ -611,7 +709,9 @@ export const NotificationsWidget: React.FC<NotificationsWidgetProps> = ({
   }, [filteredNotifications]);
 
   const displayedNotifications = sortedNotifications.slice(0, layout.listCap);
-  const unreadCount = useMemo(() => rows.filter((n) => !n.isRead).length, [rows]);
+  const visibleRows = useMemo(() => rows.filter((n) => !n.isHidden), [rows]);
+  const unreadCount = useMemo(() => visibleRows.filter((n) => !n.isRead).length, [visibleRows]);
+  const hiddenCount = useMemo(() => rows.filter((n) => n.isHidden).length, [rows]);
   const criticalUnreadCount = useMemo(
     () => rows.filter((n) => !n.isRead && n.tone === 'error').length,
     [rows],
@@ -653,36 +753,24 @@ export const NotificationsWidget: React.FC<NotificationsWidgetProps> = ({
       readOnly={readOnly}
       enhancedMenu={
         <div className="space-y-1">
-          <button
-            onClick={() => setFilter('all')}
-            className={`w-full px-3 py-2 text-left text-sm rounded ${
-              filter === 'all'
-                ? 'bg-primary-50 text-primary-700 dark:bg-primary-900/20 dark:text-primary-400'
-                : 'text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700'
-            }`}
-          >
+          <FilterMenuButton active={filter === 'all'} onClick={() => setFilter('all')}>
             All Notifications
-          </button>
-          <button
-            onClick={() => setFilter('unread')}
-            className={`w-full px-3 py-2 text-left text-sm rounded ${
-              filter === 'unread'
-                ? 'bg-primary-50 text-primary-700 dark:bg-primary-900/20 dark:text-primary-400'
-                : 'text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700'
-            }`}
-          >
+          </FilterMenuButton>
+          <FilterMenuButton active={filter === 'unread'} onClick={() => setFilter('unread')}>
             Unread ({unreadCount})
-          </button>
-          <button
+          </FilterMenuButton>
+          <FilterMenuButton
+            active={filter === 'actionRequired'}
             onClick={() => setFilter('actionRequired')}
-            className={`w-full px-3 py-2 text-left text-sm rounded ${
-              filter === 'actionRequired'
-                ? 'bg-primary-50 text-primary-700 dark:bg-primary-900/20 dark:text-primary-400'
-                : 'text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700'
-            }`}
           >
             Action Required
-          </button>
+          </FilterMenuButton>
+          <FilterMenuButton
+            active={filter === 'includingHidden'}
+            onClick={() => setFilter('includingHidden')}
+          >
+            Including Hidden{hiddenCount > 0 ? ` (${hiddenCount})` : ''}
+          </FilterMenuButton>
         </div>
       }
     >
@@ -690,17 +778,22 @@ export const NotificationsWidget: React.FC<NotificationsWidgetProps> = ({
         {(isWideWidgetSize(size) || layout.isTall) && (
           <div className="flex space-x-1 mb-3 shrink-0">
             {[
-              { key: 'all', label: 'All', count: rows.length },
+              { key: 'all', label: 'All', count: visibleRows.length },
               { key: 'unread', label: 'Unread', count: unreadCount },
               {
                 key: 'actionRequired',
                 label: 'Action Required',
-                count: rows.filter((n) => n.actionRequired).length,
+                count: visibleRows.filter((n) => n.actionRequired).length,
+              },
+              {
+                key: 'includingHidden',
+                label: 'Including Hidden',
+                count: rows.length,
               },
             ].map(({ key, label, count }) => (
               <button
                 key={key}
-                onClick={() => setFilter(key as typeof filter)}
+                onClick={() => setFilter(key as NotificationFilter)}
                 className={`px-2 py-1 text-xs font-medium rounded transition-colors ${
                   filter === key
                     ? 'bg-primary-100 text-primary-700 dark:bg-primary-900/20 dark:text-primary-400'
@@ -748,7 +841,9 @@ export const NotificationsWidget: React.FC<NotificationsWidgetProps> = ({
                     compact={size === 'medium'}
                     index={index}
                     facilityLabel={resolveFacilityLabel(notification.facilityId)}
+                    readOnly={readOnly}
                     onToggle={() => handleNotificationToggle(notification.id)}
+                    onHide={() => void hideNotification(notification.id)}
                     formatTimestamp={formatTimestamp}
                   />
                 ))}
@@ -774,7 +869,9 @@ export const NotificationsWidget: React.FC<NotificationsWidgetProps> = ({
                   ? 'No unread notifications'
                   : filter === 'actionRequired'
                     ? 'No actions required'
-                    : 'No notifications'}
+                    : filter === 'includingHidden'
+                      ? 'No notifications (including hidden)'
+                      : 'No notifications'}
               </p>
             </div>
           )

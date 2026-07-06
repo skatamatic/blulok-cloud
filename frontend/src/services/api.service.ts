@@ -959,6 +959,7 @@ class ApiService {
     priority?: string;
     isRead?: boolean;
     includeExpired?: boolean;
+    includeHidden?: boolean;
     limit?: number;
     offset?: number;
   }) {

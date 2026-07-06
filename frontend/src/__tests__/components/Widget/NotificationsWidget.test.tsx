@@ -322,12 +322,6 @@ describe('NotificationsWidget', () => {
     });
   });
 
-  it('does not show Hide Read control', async () => {
-    renderWithProviders(<NotificationsWidget id="w1" title="Notifications" initialSize="large" />);
-    await waitFor(() => expect(screen.getByText('Security')).toBeInTheDocument());
-    expect(screen.queryByRole('button', { name: /Hide Read/i })).not.toBeInTheDocument();
-  });
-
   it('shows fms_webhook_received notifications from websocket events', async () => {
     mockGetNotifications.mockResolvedValueOnce({
       success: true,
@@ -367,6 +361,36 @@ describe('NotificationsWidget', () => {
     await waitFor(() => {
       expect(screen.getByText('FMS Update Push')).toBeInTheDocument();
       expect(screen.getByText(/alex@example.com/)).toBeInTheDocument();
+    });
+  });
+
+  it('hides a notification from the widget when delete is clicked', async () => {
+    renderWithProviders(<NotificationsWidget id="w1" title="Notifications" initialSize="large" />);
+    await waitFor(() => expect(screen.getByText('Security')).toBeInTheDocument());
+
+    const hideButtons = screen.getAllByRole('button', { name: 'Hide notification' });
+    fireEvent.click(hideButtons[0]!);
+
+    await waitFor(() => {
+      expect(mockDeleteNotification).toHaveBeenCalledWith('a');
+      expect(screen.queryByText('Security')).not.toBeInTheDocument();
+    });
+  });
+
+  it('loads hidden notifications when Including Hidden filter is selected', async () => {
+    renderWithProviders(
+      <NotificationsWidget id="w1" title="Notifications" initialSize="huge-wide" />,
+    );
+    await waitFor(() => expect(screen.getByText('Security')).toBeInTheDocument());
+
+    fireEvent.click(screen.getByRole('button', { name: /Including Hidden/i }));
+
+    await waitFor(() => {
+      expect(mockGetNotifications).toHaveBeenCalledWith(
+        expect.objectContaining({
+          includeHidden: true,
+        }),
+      );
     });
   });
 });

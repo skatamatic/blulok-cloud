@@ -35,6 +35,8 @@ export interface NotificationResponse {
   priority: NotificationPriority;
   isRead: boolean;
   readAt: Date | null;
+  /** True when the user hid this notification from the dashboard widget */
+  isHidden: boolean;
   reference: { type: string; id: string } | null;
   facilityId: string | null;
   metadata: Record<string, any> | null;
@@ -69,6 +71,8 @@ export interface QueryNotificationsOptions {
   facilityIds?: string[];
   /** Include expired notifications (for historical views) */
   includeExpired?: boolean;
+  /** Include notifications hidden from the dashboard widget (soft-deleted) */
+  includeHidden?: boolean;
   limit?: number;
   offset?: number;
 }
@@ -155,6 +159,7 @@ export class NotificationService {
       priority: options.priority,
       is_read: options.isRead,
       include_expired: options.includeExpired === true,
+      include_deleted: options.includeHidden === true,
       exclude_notification_types: excludedTypes.length > 0 ? excludedTypes : undefined,
       limit: options.limit || 50,
       offset: options.offset || 0,
@@ -601,6 +606,7 @@ export class NotificationService {
       priority: notification.priority,
       isRead: notification.is_read,
       readAt: notification.read_at,
+      isHidden: notification.is_deleted,
       reference: notification.reference_type && notification.reference_id
         ? { type: notification.reference_type, id: notification.reference_id }
         : null,

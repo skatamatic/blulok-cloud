@@ -10,6 +10,7 @@ export const notificationListQuerySchema = Joi.object({
   isRead: Joi.boolean().optional(),
   facilityId: strictUuidFieldOptional(),
   includeExpired: Joi.boolean().optional(),
+  includeHidden: Joi.boolean().optional(),
   limit: Joi.number().integer().min(1).max(100).default(50),
   offset: Joi.number().integer().min(0).default(0),
 });

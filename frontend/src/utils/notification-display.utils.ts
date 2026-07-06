@@ -49,6 +49,7 @@ export interface DashboardNotificationView {
   tone: WidgetNotificationTone;
   timestamp: Date;
   isRead: boolean;
+  isHidden: boolean;
   actionRequired: boolean;
   source: 'system' | 'device' | 'user' | 'security';
   reference?: { type: string; id: string } | null;
@@ -385,6 +386,7 @@ export function mapApiNotificationToDashboardView(
     displayType: mapToneToLegacyType(tone),
     timestamp: new Date(n.createdAt),
     isRead: n.isRead,
+    isHidden: n.isHidden === true,
     actionRequired,
     source: mapTypeToSource(n.type),
     reference: n.reference,
