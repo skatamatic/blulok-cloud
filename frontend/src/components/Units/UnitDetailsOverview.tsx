@@ -51,6 +51,8 @@ import { formatDate, formatDateTime } from '@/utils/datetime.utils';
 import { getUserDisplayName, getUserInitials, shouldShowUserEmail } from '@/utils/userDisplay.utils';
 import type { UnitAccessGroupRef } from '@/utils/device-group-membership.utils';
 import type { Location } from 'react-router-dom';
+import { DeviceConnectivityOverview } from '@/components/Devices/DeviceConnectivityOverview';
+import { resolveReachabilityDisplayFields } from '@/utils/device-reachability.utils';
 
 type UnitStatus = 'available' | 'occupied' | 'overlocked' | 'maintenance' | 'reserved';
 type LockStatus = 'locked' | 'unlocked' | 'locking' | 'unlocking' | 'error' | 'maintenance' | 'unknown';
@@ -68,6 +70,8 @@ export interface UnitDetailsOverviewData {
   features?: string[];
   created_at: string;
   updated_at: string;
+  reported_device_status?: DeviceStatus;
+  status_unreachable_reason?: string | null;
   access_groups?: UnitAccessGroupRef[];
   blulok_device?: {
     id: string;
@@ -75,6 +79,8 @@ export interface UnitDetailsOverviewData {
     firmware_version?: string;
     lock_status: LockStatus;
     device_status: DeviceStatus;
+    reported_device_status?: DeviceStatus;
+    status_unreachable_reason?: string | null;
     battery_level?: number;
     last_activity?: string;
     last_seen?: string;
@@ -188,7 +194,16 @@ export function UnitDetailsOverview({
   const sharedSlotsRemaining = unit.shared_tenants ? 4 - unit.shared_tenants.length : 4;
   const resolvedAccessGroups = accessGroups ?? unit.access_groups ?? [];
   const lockStatus = unit.blulok_device?.lock_status ?? 'unknown';
-  const deviceStatus = unit.blulok_device?.device_status ?? 'offline';
+  const reachability = resolveReachabilityDisplayFields({
+    effectiveStatus: unit.blulok_device?.device_status ?? unit.device_status,
+    reportedDeviceStatus:
+      unit.blulok_device?.reported_device_status ?? unit.reported_device_status,
+    statusUnreachableReason:
+      unit.blulok_device?.status_unreachable_reason ?? unit.status_unreachable_reason,
+  });
+  const deviceStatus = reachability.effective;
+  const reportedDeviceStatus = reachability.reported;
+  const statusUnreachableReason = reachability.reason;
   const hasBattery =
     unit.blulok_device?.battery_level != null && !Number.isNaN(Number(unit.blulok_device.battery_level));
   const hasSignal =
@@ -247,19 +262,17 @@ export function UnitDetailsOverview({
           <span className="text-sm text-gray-500 dark:text-gray-400">No device</span>
         )}
       </OverviewStat>
-      <OverviewStat label="Connectivity">
-        {unit.blulok_device ? (
-          <span className={statusBadgeSmClass(deviceStatusColors[deviceStatus])}>
-            {(() => {
-              const DeviceStatusIcon = deviceStatusIcons[deviceStatus] || ExclamationTriangleIcon;
-              return <DeviceStatusIcon className="mr-1 h-3 w-3" aria-hidden />;
-            })()}
-            {deviceStatus.replace('_', ' ')}
-          </span>
-        ) : (
+      {unit.blulok_device ? (
+        <DeviceConnectivityOverview
+          effectiveStatus={deviceStatus}
+          reportedStatus={reportedDeviceStatus}
+          statusUnreachableReason={statusUnreachableReason}
+        />
+      ) : (
+        <OverviewStat label="Connectivity">
           <span className="text-sm text-gray-500 dark:text-gray-400">—</span>
-        )}
-      </OverviewStat>
+        </OverviewStat>
+      )}
     </div>
   );
 
@@ -661,10 +674,12 @@ export function UnitDetailsOverview({
                   </span>
                 </OverviewField>
                 <OverviewField label="Connectivity">
-                  <span className={statusBadgeSmClass(deviceStatusColors[deviceStatus])}>
-                    <CheckCircleIcon className="mr-1 inline h-3 w-3" aria-hidden />
-                    {deviceStatus.replace('_', ' ')}
-                  </span>
+                  <DeviceConnectivityOverview
+                    variant="inline"
+                    effectiveStatus={deviceStatus}
+                    reportedStatus={reportedDeviceStatus}
+                    statusUnreachableReason={statusUnreachableReason}
+                  />
                 </OverviewField>
                 {hasBattery && (
                   <OverviewField label="Battery">

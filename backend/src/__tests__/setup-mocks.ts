@@ -658,7 +658,12 @@ jest.mock('../models/device.model', () => {
     countAccessControlDevices: jest.fn().mockResolvedValue(1),
     countBluLokDevices: jest.fn().mockResolvedValue(1),
     getFacilityHierarchy: jest.fn().mockResolvedValue({ hierarchy: [] }),
-    getFacilityDeviceHierarchy: jest.fn().mockResolvedValue({ hierarchy: [] }),
+    getFacilityDeviceHierarchy: jest.fn().mockResolvedValue({
+      facility: { id: 'facility-1', name: 'Test Facility' },
+      gateway: { id: 'gateway-1', facility_id: 'facility-1', status: 'online' },
+      accessControlDevices: [],
+      blulokDevices: [],
+    }),
     findByFacilityId: jest.fn().mockResolvedValue([]),
     findGatewayById: jest.fn().mockImplementation((id: string) =>
       Promise.resolve({
@@ -695,6 +700,30 @@ jest.mock('../models/gateway.model', () => ({
       { id: 'gateway-3', facility_id: null, name: 'Gateway 3', status: 'online', gateway_type: 'simulated' },
       { id: 'gateway-4', facility_id: null, name: 'Gateway 4', status: 'offline', gateway_type: 'simulated' },
     ]),
+    findByFacilityId: jest.fn().mockImplementation((facilityId: string) => {
+      if (
+        facilityId === 'facility-1' ||
+        facilityId === '550e8400-e29b-41d4-a716-446655440001'
+      ) {
+        return Promise.resolve({
+          id: 'gateway-1',
+          facility_id: facilityId,
+          name: 'Gateway 1',
+          status: 'online',
+          gateway_type: 'simulated',
+        });
+      }
+      if (facilityId === 'facility-2') {
+        return Promise.resolve({
+          id: 'gateway-2',
+          facility_id: facilityId,
+          name: 'Gateway 2',
+          status: 'offline',
+          gateway_type: 'simulated',
+        });
+      }
+      return Promise.resolve(null);
+    }),
     findById: jest.fn().mockImplementation((id: string) => {
       const gateways = [
         { id: 'gateway-1', facility_id: 'facility-1', name: 'Gateway 1', status: 'online', gateway_type: 'simulated' },

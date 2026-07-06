@@ -18,6 +18,7 @@
  */
 
 import { DeviceModel, AccessControlDevice, DeviceFilters } from '@/models/device.model';
+import { DeviceReachabilityEnrichmentService } from '@/services/device-reachability-enrichment.service';
 import { AuthService } from '@/services/auth.service';
 import { UserRole } from '@/types/auth.types';
 import { AccessDeniedError, NotFoundError } from '@/middleware/error.middleware';
@@ -161,22 +162,25 @@ export class AccessControlService {
       throw new NotFoundError('Facility');
     }
 
-    const devices = hierarchy.accessControlDevices;
-    const formattedDevices = devices.map(device => this.formatDevice(device, facilityId));
+    const enriched = await DeviceReachabilityEnrichmentService.getInstance().enrichFacilityDeviceHierarchy(
+      hierarchy,
+    );
+    const devices = enriched.accessControlDevices;
+    const formattedDevices = devices.map((device) => this.formatDevice(device, facilityId));
 
-    // Calculate summary statistics
+    // Calculate summary statistics from effective status
     const summary = {
       total: devices.length,
       byType: {
-        doors: devices.filter(d => d.device_type === 'door').length,
-        gates: devices.filter(d => d.device_type === 'gate').length,
-        elevators: devices.filter(d => d.device_type === 'elevator').length,
+        doors: devices.filter((d) => d.device_type === 'door').length,
+        gates: devices.filter((d) => d.device_type === 'gate').length,
+        elevators: devices.filter((d) => d.device_type === 'elevator').length,
       },
       byStatus: {
-        online: devices.filter(d => d.status === 'online').length,
-        offline: devices.filter(d => d.status === 'offline').length,
-        error: devices.filter(d => d.status === 'error').length,
-        maintenance: devices.filter(d => d.status === 'maintenance').length,
+        online: devices.filter((d) => d.status === 'online').length,
+        offline: devices.filter((d) => d.status === 'offline').length,
+        error: devices.filter((d) => d.status === 'error').length,
+        maintenance: devices.filter((d) => d.status === 'maintenance').length,
       },
     };
 

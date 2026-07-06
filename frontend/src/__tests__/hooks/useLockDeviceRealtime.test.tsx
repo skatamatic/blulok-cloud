@@ -81,6 +81,63 @@ describe('useLockDeviceRealtime', () => {
     ]);
   });
 
+  it('subscribes to gateway_status when facilityId and debouncedRefresh are set', () => {
+    render(
+      <TestHarness
+        facilityId="fac-1"
+        debouncedRefresh={jest.fn()}
+        subscribeUnitsForRefresh={false}
+      />
+    );
+
+    expect(mockSubscribe).toHaveBeenCalledWith(
+      'gateway_status',
+      expect.any(Function),
+      undefined,
+    );
+  });
+
+  it('debounces debouncedRefresh on gateway_status for scoped facility', () => {
+    const debouncedRefresh = jest.fn();
+    render(
+      <TestHarness
+        facilityId="fac-1"
+        debouncedRefresh={debouncedRefresh}
+        debounceMs={400}
+        subscribeUnitsForRefresh={false}
+      />
+    );
+
+    const handler = mockSubscribe.mock.calls.find((c) => c[0] === 'gateway_status')?.[1] as (
+      msg: unknown
+    ) => void;
+    expect(handler).toBeDefined();
+
+    act(() => {
+      handler({
+        data: {
+          gateways: [{ facilityId: 'fac-2', connected: false }],
+        },
+      });
+    });
+    act(() => {
+      jest.advanceTimersByTime(400);
+    });
+    expect(debouncedRefresh).not.toHaveBeenCalled();
+
+    act(() => {
+      handler({
+        data: {
+          gateways: [{ facilityId: 'fac-1', connected: false }],
+        },
+      });
+    });
+    act(() => {
+      jest.advanceTimersByTime(400);
+    });
+    expect(debouncedRefresh).toHaveBeenCalled();
+  });
+
   it('debounces debouncedRefresh and respects debounceRefreshFilter', () => {
     const debouncedRefresh = jest.fn();
     const debounceRefreshFilter = jest.fn().mockReturnValue(false);

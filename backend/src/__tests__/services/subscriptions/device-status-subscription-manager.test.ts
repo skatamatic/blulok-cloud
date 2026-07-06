@@ -1,9 +1,23 @@
 import { DeviceStatusSubscriptionManager } from '@/services/subscriptions/device-status-subscription-manager';
 import { DeviceModel } from '@/models/device.model';
 import { UserRole } from '@/types/auth.types';
+import { DeviceReachabilityEnrichmentService } from '@/services/device-reachability-enrichment.service';
 
 // Mock the DeviceModel
 jest.mock('@/models/device.model');
+
+const passthroughEnrich = async <T extends Record<string, unknown>>(row: T): Promise<T> => ({
+  ...row,
+  reported_device_status: row.device_status ?? row.status,
+  reported_status: row.status,
+  status_unreachable_reason: null,
+});
+
+jest.mock('@/services/device-reachability-enrichment.service', () => ({
+  DeviceReachabilityEnrichmentService: {
+    getInstance: jest.fn(),
+  },
+}));
 
 describe('DeviceStatusSubscriptionManager', () => {
   let manager: DeviceStatusSubscriptionManager;
@@ -50,12 +64,19 @@ describe('DeviceStatusSubscriptionManager', () => {
     
     mockDeviceModel = {
       findBluLokDeviceById: jest.fn(),
-      findBluLokDevices: jest.fn(),
+      findBluLokDevices: jest.fn().mockResolvedValue([]),
+      findAccessControlDevices: jest.fn().mockResolvedValue([]),
       findAccessControlDeviceWithGateway: jest.fn(),
     } as any;
     
     // Mock the DeviceModel constructor
     (DeviceModel as jest.MockedClass<typeof DeviceModel>).mockImplementation(() => mockDeviceModel);
+
+    (DeviceReachabilityEnrichmentService.getInstance as jest.Mock).mockReturnValue({
+      createLivenessCache: jest.fn().mockResolvedValue(new Map()),
+      enrichBluLokRow: jest.fn(passthroughEnrich),
+      enrichAccessControlRow: jest.fn(passthroughEnrich),
+    });
     
     manager = new DeviceStatusSubscriptionManager();
   });
@@ -294,6 +315,36 @@ describe('DeviceStatusSubscriptionManager', () => {
       expect(device.device_settings).toEqual({ displayName: 'Front Lock', lockNumber: 12 });
     });
 
+    it('includes reachability fields in enriched device data', async () => {
+      const mockWs = {
+        send: jest.fn(),
+        readyState: 1,
+      } as any;
+
+      const enricher = DeviceReachabilityEnrichmentService.getInstance() as jest.Mocked<any>;
+      enricher.enrichBluLokRow.mockResolvedValue({
+        ...mockDevice,
+        device_status: 'offline',
+        reported_device_status: 'online',
+        status_unreachable_reason: 'gateway_offline',
+      });
+
+      mockDeviceModel.findBluLokDevices.mockResolvedValue([mockDevice]);
+
+      (manager as any).subscriptionFilters = new Map([
+        ['test-subscription', {}],
+      ]);
+
+      await (manager as any).sendInitialData(mockWs, 'test-subscription', mockClient);
+
+      const parsed = JSON.parse(mockWs.send.mock.calls[0][0]);
+      const device = parsed.data.devices[0];
+
+      expect(device.device_status).toBe('offline');
+      expect(device.reported_device_status).toBe('online');
+      expect(device.status_unreachable_reason).toBe('gateway_offline');
+    });
+
     it('should handle errors gracefully', async () => {
       const mockWs = {
         send: jest.fn(),
@@ -301,6 +352,7 @@ describe('DeviceStatusSubscriptionManager', () => {
       } as any;
 
       mockDeviceModel.findBluLokDevices.mockRejectedValue(new Error('Database error'));
+      mockDeviceModel.findAccessControlDevices.mockResolvedValue([]);
 
       (manager as any).subscriptionFilters = new Map([
         ['test-subscription', {}],

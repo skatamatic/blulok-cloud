@@ -2,6 +2,9 @@ import { WebSocket } from 'ws';
 import { UserRole } from '@/types/auth.types';
 import { BaseSubscriptionManager, SubscriptionClient, WebSocketMessage } from './base-subscription-manager';
 import { DeviceModel } from '@/models/device.model';
+import {
+  DeviceReachabilityEnrichmentService,
+} from '@/services/device-reachability-enrichment.service';
 
 /**
  * Device Status Subscription Manager
@@ -42,12 +45,14 @@ import { DeviceModel } from '@/models/device.model';
  */
 export class DeviceStatusSubscriptionManager extends BaseSubscriptionManager {
   private deviceModel: DeviceModel;
+  private reachabilityEnrichment: DeviceReachabilityEnrichmentService;
   // Store filters per subscription for targeted updates
   private subscriptionFilters: Map<string, { deviceId?: string; facilityId?: string }> = new Map();
 
   constructor() {
     super();
     this.deviceModel = new DeviceModel();
+    this.reachabilityEnrichment = DeviceReachabilityEnrichmentService.getInstance();
   }
 
   getSubscriptionType(): string {
@@ -146,22 +151,38 @@ export class DeviceStatusSubscriptionManager extends BaseSubscriptionManager {
         }
       }
 
-      let devices: any[] = [];
-      
       if (filters?.deviceId) {
         const bluLok = await this.deviceModel.findBluLokDeviceById(filters.deviceId);
+        const cache = await this.reachabilityEnrichment.createLivenessCache();
         if (bluLok) {
-          devices = [bluLok];
+          const enriched = await this.reachabilityEnrichment.enrichBluLokRow(
+            bluLok,
+            cache,
+          );
+          this.sendMessage(ws, {
+            type: 'device_status_update',
+            subscriptionId,
+            data: {
+              devices: [this.formatDeviceStatus(enriched)],
+              count: 1,
+              lastUpdated: new Date().toISOString(),
+            },
+            timestamp: new Date().toISOString(),
+          });
+          return;
         } else {
           const accessControl = await this.deviceModel.findAccessControlDeviceWithGateway(filters.deviceId);
           if (accessControl) {
-            devices = [this.formatAccessControlDeviceStatus(accessControl)];
+            const enriched = await this.reachabilityEnrichment.enrichAccessControlRow(
+              accessControl,
+              cache,
+            );
             this.sendMessage(ws, {
               type: 'device_status_update',
               subscriptionId,
               data: {
-                devices,
-                count: devices.length,
+                devices: [this.formatAccessControlDeviceStatus(enriched)],
+                count: 1,
                 lastUpdated: new Date().toISOString(),
               },
               timestamp: new Date().toISOString(),
@@ -170,22 +191,48 @@ export class DeviceStatusSubscriptionManager extends BaseSubscriptionManager {
           }
         }
       } else {
-        // Multiple devices subscription
-        devices = await this.deviceModel.findBluLokDevices(queryFilters);
-      }
+        const cache = await this.reachabilityEnrichment.createLivenessCache();
+        const [blulokRows, accessRows] = await Promise.all([
+          this.deviceModel.findBluLokDevices(queryFilters),
+          this.deviceModel.findAccessControlDevices(queryFilters),
+        ]);
+        const deviceData = [
+          ...(await Promise.all(
+            blulokRows.map(async (d) => {
+              const enriched = await this.reachabilityEnrichment.enrichBluLokRow(d, cache);
+              return this.formatDeviceStatus(enriched);
+            }),
+          )),
+          ...(await Promise.all(
+            accessRows.map(async (d) => {
+              const enriched = await this.reachabilityEnrichment.enrichAccessControlRow(d, cache);
+              return this.formatAccessControlDeviceStatus(enriched);
+            }),
+          )),
+        ];
 
-      // Format device data
-      const deviceData = devices.map(d => this.formatDeviceStatus(d));
+        this.sendMessage(ws, {
+          type: 'device_status_update',
+          subscriptionId,
+          data: {
+            devices: deviceData,
+            count: deviceData.length,
+            lastUpdated: new Date().toISOString(),
+          },
+          timestamp: new Date().toISOString(),
+        });
+        return;
+      }
 
       this.sendMessage(ws, {
         type: 'device_status_update',
         subscriptionId,
         data: {
-          devices: deviceData,
-          count: deviceData.length,
-          lastUpdated: new Date().toISOString()
+          devices: [],
+          count: 0,
+          lastUpdated: new Date().toISOString(),
         },
-        timestamp: new Date().toISOString()
+        timestamp: new Date().toISOString(),
       });
     } catch (error) {
       this.logger.error('Error sending initial device status data:', error);
@@ -221,6 +268,8 @@ export class DeviceStatusSubscriptionManager extends BaseSubscriptionManager {
       gateway_name: device.gateway_name,
       lock_status: device.lock_status,
       device_status: device.device_status,
+      reported_device_status: device.reported_device_status,
+      status_unreachable_reason: device.status_unreachable_reason ?? null,
       battery_level: device.battery_level,
       signal_strength: device.signal_strength,
       temperature: device.temperature,
@@ -248,7 +297,9 @@ export class DeviceStatusSubscriptionManager extends BaseSubscriptionManager {
       gateway_id: device.gateway_id,
       gateway_name: device.gateway_name,
       lock_status: lockStatus,
-      device_status: device.status,
+      device_status: device.status ?? device.device_status,
+      reported_device_status: device.reported_status ?? device.reported_device_status,
+      status_unreachable_reason: device.status_unreachable_reason ?? null,
       battery_level: undefined,
       signal_strength: undefined,
       temperature: undefined,
@@ -275,16 +326,25 @@ export class DeviceStatusSubscriptionManager extends BaseSubscriptionManager {
 
       // BluLok first; fall back to access control (gates/doors) — IDs do not overlap by table.
       let deviceData: any;
+      const cache = await this.reachabilityEnrichment.createLivenessCache();
       const bluLok = await this.deviceModel.findBluLokDeviceById(deviceId);
       if (bluLok) {
-        deviceData = this.formatDeviceStatus(bluLok);
+        const enriched = await this.reachabilityEnrichment.enrichBluLokRow(
+          bluLok,
+          cache,
+        );
+        deviceData = this.formatDeviceStatus(enriched);
       } else {
         const ac = await this.deviceModel.findAccessControlDeviceWithGateway(deviceId);
         if (!ac) {
           this.logger.warn(`Device ${deviceId} not found for broadcast`);
           return;
         }
-        deviceData = this.formatAccessControlDeviceStatus(ac);
+        const enriched = await this.reachabilityEnrichment.enrichAccessControlRow(
+          ac,
+          cache,
+        );
+        deviceData = this.formatAccessControlDeviceStatus(enriched);
         if (!facilityId && ac.facility_id) {
           facilityId = ac.facility_id;
         }
@@ -353,6 +413,87 @@ export class DeviceStatusSubscriptionManager extends BaseSubscriptionManager {
       }
     } catch (error) {
       this.logger.error('Error broadcasting device status update:', error);
+    }
+  }
+
+  /**
+   * Re-broadcast enriched device statuses when gateway connectivity changes for a facility.
+   */
+  public async broadcastFacilityReachabilityRefresh(facilityId: string): Promise<void> {
+    try {
+      const activeSubscriptions = Array.from(this.watchers.keys());
+      if (activeSubscriptions.length === 0) return;
+
+      const cache = await this.reachabilityEnrichment.createLivenessCache();
+      const [blulokRows, accessRows] = await Promise.all([
+        this.deviceModel.findBluLokDevices({ facility_id: facilityId }),
+        this.deviceModel.findAccessControlDevices({ facility_id: facilityId }),
+      ]);
+
+      const deviceData = [
+        ...(await this.reachabilityEnrichment.enrichBluLokList(blulokRows, cache)).map(
+          (d) => this.formatDeviceStatus(d),
+        ),
+        ...(await this.reachabilityEnrichment.enrichAccessControlList(
+          accessRows,
+          cache,
+        )).map((d) => this.formatAccessControlDeviceStatus(d)),
+      ];
+
+      for (const subscriptionId of activeSubscriptions) {
+        const client = this.clientContext.get(subscriptionId);
+        const filters = this.subscriptionFilters.get(subscriptionId);
+        if (!client) continue;
+
+        if (filters?.facilityId && filters.facilityId !== facilityId) continue;
+        if (
+          client.userRole !== UserRole.ADMIN &&
+          client.userRole !== UserRole.DEV_ADMIN &&
+          client.facilityIds &&
+          client.facilityIds.length > 0 &&
+          !client.facilityIds.includes(facilityId)
+        ) {
+          continue;
+        }
+
+        const scopedDevices =
+          filters?.facilityId || filters?.deviceId
+            ? deviceData.filter((d) => !filters?.deviceId || d.id === filters.deviceId)
+            : deviceData;
+
+        if (scopedDevices.length === 0 && deviceData.length > 0) continue;
+
+        const watchers = this.watchers.get(subscriptionId);
+        if (!watchers) continue;
+
+        watchers.forEach((ws) => {
+          if (ws.readyState !== WebSocket.OPEN) {
+            watchers.delete(ws);
+            return;
+          }
+          try {
+            ws.send(
+              JSON.stringify({
+                type: 'device_status_update',
+                subscriptionId,
+                data: {
+                  devices: scopedDevices,
+                  count: scopedDevices.length,
+                  source: 'gateway_reachability_refresh',
+                  facilityId,
+                  lastUpdated: new Date().toISOString(),
+                },
+                timestamp: new Date().toISOString(),
+              }),
+            );
+          } catch (error) {
+            this.logger.error('Error sending facility reachability refresh:', error);
+            watchers.delete(ws);
+          }
+        });
+      }
+    } catch (error) {
+      this.logger.error('Error broadcasting facility reachability refresh:', error);
     }
   }
 

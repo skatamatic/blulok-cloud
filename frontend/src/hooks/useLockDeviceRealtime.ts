@@ -35,7 +35,12 @@ export interface UseLockDeviceRealtimeParams {
    * When using debouncedRefresh, subscribe to granular device_status (default true).
    * Set false for unit-list tabs that only need units_update.
    */
-  subscribeDeviceStatusForRefresh?: boolean;
+  /**
+   * When true (default), also subscribe to `gateway_status` and debounce refresh on
+   * connect/disconnect so list/detail pages reload when reachability coercion changes
+   * (e.g. network_infra-only facilities with no operational device rows).
+   */
+  refreshOnGatewayStatusChange?: boolean;
 }
 
 export function useLockDeviceRealtime(params: UseLockDeviceRealtimeParams): void {
@@ -82,6 +87,31 @@ export function useLockDeviceRealtime(params: UseLockDeviceRealtimeParams): void
     [scheduleDebouncedRefresh],
   );
 
+  const onGatewayStatusMessage = useCallback(
+    (wrapped: unknown) => {
+      const p = paramsRef.current;
+      if (p.refreshOnGatewayStatusChange === false) return;
+
+      const payload =
+        wrapped && typeof wrapped === 'object' && 'data' in wrapped
+          ? (wrapped as { data?: { gateways?: Array<{ facilityId?: string; facility_id?: string }> } }).data
+          : undefined;
+      const gateways = payload?.gateways;
+      const facilityFilter = p.facilityId;
+
+      if (facilityFilter && Array.isArray(gateways)) {
+        const affectsFacility = gateways.some((g) => {
+          const fid = g.facilityId ?? g.facility_id;
+          return fid === facilityFilter;
+        });
+        if (!affectsFacility) return;
+      }
+
+      scheduleDebouncedRefresh(wrapped);
+    },
+    [scheduleDebouncedRefresh],
+  );
+
   useEffect(() => {
     if (params.enabled === false) return;
     if (!isConnected) return;
@@ -96,6 +126,12 @@ export function useLockDeviceRealtime(params: UseLockDeviceRealtimeParams): void
       (wantsRefresh && p.subscribeDeviceStatusForRefresh !== false);
 
     const needUnitsSub = wantsRefresh && p.subscribeUnitsForRefresh !== false;
+
+    const needGatewayStatusSub =
+      p.refreshOnGatewayStatusChange !== false &&
+      p.facilityId != null &&
+      p.facilityId !== '' &&
+      (wantsRefresh || p.onDeviceRows != null);
 
     const subscriptionIds: string[] = [];
 
@@ -115,6 +151,12 @@ export function useLockDeviceRealtime(params: UseLockDeviceRealtimeParams): void
       );
     }
 
+    if (needGatewayStatusSub) {
+      subscriptionIds.push(
+        subscribe('gateway_status', onGatewayStatusMessage, undefined),
+      );
+    }
+
     return () => {
       clearDebounce();
       subscriptionIds.forEach((id) => unsubscribe(id));
@@ -127,10 +169,12 @@ export function useLockDeviceRealtime(params: UseLockDeviceRealtimeParams): void
     params.facilityId,
     params.subscribeUnitsForRefresh,
     params.subscribeDeviceStatusForRefresh,
+    params.refreshOnGatewayStatusChange,
     isConnected,
     subscribe,
     unsubscribe,
     onDeviceStatusMessage,
+    onGatewayStatusMessage,
     scheduleDebouncedRefresh,
     clearDebounce,
   ]);

@@ -79,6 +79,7 @@ import {
   sortMergedDeviceList,
   needsInMemoryDeviceSort,
 } from '@/utils/merged-device-list.utils';
+import { DeviceReachabilityEnrichmentService } from '@/services/device-reachability-enrichment.service';
 import {
   registerGet,
   registerPost,
@@ -114,6 +115,37 @@ import {
 const DEFAULT_DEVICE_LIST_LIMIT = 30;
 const MAX_DEVICE_LIST_LIMIT = 200;
 const MOUNT = '/api/v1/devices';
+
+const reachabilityEnrichment = () => DeviceReachabilityEnrichmentService.getInstance();
+
+async function enrichDeviceListRows<T extends object>(devices: T[]): Promise<T[]> {
+  const enricher = reachabilityEnrichment();
+  const cache = await enricher.createLivenessCache();
+  return Promise.all(
+    devices.map(async (d) => {
+      const fields = d as Record<string, unknown>;
+      if (fields.device_category === 'blulok') {
+        return enricher.enrichBluLokRow(d, cache);
+      }
+      if (fields.device_category === 'access_control') {
+        return enricher.enrichAccessControlRow(d, cache);
+      }
+      if (fields.device_category === 'network_infra') {
+        return enricher.enrichNetworkInfraRow(d, cache);
+      }
+      return d;
+    }),
+  );
+}
+
+function applyEffectiveStatusFilter<T extends object>(
+  devices: T[],
+  statusFilter: string | undefined,
+): T[] {
+  if (!statusFilter) return devices;
+  const enricher = reachabilityEnrichment();
+  return devices.filter((d) => enricher.matchesEffectiveStatus(d, statusFilter));
+}
 
 function parseListOffset(raw: unknown): number {
   if (raw === undefined || raw === null || raw === '') return 0;
@@ -204,21 +236,26 @@ registerGet(
 
       const sortKey = normalizeDeviceListSortKey(sortByParam);
       const order: 'asc' | 'desc' = sortOrderParam === 'desc' ? 'desc' : 'asc';
+      const statusFilter = status as string | undefined;
 
       if (deviceScope === 'network_infra') {
         const { GatewayInventoryDeviceSyncService } = await import('@/services/gateway-inventory-device-sync.service');
         const infraSortKey = normalizeNetworkInfraSortKey(sortByParam);
+        const fetchAllForEffectiveFilter = Boolean(statusFilter);
         const infraFilters = {
-          status: status as string | undefined,
           search: search as string | undefined,
           sortBy: infraSortKey as any,
           sortOrder: order,
-          offset: offsetNum,
-          limit: limitParsed ?? (projectionId ? undefined : DEFAULT_DEVICE_LIST_LIMIT),
+          ...(fetchAllForEffectiveFilter
+            ? {}
+            : {
+                offset: offsetNum,
+                limit: limitParsed ?? (projectionId ? undefined : DEFAULT_DEVICE_LIST_LIMIT),
+              }),
           ...(allowedFacilityId ? { facility_id: allowedFacilityId } : {}),
           ...(allowedFacilityIds ? { facility_ids: allowedFacilityIds } : {}),
         };
-        const { devices: networkInfraDevices, total: networkInfraTotal } =
+        let { devices: networkInfraDevices } =
           await GatewayInventoryDeviceSyncService.getInstance().listNetworkInfraDevices(infraFilters);
 
         if (projectionId) {
@@ -228,18 +265,27 @@ registerGet(
               id: d.id,
               device_category: d.device_category,
             })),
-            total: networkInfraTotal,
+            total: networkInfraDevices.length,
           });
           return;
         }
 
-        res.json({ success: true, devices: networkInfraDevices, total: networkInfraTotal });
+        networkInfraDevices = await enrichDeviceListRows(networkInfraDevices);
+        if (statusFilter) {
+          networkInfraDevices = applyEffectiveStatusFilter(networkInfraDevices, statusFilter);
+        }
+        const infraTotal = networkInfraDevices.length;
+        if (fetchAllForEffectiveFilter) {
+          const pageSize = limitParsed ?? DEFAULT_DEVICE_LIST_LIMIT;
+          networkInfraDevices = networkInfraDevices.slice(offsetNum, offsetNum + pageSize);
+        }
+
+        res.json({ success: true, devices: networkInfraDevices, total: infraTotal });
         return;
       }
 
       const baseFilters: DeviceFilters = {
         device_type: device_type as any,
-        status: status as string,
         search: search as string,
       };
       if (allowedFacilityId) {
@@ -250,11 +296,12 @@ registerGet(
 
       let devices: any[] = [];
       let total = 0;
+      let devicesEnriched = false;
 
       const dt = device_type as string | undefined;
       const mergeAllScopes = deviceScope === 'all';
 
-      if (needsInMemoryDeviceSort(dt, sortKey) || mergeAllScopes) {
+      if (needsInMemoryDeviceSort(dt, sortKey) || mergeAllScopes || Boolean(statusFilter)) {
         const fetchFilters: DeviceFilters = {
           ...baseFilters,
           sortBy: 'created_at',
@@ -283,12 +330,19 @@ registerGet(
           const { GatewayInventoryDeviceSyncService } = await import('@/services/gateway-inventory-device-sync.service');
           const { devices: networkInfraDevices } =
             await GatewayInventoryDeviceSyncService.getInstance().listNetworkInfraDevices({
-              status: status as string | undefined,
               search: search as string | undefined,
               ...(allowedFacilityId ? { facility_id: allowedFacilityId } : {}),
               ...(allowedFacilityIds ? { facility_ids: allowedFacilityIds } : {}),
             });
           devices = [...devices, ...networkInfraDevices];
+        }
+
+        if (!projectionId) {
+          devices = await enrichDeviceListRows(devices);
+          devicesEnriched = true;
+          if (statusFilter) {
+            devices = applyEffectiveStatusFilter(devices, statusFilter);
+          }
         }
 
         sortMergedDeviceList(devices, sortKey, order);
@@ -331,6 +385,10 @@ registerGet(
           devices = blulokDevices.map((d) => ({ ...d, device_category: 'blulok' }));
           total = await deviceModel.countBluLokDevices(baseFilters);
         }
+      }
+
+      if (!projectionId && devices.length > 0 && !devicesEnriched) {
+        devices = await enrichDeviceListRows(devices);
       }
 
       if (projectionId) {
@@ -391,7 +449,8 @@ registerGet(
         return;
       }
 
-      res.json({ success: true, device });
+      const enriched = await reachabilityEnrichment().enrichBluLokRow(device, await reachabilityEnrichment().createLivenessCache());
+      res.json({ success: true, device: enriched });
     } catch (error) {
       console.error('Error fetching device:', error);
       res.status(500).json({ success: false, message: 'Failed to fetch device' });
@@ -440,10 +499,13 @@ registerGet(
 
       res.json({
         success: true,
-        device: {
-          ...device,
-          facility_name: facility?.name ?? String(device.facility_id),
-        },
+        device: await reachabilityEnrichment().enrichAccessControlRow(
+          {
+            ...device,
+            facility_name: facility?.name ?? String(device.facility_id),
+          } as Record<string, unknown>,
+          await reachabilityEnrichment().createLivenessCache(),
+        ),
       });
     } catch (error) {
       console.error('Error fetching access control device:', error);
@@ -494,7 +556,10 @@ registerGet(
         return;
       }
 
-      res.json({ hierarchy });
+      const enrichedHierarchy =
+        await reachabilityEnrichment().enrichFacilityDeviceHierarchy(hierarchy);
+
+      res.json({ hierarchy: enrichedHierarchy });
     } catch (error) {
       logger.error('Error fetching facility device hierarchy:', error);
       res.status(500).json({ success: false, message: 'Failed to fetch device hierarchy' });
@@ -1360,24 +1425,49 @@ registerGet(
 
       const filters: DeviceFilters = {
         device_type: 'blulok',
-        status: status as string,
         search: search as string,
         sortBy: sortByRaw as any,
         sortOrder: sortOrderRaw === 'desc' ? 'desc' : 'asc',
       };
 
-      if (limitParsed !== undefined) {
-        filters.limit = limitParsed;
-      } else {
-        filters.limit = DEFAULT_DEVICE_LIST_LIMIT;
+      const statusFilter = status as string | undefined;
+      const fetchAllForEffectiveFilter = Boolean(statusFilter);
+
+      if (!fetchAllForEffectiveFilter) {
+        if (limitParsed !== undefined) {
+          filters.limit = limitParsed;
+        } else {
+          filters.limit = DEFAULT_DEVICE_LIST_LIMIT;
+        }
+        filters.offset = offsetNum;
       }
-      filters.offset = offsetNum;
       if (allowedFacilityId) {
         filters.facility_id = allowedFacilityId;
       }
 
-      const devices = await deviceModel.findUnassignedDevices(filters);
-      const total = await deviceModel.countUnassignedDevices(filters);
+      let devices: any[] = await deviceModel.findUnassignedDevices(filters);
+      let total: number;
+
+      if (fetchAllForEffectiveFilter) {
+        const enricher = reachabilityEnrichment();
+        devices = await enricher.enrichBluLokList(
+          devices.map((d) => ({ ...d, device_category: 'blulok' as const })),
+        );
+        devices = applyEffectiveStatusFilter(devices, statusFilter);
+        total = devices.length;
+        const pageSize = limitParsed ?? DEFAULT_DEVICE_LIST_LIMIT;
+        devices = devices.slice(offsetNum, offsetNum + pageSize);
+      } else {
+        const enricher = reachabilityEnrichment();
+        devices = await enricher.enrichBluLokList(
+          devices.map((d) => ({ ...d, device_category: 'blulok' as const })),
+        );
+        total = await deviceModel.countUnassignedDevices({
+          ...filters,
+          limit: undefined,
+          offset: undefined,
+        });
+      }
 
       res.json({ success: true, devices, total });
     } catch (error) {

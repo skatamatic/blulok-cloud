@@ -45,6 +45,7 @@ import {
 import { readDisplayName } from '@/utils/deviceMetadataForm.utils';
 import { formatDateTime } from '@/utils/datetime.utils';
 import { getUserDisplayName, getUserInitials, shouldShowUserEmail } from '@/utils/userDisplay.utils';
+import { DeviceConnectivityOverview } from '@/components/Devices/DeviceConnectivityOverview';
 import type { EffectiveAccessCode, AccessMethod } from '@/types/facility.types';
 import type { Location } from 'react-router-dom';
 
@@ -72,6 +73,9 @@ export interface DeviceDetailsOverviewData {
   facility_name: string;
   lock_status: LockStatus;
   device_status: DeviceStatus;
+  reported_device_status?: DeviceStatus;
+  reported_status?: DeviceStatus;
+  status_unreachable_reason?: string | null;
   battery_level?: number;
   signal_strength?: number;
   temperature?: number;
@@ -207,6 +211,8 @@ export function DeviceDetailsOverview({
 
   const lockStatus = device.lock_status ?? 'unknown';
   const deviceStatus = device.device_status ?? 'offline';
+  const reportedStatus =
+    device.reported_device_status ?? device.reported_status ?? deviceStatus;
   const hasBattery = device.battery_level != null && !Number.isNaN(Number(device.battery_level));
   const hasSignal = device.signal_strength != null && !Number.isNaN(Number(device.signal_strength));
   const hasTemperature = tempNum != null && !Number.isNaN(tempNum);
@@ -225,17 +231,11 @@ export function DeviceDetailsOverview({
           </span>
         </OverviewStat>
       )}
-      <OverviewStat label="Connectivity">
-        <span
-          className={statusBadgeSmClass(deviceStatusColors[deviceStatus])}
-        >
-          {(() => {
-            const DeviceStatusIcon = deviceStatusIcons[deviceStatus] || ExclamationTriangleIcon;
-            return <DeviceStatusIcon className="mr-1 h-3 w-3" aria-hidden />;
-          })()}
-          {deviceStatus.replace('_', ' ')}
-        </span>
-      </OverviewStat>
+      <DeviceConnectivityOverview
+        effectiveStatus={deviceStatus}
+        reportedStatus={reportedStatus}
+        statusUnreachableReason={device.status_unreachable_reason}
+      />
       <OverviewStat label="Lock">
         <span
           className={statusBadgeSmClass(lockStatusColors[lockStatus])}

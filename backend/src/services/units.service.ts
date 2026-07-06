@@ -8,6 +8,7 @@ import { NotificationService } from '@/services/notification.service';
 import { ActivityService } from '@/services/activity.service';
 import { DeviceGroupService } from '@/services/device-group.service';
 import { logger } from '@/utils/logger';
+import { DeviceReachabilityEnrichmentService } from '@/services/device-reachability-enrichment.service';
 
 /**
  * Units Service
@@ -61,10 +62,10 @@ export class UnitsService {
    */
   async getUnits(userId: string, userRole: UserRole, filters: any = {}): Promise<{ units: any[]; total: number }> {
     try {
-      // Get units with pagination and filtering
       const result = await this.unitModel.getUnitsListForUser(userId, userRole, filters);
-      return result;
-
+      const enricher = DeviceReachabilityEnrichmentService.getInstance();
+      const enrichedUnits = await enricher.enrichUnitList(result.units);
+      return { units: enrichedUnits, total: result.total };
     } catch (error) {
       logger.error('Error getting units:', error);
       throw error;
@@ -112,8 +113,10 @@ export class UnitsService {
         // Unit exists but user doesn't have access - throw for 403
         throw new Error('Access denied');
       }
-      
-      return result;
+
+      const enricher = DeviceReachabilityEnrichmentService.getInstance();
+      const cache = await enricher.createLivenessCache();
+      return enricher.enrichUnitRow(result, cache);
     } catch (error) {
       logger.error('Error getting unit details:', error);
       throw error;
@@ -194,7 +197,13 @@ export class UnitsService {
     }
 
     await this.unitModel.setOverlockStatus(unitId, isOverlocked);
-    return this.unitModel.getUnitDetailsForUser(unitId, userId, userRole);
+    const result = await this.unitModel.getUnitDetailsForUser(unitId, userId, userRole);
+    if (!result) {
+      throw new Error('Failed to load unit after overlock update');
+    }
+    const enricher = DeviceReachabilityEnrichmentService.getInstance();
+    const cache = await enricher.createLivenessCache();
+    return enricher.enrichUnitRow(result, cache);
   }
 
   /**

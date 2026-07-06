@@ -54,12 +54,17 @@ interface UnitDetails {
   facility_lock_command_timeout_sec?: number | null;
   description?: string;
   features?: string[];
+  device_status?: 'online' | 'offline' | 'low_battery' | 'error';
+  reported_device_status?: 'online' | 'offline' | 'low_battery' | 'error';
+  status_unreachable_reason?: string | null;
   blulok_device?: {
     id: string;
     device_serial: string;
     firmware_version?: string;
     lock_status: 'locked' | 'unlocked' | 'locking' | 'unlocking' | 'error' | 'maintenance' | 'unknown';
     device_status: 'online' | 'offline' | 'low_battery' | 'error';
+    reported_device_status?: 'online' | 'offline' | 'low_battery' | 'error';
+    status_unreachable_reason?: string | null;
     battery_level?: number;
     last_activity?: string;
     last_seen?: string;
@@ -205,6 +210,18 @@ export default function UnitDetailsPage() {
       if (!prev?.blulok_device) return prev;
       return {
         ...prev,
+        device_status: (deviceUpdate.device_status ??
+          prev.device_status ??
+          prev.blulok_device.device_status) as NonNullable<UnitDetails['device_status']>,
+        reported_device_status:
+          deviceUpdate.reported_device_status ??
+          prev.reported_device_status ??
+          prev.blulok_device.reported_device_status ??
+          prev.blulok_device.device_status,
+        status_unreachable_reason:
+          deviceUpdate.status_unreachable_reason !== undefined
+            ? deviceUpdate.status_unreachable_reason
+            : prev.status_unreachable_reason ?? prev.blulok_device.status_unreachable_reason,
         blulok_device: {
           ...prev.blulok_device,
           lock_status: (deviceUpdate.lock_status || prev.blulok_device.lock_status) as NonNullable<
@@ -213,6 +230,14 @@ export default function UnitDetailsPage() {
           device_status: (deviceUpdate.device_status || prev.blulok_device.device_status) as NonNullable<
             UnitDetails['blulok_device']
           >['device_status'],
+          reported_device_status:
+            deviceUpdate.reported_device_status ??
+            prev.blulok_device.reported_device_status ??
+            prev.blulok_device.device_status,
+          status_unreachable_reason:
+            deviceUpdate.status_unreachable_reason !== undefined
+              ? deviceUpdate.status_unreachable_reason
+              : prev.blulok_device.status_unreachable_reason,
           battery_level: deviceUpdate.battery_level ?? prev.blulok_device.battery_level,
           signal_strength: deviceUpdate.signal_strength ?? prev.blulok_device.signal_strength,
           temperature:
@@ -249,7 +274,11 @@ export default function UnitDetailsPage() {
   useLockDeviceRealtime({
     enabled: !!unit?.blulok_device?.id,
     deviceId: unit?.blulok_device?.id,
+    facilityId: unit?.facility_id,
     onDeviceRows: mergeBlulokFromSnapshots,
+    debouncedRefresh: () => {
+      void loadUnitDetails();
+    },
     subscribeUnitsForRefresh: false,
   });
 

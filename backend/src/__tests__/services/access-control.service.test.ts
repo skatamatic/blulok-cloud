@@ -1,9 +1,17 @@
 import { AccessControlService } from '@/services/access-control.service';
 import { DeviceModel, AccessControlDevice } from '@/models/device.model';
 import { UserRole } from '@/types/auth.types';
+import { DeviceReachabilityEnrichmentService } from '@/services/device-reachability-enrichment.service';
 
 // Mock dependencies
 jest.mock('@/models/device.model');
+jest.mock('@/services/gateway/gateway-events.service', () => ({
+  GatewayEventsService: {
+    getInstance: jest.fn().mockReturnValue({
+      getFacilityConnectionStatus: jest.fn().mockReturnValue({ connected: null }),
+    }),
+  },
+}));
 
 describe('AccessControlService', () => {
   let service: AccessControlService;
@@ -49,6 +57,7 @@ describe('AccessControlService', () => {
     id: 'gateway-1',
     facility_id: 'facility-1',
     name: 'Test Gateway',
+    status: 'online' as const,
   };
 
   const mockFacility = {
@@ -58,6 +67,7 @@ describe('AccessControlService', () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+    DeviceReachabilityEnrichmentService.resetForTests();
 
     mockDeviceModel = {
       findAccessControlDevices: jest.fn().mockResolvedValue([mockAccessControlDevice]),

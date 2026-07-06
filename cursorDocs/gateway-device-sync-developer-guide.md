@@ -5,7 +5,7 @@ Comprehensive reference for **gateway firmware developers** on how BluLok Cloud 
 **Audience:** Java mesh-manager / gateway team implementing PROXY calls over `/ws/gateway`.
 
 **Companion docs (field tables):** [Gateway device inventory & state payload reference](./gateway-device-inventory-payload.md)  
-**Transport & auth:** [Gateway ↔ Cloud integration](./gateway-integration.md)  
+**Transport & auth:** [Gateway ↔ Cloud integration](./gateway-integration.md) — includes **device reachability coercion** (display-only; does not alter inventory/state sync payloads written to DB or recovery snapshots)  
 **Swap / recovery (blocks inventory):** [Gateway Swap / Recovery — Operator & Developer Guide](./gateway-swap-recovery-operators-guide.md)
 
 ---

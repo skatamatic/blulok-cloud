@@ -116,25 +116,65 @@ export const assignBlulokDeviceBodySchema = Joi.object({
   unit_id: Joi.string().required(),
 });
 
+export const statusUnreachableReasonSchema = Joi.string()
+  .valid('gateway_offline', 'gateway_maintenance', 'gateway_error')
+  .allow(null);
+
+/** Shared reachability fields — inline in each schema (Joi spread breaks joi-to-swagger). */
+const reachabilityFieldKeys = {
+  reported_device_status: Joi.string().optional(),
+  reported_status: Joi.string().optional(),
+  status_unreachable_reason: statusUnreachableReasonSchema.optional(),
+};
+
+export const deviceReachabilityFieldsSchema = reachabilityFieldKeys;
+
+export const deviceListItemSchema = Joi.object({
+  id: Joi.string().optional(),
+  device_category: Joi.string().valid('blulok', 'access_control', 'network_infra').optional(),
+  device_status: Joi.string().optional(),
+  status: Joi.string().optional(),
+  is_online: Joi.boolean().optional(),
+  reported_device_status: Joi.string().optional(),
+  reported_status: Joi.string().optional(),
+  status_unreachable_reason: statusUnreachableReasonSchema.optional(),
+});
+
+export const deviceDetailSchema = Joi.object({
+  device_status: Joi.string().optional(),
+  status: Joi.string().optional(),
+  is_online: Joi.boolean().optional(),
+  reported_device_status: Joi.string().optional(),
+  reported_status: Joi.string().optional(),
+  status_unreachable_reason: statusUnreachableReasonSchema.optional(),
+});
+
+export const facilityDeviceHierarchySchema = Joi.object({
+  facility: Joi.object().unknown(true).required(),
+  gateway: Joi.object().unknown(true).allow(null).required(),
+  accessControlDevices: Joi.array().items(deviceDetailSchema).required(),
+  blulokDevices: Joi.array().items(deviceDetailSchema).required(),
+}).unknown(true);
+
 export const devicesListResponseSchema = Joi.object({
   success: Joi.boolean().valid(true).optional(),
-  devices: Joi.array().items(Joi.object()).required(),
+  devices: Joi.array().items(deviceListItemSchema).required(),
   total: Joi.number().integer().required(),
 }).unknown(true);
 
 export const deviceResponseSchema = Joi.object({
   success: Joi.boolean().valid(true).required(),
-  device: Joi.object().required(),
+  device: deviceDetailSchema.required(),
 }).unknown(true);
 
 export const deviceWithSideEffectsResponseSchema = Joi.object({
   success: Joi.boolean().valid(true).required(),
-  device: Joi.object().required(),
+  device: deviceDetailSchema.required(),
   sideEffects: Joi.object().optional(),
 }).unknown(true);
 
 export const hierarchyResponseSchema = Joi.object({
-  hierarchy: Joi.object().required(),
+  hierarchy: facilityDeviceHierarchySchema.required(),
 });
 
 export const denylistResponseSchema = Joi.object({

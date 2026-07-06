@@ -314,6 +314,7 @@ export class GatewayEventsService {
       if (previousStatus === 'offline') {
         const wsService = WebSocketService.getInstance();
         await wsService.broadcastGatewayStatusUpdate(facilityId, gw.id);
+        void wsService.broadcastFacilityDeviceReachabilityRefresh(facilityId);
         return;
       }
 
@@ -329,6 +330,7 @@ export class GatewayEventsService {
 
       const wsService = WebSocketService.getInstance();
       await wsService.broadcastGatewayStatusUpdate(facilityId, gw.id);
+      void wsService.broadcastFacilityDeviceReachabilityRefresh(facilityId);
     } catch (error) {
       logger.warn(`applyPendingGatewayOffline failed facility=${facilityId}`, error);
     }
@@ -375,6 +377,7 @@ export class GatewayEventsService {
 
         const wsService = WebSocketService.getInstance();
         await wsService.broadcastGatewayStatusUpdate(facilityId, gw.id);
+        void wsService.broadcastFacilityDeviceReachabilityRefresh(facilityId);
         return;
       }
 
@@ -383,6 +386,7 @@ export class GatewayEventsService {
 
       const wsService = WebSocketService.getInstance();
       await wsService.broadcastGatewayStatusUpdate(facilityId, gw.id);
+      void wsService.broadcastFacilityDeviceReachabilityRefresh(facilityId);
     } catch (error) {
       logger.warn(`syncGatewayDbWithInboundConnection failed facility=${facilityId}`, error);
     }

@@ -567,6 +567,16 @@ export class WebSocketService {
     }
   }
 
+  public async broadcastFacilityDeviceReachabilityRefresh(facilityId: string): Promise<void> {
+    const manager = this.subscriptionRegistry.getDeviceStatusManager();
+    if (manager && typeof manager.broadcastFacilityReachabilityRefresh === 'function') {
+      await manager.broadcastFacilityReachabilityRefresh(facilityId);
+    }
+    await this.broadcastUnitsUpdate();
+    await this.broadcastBatteryStatusUpdate();
+    await this.broadcastGeneralStatsUpdate();
+  }
+
   public async broadcastCommandQueueUpdate(): Promise<void> {
     const manager: any = this.subscriptionRegistry.getManager('command_queue');
     if (manager && typeof manager.broadcastUpdate === 'function') {

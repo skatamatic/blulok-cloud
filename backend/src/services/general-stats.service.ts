@@ -4,6 +4,9 @@ import { logger } from '@/utils/logger';
 import { AuthService } from '@/services/auth.service';
 import { FacilityAccessService } from '@/services/facility-access.service';
 import { AccessDeniedError } from '@/middleware/error.middleware';
+import { DeviceModel } from '@/models/device.model';
+import { DeviceReachabilityEnrichmentService } from '@/services/device-reachability-enrichment.service';
+import { effectiveStatusFromEnrichedRow } from '@/types/device-reachability.types';
 
 /**
  * General Statistics Data Interface
@@ -194,28 +197,7 @@ export class GeneralStatsService {
       facilityParams
     );
 
-    const deviceStats = await knex.raw(
-      `
-      SELECT 
-        COUNT(*) as total,
-        SUM(CASE WHEN devices.status = 'online' THEN 1 ELSE 0 END) as online,
-        SUM(CASE WHEN devices.status = 'offline' THEN 1 ELSE 0 END) as offline,
-        SUM(CASE WHEN devices.status = 'error' THEN 1 ELSE 0 END) as error,
-        SUM(CASE WHEN devices.status = 'maintenance' THEN 1 ELSE 0 END) as maintenance
-      FROM (
-        SELECT acd.status FROM access_control_devices acd
-        JOIN gateways g ON acd.gateway_id = g.id
-        JOIN facilities f ON g.facility_id = f.id
-        WHERE 1=1 ${facilityFilter}
-        UNION ALL
-        SELECT bd.device_status as status FROM blulok_devices bd
-        JOIN units u ON bd.unit_id = u.id
-        JOIN facilities f ON u.facility_id = f.id
-        WHERE 1=1 ${facilityFilter}
-      ) devices
-    `,
-      deviceParams
-    );
+    const deviceCounts = await this.countEffectiveDeviceStats(ids);
 
     const userJoin = ids.length
       ? `JOIN user_facility_associations ufa ON u.id = ufa.user_id 
@@ -262,7 +244,6 @@ export class GeneralStatsService {
     }
 
     const facilityData = firstRowFromMysqlRaw(facilityStats);
-    const deviceData = firstRowFromMysqlRaw(deviceStats);
     const userData = firstRowFromMysqlRaw(userStats);
 
     const openAlerts = await this.countAlertNotifications(userId, scope);
@@ -274,13 +255,7 @@ export class GeneralStatsService {
         inactive: parseInt(facilityData.inactive, 10) || 0,
         maintenance: parseInt(facilityData.maintenance, 10) || 0,
       },
-      devices: {
-        total: parseInt(deviceData.total, 10) || 0,
-        online: parseInt(deviceData.online, 10) || 0,
-        offline: parseInt(deviceData.offline, 10) || 0,
-        error: parseInt(deviceData.error, 10) || 0,
-        maintenance: parseInt(deviceData.maintenance, 10) || 0,
-      },
+      devices: deviceCounts,
       users: {
         total: parseInt(userData.total, 10) || 0,
         active: parseInt(userData.active, 10) || 0,
@@ -299,5 +274,38 @@ export class GeneralStatsService {
       userRole === UserRole.FACILITY_ADMIN ||
       userRole === UserRole.MAINTENANCE
     );
+  }
+
+  private async countEffectiveDeviceStats(facilityIds: string[]): Promise<GeneralStatsData['devices']> {
+    const deviceModel = new DeviceModel();
+    const enricher = DeviceReachabilityEnrichmentService.getInstance();
+    const scopeFilters =
+      facilityIds.length > 0 ? { facility_ids: facilityIds } : ({} as { facility_ids?: string[] });
+
+    const [blulokRows, accessRows] = await Promise.all([
+      deviceModel.findBluLokDevices(scopeFilters),
+      deviceModel.findAccessControlDevices(scopeFilters),
+    ]);
+
+    const enriched = [
+      ...(await enricher.enrichBluLokList(blulokRows)),
+      ...(await enricher.enrichAccessControlList(accessRows)),
+    ];
+
+    const counts = { total: 0, online: 0, offline: 0, error: 0, maintenance: 0 };
+    for (const row of enriched) {
+      counts.total += 1;
+      const status = effectiveStatusFromEnrichedRow(row);
+      if (status === 'online' || status === 'low_battery') {
+        counts.online += 1;
+      } else if (status === 'offline') {
+        counts.offline += 1;
+      } else if (status === 'error') {
+        counts.error += 1;
+      } else if (status === 'maintenance') {
+        counts.maintenance += 1;
+      }
+    }
+    return counts;
   }
 }

@@ -11,6 +11,8 @@ export interface LockDeviceSnapshot {
   device_settings?: Record<string, unknown>;
   lock_status?: string;
   device_status?: string;
+  reported_device_status?: string;
+  status_unreachable_reason?: string | null;
   battery_level?: number;
   signal_strength?: number;
   temperature?: number;
@@ -42,6 +44,12 @@ export function normalizeDeviceStatusWsPayload(data: unknown): LockDeviceSnapsho
           : undefined,
       lock_status: typeof device.lock_status === 'string' ? device.lock_status : undefined,
       device_status: typeof device.device_status === 'string' ? device.device_status : undefined,
+      reported_device_status:
+        typeof device.reported_device_status === 'string' ? device.reported_device_status : undefined,
+      status_unreachable_reason:
+        device.status_unreachable_reason === null || typeof device.status_unreachable_reason === 'string'
+          ? device.status_unreachable_reason
+          : undefined,
       battery_level: typeof device.battery_level === 'number' ? device.battery_level : undefined,
       signal_strength:
         typeof device.signal_strength === 'number'

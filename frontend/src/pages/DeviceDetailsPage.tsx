@@ -59,6 +59,9 @@ interface DeviceDetails {
   facility_name: string;
   lock_status: 'locked' | 'unlocked' | 'locking' | 'unlocking' | 'error' | 'maintenance' | 'unknown';
   device_status: 'online' | 'offline' | 'low_battery' | 'error';
+  reported_device_status?: 'online' | 'offline' | 'low_battery' | 'error';
+  reported_status?: 'online' | 'offline' | 'error' | 'maintenance';
+  status_unreachable_reason?: string | null;
   battery_level?: number;
   /** Wireless signal strength in dBm (e.g., -70 dBm) */
   signal_strength?: number;
@@ -77,6 +80,14 @@ interface DeviceDetails {
     last_name: string;
     email: string;
   };
+}
+
+function mapAccessControlStatusToDeviceStatus(
+  status: string | undefined,
+): DeviceDetails['device_status'] {
+  if (status === 'maintenance' || status === 'offline') return 'offline';
+  if (status === 'error') return 'error';
+  return 'online';
 }
 
 interface DenylistEntry {
@@ -264,6 +275,8 @@ export default function DeviceDetailsPage() {
                 displayName: deviceUpdate.name,
               }
             : prev.device_settings;
+      const nextReportedDeviceStatus =
+        deviceUpdate.reported_device_status ?? prev.reported_device_status ?? prev.device_status;
       return {
         ...prev,
         ...(deviceUpdate.name !== undefined ? { name: deviceUpdate.name } : {}),
@@ -275,6 +288,16 @@ export default function DeviceDetailsPage() {
           : {}),
         lock_status: (deviceUpdate.lock_status ?? prev.lock_status) as DeviceDetails['lock_status'],
         device_status: (deviceUpdate.device_status ?? prev.device_status) as DeviceDetails['device_status'],
+        reported_device_status: nextReportedDeviceStatus,
+        ...(deviceCategory === 'access_control' && deviceUpdate.reported_device_status != null
+          ? {
+              reported_status: deviceUpdate.reported_device_status as DeviceDetails['reported_status'],
+            }
+          : {}),
+        status_unreachable_reason:
+          deviceUpdate.status_unreachable_reason !== undefined
+            ? deviceUpdate.status_unreachable_reason
+            : prev.status_unreachable_reason,
         battery_level: deviceUpdate.battery_level ?? prev.battery_level,
         signal_strength: deviceUpdate.signal_strength ?? prev.signal_strength,
         temperature:
@@ -294,11 +317,15 @@ export default function DeviceDetailsPage() {
         last_seen: deviceUpdate.last_seen ?? prev.last_seen,
       };
     });
-  }, [deviceId]);
+  }, [deviceId, deviceCategory]);
 
   useLockDeviceRealtime({
     deviceId: deviceId ?? undefined,
+    facilityId: device?.facility_id,
     onDeviceRows: mergeDeviceFromSnapshots,
+    debouncedRefresh: () => {
+      void loadDeviceDetails();
+    },
     subscribeUnitsForRefresh: false,
   });
 
@@ -359,12 +386,9 @@ export default function DeviceDetailsPage() {
           facility_id: ac.facility_id ?? '',
           facility_name: ac.facility_name || String(ac.facility_id ?? ''),
           lock_status: ac.is_locked ? 'locked' : 'unlocked',
-          device_status:
-            ac.status === 'maintenance' || ac.status === 'offline'
-              ? 'offline'
-              : ac.status === 'error'
-                ? 'error'
-                : 'online',
+          device_status: mapAccessControlStatusToDeviceStatus(ac.status),
+          reported_status: (ac.reported_status ?? ac.status) as DeviceDetails['reported_status'],
+          status_unreachable_reason: ac.status_unreachable_reason ?? null,
           last_activity: ac.last_activity,
           firmware_version:
             typeof ac.metadata?.firmware_version === 'string'

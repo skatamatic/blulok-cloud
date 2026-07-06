@@ -28,6 +28,7 @@ export interface NetworkInfraDeviceListItem {
   device_kind: NetworkInfraSyncKind | 'gateway';
   name: string;
   device_serial: string;
+  state?: string | null;
   status: string;
   firmware_version?: string | null;
   info?: Record<string, unknown>;
@@ -329,6 +330,7 @@ export class GatewayInventoryDeviceSyncService {
       device_kind: row.device_kind,
       name: row.device_serial,
       device_serial: row.device_serial,
+      state: row.state,
       status: mapInfraStateToStatus(row.state),
       firmware_version: row.firmware_version,
       info: row.info,

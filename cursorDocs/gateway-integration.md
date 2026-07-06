@@ -76,6 +76,23 @@ Gateways **do not** push lock state over operator REST from the browser. They us
 
 Any UI that shows BluLok lock or device telemetry should go through **`useLockDeviceRealtime`** and **`normalizeDeviceStatusWsPayload`** (`frontend/src/hooks/useLockDeviceRealtime.ts`, `frontend/src/utils/deviceStatusWs.utils.ts`) so subscription scope, debouncing, and payload parsing stay consistent.
 
+### Device reachability when gateway is offline (dual-status model)
+
+When the facility gateway is unreachable, child devices may still have **last-reported** telemetry in the DB (`online`, `low_battery`, etc.). Operator-facing reads apply **reachability coercion** at the display boundary so lists, widgets, stats, and WebSocket payloads show **effective** connectivity in the existing field names.
+
+| Layer | Behavior |
+|-------|----------|
+| **DB / ingest / snapshot** | Columns such as `blulok_devices.device_status`, `access_control_devices.status`, and `gateway_inventory_devices.state` remain **last-reported telemetry only**. `InventorySnapshotService.buildSnapshotPayload` and gateway ingest paths read **raw DB** — never enriched DTOs. |
+| **REST + dashboard WS** | Responses overwrite **effective** status into existing fields (`device_status`, `status`, `is_online` on units). Detail endpoints and WS rows also include optional **`reported_device_status`** / **`reported_status`** and **`status_unreachable_reason`** when they differ. |
+| **Coercion rules** | If the gateway is reachable, effective = reported. If unreachable and reported is `online`, `low_battery`, or infra-equivalent healthy state, effective → `offline` with reason `gateway_offline`, `gateway_maintenance`, or `gateway_error`. Already-offline/error reported states are not coerced. Lock position, battery, and signal are **never** coerced. |
+| **Grace period** | During **`GATEWAY_OFFLINE_GRACE_MS`** (default 60s), live `connected === false` from `GatewayEventsService.getFacilityConnectionStatus()` drives coercion for UI pills and device reachability — same as the gateway status pill — even if `gateways.status` in the DB has not yet flipped to offline. |
+
+Implementation: `backend/src/utils/device-reachability.utils.ts`, `backend/src/services/device-reachability-enrichment.service.ts`. Gateway connect/disconnect triggers **`broadcastFacilityDeviceReachabilityRefresh`** so clients update without waiting for per-device telemetry.
+
+Recovery **inventory-preview** (`GET /api/v1/gateways/:id/recovery/inventory-preview`) intentionally returns **raw snapshot payload** (`properties.online` from DB) — not display-coerced values — so operators see what will be pushed to a restored gateway.
+
+See also [Gateway device sync developer guide](./gateway-device-sync-developer-guide.md) — cloud display coercion does **not** affect gateway sync payloads.
+
 ### Gateway status (`gateway_status_update`) — backend behavior
 
 - **`GatewayStatusSubscriptionManager.broadcastUpdate`** always **`invalidateCache()`** first, then loads gateways from the DB, so **HTTP polling** and **inbound `/ws/gateway`** both publish **current** rows (no stale 5s `findAll` cache).

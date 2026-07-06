@@ -1,5 +1,6 @@
 import Joi from 'joi';
 import { routeIdField } from '@/openapi/common-schemas';
+import { facilityDeviceHierarchySchema } from '@/schemas/devices.schemas';
 import {
   MAX_LOCK_COMMAND_TIMEOUT_SEC,
   MIN_LOCK_COMMAND_TIMEOUT_SEC,
@@ -72,7 +73,7 @@ export const facilitiesListResponseSchema = Joi.object({
 export const facilityDetailResponseSchema = Joi.object({
   success: Joi.boolean().valid(true).required(),
   facility: Joi.object().required(),
-  deviceHierarchy: Joi.object().required(),
+  deviceHierarchy: facilityDeviceHierarchySchema.required(),
 });
 
 export const facilityMutationResponseSchema = Joi.object({

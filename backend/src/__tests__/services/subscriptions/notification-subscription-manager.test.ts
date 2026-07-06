@@ -45,6 +45,7 @@ describe('NotificationSubscriptionManager', () => {
       onNotificationCreated: jest.fn().mockReturnValue(() => {}),
       onNotificationRead: jest.fn().mockReturnValue(() => {}),
       onBatchRead: jest.fn().mockReturnValue(() => {}),
+      onBatchHidden: jest.fn().mockReturnValue(() => {}),
       onNotificationDeleted: jest.fn().mockReturnValue(() => {}),
     } as any;
 

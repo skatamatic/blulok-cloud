@@ -2,15 +2,42 @@ import { GeneralStatsService } from '../../services/general-stats.service';
 import { UserRole } from '@/types/auth.types';
 import { DatabaseService } from '../../services/database.service';
 import { AuthService } from '../../services/auth.service';
+import { DeviceModel } from '../../models/device.model';
 
 // Mock the database service
 jest.mock('../../services/database.service');
 jest.mock('../../models/user-facility-association.model');
+jest.mock('../../models/device.model');
 jest.mock('../../services/auth.service', () => ({
   AuthService: {
     canAccessFacility: jest.fn().mockResolvedValue(true),
   },
 }));
+
+function mockEffectiveDeviceInventory(
+  blulokStatuses: string[],
+  accessStatuses: string[] = [],
+): void {
+  (DeviceModel as jest.MockedClass<typeof DeviceModel>).mockImplementation(
+    () =>
+      ({
+        findBluLokDevices: jest.fn().mockResolvedValue(
+          blulokStatuses.map((device_status, index) => ({
+            id: `blulok-${index}`,
+            facility_id: 'facility-1',
+            device_status,
+          })),
+        ),
+        findAccessControlDevices: jest.fn().mockResolvedValue(
+          accessStatuses.map((status, index) => ({
+            id: `ac-${index}`,
+            facility_id: 'facility-1',
+            status,
+          })),
+        ),
+      }) as unknown as DeviceModel,
+  );
+}
 
 describe('GeneralStatsService', () => {
   let service: GeneralStatsService;
@@ -34,6 +61,8 @@ describe('GeneralStatsService', () => {
     (DatabaseService.getInstance as jest.Mock).mockReturnValue(mockDb);
     // Reset the service instance to ensure it uses the mocked database
     (GeneralStatsService as any).instance = undefined;
+    const { DeviceReachabilityEnrichmentService } = require('../../services/device-reachability-enrichment.service');
+    DeviceReachabilityEnrichmentService.resetForTests();
     service = GeneralStatsService.getInstance();
   });
 
@@ -79,9 +108,11 @@ describe('GeneralStatsService', () => {
     });
 
     it('should return all data for ADMIN role', async () => {
+      mockEffectiveDeviceInventory(
+        ['online', 'online', 'online', 'online', 'online', 'online', 'online', 'online', 'offline', 'error'],
+      );
       mockDb.connection.raw
         .mockResolvedValueOnce([[{ total: 5, active: 4, inactive: 1, maintenance: 0 }]]) // facilities
-        .mockResolvedValueOnce([[{ total: 10, online: 8, offline: 1, error: 1, maintenance: 0 }]]) // devices
         .mockResolvedValueOnce([[{ total: 20, active: 18, inactive: 2 }]]) // users
         .mockResolvedValueOnce([[ // role stats (mysql2: [rows, fields])
           { role: UserRole.TENANT, count: 15 },
@@ -100,9 +131,9 @@ describe('GeneralStatsService', () => {
     });
 
     it('should return scoped data for FACILITY_ADMIN role', async () => {
+      mockEffectiveDeviceInventory(['online', 'online', 'online', 'online', 'offline']);
       mockDb.connection.raw
         .mockResolvedValueOnce([[{ total: 2, active: 2, inactive: 0, maintenance: 0 }]]) // facilities
-        .mockResolvedValueOnce([[{ total: 5, online: 4, offline: 1, error: 0, maintenance: 0 }]]) // devices
         .mockResolvedValueOnce([[{ total: 8, active: 7, inactive: 1 }]]) // users
         .mockResolvedValueOnce([[
           { role: UserRole.TENANT, count: 6 },
@@ -120,9 +151,9 @@ describe('GeneralStatsService', () => {
     });
 
     it('should return scoped data for MAINTENANCE role', async () => {
+      mockEffectiveDeviceInventory(['online', 'online', 'offline']);
       mockDb.connection.raw
         .mockResolvedValueOnce([[{ total: 1, active: 1, inactive: 0, maintenance: 0 }]])
-        .mockResolvedValueOnce([[{ total: 3, online: 2, offline: 1, error: 0, maintenance: 0 }]])
         .mockResolvedValueOnce([[{ total: 4, active: 4, inactive: 0 }]])
         .mockResolvedValueOnce([[{ role: UserRole.TENANT, count: 2 }]]);
 
@@ -147,9 +178,9 @@ describe('GeneralStatsService', () => {
 
     it('should narrow stats to one facility when facilityId option is provided', async () => {
       const targetId = 'facility-1';
+      mockEffectiveDeviceInventory(['online', 'online']);
       mockDb.connection.raw
         .mockResolvedValueOnce([[{ total: 1, active: 1, inactive: 0, maintenance: 0 }]])
-        .mockResolvedValueOnce([[{ total: 2, online: 2, offline: 0, error: 0, maintenance: 0 }]])
         .mockResolvedValueOnce([[{ total: 3, active: 3, inactive: 0 }]])
         .mockResolvedValueOnce([[{ role: UserRole.TENANT, count: 2 }]]);
 

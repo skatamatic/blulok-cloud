@@ -35,6 +35,7 @@
 import { Router, Response } from 'express';
 import { FacilityModel, Facility } from '@/models/facility.model';
 import { DeviceModel } from '@/models/device.model';
+import { DeviceReachabilityEnrichmentService } from '@/services/device-reachability-enrichment.service';
 import { authenticateToken, requireRoles, applyFacilityScope } from '@/middleware/auth.middleware';
 import { UserRole, AuthenticatedRequest } from '@/types/auth.types';
 import { AuthService } from '@/services/auth.service';
@@ -244,11 +245,16 @@ registerGet(
 
       const stats = await facilityModel.getFacilityStats(String(id));
       const deviceHierarchy = await deviceModel.getFacilityDeviceHierarchy(String(id));
+      const enrichedDeviceHierarchy = deviceHierarchy
+        ? await DeviceReachabilityEnrichmentService.getInstance().enrichFacilityDeviceHierarchy(
+            deviceHierarchy,
+          )
+        : { facility: enrichedFacility, gateway: null, accessControlDevices: [], blulokDevices: [] };
 
       res.json({
         success: true,
         facility: { ...enrichedFacility, stats },
-        deviceHierarchy
+        deviceHierarchy: enrichedDeviceHierarchy,
       });
     } catch (error) {
       console.error('Error fetching facility:', error);

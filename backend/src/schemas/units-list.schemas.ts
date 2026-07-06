@@ -1,5 +1,6 @@
 import Joi from 'joi';
 import { routeIdField } from '@/openapi/common-schemas';
+import { statusUnreachableReasonSchema } from '@/schemas/devices.schemas';
 
 export const facilityUnitsParamSchema = Joi.object({
   facilityId: routeIdField(),
@@ -19,8 +20,24 @@ export const unitsListQuerySchema = Joi.object({
   lock_status: Joi.string().optional(),
 });
 
+export const unitListItemSchema = Joi.object({
+  id: Joi.string().optional(),
+  device_status: Joi.string().optional(),
+  reported_device_status: Joi.string().optional(),
+  status_unreachable_reason: statusUnreachableReasonSchema.optional(),
+  is_online: Joi.boolean().optional(),
+  blulok_device: Joi.object({
+    device_status: Joi.string().optional(),
+    reported_device_status: Joi.string().optional(),
+    status_unreachable_reason: statusUnreachableReasonSchema.optional(),
+  })
+    .unknown(true)
+    .optional()
+    .allow(null),
+}).unknown(true);
+
 export const unitsListResponseSchema = Joi.object({
   success: Joi.boolean().valid(true).required(),
-  units: Joi.array().items(Joi.object()).required(),
+  units: Joi.array().items(unitListItemSchema).required(),
   total: Joi.number().integer().required(),
 });

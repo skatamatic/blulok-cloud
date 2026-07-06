@@ -5251,6 +5251,127 @@ async function run() {
     }
     ok('Gateway status WebSocket checks complete');
 
+    // Device reachability coercion: DB keeps last-reported telemetry; operator reads show effective status.
+    heading('Device reachability when gateway offline');
+    step('Syncing BluLok device online in DB before gateway disconnect');
+    const reqReachOnline = 'req-reach-online';
+    ws.send(JSON.stringify({
+      type: 'PROXY_REQUEST',
+      id: reqReachOnline,
+      method: 'POST',
+      path: '/internal/gateway/devices/state',
+      body: {
+        facility_id: facilityId,
+        updates: [gwLockDevice({ lock_id: remainingSerial, online: true })],
+      },
+    }));
+    const respReachOnline = await waitForProxyResponse(ws, reqReachOnline);
+    if (respReachOnline.status !== 200) {
+      throw new Error(`Gateway devices/state online restore failed: ${respReachOnline.status}`);
+    }
+    ok('Device telemetry synced online in DB');
+
+    step('Disconnecting inbound gateway WebSocket — expect effective offline on operator reads');
+    const reachabilityEvents = [];
+    const reachabilityWs = new WebSocket(`${UI_WS_URL}?token=${token}`);
+    await new Promise((res, rej) => {
+      reachabilityWs.once('open', res);
+      reachabilityWs.once('error', rej);
+    });
+    reachabilityWs.on('message', (raw) => {
+      try {
+        const msg = JSON.parse(raw.toString());
+        if (msg.type === 'device_status_update' && msg.data) {
+          reachabilityEvents.push(msg);
+        }
+      } catch {
+        /* ignore */
+      }
+    });
+    reachabilityWs.send(JSON.stringify({
+      type: 'subscription',
+      subscriptionType: 'device_status',
+      data: { device_id: deviceId },
+    }));
+    await delay(500);
+
+    try {
+      ws.close();
+    } catch {
+      /* ignore */
+    }
+    await delay(800);
+
+    const reachDeadline = Date.now() + 10000;
+    let reachHttpDevice = null;
+    while (Date.now() < reachDeadline) {
+      const detailResp = await axios.get(`${API_BASE}/devices/blulok/${deviceId}`, {
+        headers: authHeaders(token),
+      });
+      const row = detailResp.data?.device;
+      if (row?.device_status === 'offline' && row?.reported_device_status === 'online') {
+        reachHttpDevice = row;
+        break;
+      }
+      await delay(300);
+    }
+    if (!reachHttpDevice) {
+      reachabilityWs.close();
+      throw new Error(
+        'Expected GET /devices/blulok/:id to show effective offline with reported_device_status online after gateway disconnect',
+      );
+    }
+    ok('HTTP device detail shows effective offline with reported_device_status online');
+
+    let reachWsRow = null;
+    while (Date.now() < reachDeadline) {
+      for (const ev of reachabilityEvents) {
+        const hit = ev.data?.devices?.find((d) => d.id === deviceId);
+        if (hit?.device_status === 'offline' && hit?.reported_device_status === 'online') {
+          reachWsRow = hit;
+          break;
+        }
+      }
+      if (reachWsRow) break;
+      await delay(300);
+    }
+    if (!reachWsRow) {
+      reachabilityWs.close();
+      throw new Error(
+        'Expected device_status_update with effective offline and reported_device_status online after gateway disconnect',
+      );
+    }
+    ok('WebSocket device_status_update reflects gateway-offline reachability coercion');
+
+    step('Inventory snapshot preview still uses raw DB online flags (not display coercion)');
+    const previewResp = await axios.get(
+      `${API_BASE}/gateways/${gatewayId}/recovery/inventory-preview`,
+      { headers: authHeaders(token) },
+    );
+    const previewDevices = previewResp.data?.data?.devices ?? previewResp.data?.devices ?? [];
+    const previewLock = previewDevices.find(
+      (d) => d.kind === 'lock' && (d.lock_id === remainingSerial || d.properties?.lock_id === remainingSerial),
+    );
+    if (!previewLock) {
+      reachabilityWs.close();
+      throw new Error(`Inventory preview missing lock ${remainingSerial}`);
+    }
+    if (previewLock.properties?.online !== true) {
+      reachabilityWs.close();
+      throw new Error(
+        `Inventory preview should keep raw DB online:true; got ${JSON.stringify(previewLock.properties)}`,
+      );
+    }
+    ok('Recovery inventory-preview retains raw online:true from DB while gateway is disconnected');
+
+    if (reachabilityWs.readyState === WebSocket.OPEN) {
+      reachabilityWs.close();
+    }
+
+    step('Reconnecting gateway WebSocket after reachability checks');
+    ws = await connectGatewayWsAndAuth(WS_URL, token, facilityId, gatewayId);
+    ok('Gateway reconnected after reachability coercion test');
+
     // WebSocket flood/churn resilience checks to catch regressions that can
     // overload subscription setup or destabilize the backend event loop.
     heading('Dashboard WebSocket Subscription Resilience');
