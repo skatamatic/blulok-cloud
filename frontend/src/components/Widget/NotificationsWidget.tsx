@@ -319,7 +319,7 @@ const NotificationCard: React.FC<{
                     e.stopPropagation();
                     onHide();
                   }}
-                  className="no-drag rounded-md p-1 text-gray-400 opacity-60 transition-all hover:bg-gray-100 hover:text-red-600 hover:opacity-100 group-hover:opacity-100 dark:hover:bg-gray-700 dark:hover:text-red-400"
+                  className="no-drag rounded-md p-1 text-gray-400 opacity-[0.33] transition-all hover:bg-gray-100 hover:text-red-600 hover:opacity-100 dark:hover:bg-gray-700 dark:hover:text-red-400"
                   aria-label="Hide notification"
                   title="Hide from widget"
                 >
@@ -655,6 +655,10 @@ export const NotificationsWidget: React.FC<NotificationsWidgetProps> = ({
           }
           break;
         }
+        case 'notifications_batch_hidden': {
+          setRows((prev) => prev.map((r) => ({ ...r, isHidden: true, isRead: true })));
+          break;
+        }
         default:
           break;
       }
@@ -717,6 +721,22 @@ export const NotificationsWidget: React.FC<NotificationsWidgetProps> = ({
     [rows],
   );
 
+  const clearAllNotifications = async () => {
+    if (visibleRows.length === 0) return;
+    try {
+      await apiService.hideAllNotifications(facilityFilter);
+      setRows((prev) => prev.map((n) => ({ ...n, isHidden: true, isRead: true })));
+    } catch (e) {
+      console.error('Clear all notifications failed', e);
+      addToast({
+        type: 'error',
+        title: 'Could not clear notifications',
+        message: 'Try again in a moment.',
+      });
+      void loadNotifications({ silent: true, offset: 0 });
+    }
+  };
+
   const formatTimestamp = formatNotificationTimestamp;
 
   const showFacilityInCards = !facilityFilter;
@@ -771,6 +791,11 @@ export const NotificationsWidget: React.FC<NotificationsWidgetProps> = ({
           >
             Including Hidden{hiddenCount > 0 ? ` (${hiddenCount})` : ''}
           </FilterMenuButton>
+          {!readOnly && visibleRows.length > 0 && (
+            <FilterMenuButton active={false} onClick={() => void clearAllNotifications()}>
+              Clear all
+            </FilterMenuButton>
+          )}
         </div>
       }
     >
@@ -891,14 +916,26 @@ export const NotificationsWidget: React.FC<NotificationsWidgetProps> = ({
         )}
 
         {(size === 'medium-tall' || size === 'large' || size === 'huge' || size.includes('wide')) &&
-          unreadCount > 0 && (
-            <div className="border-t border-gray-200 dark:border-gray-700 pt-3 mt-3 shrink-0">
+          !readOnly &&
+          visibleRows.length > 0 && (
+            <div className="border-t border-gray-200 dark:border-gray-700 pt-3 mt-3 shrink-0 flex gap-2">
+              {unreadCount > 0 && (
+                <button
+                  type="button"
+                  onClick={() => void markAllAsRead()}
+                  className="flex-1 py-2 px-3 text-xs font-medium text-gray-700 dark:text-gray-300 bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 rounded-lg transition-colors"
+                >
+                  Mark all read
+                </button>
+              )}
               <button
                 type="button"
-                onClick={() => void markAllAsRead()}
-                className="w-full py-2 px-3 text-xs font-medium text-gray-700 dark:text-gray-300 bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 rounded-lg transition-colors"
+                onClick={() => void clearAllNotifications()}
+                className={`py-2 px-3 text-xs font-medium text-gray-600 dark:text-gray-400 bg-gray-50 dark:bg-gray-800/80 hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-950/30 dark:hover:text-red-400 rounded-lg transition-colors ${
+                  unreadCount > 0 ? 'flex-1' : 'w-full'
+                }`}
               >
-                Mark all read
+                Clear all
               </button>
             </div>
           )}

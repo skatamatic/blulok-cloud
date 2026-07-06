@@ -9,6 +9,7 @@ const mockGetNotifications = jest.fn();
 const mockMarkNotificationRead = jest.fn();
 const mockDeleteNotification = jest.fn();
 const mockMarkAllNotificationsRead = jest.fn();
+const mockHideAllNotifications = jest.fn();
 const mockAddToast = jest.fn();
 
 jest.mock('@/contexts/ToastContext', () => ({
@@ -22,6 +23,7 @@ jest.mock('@/services/api.service', () => ({
     markNotificationRead: (...args: unknown[]) => mockMarkNotificationRead(...args),
     deleteNotification: (...args: unknown[]) => mockDeleteNotification(...args),
     markAllNotificationsRead: (...args: unknown[]) => mockMarkAllNotificationsRead(...args),
+    hideAllNotifications: (...args: unknown[]) => mockHideAllNotifications(...args),
   },
 }));
 
@@ -391,6 +393,20 @@ describe('NotificationsWidget', () => {
           includeHidden: true,
         }),
       );
+    });
+  });
+
+  it('clears all visible notifications when Clear all is clicked', async () => {
+    mockHideAllNotifications.mockResolvedValue({ success: true, hiddenCount: 2 });
+
+    renderWithProviders(<NotificationsWidget id="w1" title="Notifications" initialSize="large" />);
+    await waitFor(() => expect(screen.getByText('Security')).toBeInTheDocument());
+
+    fireEvent.click(screen.getByRole('button', { name: 'Clear all' }));
+
+    await waitFor(() => {
+      expect(mockHideAllNotifications).toHaveBeenCalled();
+      expect(screen.queryByText('Security')).not.toBeInTheDocument();
     });
   });
 });

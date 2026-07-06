@@ -177,6 +177,20 @@ export class NotificationSubscriptionManager extends BaseSubscriptionManager {
         await this.broadcastUnreadCountsForUser(event.userId);
       }),
     );
+
+    this.cleanupFunctions.push(
+      this.eventService.onBatchHidden(async (event) => {
+        this.broadcastToMatchingSubscriptions(event.userId, {
+          type: 'notifications_batch_hidden',
+          data: {
+            facilityId: event.facilityId,
+            facilityIds: event.facilityIds,
+            timestamp: event.timestamp.toISOString(),
+          },
+        }, { facilityId: event.facilityId, facilityIds: event.facilityIds });
+        await this.broadcastUnreadCountsForUser(event.userId);
+      }),
+    );
   }
 
   protected async sendInitialData(

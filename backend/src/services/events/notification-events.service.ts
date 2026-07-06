@@ -156,6 +156,23 @@ export class NotificationEventsService {
   }
 
   /**
+   * Emit batch hidden event (all notifications cleared from widget scope)
+   */
+  public emitBatchHidden(
+    userId: string,
+    scope?: { facilityId?: string; facilityIds?: string[] },
+  ): void {
+    logger.info(`📬 Batch notifications hidden for user ${userId}`);
+
+    this.eventEmitter.emit('notification:batch:hidden', {
+      userId,
+      facilityId: scope?.facilityId,
+      facilityIds: scope?.facilityIds,
+      timestamp: new Date(),
+    });
+  }
+
+  /**
    * Subscribe to notification created events
    * @returns Cleanup function to unsubscribe
    */
@@ -203,6 +220,16 @@ export class NotificationEventsService {
     const wrappedHandler = this.wrapHandler(handler);
     this.eventEmitter.on('notification:batch:read', wrappedHandler);
     return () => this.eventEmitter.off('notification:batch:read', wrappedHandler);
+  }
+
+  /**
+   * Subscribe to batch hidden events
+   * @returns Cleanup function to unsubscribe
+   */
+  public onBatchHidden(handler: (event: { userId: string; facilityId?: string; facilityIds?: string[]; timestamp: Date }) => void | Promise<void>): () => void {
+    const wrappedHandler = this.wrapHandler(handler);
+    this.eventEmitter.on('notification:batch:hidden', wrappedHandler);
+    return () => this.eventEmitter.off('notification:batch:hidden', wrappedHandler);
   }
 
   /**

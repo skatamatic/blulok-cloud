@@ -396,6 +396,42 @@ export class NotificationService {
     return deleted;
   }
 
+  /**
+   * Hide (soft delete) all notifications for a user within optional facility scope.
+   */
+  async hideAllNotifications(
+    requestingUserId: string,
+    requestingUserRole: UserRole,
+    targetUserId: string,
+    scope?: { facilityId?: string; facilityIds?: string[] },
+    requestingUserFacilityIds?: string[],
+  ): Promise<number> {
+    if (requestingUserId !== targetUserId && !AuthService.isAdmin(requestingUserRole)) {
+      throw new AccessDeniedError('Cannot modify other user notifications');
+    }
+
+    const facilityScope = this.resolveFacilityScope(
+      requestingUserRole,
+      requestingUserFacilityIds,
+      scope?.facilityId,
+      scope?.facilityIds,
+    );
+
+    const count = await this.notificationModel.deleteAllForUser(targetUserId, {
+      facilityId: facilityScope.facilityId,
+      facilityIds: facilityScope.facilityIds,
+    });
+
+    if (count > 0) {
+      this.eventService.emitBatchHidden(targetUserId, {
+        facilityId: facilityScope.facilityId,
+        facilityIds: facilityScope.facilityIds,
+      });
+    }
+
+    return count;
+  }
+
   // ============================================
   // Convenience methods for creating specific notification types
   // ============================================

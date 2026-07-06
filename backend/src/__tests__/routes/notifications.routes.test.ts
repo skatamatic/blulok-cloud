@@ -13,6 +13,7 @@ jest.mock('@/services/notification.service', () => ({
       markAsRead: jest.fn(),
       markMultipleAsRead: jest.fn(),
       markAllAsRead: jest.fn(),
+      hideAllNotifications: jest.fn(),
       deleteNotification: jest.fn(),
       getUnreadCount: jest.fn(),
       notifyAccessGranted: jest.fn(),
@@ -90,6 +91,7 @@ describe('Notifications Routes', () => {
     });
     mockService.markMultipleAsRead.mockReset().mockResolvedValue(3);
     mockService.markAllAsRead.mockReset().mockResolvedValue(10);
+    mockService.hideAllNotifications.mockReset().mockResolvedValue(5);
     mockService.deleteNotification.mockReset().mockResolvedValue(true);
     mockService.getUnreadCount.mockReset().mockResolvedValue(5);
   });
@@ -112,6 +114,9 @@ describe('Notifications Routes', () => {
       expectUnauthorized(response);
 
       response = await request(app).post('/api/v1/notifications/read-all');
+      expectUnauthorized(response);
+
+      response = await request(app).post('/api/v1/notifications/hide-all');
       expectUnauthorized(response);
 
       response = await request(app).delete('/api/v1/notifications/550e8400-e29b-41d4-a716-446655440001');
@@ -584,6 +589,39 @@ describe('Notifications Routes', () => {
         .expect(200);
 
       expect(response.body.markedCount).toBe(0);
+    });
+  });
+
+  describe('POST /api/v1/notifications/hide-all - Hide All Notifications', () => {
+    it('should hide all notifications for the current user', async () => {
+      const response = await request(app)
+        .post('/api/v1/notifications/hide-all')
+        .set('Authorization', `Bearer ${testData.users.tenant.token}`)
+        .send({})
+        .expect(200);
+
+      expectSuccess(response);
+      expect(response.body).toHaveProperty('hiddenCount');
+    });
+
+    it('should pass facility scope to the service', async () => {
+      const facilityId = testData.facilities.facility1.id;
+      mockService.hideAllNotifications.mockResolvedValue(3);
+
+      const response = await request(app)
+        .post('/api/v1/notifications/hide-all')
+        .set('Authorization', `Bearer ${testData.users.tenant.token}`)
+        .send({ facilityId })
+        .expect(200);
+
+      expect(response.body.hiddenCount).toBe(3);
+      expect(mockService.hideAllNotifications).toHaveBeenCalledWith(
+        testData.users.tenant.id,
+        testData.users.tenant.role,
+        testData.users.tenant.id,
+        { facilityId },
+        testData.users.tenant.facilityIds,
+      );
     });
   });
 

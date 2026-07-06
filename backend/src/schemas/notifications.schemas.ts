@@ -55,6 +55,11 @@ export const markedCountResponseSchema = Joi.object({
   markedCount: Joi.number().integer().required(),
 });
 
+export const hiddenCountResponseSchema = Joi.object({
+  success: Joi.boolean().valid(true).required(),
+  hiddenCount: Joi.number().integer().required(),
+});
+
 export const deleteNotificationResponseSchema = Joi.object({
   success: Joi.boolean().valid(true).required(),
   message: Joi.string().required(),

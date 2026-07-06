@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
 import { 
   ArrowPathIcon,
+  BoltIcon,
   CheckCircleIcon,
   ExclamationTriangleIcon,
   ServerIcon,
@@ -16,7 +17,13 @@ import { apiService } from '@/services/api.service';
 import { useFMSSync } from '@/contexts/FMSSyncContext';
 import { useGlobalFacility, ALL_FACILITIES_ID } from '@/contexts/GlobalFacilityContext';
 import { FMSSyncLog } from '@/types/fms.types';
-import { getFmsSyncHistoryDetectedSuffix } from '@/utils/fmsSyncLogDisplay';
+import {
+  getFmsSyncHistoryChangesLabel,
+  getFmsSyncHistoryRowClassName,
+  getFmsSyncHistoryTypeBadgeClassName,
+  getFmsSyncLogTypeLabel,
+  isFmsWebhookPushLog,
+} from '@/utils/fmsSyncLogDisplay';
 import { isFMSSyncInProgressError } from '@/utils/fms-sync.utils';
 import { useWidgetSizeState } from '@/hooks/useWidgetSizeState';
 import { usePressWithoutDrag } from '@/hooks/usePressWithoutDrag';
@@ -814,25 +821,37 @@ export const SyncFMSWidget: React.FC<SyncFMSWidgetProps> = ({
               <h4 className="text-xs font-medium text-gray-700 dark:text-gray-300 mb-2 flex-shrink-0">Recent Syncs</h4>
               <div className="flex-1 min-h-0 overflow-y-auto">
                 <div className="space-y-2 pr-1">
-                  {syncHistory.slice(0, size === 'large' ? 8 : size === 'large-wide' ? 10 : 12).map((sync) => (
-                    <div
-                      key={sync.id}
-                      className="flex items-center justify-between p-2 bg-gray-50 dark:bg-gray-700/50 rounded-lg text-xs"
-                    >
-                      <div className="flex items-center space-x-2">
-                        {getStatusIcon(sync.sync_status)}
-                        <span className="text-gray-700 dark:text-gray-300">
-                          {formatDateTime(sync.started_at)}
+                  {syncHistory.slice(0, size === 'large' ? 8 : size === 'large-wide' ? 10 : 12).map((sync) => {
+                    const webhookPush = isFmsWebhookPushLog(sync);
+                    return (
+                      <div key={sync.id} className={getFmsSyncHistoryRowClassName(sync)}>
+                        <div className="flex min-w-0 items-center gap-2">
+                          {webhookPush ? (
+                            <BoltIcon className="h-4 w-4 shrink-0 text-sky-500 dark:text-sky-400" aria-hidden />
+                          ) : (
+                            <span className="shrink-0 [&>svg]:h-5 [&>svg]:w-5">{getStatusIcon(sync.sync_status)}</span>
+                          )}
+                          <div className="min-w-0">
+                            <div className="flex flex-wrap items-center gap-1.5">
+                              <span className={getFmsSyncHistoryTypeBadgeClassName(sync)}>
+                                {getFmsSyncLogTypeLabel(sync)}
+                              </span>
+                              <span className="truncate text-gray-700 dark:text-gray-300">
+                                {formatDateTime(sync.started_at)}
+                              </span>
+                            </div>
+                          </div>
+                        </div>
+                        <span
+                          className={`shrink-0 text-right text-gray-500 dark:text-gray-400 ${
+                            webhookPush ? 'text-[11px]' : ''
+                          }`}
+                        >
+                          {getFmsSyncHistoryChangesLabel(sync)}
                         </span>
                       </div>
-                      <span className="text-gray-500 dark:text-gray-400">
-                        {sync.changes_detected || 0} detected
-                        {sync.changes_applied !== undefined && sync.changes_applied !== null && (
-                          <span>{getFmsSyncHistoryDetectedSuffix(sync)}</span>
-                        )}
-                      </span>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               </div>
             </div>

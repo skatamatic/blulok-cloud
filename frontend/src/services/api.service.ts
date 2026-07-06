@@ -994,6 +994,11 @@ class ApiService {
     return response.data as { success: boolean; markedCount: number };
   }
 
+  async hideAllNotifications(facilityId?: string) {
+    const response = await this.api.post('/notifications/hide-all', facilityId ? { facilityId } : {});
+    return response.data as { success: boolean; hiddenCount: number };
+  }
+
   async deleteNotification(notificationId: string) {
     const response = await this.api.delete(`/notifications/${notificationId}`);
     return response.data as { success: boolean; message?: string };

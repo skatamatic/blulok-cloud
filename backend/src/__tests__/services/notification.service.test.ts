@@ -52,6 +52,7 @@ describe('NotificationService', () => {
       markAsRead: jest.fn().mockResolvedValue({ ...mockNotification, is_read: true, read_at: new Date() }),
       markMultipleAsRead: jest.fn().mockResolvedValue(3),
       markAllAsRead: jest.fn().mockResolvedValue(10),
+      deleteAllForUser: jest.fn().mockResolvedValue(5),
       delete: jest.fn().mockResolvedValue(true),
       purgeStaleForUser: jest.fn().mockResolvedValue(0),
     } as any;
@@ -61,6 +62,7 @@ describe('NotificationService', () => {
       emitNotificationRead: jest.fn(),
       emitNotificationDeleted: jest.fn(),
       emitBatchRead: jest.fn(),
+      emitBatchHidden: jest.fn(),
     } as any;
 
     (NotificationModel as jest.MockedClass<typeof NotificationModel>).mockImplementation(() => mockNotificationModel);
@@ -565,6 +567,37 @@ describe('NotificationService', () => {
 
       expect(result).toBe(true);
       expect(mockNotificationModel.delete).toHaveBeenCalledWith('notification-1');
+    });
+  });
+
+  describe('hideAllNotifications', () => {
+    it('should hide all notifications and emit batch hidden event', async () => {
+      const result = await service.hideAllNotifications('user-1', UserRole.TENANT, 'user-1');
+
+      expect(result).toBe(5);
+      expect(mockNotificationModel.deleteAllForUser).toHaveBeenCalledWith('user-1', {
+        facilityId: undefined,
+        facilityIds: undefined,
+      });
+      expect(mockEventService.emitBatchHidden).toHaveBeenCalledWith('user-1', {
+        facilityId: undefined,
+        facilityIds: undefined,
+      });
+    });
+
+    it('should not emit when nothing was hidden', async () => {
+      mockNotificationModel.deleteAllForUser.mockResolvedValue(0);
+
+      const result = await service.hideAllNotifications('user-1', UserRole.TENANT, 'user-1');
+
+      expect(result).toBe(0);
+      expect(mockEventService.emitBatchHidden).not.toHaveBeenCalled();
+    });
+
+    it('should throw when non-owner non-admin tries to hide all', async () => {
+      await expect(
+        service.hideAllNotifications('user-1', UserRole.TENANT, 'user-2'),
+      ).rejects.toThrow('Cannot modify other user notifications');
     });
   });
 

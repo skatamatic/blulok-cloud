@@ -22,6 +22,7 @@
  * - POST /notifications/:id/read - Mark notification as read
  * - POST /notifications/read - Mark multiple notifications as read
  * - POST /notifications/read-all - Mark all notifications as read
+ * - POST /notifications/hide-all - Hide all notifications for the current user
  * - DELETE /notifications/:id - Delete a notification
  */
 
@@ -42,6 +43,7 @@ import {
   unreadCountResponseSchema,
   notificationResponseSchema,
   markedCountResponseSchema,
+  hiddenCountResponseSchema,
   deleteNotificationResponseSchema,
 } from '@/schemas/notifications.schemas';
 import { errorEnvelopeSchema } from '@/openapi/common-schemas';
@@ -271,6 +273,51 @@ registerPost(
     res.json({
       success: true,
       markedCount: count,
+    });
+  }),
+);
+
+registerPost(
+  router,
+  '/hide-all',
+  {
+    openApiPath: `${MOUNT}/hide-all`,
+    tags: ['Notifications'],
+    summary: 'Hide all notifications for the current user',
+    security: 'bearer',
+    body: markAllReadSchema,
+    responses: {
+      200: hiddenCountResponseSchema,
+      403: errorEnvelopeSchema,
+    },
+  },
+  asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+    const user = req.user!;
+    const { facilityId } = req.body;
+
+    if (facilityId && !AuthService.canAccessAllFacilities(user.role)) {
+      if (!user.facilityIds?.includes(facilityId)) {
+        throw new AccessDeniedError('Access denied to this facility');
+      }
+    }
+
+    const service = NotificationService.getInstance();
+    const scope = facilityId
+      ? { facilityId }
+      : !AuthService.canAccessAllFacilities(user.role) && user.facilityIds?.length
+        ? { facilityIds: user.facilityIds }
+        : undefined;
+    const count = await service.hideAllNotifications(
+      user.userId,
+      user.role,
+      user.userId,
+      scope,
+      user.facilityIds,
+    );
+
+    res.json({
+      success: true,
+      hiddenCount: count,
     });
   }),
 );

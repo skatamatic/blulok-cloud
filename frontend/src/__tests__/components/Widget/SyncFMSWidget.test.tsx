@@ -594,8 +594,42 @@ describe('SyncFMSWidget', () => {
         <SyncFMSWidget {...defaultProps} initialSize="large" />
       );
 
-      // Should display "5 detected • All Applied" or just "5 detected" depending on the sync result
+      expect(await screen.findByText('Full sync')).toBeInTheDocument();
       expect(await screen.findByText(/5 detected/i)).toBeInTheDocument();
+    });
+
+    it('visually distinguishes webhook pushes from full syncs', async () => {
+      (fmsService.getSyncHistory as jest.Mock).mockResolvedValue({
+        logs: [
+          {
+            id: 'sync-webhook',
+            facility_id: 'facility-1',
+            sync_status: 'completed',
+            triggered_by: 'webhook',
+            started_at: '2024-01-02T10:00:00Z',
+            changes_detected: 1,
+            changes_applied: 1,
+          },
+          {
+            id: 'sync-manual',
+            facility_id: 'facility-1',
+            sync_status: 'completed',
+            triggered_by: 'manual',
+            started_at: '2024-01-01T10:00:00Z',
+            changes_detected: 5,
+            changes_applied: 5,
+          },
+        ],
+      });
+
+      renderWithProviders(
+        <SyncFMSWidget {...defaultProps} initialSize="large" />
+      );
+
+      expect(await screen.findByText('Update push')).toBeInTheDocument();
+      expect(screen.getByText('Full sync')).toBeInTheDocument();
+      expect(screen.getByText('1 change')).toBeInTheDocument();
+      expect(screen.getByText(/5 detected/i)).toBeInTheDocument();
     });
 
     it('scrolls sync history when content overflows', async () => {

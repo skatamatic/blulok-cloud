@@ -429,6 +429,31 @@ export class NotificationModel {
   }
 
   /**
+   * Soft delete all non-deleted notifications for a user (optionally scoped by facility).
+   */
+  async deleteAllForUser(userId: string, scope?: { facilityId?: string; facilityIds?: string[] }): Promise<number> {
+    const knex = this.db.connection;
+
+    let query = knex('notifications')
+      .where('user_id', userId)
+      .where('is_deleted', false);
+
+    if (scope?.facilityId) {
+      query = query.where('facility_id', scope.facilityId);
+    } else if (scope?.facilityIds && scope.facilityIds.length > 0) {
+      query = query.whereIn('facility_id', scope.facilityIds);
+    }
+
+    const result = await query.update({
+      is_deleted: true,
+      updated_at: new Date(),
+    });
+
+    logger.info(`Soft-deleted ${result} notifications for user ${userId}`);
+    return result;
+  }
+
+  /**
    * Soft delete a notification
    */
   async delete(id: string): Promise<boolean> {
