@@ -4,7 +4,6 @@ import { successEnvelopeSchema, routeIdField } from '@/openapi/common-schemas';
 export const deviceGroupCreateSchema = Joi.object({
   facility_id: Joi.string().uuid().required(),
   group_type: Joi.string().valid('zone', 'access_code').default('zone'),
-  is_global_shared: Joi.boolean().default(false),
   name: Joi.string().max(255).required(),
   description: Joi.string().allow('', null).optional(),
   settings: Joi.object().optional(),
@@ -13,7 +12,6 @@ export const deviceGroupCreateSchema = Joi.object({
 
 export const deviceGroupUpdateSchema = Joi.object({
   group_type: Joi.string().valid('zone', 'access_code').optional(),
-  is_global_shared: Joi.boolean().optional(),
   name: Joi.string().max(255).optional(),
   description: Joi.string().allow('', null).optional(),
   settings: Joi.object().optional(),

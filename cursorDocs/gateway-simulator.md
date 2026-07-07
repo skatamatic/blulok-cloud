@@ -157,7 +157,9 @@ Sidebar catalog **Users** mirrors the mobile app path against the same backend A
 **Import (recommended):** On **Import user**, sign in with **Admin or Dev Admin** (separate from gateway setup). Then the sim lists `GET /api/v1/users` and for each selection:
 
 1. `POST /api/v1/dev/simulator/user-session` — mints a JWT for that user (cached locally with `exp`)
-2. `GET /api/v1/users/:id/details` — pulls registered app devices (admin/dev admin)
+2. `GET /api/v1/users/:id/details` — registered mobile app devices (`user.devices`) and app-entry access control entitlements (`user.accessControlDevices`). Tenants may call this for **self**; admins may call for any user.
+
+**E2E regression:** `backend/npm run ws:e2e` — Access Codes section verifies tenant **self** `GET /users/:id/details` returns non-empty `devices` after `register-key`, default-group `accessControlDevices` after `is_default` entitlement, alignment with `/access-codes/app/my`, share1 default-group visibility, and negative cases (no zone access, private group exclusion).
 
 No manual email/password entry — users must already exist in the backend.
 

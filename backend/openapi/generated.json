@@ -7737,6 +7737,83 @@
             "bearerAuth": []
           }
         ]
+      },
+      "get": {
+        "tags": [
+          "FMS"
+        ],
+        "summary": "List FMS configurations",
+        "description": "Returns FMS configs visible to the caller. FACILITY_ADMIN is scoped to assigned facilities. Use webhooks_only to filter webhook-enabled integrations.",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "webhooks_only",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "is_enabled",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "provider_type",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "HTTP 200",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GetFmsConfigResponse200"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "HTTP 403",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "x-migration-status": "complete",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
       }
     },
     "/fms/config/{facilityId}": {
@@ -8134,6 +8211,69 @@
         ]
       }
     },
+    "/fms/webhooks/{facilityId}/events": {
+      "get": {
+        "tags": [
+          "FMS"
+        ],
+        "summary": "Get recent FMS webhook events for a facility",
+        "parameters": [
+          {
+            "name": "facilityId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "HTTP 200",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GetFmsWebhooksFacilityIdEventsResponse200"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "HTTP 403",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "x-migration-status": "complete",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
     "/fms/sync/{syncLogId}": {
       "get": {
         "tags": [
@@ -8370,13 +8510,70 @@
         ]
       }
     },
+    "/fms/changes/dismiss": {
+      "post": {
+        "tags": [
+          "FMS"
+        ],
+        "summary": "Dismiss pending FMS changes from review",
+        "description": "Marks invalid or failed changes as rejected so they leave the pending review queue. Omit changeIds to dismiss all dismissible pending changes for the sync log.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PostFmsChangesDismissRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "HTTP 200",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PostFmsChangesDismissResponse200"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "HTTP 403",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "HTTP 404",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "x-migration-status": "complete",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
     "/fms/webhook/{facilityId}": {
       "post": {
         "tags": [
           "FMS"
         ],
         "summary": "Webhook receiver for FMS events",
-        "description": "Public Storable Edge CloudEvents receiver. Raw JSON body is required for HMAC signature verification (X-Storable-Signature, X-Webhook-Signature, or X-Signature).",
+        "description": "Public FMS CloudEvents receiver. Auth mode is configured per facility (HMAC signature, shared header secret, or none).",
         "parameters": [
           {
             "name": "facilityId",
@@ -14973,6 +15170,14 @@
             }
           },
           {
+            "name": "includeHidden",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
             "name": "limit",
             "in": "query",
             "required": false,
@@ -15253,6 +15458,52 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/PostNotificationsReadResponse200"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "HTTP 403",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "x-migration-status": "complete",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/notifications/hide-all": {
+      "post": {
+        "tags": [
+          "Notifications"
+        ],
+        "summary": "Hide all notifications for the current user",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PostNotificationsReadAllRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "HTTP 200",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PostNotificationsHideAllResponse200"
                 }
               }
             }
@@ -18042,8 +18293,89 @@
           },
           "deviceHierarchy": {
             "type": "object",
-            "properties": {},
-            "additionalProperties": false
+            "properties": {
+              "facility": {
+                "type": "object",
+                "properties": {}
+              },
+              "gateway": {
+                "type": "object",
+                "properties": {},
+                "nullable": true
+              },
+              "accessControlDevices": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "device_status": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "string"
+                    },
+                    "is_online": {
+                      "type": "boolean"
+                    },
+                    "reported_device_status": {
+                      "type": "string"
+                    },
+                    "reported_status": {
+                      "type": "string"
+                    },
+                    "status_unreachable_reason": {
+                      "type": "string",
+                      "enum": [
+                        "gateway_offline",
+                        "gateway_maintenance",
+                        "gateway_error"
+                      ],
+                      "nullable": true
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              },
+              "blulokDevices": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "device_status": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "string"
+                    },
+                    "is_online": {
+                      "type": "boolean"
+                    },
+                    "reported_device_status": {
+                      "type": "string"
+                    },
+                    "reported_status": {
+                      "type": "string"
+                    },
+                    "status_unreachable_reason": {
+                      "type": "string",
+                      "enum": [
+                        "gateway_offline",
+                        "gateway_maintenance",
+                        "gateway_error"
+                      ],
+                      "nullable": true
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              }
+            },
+            "required": [
+              "facility",
+              "gateway",
+              "accessControlDevices",
+              "blulokDevices"
+            ]
           }
         },
         "required": [
@@ -18253,8 +18585,50 @@
             "type": "array",
             "items": {
               "type": "object",
-              "properties": {},
-              "additionalProperties": false
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "device_status": {
+                  "type": "string"
+                },
+                "reported_device_status": {
+                  "type": "string"
+                },
+                "status_unreachable_reason": {
+                  "type": "string",
+                  "enum": [
+                    "gateway_offline",
+                    "gateway_maintenance",
+                    "gateway_error"
+                  ],
+                  "nullable": true
+                },
+                "is_online": {
+                  "type": "boolean"
+                },
+                "blulok_device": {
+                  "type": "object",
+                  "properties": {
+                    "device_status": {
+                      "type": "string"
+                    },
+                    "reported_device_status": {
+                      "type": "string"
+                    },
+                    "status_unreachable_reason": {
+                      "type": "string",
+                      "enum": [
+                        "gateway_offline",
+                        "gateway_maintenance",
+                        "gateway_error"
+                      ],
+                      "nullable": true
+                    }
+                  },
+                  "nullable": true
+                }
+              }
             }
           },
           "total": {
@@ -18315,7 +18689,43 @@
             "type": "array",
             "items": {
               "type": "object",
-              "properties": {},
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "device_category": {
+                  "type": "string",
+                  "enum": [
+                    "blulok",
+                    "access_control",
+                    "network_infra"
+                  ]
+                },
+                "device_status": {
+                  "type": "string"
+                },
+                "status": {
+                  "type": "string"
+                },
+                "is_online": {
+                  "type": "boolean"
+                },
+                "reported_device_status": {
+                  "type": "string"
+                },
+                "reported_status": {
+                  "type": "string"
+                },
+                "status_unreachable_reason": {
+                  "type": "string",
+                  "enum": [
+                    "gateway_offline",
+                    "gateway_maintenance",
+                    "gateway_error"
+                  ],
+                  "nullable": true
+                }
+              },
               "additionalProperties": false
             }
           },
@@ -18336,7 +18746,32 @@
           },
           "device": {
             "type": "object",
-            "properties": {},
+            "properties": {
+              "device_status": {
+                "type": "string"
+              },
+              "status": {
+                "type": "string"
+              },
+              "is_online": {
+                "type": "boolean"
+              },
+              "reported_device_status": {
+                "type": "string"
+              },
+              "reported_status": {
+                "type": "string"
+              },
+              "status_unreachable_reason": {
+                "type": "string",
+                "enum": [
+                  "gateway_offline",
+                  "gateway_maintenance",
+                  "gateway_error"
+                ],
+                "nullable": true
+              }
+            },
             "additionalProperties": false
           }
         },
@@ -18350,8 +18785,89 @@
         "properties": {
           "hierarchy": {
             "type": "object",
-            "properties": {},
-            "additionalProperties": false
+            "properties": {
+              "facility": {
+                "type": "object",
+                "properties": {}
+              },
+              "gateway": {
+                "type": "object",
+                "properties": {},
+                "nullable": true
+              },
+              "accessControlDevices": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "device_status": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "string"
+                    },
+                    "is_online": {
+                      "type": "boolean"
+                    },
+                    "reported_device_status": {
+                      "type": "string"
+                    },
+                    "reported_status": {
+                      "type": "string"
+                    },
+                    "status_unreachable_reason": {
+                      "type": "string",
+                      "enum": [
+                        "gateway_offline",
+                        "gateway_maintenance",
+                        "gateway_error"
+                      ],
+                      "nullable": true
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              },
+              "blulokDevices": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "device_status": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "string"
+                    },
+                    "is_online": {
+                      "type": "boolean"
+                    },
+                    "reported_device_status": {
+                      "type": "string"
+                    },
+                    "reported_status": {
+                      "type": "string"
+                    },
+                    "status_unreachable_reason": {
+                      "type": "string",
+                      "enum": [
+                        "gateway_offline",
+                        "gateway_maintenance",
+                        "gateway_error"
+                      ],
+                      "nullable": true
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              }
+            },
+            "required": [
+              "facility",
+              "gateway",
+              "accessControlDevices",
+              "blulokDevices"
+            ]
           }
         },
         "required": [
@@ -18537,7 +19053,32 @@
           },
           "device": {
             "type": "object",
-            "properties": {},
+            "properties": {
+              "device_status": {
+                "type": "string"
+              },
+              "status": {
+                "type": "string"
+              },
+              "is_online": {
+                "type": "boolean"
+              },
+              "reported_device_status": {
+                "type": "string"
+              },
+              "reported_status": {
+                "type": "string"
+              },
+              "status_unreachable_reason": {
+                "type": "string",
+                "enum": [
+                  "gateway_offline",
+                  "gateway_maintenance",
+                  "gateway_error"
+                ],
+                "nullable": true
+              }
+            },
             "additionalProperties": false
           },
           "sideEffects": {
@@ -19286,6 +19827,73 @@
         ],
         "additionalProperties": false
       },
+      "GetFmsConfigResponse200": {
+        "type": "object",
+        "properties": {
+          "success": {
+            "type": "boolean"
+          },
+          "configs": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "facility_id": {
+                  "type": "string"
+                },
+                "facility_name": {
+                  "type": "string",
+                  "nullable": true
+                },
+                "provider_type": {
+                  "type": "string"
+                },
+                "is_enabled": {
+                  "type": "boolean"
+                },
+                "config": {
+                  "type": "object",
+                  "properties": {},
+                  "additionalProperties": false
+                },
+                "last_sync_at": {
+                  "type": "string",
+                  "format": "date-time",
+                  "nullable": true
+                },
+                "last_sync_status": {
+                  "type": "string",
+                  "nullable": true
+                },
+                "created_at": {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                "updated_at": {
+                  "type": "string",
+                  "format": "date-time"
+                }
+              },
+              "required": [
+                "id",
+                "facility_id",
+                "provider_type",
+                "is_enabled",
+                "config"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": [
+          "success",
+          "configs"
+        ],
+        "additionalProperties": false
+      },
       "GetFmsConfigFacilityIdResponse200": {
         "type": "object",
         "properties": {
@@ -19429,6 +20037,27 @@
         ],
         "additionalProperties": false
       },
+      "GetFmsWebhooksFacilityIdEventsResponse200": {
+        "type": "object",
+        "properties": {
+          "success": {
+            "type": "boolean"
+          },
+          "events": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {},
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": [
+          "success",
+          "events"
+        ],
+        "additionalProperties": false
+      },
       "GetFmsSyncSyncLogIdResponse200": {
         "type": "object",
         "properties": {
@@ -19551,6 +20180,44 @@
         "required": [
           "success",
           "message"
+        ],
+        "additionalProperties": false
+      },
+      "PostFmsChangesDismissRequest": {
+        "type": "object",
+        "properties": {
+          "syncLogId": {
+            "type": "string"
+          },
+          "changeIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "syncLogId"
+        ],
+        "additionalProperties": false
+      },
+      "PostFmsChangesDismissResponse200": {
+        "type": "object",
+        "properties": {
+          "success": {
+            "type": "boolean"
+          },
+          "message": {
+            "type": "string"
+          },
+          "dismissed": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "success",
+          "message",
+          "dismissed"
         ],
         "additionalProperties": false
       },
@@ -22691,6 +23358,22 @@
         },
         "additionalProperties": false
       },
+      "PostNotificationsHideAllResponse200": {
+        "type": "object",
+        "properties": {
+          "success": {
+            "type": "boolean"
+          },
+          "hiddenCount": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "success",
+          "hiddenCount"
+        ],
+        "additionalProperties": false
+      },
       "DeleteNotificationsIdResponse200": {
         "type": "object",
         "properties": {
@@ -22755,10 +23438,6 @@
             ],
             "default": "zone"
           },
-          "is_global_shared": {
-            "type": "boolean",
-            "default": false
-          },
           "name": {
             "type": "string",
             "maxLength": 255
@@ -22793,9 +23472,6 @@
               "zone",
               "access_code"
             ]
-          },
-          "is_global_shared": {
-            "type": "boolean"
           },
           "name": {
             "type": "string",

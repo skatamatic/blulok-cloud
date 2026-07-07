@@ -284,7 +284,7 @@ export class DeviceStatusSubscriptionManager extends BaseSubscriptionManager {
 
   /** Access-control rows use `is_locked` and `status`; map to the same WS shape clients expect. */
   private formatAccessControlDeviceStatus(device: any): any {
-    const lockStatus = device.is_locked === true ? 'locked' : 'unlocked';
+    const lockStatus = Boolean(device.is_locked) ? 'locked' : 'unlocked';
     return {
       id: device.id,
       device_serial: device.device_serial ?? device.name ?? device.id,

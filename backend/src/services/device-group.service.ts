@@ -104,9 +104,6 @@ export class DeviceGroupService {
     if (data?.is_default === false) {
       throw new ValidationError('The default access group cannot be unset');
     }
-    if (data?.is_global_shared === false) {
-      throw new ValidationError('The default access group must remain available to all facility tenants');
-    }
     if (data?.is_active === false) {
       throw new ValidationError('The default access group cannot be deactivated');
     }
@@ -180,16 +177,13 @@ export class DeviceGroupService {
   }
 
   /**
-   * Resolve which group row should be the single facility default (legacy "free", global shared, etc.).
+   * Resolve which group row should be the single facility default (legacy names, existing default, etc.).
    */
   private async resolveDefaultGroupCandidate(facilityId: string): Promise<DeviceGroup | null> {
     for (const legacyName of LEGACY_DEFAULT_ACCESS_GROUP_NAMES) {
       const legacy = await this.model.findByFacilityAndName(facilityId, legacyName);
       if (legacy) return legacy;
     }
-
-    const globalShared = await this.model.findOldestGlobalSharedByFacility(facilityId);
-    if (globalShared) return globalShared;
 
     return this.model.findDefaultByFacility(facilityId);
   }
@@ -204,7 +198,6 @@ export class DeviceGroupService {
 
     const updated = await this.model.update(groupId, {
       is_default: true,
-      is_global_shared: true,
       is_active: true,
       group_type: 'access_code',
       name: DEFAULT_ACCESS_GROUP_NAME,
@@ -234,7 +227,6 @@ export class DeviceGroupService {
     if (candidate) {
       const needsRepair =
         !candidate.is_default
-        || !candidate.is_global_shared
         || candidate.name !== DEFAULT_ACCESS_GROUP_NAME
         || candidate.group_type !== 'access_code';
 
@@ -249,7 +241,6 @@ export class DeviceGroupService {
     const group = await this.model.create({
       facility_id: facilityId,
       group_type: 'access_code',
-      is_global_shared: true,
       is_default: true,
       name: DEFAULT_ACCESS_GROUP_NAME,
       description: 'Default access group — all tenants in this facility',
@@ -507,7 +498,6 @@ export class DeviceGroupService {
     const group = await this.model.create({
       ...data,
       group_type: data.group_type || 'zone',
-      is_global_shared: Boolean(data.is_global_shared),
       is_default: false,
     });
 
@@ -559,7 +549,6 @@ export class DeviceGroupService {
 
     const rollbackGroupState: UpdateDeviceGroupData = {
       group_type: existing.group_type,
-      is_global_shared: existing.is_global_shared,
       is_default: existing.is_default,
       name: existing.name,
       description: existing.description,

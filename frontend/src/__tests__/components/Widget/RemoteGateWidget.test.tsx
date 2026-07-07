@@ -328,10 +328,10 @@ describe('RemoteGateWidget', () => {
       );
       
       await waitFor(() => {
-        // Should show stats
+        // Should show stats footer labels
         expect(screen.getByText('Total')).toBeInTheDocument();
         expect(screen.getByText('Online')).toBeInTheDocument();
-        expect(screen.getByText('Open')).toBeInTheDocument();
+        expect(screen.getAllByText('Open').length).toBeGreaterThanOrEqual(1);
       });
     });
   });
@@ -367,10 +367,9 @@ describe('RemoteGateWidget', () => {
       // Verify the select value changed
       expect(select.value).toBe('gate-3');
       
-      // Should now show the offline gate status or "Cannot operate gate remotely"
+      // Should now show the offline gate status
       await waitFor(() => {
-        // The component shows "Gate offline" for offline gates or shows the "Cannot operate" message
-        expect(screen.getByText('Cannot operate gate remotely')).toBeInTheDocument();
+        expect(screen.getByText('Remote control unavailable')).toBeInTheDocument();
       }, { timeout: 3000 });
     });
   });
@@ -492,7 +491,7 @@ describe('RemoteGateWidget', () => {
       });
       
       await waitFor(() => {
-        expect(screen.getByText(/Local reminder until/)).toBeInTheDocument();
+        expect(screen.getByText(/Reminder until/)).toBeInTheDocument();
       }, { timeout: 3000 });
     });
 
@@ -550,7 +549,7 @@ describe('RemoteGateWidget', () => {
       
       await waitFor(() => {
         expect(screen.getByText(/Gate offline/i)).toBeInTheDocument();
-        expect(screen.getByText('Cannot operate gate remotely')).toBeInTheDocument();
+        expect(screen.getByText('Remote control unavailable')).toBeInTheDocument();
       });
     });
   });

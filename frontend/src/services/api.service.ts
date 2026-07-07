@@ -761,7 +761,6 @@ class ApiService {
   async createDeviceGroup(payload: {
     facility_id: string;
     group_type?: 'zone' | 'access_code';
-    is_global_shared?: boolean;
     is_default?: boolean;
     name: string;
     description?: string;
@@ -774,7 +773,6 @@ class ApiService {
 
   async updateDeviceGroup(groupId: string, payload: {
     group_type?: 'zone' | 'access_code';
-    is_global_shared?: boolean;
     is_default?: boolean;
     name?: string;
     description?: string;

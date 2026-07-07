@@ -379,10 +379,11 @@ registerGet(
 
   // facilitiesWithUnits is already properly structured
 
-  // Get user devices (admin/dev_admin — used by gateway simulator user import)
+  // Registered mobile app devices (UserDevice rows). Admins see any user; tenants see self.
   let userDevices: any[] = [];
   let accessControlDevices: any[] = [];
-  const canLoadUserDevices = AuthService.isAdmin(req.user!.role);
+  const isSelfRequest = req.user!.userId === id;
+  const canLoadUserDevices = AuthService.isAdmin(req.user!.role) || isSelfRequest;
   if (canLoadUserDevices) {
     const userDeviceModel = new UserDeviceModel();
     userDevices = await userDeviceModel.listByUser(id);
@@ -429,35 +430,19 @@ registerGet(
 
   const targetRole = user.role as UserRole;
   const targetFacilityIds = facilityIds.map((facilityId) => String(facilityId));
+  const codesByDeviceId = new Map<string, Array<{
+    code: string;
+    valid_from: Date;
+    valid_until: Date;
+    schedule_id?: string | null;
+    schedule_name?: string | null;
+  }>>();
+
   try {
     const appEntryDeviceIds = await AppEntryAccessService.resolveDeviceIds(db, {
       userId: id,
       userRole: targetRole,
       facilityIds: targetFacilityIds,
-    });
-
-    const appCodes = await AccessCodeService.getInstance().getAppCodesForUser(
-      id,
-      targetRole,
-      targetFacilityIds,
-    );
-    const codesByDeviceId = new Map<string, Array<{
-      code: string;
-      valid_from: Date;
-      valid_until: Date;
-      schedule_id?: string | null;
-      schedule_name?: string | null;
-    }>>();
-    appCodes.forEach((pairing) => {
-      const list = codesByDeviceId.get(pairing.device_id) || [];
-      list.push({
-        code: pairing.code,
-        valid_from: pairing.valid_from,
-        valid_until: pairing.valid_until,
-        schedule_id: pairing.schedule_id ?? null,
-        schedule_name: pairing.schedule_name ?? null,
-      });
-      codesByDeviceId.set(pairing.device_id, list);
     });
 
     if (appEntryDeviceIds.length > 0) {
@@ -475,6 +460,30 @@ registerGet(
         .join('gateways as g', 'g.id', 'd.gateway_id')
         .whereIn('d.id', appEntryDeviceIds)
         .orderBy('d.name', 'asc');
+
+      try {
+        const appCodes = await AccessCodeService.getInstance().getAppCodesForUser(
+          id,
+          targetRole,
+          targetFacilityIds,
+        );
+        appCodes.forEach((pairing) => {
+          const list = codesByDeviceId.get(pairing.device_id) || [];
+          list.push({
+            code: pairing.code,
+            valid_from: pairing.valid_from,
+            valid_until: pairing.valid_until,
+            schedule_id: pairing.schedule_id ?? null,
+            schedule_name: pairing.schedule_name ?? null,
+          });
+          codesByDeviceId.set(pairing.device_id, list);
+        });
+      } catch (codeError) {
+        logger.warn('Failed to load access codes for user details access-control devices', {
+          userId: id,
+          error: (codeError as Error)?.message || codeError,
+        });
+      }
 
       accessControlDevices = rows.map((row) => {
         const rawMethods = row.access_methods;

@@ -6,7 +6,8 @@ import {
   ClockIcon,
   ExclamationTriangleIcon,
   CheckCircleIcon,
-  ArrowPathIcon
+  ArrowPathIcon,
+  InformationCircleIcon,
 } from '@heroicons/react/24/outline';
 import { Widget } from './Widget';
 import { WidgetSize } from './WidgetSizeDropdown';
@@ -37,6 +38,11 @@ interface GateDevice {
   holdUntil?: Date;
   deviceType: 'gate' | 'elevator' | 'door';
 }
+
+const HOLD_REMINDER_TOOLTIP =
+  'Unlocks the gate. Timer is a local reminder only; re-lock behavior depends on hardware.';
+
+const MANUAL_CLOSE_HINT = 'Close manually at the gate — remote lock is not enabled for this hardware.';
 
 interface RemoteGateWidgetProps {
   id: string;
@@ -418,13 +424,13 @@ export const RemoteGateWidget: React.FC<RemoteGateWidgetProps> = ({
         </div>
       ) : (
         /* Full gate control for large widgets */
-        <div className="h-full flex flex-col min-h-0">
-        {/* Gate Selection — pinned to top */}
-        <div className="flex-shrink-0 mb-2">
+        <div className="h-full flex flex-col min-h-0 gap-2">
+        {/* Gate Selection */}
+        <div className="flex-shrink-0">
           <select
             value={selectedGate}
             onChange={(e) => setSelectedGate(e.target.value)}
-            className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white text-sm"
+            className="w-full px-3 py-1.5 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white text-sm"
           >
             <option value="">Choose a gate</option>
             {gates.map((gate) => (
@@ -435,17 +441,17 @@ export const RemoteGateWidget: React.FC<RemoteGateWidgetProps> = ({
           </select>
         </div>
 
-        {/* Gate Status */}
+        {/* Gate status — compact; last activity stays visible */}
         {selectedGateData && (
-          <div className="flex-shrink-0 bg-gray-50 dark:bg-gray-700/50 rounded-lg p-3 mb-2">
-            <div className="flex items-center justify-between mb-2">
-              <div className="flex items-center space-x-2">
+          <div className="flex-shrink-0 rounded-lg bg-gray-50 dark:bg-gray-700/50 px-2.5 py-2">
+            <div className="flex items-center justify-between gap-2 min-w-0">
+              <div className="flex items-center gap-1.5 min-w-0">
                 {getStatusIcon(selectedGateData.status)}
-                <span className="text-sm font-medium text-gray-900 dark:text-white">
+                <span className="text-sm font-medium text-gray-900 dark:text-white truncate">
                   {selectedGateData.name}
                 </span>
               </div>
-              <span className={`text-xs px-2 py-1 rounded-full ${
+              <span className={`flex-shrink-0 text-xs px-2 py-0.5 rounded-full ${
                 selectedGateData.isOpen 
                   ? 'bg-green-600 text-white dark:bg-green-600'
                   : 'bg-gray-600 text-white dark:bg-gray-600'
@@ -453,90 +459,108 @@ export const RemoteGateWidget: React.FC<RemoteGateWidgetProps> = ({
                 {selectedGateData.isOpen ? 'Open' : 'Closed'}
               </span>
             </div>
-            
-            <div className="text-xs text-gray-500 dark:text-gray-400">
-              Last activity: {formatRelativeTime(selectedGateData.lastActivity, { absoluteAfterHours: 24, absoluteStyle: 'date' })}
-            </div>
-
+            <p
+              className="mt-1 text-xs text-gray-500 dark:text-gray-400 truncate"
+              title={formatRelativeTime(selectedGateData.lastActivity, {
+                absoluteAfterHours: 24,
+                absoluteStyle: 'date',
+              })}
+            >
+              Last activity:{' '}
+              {formatRelativeTime(selectedGateData.lastActivity, {
+                absoluteAfterHours: 24,
+                absoluteStyle: 'date',
+              })}
+            </p>
             {selectedGateData.holdUntil && (
-              <div className="mt-2 text-xs text-blue-600 dark:text-blue-400">
-                Local reminder until {formatTime(selectedGateData.holdUntil)}
-              </div>
+              <p
+                className="mt-0.5 text-[10px] text-blue-600 dark:text-blue-400 truncate"
+                title={`Local reminder until ${formatTime(selectedGateData.holdUntil)}`}
+              >
+                Reminder until {formatTime(selectedGateData.holdUntil)}
+              </p>
             )}
           </div>
         )}
 
-        {/* Control / empty state — centered unless an online gate is selected */}
-        <div
-          className={`flex-1 flex flex-col min-h-0 ${
-            selectedGateData?.status === 'online'
-              ? 'justify-end'
-              : 'justify-center items-center'
-          }`}
-        >
+        {/* Controls — scroll if the grid cell is short */}
+        <div className="flex-1 min-h-0 overflow-y-auto">
           {selectedGateData ? (
             selectedGateData.status === 'online' ? (
-              <div className="space-y-2">
+              <div className="flex flex-col gap-1.5">
                 <button
                   onClick={() => handleGateOperation('open')}
                   disabled={isOperating || selectedGateData.isOpen}
-                  className="w-full flex items-center justify-center space-x-2 py-3 px-4 bg-green-600 hover:bg-green-700 disabled:bg-gray-400 text-white rounded-lg font-medium transition-colors disabled:cursor-not-allowed"
+                  className="w-full flex items-center justify-center gap-2 py-2.5 px-3 bg-green-600 hover:bg-green-700 disabled:bg-gray-400 text-white rounded-lg text-sm font-medium transition-colors disabled:cursor-not-allowed"
                 >
-                  <PlayIcon className="h-5 w-5" />
+                  <PlayIcon className="h-4 w-4 shrink-0" />
                   <span>{isOperating ? 'Opening...' : 'Open Once'}</span>
                 </button>
-                
-                <button
-                  onClick={() => handleGateOperation('hold')}
-                  disabled={isOperating || selectedGateData.isOpen}
-                  className="w-full flex items-center justify-center space-x-2 py-2 px-4 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-400 text-white rounded-lg text-sm transition-colors disabled:cursor-not-allowed"
-                >
-                  <ClockIcon className="h-4 w-4" />
-                  <span>{isOperating ? 'Setting...' : `Unlock & remind (${holdDuration}m)`}</span>
-                </button>
-                <p className="text-xs text-gray-500 dark:text-gray-400 px-0.5">
-                  Unlocks the gate. Timer is a local reminder only; re-lock behavior depends on hardware.
-                </p>
+
+                <div className="flex items-stretch gap-1">
+                  <button
+                    type="button"
+                    onClick={() => handleGateOperation('hold')}
+                    disabled={isOperating || selectedGateData.isOpen}
+                    title={HOLD_REMINDER_TOOLTIP}
+                    className="min-w-0 flex-1 flex items-center justify-center gap-2 py-2 px-3 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-400 text-white rounded-lg text-sm transition-colors disabled:cursor-not-allowed"
+                  >
+                    <ClockIcon className="h-4 w-4 shrink-0" />
+                    <span className="truncate">
+                      {isOperating ? 'Setting...' : `Unlock & remind (${holdDuration}m)`}
+                    </span>
+                  </button>
+                  <span
+                    className="inline-flex shrink-0 items-center justify-center rounded-lg border border-gray-200 bg-gray-50 px-2 text-gray-400 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-500"
+                    title={HOLD_REMINDER_TOOLTIP}
+                    aria-label={HOLD_REMINDER_TOOLTIP}
+                  >
+                    <InformationCircleIcon className="h-4 w-4" aria-hidden />
+                  </span>
+                </div>
 
                 {selectedGateData.isOpen && selectedGateData.supportsRemoteLock && (
                   <button
                     onClick={() => handleGateOperation('close')}
                     disabled={isOperating}
-                    className="w-full flex items-center justify-center space-x-2 py-2 px-4 bg-red-600 hover:bg-red-700 disabled:bg-gray-400 text-white rounded-lg text-sm transition-colors disabled:cursor-not-allowed"
+                    className="w-full flex items-center justify-center gap-2 py-2 px-3 bg-red-600 hover:bg-red-700 disabled:bg-gray-400 text-white rounded-lg text-sm transition-colors disabled:cursor-not-allowed"
                   >
-                    <StopIcon className="h-4 w-4" />
+                    <StopIcon className="h-4 w-4 shrink-0" />
                     <span>{isOperating ? 'Closing...' : 'Close Gate'}</span>
                   </button>
                 )}
                 {selectedGateData.isOpen && !selectedGateData.supportsRemoteLock && (
-                  <p className="text-xs text-gray-500 dark:text-gray-400 text-center">
-                    Close manually at the gate — remote lock is not enabled for this hardware.
+                  <p
+                    className="text-center text-[10px] leading-snug text-gray-400 dark:text-gray-500 italic"
+                    title={MANUAL_CLOSE_HINT}
+                  >
+                    Close on site — remote lock unavailable
                   </p>
                 )}
               </div>
             ) : (
-              <div className="text-center">
-                <ExclamationTriangleIcon className="h-8 w-8 text-red-400 mx-auto mb-2" />
-                <p className="text-sm text-red-600 dark:text-red-400">
+              <div className="flex h-full flex-col items-center justify-center text-center py-2">
+                <ExclamationTriangleIcon className="h-7 w-7 text-red-400 mb-1" />
+                <p className="text-sm text-red-600 dark:text-red-400 capitalize">
                   Gate {selectedGateData.status}
                 </p>
-                <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                  Cannot operate gate remotely
+                <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
+                  Remote control unavailable
                 </p>
               </div>
             )
           ) : (
-            <div className="text-center">
-              <BoltIcon className="h-8 w-8 text-gray-400 mx-auto mb-2" />
+            <div className="flex h-full flex-col items-center justify-center text-center py-2">
+              <BoltIcon className="h-7 w-7 text-gray-400 mb-1" />
               <p className="text-sm text-gray-500 dark:text-gray-400">Select a gate to control</p>
               {gates.length === 0 && (
-                <p className="text-xs text-gray-400 dark:text-gray-500 mt-1">
+                <p className="text-xs text-gray-400 dark:text-gray-500 mt-0.5">
                   No access control devices found
                 </p>
               )}
               {gates.length > 0 && onlineGates.length === 0 && (
-                <p className="text-xs text-amber-600 dark:text-amber-400 mt-1">
-                  All gates are offline — status shown; remote control disabled
+                <p className="text-xs text-amber-600 dark:text-amber-400 mt-0.5">
+                  All gates offline
                 </p>
               )}
             </div>
@@ -545,25 +569,25 @@ export const RemoteGateWidget: React.FC<RemoteGateWidgetProps> = ({
 
         {/* Quick Stats for larger widgets */}
         {showLargeStats && gates.length > 0 && (
-          <div className="border-t border-gray-200 dark:border-gray-700 pt-3 mt-3">
+          <div className="flex-shrink-0 border-t border-gray-200 dark:border-gray-700 pt-2">
             <div className="grid grid-cols-3 gap-2 text-center">
               <div>
-                <div className="text-lg font-bold text-gray-900 dark:text-white">
+                <div className="text-base font-bold text-gray-900 dark:text-white">
                   {gates.length}
                 </div>
-                <div className="text-xs text-gray-500 dark:text-gray-400">Total</div>
+                <div className="text-[10px] text-gray-500 dark:text-gray-400">Total</div>
               </div>
               <div>
-                <div className="text-lg font-bold text-green-600 dark:text-green-400">
+                <div className="text-base font-bold text-green-600 dark:text-green-400">
                   {onlineGates.length}
                 </div>
-                <div className="text-xs text-gray-500 dark:text-gray-400">Online</div>
+                <div className="text-[10px] text-gray-500 dark:text-gray-400">Online</div>
               </div>
               <div>
-                <div className="text-lg font-bold text-blue-600 dark:text-blue-400">
+                <div className="text-base font-bold text-blue-600 dark:text-blue-400">
                   {gates.filter(g => g.isOpen).length}
                 </div>
-                <div className="text-xs text-gray-500 dark:text-gray-400">Open</div>
+                <div className="text-[10px] text-gray-500 dark:text-gray-400">Open</div>
               </div>
             </div>
           </div>

@@ -1088,7 +1088,7 @@ export class AccessCodeService {
       .join('access_control_devices as d', 'd.id', 'gm.device_id')
       .join('gateways as gw', 'gw.id', 'd.gateway_id')
       .whereIn('g.facility_id', targetFacilityIds)
-      .andWhere('g.is_global_shared', true)
+      .andWhere('g.is_default', true)
       .andWhere('g.is_active', true)
       .andWhere('gm.device_type', 'access_control')
       .whereRaw(`JSON_CONTAINS(COALESCE(d.access_methods, '["app"]'), '"keypad"')`);

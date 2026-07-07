@@ -13,7 +13,7 @@ type ResolveParams = {
 /**
  * Resolves app-entry capable access-control device IDs that a user can access.
  * Entitlements combine:
- * - Global/default groups (is_global_shared) for all tenants in a facility
+ * - Default facility group (is_default) for all tenants in a facility
  * - Specific groups where the tenant's unit lock shares group membership
  */
 export class AppEntryAccessService {
@@ -136,7 +136,7 @@ export class AppEntryAccessService {
     );
   }
 
-  private static async resolveGlobalSharedDeviceIds(
+  private static async resolveDefaultGroupDeviceIds(
     db: Knex,
     facilityIds: string[],
   ): Promise<string[]> {
@@ -149,7 +149,7 @@ export class AppEntryAccessService {
       .join('gateways as g', 'g.id', 'acd.gateway_id')
       .whereIn('dg.facility_id', facilityIds)
       .andWhere('dg.is_active', true)
-      .andWhere('dg.is_global_shared', true)
+      .andWhere('dg.is_default', true)
       .andWhere('zone_access.device_type', 'access_control')
       .whereRaw(`JSON_CONTAINS(COALESCE(acd.access_methods, '["app"]'), '"app"')`)
       .orderBy('acd.id', 'asc');
@@ -235,7 +235,7 @@ export class AppEntryAccessService {
         facilityIds,
         facilityId,
       ),
-      this.resolveGlobalSharedDeviceIds(db, tenantFacilityIds),
+      this.resolveDefaultGroupDeviceIds(db, tenantFacilityIds),
     ]);
 
     return Array.from(new Set([...scopedIds, ...globalIds]));

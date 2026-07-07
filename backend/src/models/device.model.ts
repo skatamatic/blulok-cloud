@@ -712,16 +712,32 @@ export class DeviceModel {
         statusChanged = true;
       }
 
-      if (data.is_locked !== undefined && data.is_locked !== before.is_locked) {
-        this.eventService.emitDeviceTelemetryUpdated({
-          deviceId,
-          gatewayId,
-          facilityId,
-        });
-        statusChanged = true;
+      if (data.is_locked !== undefined) {
+        const lockChanged =
+          Boolean(data.is_locked) !== Boolean(before.is_locked);
+        if (lockChanged) {
+          this.eventService.emitDeviceTelemetryUpdated({
+            deviceId,
+            gatewayId,
+            facilityId,
+          });
+          statusChanged = true;
+        }
 
         void import('@/services/lock-command.service').then(({ LockCommandService }) => {
-          LockCommandService.getInstance().handleAccessControlLockSettled(deviceId, data.is_locked as boolean);
+          const lockCommandService = LockCommandService.getInstance();
+          const hadPendingLockCommand = lockCommandService.hasPendingLockCommand(deviceId);
+          lockCommandService.handleAccessControlLockSettled(deviceId, data.is_locked as boolean);
+
+          // Gateway lock feedback while a remote command is in flight must reach clients
+          // even when is_locked is unchanged (e.g. unlock failed — gate stayed closed).
+          if (!lockChanged && hadPendingLockCommand) {
+            this.eventService.emitDeviceTelemetryUpdated({
+              deviceId,
+              gatewayId,
+              facilityId,
+            });
+          }
         }).catch((err) => {
           logger.warn('Failed to notify LockCommandService of access-control lock settlement', err);
         });

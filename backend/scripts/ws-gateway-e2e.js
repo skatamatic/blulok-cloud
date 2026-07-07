@@ -10,6 +10,8 @@ const dotenv = require('dotenv');
  * End-to-end: facility gateway on /ws/gateway (AUTH + PROXY_REQUEST → internal APIs such as
  * POST /internal/gateway/devices/state) → DB → dashboard /ws fanout:
  *   device_status_update (HTTP + gateway lock_status), units_update, gateway_status_update
+ *   Access-control unlock settlement: unchanged gateway locked:true while a remote OPEN is pending
+ *   must still fan out lock_status locked on device_status (clears UI unlocking state).
  * Uses DEV_ADMIN (or env overrides) to provision facility/gateway/device, then validates
  * the same paths the web app uses (UI_WS_URL + subscription JSON).
  *
@@ -991,12 +993,149 @@ async function fetchAuthProfile(token) {
 }
 
 async function verifyUserDetailsEndpoint(token, userId) {
+  const user = await fetchUserDetails(token, userId);
+  if (!Array.isArray(user.facilities)) {
+    throw new Error('User details response missing facilities array');
+  }
+  if (!Array.isArray(user.devices)) {
+    throw new Error('User details response missing devices array');
+  }
+  if (!Array.isArray(user.accessControlDevices)) {
+    throw new Error('User details response missing accessControlDevices array');
+  }
+  ok('User details endpoint verified for authenticated user');
+  return user;
+}
+
+async function fetchUserDetails(token, userId) {
   const res = await axios.get(`${API_BASE}/users/${userId}/details`, { headers: authHeaders(token) });
   if (!res.data?.user) {
     throw new Error('User details response missing user payload');
   }
-  ok('User details endpoint verified for authenticated user');
   return res.data.user;
+}
+
+function assertUserDetailsAccessControlDevice(entry, context, meta) {
+  if (!entry?.id || !entry?.device_id) {
+    throw new Error(`${context}: missing id/device_id`);
+  }
+  if (String(entry.id) !== String(entry.device_id)) {
+    throw new Error(`${context}: id and device_id should match`);
+  }
+  if (!entry.access_id || typeof entry.access_id !== 'string') {
+    throw new Error(`${context}: missing access_id`);
+  }
+  const relay = Number(entry.relay_channel);
+  if (!Number.isInteger(relay) || relay < 1 || relay > 8) {
+    throw new Error(`${context}: invalid relay_channel ${entry.relay_channel}`);
+  }
+  if (!entry.facility_id) {
+    throw new Error(`${context}: missing facility_id`);
+  }
+  if (!entry.name) {
+    throw new Error(`${context}: missing name`);
+  }
+  if (!Array.isArray(entry.access_methods) || !entry.access_methods.includes('app')) {
+    throw new Error(`${context}: expected access_methods to include app`);
+  }
+  if (!Array.isArray(entry.codes)) {
+    throw new Error(`${context}: codes must be an array`);
+  }
+  if (meta) {
+    if (entry.access_id !== meta.access_id) {
+      throw new Error(`${context}: expected access_id ${meta.access_id}, got ${entry.access_id}`);
+    }
+    if (relay !== meta.relay_channel) {
+      throw new Error(`${context}: expected relay_channel ${meta.relay_channel}, got ${relay}`);
+    }
+  }
+}
+
+/**
+ * Mirrors the mobile app developer flow: tenant (or admin) fetches GET /users/:id/details
+ * and expects registered mobile devices plus app-entry accessControlDevices from default/specific groups.
+ */
+async function verifyTenantUserDetailsEntitlements({
+  tenantToken,
+  tenantId,
+  adminToken,
+  facilityId,
+  expectedMobileAppDeviceIds = [],
+  requiredAccessControlDeviceIds = [],
+  forbiddenAccessControlDeviceIds = [],
+  accessControlMeta = {},
+  label = 'tenant user details',
+}) {
+  const tenantUser = await fetchUserDetails(tenantToken, tenantId);
+
+  if (!Array.isArray(tenantUser.devices)) {
+    throw new Error(`[${label}] Expected user.devices to be an array`);
+  }
+  for (const appDeviceId of expectedMobileAppDeviceIds) {
+    const match = tenantUser.devices.find((device) => device.app_device_id === appDeviceId);
+    if (!match) {
+      throw new Error(`[${label}] Expected user.devices to include registered app device ${appDeviceId}`);
+    }
+    if (!match.id) {
+      throw new Error(`[${label}] Registered device ${appDeviceId} missing id`);
+    }
+  }
+
+  if (!Array.isArray(tenantUser.accessControlDevices)) {
+    throw new Error(`[${label}] Expected user.accessControlDevices to be an array`);
+  }
+  const accessControlIds = new Set(
+    tenantUser.accessControlDevices.map((device) => String(device.device_id || device.id)),
+  );
+
+  for (const deviceId of requiredAccessControlDeviceIds) {
+    const normalizedId = String(deviceId);
+    if (!accessControlIds.has(normalizedId)) {
+      throw new Error(
+        `[${label}] Expected accessControlDevices to include ${normalizedId} (default group or zone entitlement)`,
+      );
+    }
+    const entry = tenantUser.accessControlDevices.find(
+      (device) => String(device.device_id || device.id) === normalizedId,
+    );
+    assertUserDetailsAccessControlDevice(
+      entry,
+      `${label} / accessControlDevices/${normalizedId}`,
+      accessControlMeta[normalizedId],
+    );
+    if (facilityId && String(entry.facility_id) !== String(facilityId)) {
+      throw new Error(`[${label}] Device ${normalizedId} has unexpected facility_id ${entry.facility_id}`);
+    }
+  }
+
+  for (const deviceId of forbiddenAccessControlDeviceIds) {
+    const normalizedId = String(deviceId);
+    if (accessControlIds.has(normalizedId)) {
+      throw new Error(`[${label}] accessControlDevices should not include ${normalizedId}`);
+    }
+  }
+
+  if (adminToken) {
+    const adminView = await fetchUserDetails(adminToken, tenantId);
+    if (!Array.isArray(adminView.devices)) {
+      throw new Error(`[${label}] Admin view expected user.devices array`);
+    }
+    for (const appDeviceId of expectedMobileAppDeviceIds) {
+      if (!adminView.devices.some((device) => device.app_device_id === appDeviceId)) {
+        throw new Error(`[${label}] Admin view expected user.devices to include ${appDeviceId}`);
+      }
+    }
+    const adminAccessControlIds = new Set(
+      (adminView.accessControlDevices || []).map((device) => String(device.device_id || device.id)),
+    );
+    for (const deviceId of requiredAccessControlDeviceIds) {
+      if (!adminAccessControlIds.has(String(deviceId))) {
+        throw new Error(`[${label}] Admin view expected accessControlDevices to include ${deviceId}`);
+      }
+    }
+  }
+
+  return tenantUser;
 }
 
 async function getFirstFacility(token) {
@@ -5034,9 +5173,215 @@ async function run() {
         `Expected WS location_description "South gate WS updated", got "${wsAcRenameRow.location_description}"`,
       );
     }
-    closeDeviceStatusWatcher(acStatusWs);
     ok(`Dashboard device_status subscription received access_control rename "${acWsRenamed}"`);
-    
+
+    heading('Access control unlock — unchanged locked feedback (dashboard transitional state)');
+    step('Seed access control gate locked (gateway state, no last_seen)');
+    const reqAcUnlockSettleSeed = 'req-ac-unlock-settle-seed';
+    ws.send(JSON.stringify({
+      type: 'PROXY_REQUEST',
+      id: reqAcUnlockSettleSeed,
+      method: 'POST',
+      path: `/internal/gateway/devices/state`,
+      body: {
+        facility_id: facilityId,
+        updates: [
+          gwAccessDevice({
+            access_id: accessSerialMulti,
+            relay_channel: accessRelaySecondary,
+            online: true,
+            locked: true,
+          }),
+        ],
+      },
+    }));
+    const respAcUnlockSettleSeed = await waitForProxyResponse(ws, reqAcUnlockSettleSeed);
+    if (respAcUnlockSettleSeed.status !== 200 || !respAcUnlockSettleSeed.body?.success) {
+      closeDeviceStatusWatcher(acStatusWs);
+      closeDeviceStatusWatcher(deviceStatusWs);
+      throw new Error(`Access control locked seed for unlock settlement failed: ${respAcUnlockSettleSeed.status}`);
+    }
+    const acLockedDetailResp = await axios.get(`${API_BASE}/devices/access-control/${acForWs.id}`, {
+      headers: authHeaders(token),
+    });
+    const acLockedDetail = acLockedDetailResp.data?.device || acLockedDetailResp.data;
+    const acIsLocked =
+      acLockedDetail?.is_locked ?? acLockedDetail?.isLocked;
+    if (acIsLocked != true) {
+      closeDeviceStatusWatcher(acStatusWs);
+      closeDeviceStatusWatcher(deviceStatusWs);
+      throw new Error(
+        `Expected access control gate is_locked=true before unlock settlement test, got ${JSON.stringify(acIsLocked)}`,
+      );
+    }
+    ok('Access control gate seeded locked via gateway devices/state');
+
+    let acUnlockSettleBaseline = acStatusEvents.length;
+    step('PUT /devices/access-control/:id/lock unlocked — pending remote OPEN');
+    const expectAcUnlockCmd = waitForCommand(
+      ws,
+      (cmd) =>
+        cmd.cmd_type === 'UNLOCK'
+        && (String(cmd.device_id) === String(accessSerialMulti)
+          || String(cmd.device_id) === String(acForWs.id)),
+    );
+    const acUnlockHttp = await axios.put(
+      `${API_BASE}/devices/access-control/${acForWs.id}/lock`,
+      { lock_status: 'unlocked' },
+      { headers: authHeaders(token) },
+    );
+    if (acUnlockHttp.status !== 200 || acUnlockHttp.data?.success === false) {
+      closeDeviceStatusWatcher(acStatusWs);
+      closeDeviceStatusWatcher(deviceStatusWs);
+      throw new Error(
+        `Access-control unlock for settlement test failed: ${acUnlockHttp.status} ${JSON.stringify(acUnlockHttp.data)}`,
+      );
+    }
+    const acUnlockCmd = await expectAcUnlockCmd;
+    if (!acUnlockCmd) {
+      closeDeviceStatusWatcher(acStatusWs);
+      closeDeviceStatusWatcher(deviceStatusWs);
+      throw new Error('Did not receive UNLOCK on gateway WebSocket after access-control HTTP unlock');
+    }
+    ok('HTTP access-control unlock accepted; gateway received UNLOCK');
+
+    acUnlockSettleBaseline = acStatusEvents.length;
+    step('POST /devices/state locked:true unchanged (no last_seen) — expect device_status_update locked');
+    const reqAcUnlockSettle = 'req-ac-unlock-settle-unchanged';
+    ws.send(JSON.stringify({
+      type: 'PROXY_REQUEST',
+      id: reqAcUnlockSettle,
+      method: 'POST',
+      path: `/internal/gateway/devices/state`,
+      body: {
+        facility_id: facilityId,
+        updates: [
+          gwAccessDevice({
+            access_id: accessSerialMulti,
+            relay_channel: accessRelaySecondary,
+            online: true,
+            locked: true,
+          }),
+        ],
+      },
+    }));
+    const respAcUnlockSettle = await waitForProxyResponse(ws, reqAcUnlockSettle);
+    if (respAcUnlockSettle.status !== 200 || !respAcUnlockSettle.body?.success) {
+      closeDeviceStatusWatcher(acStatusWs);
+      closeDeviceStatusWatcher(deviceStatusWs);
+      throw new Error(`Access control unchanged locked settlement failed: ${respAcUnlockSettle.status}`);
+    }
+    const acSettleState = respAcUnlockSettle.body?.data?.access_control;
+    if (!acSettleState || acSettleState.updated < 1) {
+      closeDeviceStatusWatcher(acStatusWs);
+      closeDeviceStatusWatcher(deviceStatusWs);
+      throw new Error(
+        `Expected access_control.updated >= 1 for unchanged locked feedback, got ${JSON.stringify(acSettleState)}`,
+      );
+    }
+    const acSettleRow = await waitForDeviceStatusLockStatus(
+      acStatusEvents,
+      acForWs.id,
+      'locked',
+      acUnlockSettleBaseline,
+      8000,
+    );
+    if (!acSettleRow) {
+      closeDeviceStatusWatcher(acStatusWs);
+      closeDeviceStatusWatcher(deviceStatusWs);
+      throw new Error(
+        'Did not receive device_status_update with lock_status locked after unchanged gateway locked feedback '
+        + '(access-control unlock settlement / UI transitional state)',
+      );
+    }
+    ok('WebSocket shows lock_status locked after unchanged gateway locked feedback (unlock settlement)');
+
+    acUnlockSettleBaseline = acStatusEvents.length;
+    step('POST /devices/state locked:false — gate opened (successful unlock feedback)');
+    const reqAcUnlockOpen = 'req-ac-unlock-open-success';
+    ws.send(JSON.stringify({
+      type: 'PROXY_REQUEST',
+      id: reqAcUnlockOpen,
+      method: 'POST',
+      path: `/internal/gateway/devices/state`,
+      body: {
+        facility_id: facilityId,
+        updates: [
+          gwAccessDevice({
+            access_id: accessSerialMulti,
+            relay_channel: accessRelaySecondary,
+            online: true,
+            locked: false,
+          }),
+        ],
+      },
+    }));
+    const respAcUnlockOpen = await waitForProxyResponse(ws, reqAcUnlockOpen);
+    if (respAcUnlockOpen.status !== 200 || !respAcUnlockOpen.body?.success) {
+      closeDeviceStatusWatcher(acStatusWs);
+      closeDeviceStatusWatcher(deviceStatusWs);
+      throw new Error(`Access control open success state failed: ${respAcUnlockOpen.status}`);
+    }
+    const acOpenRow = await waitForDeviceStatusLockStatus(
+      acStatusEvents,
+      acForWs.id,
+      'unlocked',
+      acUnlockSettleBaseline,
+      8000,
+    );
+    if (!acOpenRow) {
+      closeDeviceStatusWatcher(acStatusWs);
+      closeDeviceStatusWatcher(deviceStatusWs);
+      throw new Error(
+        'Did not receive device_status_update with lock_status unlocked after gateway locked:false',
+      );
+    }
+    ok('WebSocket shows lock_status unlocked after gateway open feedback (success path)');
+
+    acUnlockSettleBaseline = acStatusEvents.length;
+    step('POST /devices/state locked:true — gate re-closed (open-then-close cycle)');
+    const reqAcUnlockReclose = 'req-ac-unlock-reclose';
+    ws.send(JSON.stringify({
+      type: 'PROXY_REQUEST',
+      id: reqAcUnlockReclose,
+      method: 'POST',
+      path: `/internal/gateway/devices/state`,
+      body: {
+        facility_id: facilityId,
+        updates: [
+          gwAccessDevice({
+            access_id: accessSerialMulti,
+            relay_channel: accessRelaySecondary,
+            online: true,
+            locked: true,
+          }),
+        ],
+      },
+    }));
+    const respAcUnlockReclose = await waitForProxyResponse(ws, reqAcUnlockReclose);
+    if (respAcUnlockReclose.status !== 200 || !respAcUnlockReclose.body?.success) {
+      closeDeviceStatusWatcher(acStatusWs);
+      closeDeviceStatusWatcher(deviceStatusWs);
+      throw new Error(`Access control re-close state failed: ${respAcUnlockReclose.status}`);
+    }
+    const acRecloseRow = await waitForDeviceStatusLockStatus(
+      acStatusEvents,
+      acForWs.id,
+      'locked',
+      acUnlockSettleBaseline,
+      8000,
+    );
+    if (!acRecloseRow) {
+      closeDeviceStatusWatcher(acStatusWs);
+      closeDeviceStatusWatcher(deviceStatusWs);
+      throw new Error(
+        'Did not receive device_status_update with lock_status locked after open-then-close cycle',
+      );
+    }
+    ok('WebSocket shows lock_status locked after gate re-closed (open-then-close cycle)');
+
+    closeDeviceStatusWatcher(acStatusWs);
+
     step('Unsubscribing from device_status');
     deviceStatusWs.send(JSON.stringify({
       type: 'unsubscription',
@@ -6389,6 +6734,16 @@ async function run() {
     created.primaryAppDevId = primaryAppDevId;
     step(`Registering user-device ${primaryAppDevId} for primary tenant`);
     await registerUserDevice(primaryToken, primaryAppDevId, dummyPubKeyB64);
+    step('Verifying tenant self user details includes registered mobile app device');
+    if (!created.primaryTenantId) throw new Error('Primary tenant id missing for user details check');
+    await verifyTenantUserDetailsEntitlements({
+      tenantToken: primaryToken,
+      tenantId: created.primaryTenantId,
+      adminToken: token,
+      expectedMobileAppDeviceIds: [primaryAppDevId],
+      label: 'post mobile registration',
+    });
+    ok('Tenant self user details includes registered mobile app device');
     step('Requesting route pass for primary tenant');
     const primaryPass = await requestRoutePass(primaryToken, primaryAppDevId);
     const primaryClaims = decodeJwtClaims(primaryPass);
@@ -6994,6 +7349,17 @@ async function run() {
     const registeredDeviceId = regDeviceRes.data.device.id;
     if (VERBOSE) console.log(`  • Device response: ${JSON.stringify(regDeviceRes.data.device)}`);
     ok(`Device registered with ID: ${registeredDeviceId}`);
+
+    step('Verifying tenant self user details includes registered mobile device before revocation');
+    if (!created.primaryTenantId) throw new Error('Primary tenant id missing for pre-revoke user details check');
+    const preRevokeDetails = await fetchUserDetails(primaryToken, created.primaryTenantId);
+    const hasRegisteredE2eDevice = (preRevokeDetails.devices || []).some(
+      (device) => device.app_device_id === e2eDeviceId,
+    );
+    if (!hasRegisteredE2eDevice) {
+      throw new Error('Expected tenant self user details user.devices to include e2e revoke-test device before revocation');
+    }
+    ok('Tenant self user details lists registered mobile device before revocation');
 
     // Use the default password set during first-time login flow
     const primaryTenantPassword = 'TestUser123!';
@@ -8970,9 +9336,7 @@ async function run() {
     };
 
     const getAccessControlMeta = (deviceId) => {
-      const meta = created.accessControlDeviceMeta?.[deviceId];
-      if (!meta) throw new Error(`Missing access control meta for device ${deviceId}`);
-      return meta;
+      return created.accessControlDeviceMeta?.[deviceId] || null;
     };
 
     const assertNoLegacyTopLevelCodeFields = (cmd) => {
@@ -9000,15 +9364,17 @@ async function run() {
       if (typeof entry.access_id !== 'string' || !entry.access_id.trim()) {
         throw new Error(`${context}: missing access_id for device ${deviceId}`);
       }
-      if (entry.access_id !== meta.access_id) {
-        throw new Error(`${context}: expected access_id ${meta.access_id}, got ${entry.access_id}`);
-      }
       const relay = Number(entry.relay_channel);
       if (!Number.isInteger(relay) || relay < 1 || relay > 8) {
         throw new Error(`${context}: invalid relay_channel ${entry.relay_channel}`);
       }
-      if (relay !== meta.relay_channel) {
-        throw new Error(`${context}: expected relay_channel ${meta.relay_channel}, got ${relay}`);
+      if (meta) {
+        if (entry.access_id !== meta.access_id) {
+          throw new Error(`${context}: expected access_id ${meta.access_id}, got ${entry.access_id}`);
+        }
+        if (relay !== meta.relay_channel) {
+          throw new Error(`${context}: expected relay_channel ${meta.relay_channel}, got ${relay}`);
+        }
       }
     };
 
@@ -9276,6 +9642,21 @@ async function run() {
       throw new Error('Expected freshly synced access-control device to be auto-assigned to default access group');
     }
     ok('Default access group contains auto-assigned access-control device');
+
+    if (created.primaryTenantId && primaryToken) {
+      step('Verifying tenant user details includes default-group app-entry access control devices');
+      await verifyTenantUserDetailsEntitlements({
+        tenantToken: primaryToken,
+        tenantId: created.primaryTenantId,
+        adminToken: token,
+        facilityId: created.facilityId,
+        expectedMobileAppDeviceIds: created.primaryAppDevId ? [created.primaryAppDevId] : [],
+        requiredAccessControlDeviceIds: [multiDoorDeviceA.id],
+        accessControlMeta: created.accessControlDeviceMeta,
+        label: 'default group app-entry entitlement',
+      });
+      ok('Tenant user details includes default-group app-entry access control devices');
+    }
 
     step('Creating a device group and assigning two access-control devices');
     const groupCreateResp = await axios.post(
@@ -9936,7 +10317,7 @@ async function run() {
     accessCodeConfigModified = false;
     ok('Access code schedule reverted');
 
-    step('Validating unified default global group and additional global shared access groups');
+    step('Validating unified default group and additional access groups');
     const groupsListForGlobalResp = await axios.get(
       `${API_BASE}/device-groups`,
       {
@@ -9946,34 +10327,33 @@ async function run() {
     );
     const allFacilityGroups = groupsListForGlobalResp.data?.data || [];
     const defaultGlobalGroup = allFacilityGroups.find((group) => group.is_default);
-    if (!defaultGlobalGroup || !defaultGlobalGroup.is_global_shared) {
-      throw new Error('Expected protected default access group to be global shared');
+    if (!defaultGlobalGroup) {
+      throw new Error('Expected protected default access group');
     }
 
     const globalGroupResp = await axios.post(
       `${API_BASE}/device-groups`,
       {
         facility_id: created.facilityId,
-        is_global_shared: true,
-        name: `E2E Additional Global Group ${Date.now()}`,
+        name: `E2E Additional Access Group ${Date.now()}`,
       },
       { headers: { Authorization: `Bearer ${created.facilityAdminToken}` } },
     );
     globalSharedAccessCodeGroupId = globalGroupResp.data?.data?.id;
-    if (!globalSharedAccessCodeGroupId) throw new Error('Additional global shared group creation did not return id');
-    if (globalGroupResp.data?.data?.is_global_shared !== true) {
-      throw new Error('Expected additional global shared group to remain global shared');
+    if (!globalSharedAccessCodeGroupId) throw new Error('Additional access group creation did not return id');
+    if (globalGroupResp.data?.data?.is_default === true) {
+      throw new Error('Expected additional access group to remain non-default');
     }
 
     const defaultAfterCreateResp = await axios.get(
       `${API_BASE}/device-groups/${defaultGlobalGroup.id}`,
       { headers: { Authorization: `Bearer ${created.facilityAdminToken}` } },
     );
-    if (!defaultAfterCreateResp.data?.data?.is_global_shared) {
-      throw new Error('Expected default access group to remain global shared after creating another global group');
+    if (!defaultAfterCreateResp.data?.data?.is_default) {
+      throw new Error('Expected default access group to remain default after creating another group');
     }
     demotedGlobalSharedAccessCodeGroupId = null;
-    ok('Default global group remains protected while additional global shared groups can coexist');
+    ok('Default group remains protected while additional access groups can coexist');
 
     const membershipConflictResp = await axios.post(
       `${API_BASE}/device-groups/${globalSharedAccessCodeGroupId}/members`,
@@ -9996,18 +10376,18 @@ async function run() {
       },
     );
     await axios.post(
-      `${API_BASE}/device-groups/${globalSharedAccessCodeGroupId}/members`,
+      `${API_BASE}/device-groups/${defaultGlobalGroup.id}/members`,
       { device_id: keypadDeviceB, device_type: 'access_control' },
       { headers: { Authorization: `Bearer ${created.facilityAdminToken}` } },
     );
 
-    const globalGroupCode = '222222';
-    const expectGlobalGroupSet = waitForCommand(
+    const defaultGroupCode = '222222';
+    const expectDefaultGroupSet = waitForCommand(
       ws,
       (cmd) =>
         cmd.cmd_type === 'ACCESS_CODE_UPDATE' &&
         Array.isArray(cmd.codes) &&
-        normalizeCodeRowsForDevice(cmd, keypadDeviceB).some((entry) => entry.code === globalGroupCode),
+        normalizeCodeRowsForDevice(cmd, keypadDeviceB).some((entry) => entry.code === defaultGroupCode),
       15000,
     );
     await axios.put(
@@ -10015,13 +10395,13 @@ async function run() {
       {
         facility_id: created.facilityId,
         scope_type: 'device_group',
-        scope_id: globalSharedAccessCodeGroupId,
-        code: globalGroupCode,
+        scope_id: defaultGlobalGroup.id,
+        code: defaultGroupCode,
       },
       { headers: { Authorization: `Bearer ${created.facilityAdminToken}` } },
     );
-    await expectGlobalGroupSet;
-    ok('Global shared group membership and keypad code configuration validated');
+    await expectDefaultGroupSet;
+    ok('Default group membership and keypad code configuration validated');
 
     step('Configuring schedule-scoped access code and validating tenant schedule resolution');
     const accessCodeSchedulesResp = await axios.get(
@@ -10059,7 +10439,7 @@ async function run() {
         {
           facility_id: created.facilityId,
           scope_type: 'device_group',
-          scope_id: globalSharedAccessCodeGroupId,
+          scope_id: defaultGlobalGroup.id,
           schedule_id: selectedSchedule.id,
           code: scheduledGroupCode,
         },
@@ -10091,8 +10471,6 @@ async function run() {
         `${API_BASE}/device-groups`,
         {
           facility_id: created.facilityId,
-          group_type: 'access_code',
-          is_global_shared: false,
           name: `E2E Private Access Group ${Date.now()}`,
         },
         { headers: { Authorization: `Bearer ${created.facilityAdminToken}` } },
@@ -10226,7 +10604,7 @@ async function run() {
       }
       const tenantIds = new Set(tenantAppCodes.map((entry) => entry.device_id));
       if (!tenantIds.has(keypadDeviceB)) {
-        throw new Error('Expected tenant /access-codes/app/my to include globally shared keypad device');
+        throw new Error('Expected tenant /access-codes/app/my to include default-group keypad device');
       }
       if (!tenantIds.has(keypadDeviceA)) {
         throw new Error('Expected tenant /access-codes/app/my to include multi-zone keypad when tenant has at least one linked zone');
@@ -10234,6 +10612,22 @@ async function run() {
       if (keypadDeviceC && tenantIds.has(keypadDeviceC)) {
         throw new Error('Tenant /access-codes/app/my should not include private-group keypad device');
       }
+
+      step('Verifying tenant user details accessControlDevices align with app-facing entitlements');
+      if (!created.primaryTenantId) throw new Error('Primary tenant id missing for user details entitlement check');
+      await verifyTenantUserDetailsEntitlements({
+        tenantToken: primaryToken,
+        tenantId: created.primaryTenantId,
+        adminToken: token,
+        facilityId: created.facilityId,
+        expectedMobileAppDeviceIds: created.primaryAppDevId ? [created.primaryAppDevId] : [],
+        requiredAccessControlDeviceIds: [keypadDeviceA, keypadDeviceB],
+        forbiddenAccessControlDeviceIds: keypadDeviceC ? [keypadDeviceC] : [],
+        accessControlMeta: created.accessControlDeviceMeta,
+        label: 'scoped + default entitlements',
+      });
+      ok('Tenant user details accessControlDevices match app-facing tenant entitlements');
+
       ok(`App endpoint role/filter checks passed (facility_admin=${appFacilityAdminCodes.length}, admin=${appAdminCodes.length}, dev_admin=${appDevAdminCodes.length}, tenant=${tenantAppCodes.length})`);
     } else {
       ok(`App endpoint role/filter checks passed (facility_admin=${appFacilityAdminCodes.length}, admin=${appAdminCodes.length}, dev_admin=${appDevAdminCodes.length})`);
@@ -10315,12 +10709,24 @@ async function run() {
       const tenantWithUnitCodes = tenantWithUnitResp.data?.data || [];
       const tenantWithUnitDeviceIds = new Set(tenantWithUnitCodes.map((entry) => entry.device_id));
       if (!tenantWithUnitDeviceIds.has(keypadDeviceB)) {
-        throw new Error('Expected tenant with any active unit assignment to receive default/global access-code group device');
+        throw new Error('Expected tenant with any active unit assignment to receive default-group access-code device');
       }
       if (tenantWithUnitCodes.some((entry) => !entry.schedule_id)) {
         throw new Error('Tenant with unit assignment should only receive schedule-scoped access-code entries');
       }
-      ok('Tenant with active unit assignment sees default/global access-code group device');
+      ok('Tenant with active unit assignment sees default-group access-code device');
+
+      step('Verifying share1 tenant user details includes default-group access control devices');
+      await verifyTenantUserDetailsEntitlements({
+        tenantToken: share1Token,
+        tenantId: share1Id,
+        adminToken: created.facilityAdminToken || token,
+        facilityId: created.facilityId,
+        requiredAccessControlDeviceIds: [keypadDeviceB],
+        accessControlMeta: created.accessControlDeviceMeta,
+        label: 'share1 default group entitlement',
+      });
+      ok('Share1 tenant user details includes default-group access control device');
     }
 
     if (keypadDeviceA) {
@@ -10343,6 +10749,15 @@ async function run() {
       if (noZoneDeviceIds.has(keypadDeviceA)) {
         throw new Error('Tenant with no unit/key-share in any zone should not receive zone-linked access control device');
       }
+      step('Verifying no-zone tenant user details excludes zone-linked access control devices');
+      const noZoneUserDetails = await fetchUserDetails(noZoneToken, noZoneUserId);
+      const noZoneUserDetailsAcIds = new Set(
+        (noZoneUserDetails.accessControlDevices || []).map((entry) => entry.device_id || entry.id),
+      );
+      if (noZoneUserDetailsAcIds.has(keypadDeviceA)) {
+        throw new Error('No-zone tenant user details should not include zone-linked access control device');
+      }
+      ok('No-zone tenant user details excludes zone-linked access control device');
       ok('Tenant with no zone access does not receive zone-linked access control device');
     }
 

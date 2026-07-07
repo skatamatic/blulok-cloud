@@ -2,12 +2,23 @@ jest.unmock('@/models/device.model');
 
 const mockEmitDeviceStatusChanged = jest.fn();
 const mockEmitDeviceTelemetryUpdated = jest.fn();
+const mockHasPendingLockCommand = jest.fn().mockReturnValue(false);
+const mockHandleAccessControlLockSettled = jest.fn();
 
 jest.mock('@/services/device-event.service', () => ({
   DeviceEventService: {
     getInstance: jest.fn(() => ({
       emitDeviceStatusChanged: mockEmitDeviceStatusChanged,
       emitDeviceTelemetryUpdated: mockEmitDeviceTelemetryUpdated,
+    })),
+  },
+}));
+
+jest.mock('@/services/lock-command.service', () => ({
+  LockCommandService: {
+    getInstance: jest.fn(() => ({
+      hasPendingLockCommand: mockHasPendingLockCommand,
+      handleAccessControlLockSettled: mockHandleAccessControlLockSettled,
     })),
   },
 }));
@@ -35,6 +46,7 @@ describe('DeviceModel access control telemetry', () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+    mockHasPendingLockCommand.mockReturnValue(false);
     model = new DeviceModel();
 
     mockUpdate = jest.fn().mockResolvedValue(1);
@@ -97,6 +109,27 @@ describe('DeviceModel access control telemetry', () => {
       gatewayId: 'gw-1',
       facilityId: 'fac-1',
     });
+    expect(mockHandleAccessControlLockSettled).toHaveBeenCalledWith('ac-1', false);
+  });
+
+  it('emits telemetry when gateway reports unchanged lock during pending remote command', async () => {
+    mockHasPendingLockCommand.mockReturnValue(true);
+
+    await model.updateAccessControlDevice('ac-1', { is_locked: true });
+
+    expect(mockEmitDeviceTelemetryUpdated).toHaveBeenCalledWith({
+      deviceId: 'ac-1',
+      gatewayId: 'gw-1',
+      facilityId: 'fac-1',
+    });
+    expect(mockHandleAccessControlLockSettled).toHaveBeenCalledWith('ac-1', true);
+  });
+
+  it('does not emit telemetry when unchanged lock is reported with no pending command', async () => {
+    await model.updateAccessControlDevice('ac-1', { is_locked: true });
+
+    expect(mockEmitDeviceTelemetryUpdated).not.toHaveBeenCalled();
+    expect(mockHandleAccessControlLockSettled).toHaveBeenCalledWith('ac-1', true);
   });
 
   it('emits telemetry when name changes without telemetry fields', async () => {

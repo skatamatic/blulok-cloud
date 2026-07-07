@@ -151,14 +151,14 @@ The facility **gateway** itself remains in the `gateways` table and appears in t
 
 ### 3.1 Access Groups (Unified Device Groups)
 
-**Purpose**: Unified access groups control **both app-entry (route pass / BLE) and keypad access**. Each facility has one protected **default group** (`is_default=true`, `is_global_shared=true`, name `Default Facility Group`). Because it is global-shared, every tenant in the facility is entitled to its access-control devices — this guarantees a route to their unit through the shared gate/door.
+**Purpose**: Unified access groups control **both app-entry (route pass / BLE) and keypad access**. Each facility has one protected **default group** (`is_default=true`, name `Default Facility Group`). Because it is the default group, every tenant in the facility is entitled to its access-control devices — this guarantees a route to their unit through the shared gate/door.
 
 **Membership model**:
 - **Every access-control device and BluLok unit lock auto-joins the default group** on create/sync. **Lock-less units** are stored as unit-anchored `blulok` members (`device_id = source_unit_id = unit id`) via the unit-create hook; migration `091` backfills existing rows. Migrations `084` (access-control) and `085` (BluLok locks) repair historical device gaps.
 - A device may be moved into one or more **specific (non-default) groups** to restrict a wing/section. **A device never belongs to a specific group and the default group at the same time**: adding it to its first specific group removes it from the default group; removing its last specific membership returns it to the default group automatically.
 - **Access-control devices can belong to multiple specific groups at once** (e.g. a shared wing door reachable from several sub-hallway groups). The same applies to BluLok locks.
 
-**Entitlement model**: A tenant is entitled to open **all access-control devices in any group their unit lock belongs to**. Concretely: (a) the default group's access-control devices are granted to all tenants in the facility via `is_global_shared`; (b) for each specific group containing the tenant's accessible unit lock, the tenant is granted that group's access-control devices. This drives both route-pass (app entry) and keypad access-code distribution identically. BluLok lock entitlement itself flows from unit ownership / key-sharing — group membership only links a lock to the access-control devices it should reach.
+**Entitlement model**: A tenant is entitled to open **all access-control devices in any group their unit lock belongs to**. Concretely: (a) the default group's access-control devices are granted to all tenants in the facility via `is_default`; (b) for each specific group containing the tenant's accessible unit lock, the tenant is granted that group's access-control devices. This drives both route-pass (app entry) and keypad access-code distribution identically. BluLok lock entitlement itself flows from unit ownership / key-sharing — group membership only links a lock to the access-control devices it should reach.
 
 **Legacy note**: `group_type` (`zone` | `access_code`) remains in the database for backward compatibility but entitlement and UI no longer branch on it.
 
@@ -168,7 +168,6 @@ CREATE TABLE device_groups (
   id UUID PRIMARY KEY,
   facility_id UUID NOT NULL REFERENCES facilities(id),
   group_type ENUM('zone', 'access_code') NOT NULL DEFAULT 'zone', -- deprecated discriminator
-  is_global_shared BOOLEAN NOT NULL DEFAULT FALSE,
   is_default BOOLEAN NOT NULL DEFAULT FALSE,
   access_code_current_code VARCHAR(8) NULL,
   access_code_current_valid_from TIMESTAMP NULL,

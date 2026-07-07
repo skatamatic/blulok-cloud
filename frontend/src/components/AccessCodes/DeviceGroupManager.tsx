@@ -44,6 +44,7 @@ import {
   resolveUnitForMember,
   sortAccessGroups,
   unitMemberHasAssignedLock,
+  ACCESS_GROUP_LIST_SCROLL_CLASS,
 } from '@/components/AccessCodes/access-groups.utils';
 import { Unit } from '@/types/facility.types';
 
@@ -1092,7 +1093,8 @@ export function DeviceGroupManager({
                           </p>
                         </div>
                       ) : (
-                        <div className="space-y-5">
+                        <div className={`${ACCESS_GROUP_LIST_SCROLL_CLASS} pr-0.5`}>
+                          <div className="space-y-5">
                           {memberSections.map((section) => (
                             <section key={section.key}>
                               <div className="mb-2 flex items-center justify-between gap-2 px-1">
@@ -1208,6 +1210,7 @@ export function DeviceGroupManager({
                               </div>
                             </section>
                           ))}
+                          </div>
                         </div>
                       )}
                     </>

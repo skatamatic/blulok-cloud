@@ -443,7 +443,6 @@ CREATE TABLE device_groups (
   id VARCHAR(36) PRIMARY KEY DEFAULT (UUID()),
   facility_id VARCHAR(36) NOT NULL,
   group_type ENUM('zone', 'access_code') NOT NULL DEFAULT 'zone', -- deprecated; unified access groups
-  is_global_shared BOOLEAN NOT NULL DEFAULT false,
   is_default BOOLEAN NOT NULL DEFAULT false,
   access_code_current_code VARCHAR(8) NULL,
   access_code_current_valid_from DATETIME NULL,
@@ -458,7 +457,7 @@ CREATE TABLE device_groups (
   FOREIGN KEY (facility_id) REFERENCES facilities(id) ON DELETE CASCADE,
   INDEX idx_device_groups_facility_id (facility_id),
   INDEX idx_device_groups_facility_default (facility_id, is_default),
-  INDEX idx_device_groups_facility_type_global_active (facility_id, group_type, is_global_shared, is_active),
+  INDEX idx_device_groups_facility_type_active (facility_id, group_type, is_active),
   INDEX idx_device_groups_access_code_current_state (facility_id, group_type, is_active, access_code_current_valid_until)
 );
 
@@ -512,7 +511,7 @@ CREATE TABLE access_codes (
 
 **Access-code invariants**:
 - Group code is first-class group state (`device_groups.access_code_current_*`) and is updated whenever a group-scoped code is created/rotated/manual-set.
-- Each facility has exactly one protected default access group (`is_default=true`, `is_global_shared=true`). New access-control devices are auto-assigned there until placed in a specific group.
+- Each facility has exactly one protected default access group (`is_default=true`). New access-control devices are auto-assigned there until placed in a specific group.
 - Access-control devices in an active `access_code` group cannot receive device-scoped manual overrides.
 - Effective resolution always prefers active group-scoped code(s) for grouped devices to keep members code-synchronized.
 - Schedule-scoped and unscheduled codes can coexist for the same group/device scope; active uniqueness is enforced per `(facility_id, scope_type, scope_id, schedule_id)`.

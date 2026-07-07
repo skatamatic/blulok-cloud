@@ -8,7 +8,6 @@ export interface DeviceGroup {
   id: string;
   facility_id: string;
   group_type: DeviceGroupType;
-  is_global_shared: boolean;
   is_default: boolean;
   access_code_current_code?: string | null;
   access_code_current_valid_from?: Date | null;
@@ -34,7 +33,6 @@ export interface DeviceGroupMember {
 export interface CreateDeviceGroupData {
   facility_id: string;
   group_type?: DeviceGroupType;
-  is_global_shared?: boolean;
   is_default?: boolean;
   name: string;
   description?: string;
@@ -44,7 +42,6 @@ export interface CreateDeviceGroupData {
 
 export interface UpdateDeviceGroupData {
   group_type?: DeviceGroupType;
-  is_global_shared?: boolean;
   is_default?: boolean;
   access_code_current_code?: string | null;
   access_code_current_valid_from?: Date | null;
@@ -76,7 +73,6 @@ export class DeviceGroupModel {
     return {
       ...(row as unknown as DeviceGroup),
       group_type: ((row.group_type as DeviceGroupType) || 'zone'),
-      is_global_shared: Boolean(row.is_global_shared),
       is_default: Boolean(row.is_default),
       access_code_current_code: (row.access_code_current_code as string | null) ?? null,
       access_code_current_valid_from: row.access_code_current_valid_from ? new Date(String(row.access_code_current_valid_from)) : null,
@@ -93,7 +89,6 @@ export class DeviceGroupModel {
       id,
       facility_id: data.facility_id,
       group_type: data.group_type || 'zone',
-      is_global_shared: Boolean(data.is_global_shared),
       is_default: Boolean(data.is_default),
       name: data.name,
       description: data.description ?? null,
@@ -128,7 +123,6 @@ export class DeviceGroupModel {
     const payload: Record<string, unknown> = { updated_at: new Date() };
     if (data.name !== undefined) payload.name = data.name;
     if (data.group_type !== undefined) payload.group_type = data.group_type;
-    if (data.is_global_shared !== undefined) payload.is_global_shared = Boolean(data.is_global_shared);
     if (data.is_default !== undefined) payload.is_default = Boolean(data.is_default);
     if (data.access_code_current_code !== undefined) payload.access_code_current_code = data.access_code_current_code;
     if (data.access_code_current_valid_from !== undefined) payload.access_code_current_valid_from = data.access_code_current_valid_from;
@@ -369,16 +363,7 @@ export class DeviceGroupModel {
     const row = await knex('device_groups')
       .where({ facility_id: facilityId })
       .whereRaw('LOWER(name) = ?', [name.toLowerCase()])
-      .orderBy('is_global_shared', 'desc')
-      .orderBy('created_at', 'asc')
-      .first();
-    return row ? this.deserializeGroup(row as Record<string, unknown>) : null;
-  }
-
-  async findOldestGlobalSharedByFacility(facilityId: string): Promise<DeviceGroup | null> {
-    const knex = this.db.connection;
-    const row = await knex('device_groups')
-      .where({ facility_id: facilityId, is_global_shared: true })
+      .orderBy('is_default', 'desc')
       .orderBy('created_at', 'asc')
       .first();
     return row ? this.deserializeGroup(row as Record<string, unknown>) : null;
@@ -400,7 +385,6 @@ export class DeviceGroupModel {
       .andWhere('dg.facility_id', facilityId)
       .andWhere('dg.is_active', true)
       .andWhere('dg.is_default', false)
-      .andWhere('dg.is_global_shared', false)
       .where(function matchUnit() {
         this.where('m.source_unit_id', unitId).orWhere('m.device_id', unitId);
       })
@@ -429,7 +413,6 @@ export class DeviceGroupModel {
 
     if (options?.specificGroupsOnly) {
       query.andWhere('dg.is_default', false);
-      query.andWhere('dg.is_global_shared', false);
     } else if (options?.excludeDefault) {
       query.andWhere('dg.is_default', false);
     }

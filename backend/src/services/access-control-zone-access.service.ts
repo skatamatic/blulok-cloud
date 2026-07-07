@@ -23,7 +23,7 @@ export class AccessControlZoneAccessService {
   /**
    * BluLok locks plus app-enabled zone-linked access_control devices entitled for denylist
    * revocation on a unit (offline lock unlock + app-entry route pass validation).
-   * Does not include facility-wide global shared devices — use user-scoped helpers below.
+   * Does not include facility-wide default group devices — use user-scoped helpers below.
    */
   public static async getDenylistTargetsForUnits(unitIds: string[]): Promise<DenylistDeviceTarget[]> {
     const bluLokDeviceIds = await this.getBluLokDeviceIdsForUnits(unitIds);
@@ -36,8 +36,8 @@ export class AccessControlZoneAccessService {
   }
 
   /**
-   * Denylist targets when revoking unit access for a user. Includes global shared access-control
-   * devices only for facilities where the user loses all remaining unit/key-share access.
+   * Denylist targets when revoking unit access for a user. Includes default-group
+   * access-control devices only for facilities where the user loses all remaining unit/key-share access.
    */
   public static async getDenylistTargetsForUserRevocation(
     unitIds: string[],
@@ -49,7 +49,7 @@ export class AccessControlZoneAccessService {
   }
 
   /**
-   * Denylist targets to clear when granting/re-granting unit access. Includes global shared devices
+   * Denylist targets to clear when granting/re-granting unit access. Includes default-group devices
    * for facilities where the user currently has active access (e.g. after re-assignment).
    */
   public static async getDenylistRemovalTargetsForUserGrant(
@@ -72,12 +72,12 @@ export class AccessControlZoneAccessService {
       }
     }
 
-    const globalDeviceIds = await this.getGlobalSharedAccessControlDeviceIdsForFacilities(facilitiesWithAccess);
-    const globalTargets = globalDeviceIds.map((device_id) => ({
+    const defaultDeviceIds = await this.getDefaultGroupAccessControlDeviceIdsForFacilities(facilitiesWithAccess);
+    const defaultTargets = defaultDeviceIds.map((device_id) => ({
       device_id,
       device_type: 'access_control' as const,
     }));
-    return this.mergeDenylistTargets(scopedTargets, globalTargets);
+    return this.mergeDenylistTargets(scopedTargets, defaultTargets);
   }
 
   private static mergeDenylistTargets(
@@ -115,8 +115,8 @@ export class AccessControlZoneAccessService {
       }
     }
 
-    const globalDeviceIds = await this.getGlobalSharedAccessControlDeviceIdsForFacilities(lostFacilityIds);
-    return globalDeviceIds.map((device_id) => ({
+    const defaultDeviceIds = await this.getDefaultGroupAccessControlDeviceIdsForFacilities(lostFacilityIds);
+    return defaultDeviceIds.map((device_id) => ({
       device_id,
       device_type: 'access_control' as const,
     }));
@@ -201,7 +201,7 @@ export class AccessControlZoneAccessService {
     return rows.map((row) => String(row.device_id));
   }
 
-  public static async getGlobalSharedAccessControlDeviceIdsForFacilities(
+  public static async getDefaultGroupAccessControlDeviceIdsForFacilities(
     facilityIds: string[],
   ): Promise<string[]> {
     if (facilityIds.length === 0) return [];
@@ -210,9 +210,16 @@ export class AccessControlZoneAccessService {
       .join('device_groups as dg', 'dg.id', 'm.group_id')
       .whereIn('dg.facility_id', facilityIds)
       .andWhere('dg.is_active', true)
-      .andWhere('dg.is_global_shared', true)
+      .andWhere('dg.is_default', true)
       .andWhere('m.device_type', 'access_control');
     return rows.map((row) => String(row.device_id));
+  }
+
+  /** @deprecated Use getDefaultGroupAccessControlDeviceIdsForFacilities */
+  public static async getGlobalSharedAccessControlDeviceIdsForFacilities(
+    facilityIds: string[],
+  ): Promise<string[]> {
+    return this.getDefaultGroupAccessControlDeviceIdsForFacilities(facilityIds);
   }
 
   public static async getAccessControlDeviceIdsForUnits(unitIds: string[]): Promise<string[]> {

@@ -393,8 +393,9 @@ export class LockCommandService {
       return;
     }
 
+    const settledLocked = Boolean(isLocked);
     const requestedLocked = pending.requestedStatus === 'locked';
-    if (isLocked === requestedLocked) {
+    if (settledLocked === requestedLocked) {
       this.clearPending(deviceId);
       const method = resolveRemoteAccessMethod(pending.initiator.role);
       void this.logRemoteCommandSuccess({
@@ -450,6 +451,11 @@ export class LockCommandService {
       initiator: pending.initiator,
       deviceType: params.deviceType,
     });
+  }
+
+  /** True while a remote lock/unlock command is awaiting gateway confirmation. */
+  public hasPendingLockCommand(deviceId: string): boolean {
+    return this.pendingCommands.has(deviceId);
   }
 
   public peekCommandAttribution(deviceId: string): LockCommandAttribution | null {

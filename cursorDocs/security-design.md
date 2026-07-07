@@ -89,7 +89,7 @@ This document summarizes the new centralized trust model implemented in the back
 Route Passes are scoped by role to enforce least-privilege access:
 - **DEV_ADMIN/ADMIN**: Audience includes all locks across all facilities plus app-entry access_control devices.
 - **FACILITY_ADMIN**: Audience includes **app-entry access_control devices only** in assigned facilities (not unit lock unlock).
-- **TENANT**: Audience limited to locks for units assigned via FMS (`unit_assignments` table) plus app-entry access from **specific access groups** (shared lock membership) and the facility **default/global access group** (`is_global_shared`).
+- **TENANT**: Audience limited to locks for units assigned via FMS (`unit_assignments` table) plus app-entry access from **specific access groups** (shared lock membership) and the facility **default access group** (`is_default`).
 - **MAINTENANCE**: Audience limited to explicitly granted units (future: `maintenance_unit_access` table).
 
 Facility associations for route pass issuance are always read from the database for **FACILITY_ADMIN** (not from the login JWT), so admin updates to assignments take effect on the next `POST /passes/request` even if the user has not re-authenticated.

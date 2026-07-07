@@ -461,7 +461,37 @@ describe('DeviceStatusSubscriptionManager', () => {
       expect(device.device_serial).toBe('KP-001');
     });
 
-    it('should not broadcast to subscriptions for different devices', async () => {
+    it('maps MySQL tinyint is_locked=1 to lock_status locked', async () => {
+      const mockWs = { send: jest.fn(), readyState: 1 };
+
+      (manager as any).watchers = new Map([
+        ['sub-1', new Set([mockWs])],
+      ]);
+      (manager as any).clientContext = new Map([
+        ['sub-1', { userRole: 'admin', facilityIds: ['facility-1'] }],
+      ]);
+      (manager as any).subscriptionFilters = new Map([
+        ['sub-1', { deviceId: 'ac-1' }],
+      ]);
+
+      mockDeviceModel.findBluLokDeviceById.mockResolvedValue(null);
+      mockDeviceModel.findAccessControlDeviceWithGateway.mockResolvedValue({
+        id: 'ac-1',
+        device_serial: 'KP-001',
+        name: 'Main Gate',
+        facility_id: 'facility-1',
+        gateway_id: 'gateway-1',
+        is_locked: 1,
+        status: 'online',
+        created_at: new Date(),
+        updated_at: new Date(),
+      });
+
+      await manager.broadcastDeviceUpdate('ac-1', 'facility-1');
+
+      const payload = JSON.parse(mockWs.send.mock.calls[0][0]);
+      expect(payload.data.devices[0].lock_status).toBe('locked');
+    });
       const mockWs = { send: jest.fn(), readyState: 1 };
       
       (manager as any).watchers = new Map([

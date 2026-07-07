@@ -6,7 +6,6 @@ jest.mock('@/models/device-group.model', () => ({
     findDefaultByFacility: jest.fn(),
     countDefaultGroupsForFacility: jest.fn(),
     findByFacilityAndName: jest.fn(),
-    findOldestGlobalSharedByFacility: jest.fn(),
     clearDefaultFlagForFacility: jest.fn(),
     countAccessControlMembershipsForDevice: jest.fn(),
     countSpecificGroupMembershipsForUnit: jest.fn(),
@@ -66,7 +65,6 @@ describe('DeviceGroupService', () => {
     });
     model.findDefaultByFacility.mockResolvedValue(null);
     model.findByFacilityAndName.mockResolvedValue(null);
-    model.findOldestGlobalSharedByFacility.mockResolvedValue(null);
     model.countDefaultGroupsForFacility.mockResolvedValue(0);
     model.clearDefaultFlagForFacility.mockResolvedValue(undefined);
     model.countAccessControlMembershipsForDevice.mockResolvedValue(0);
@@ -75,7 +73,6 @@ describe('DeviceGroupService', () => {
       id,
       facility_id: 'fac-1',
       is_default: true,
-      is_global_shared: true,
       group_type: 'access_code',
       name: DEFAULT_ACCESS_GROUP_NAME,
       ...data,
@@ -87,7 +84,6 @@ describe('DeviceGroupService', () => {
       id: 'grp-1',
       facility_id: 'fac-1',
       group_type: 'zone',
-      is_global_shared: false,
       is_default: false,
       name: 'Main Zone',
     });
@@ -95,7 +91,6 @@ describe('DeviceGroupService', () => {
       id: 'grp-1',
       facility_id: 'fac-1',
       group_type: 'zone',
-      is_global_shared: false,
       is_default: false,
       name: 'Main Zone',
     });
@@ -129,14 +124,12 @@ describe('DeviceGroupService', () => {
 
   it('ensureDefaultGroup creates protected default group idempotently', async () => {
     model.findByFacilityAndName.mockResolvedValue(null);
-    model.findOldestGlobalSharedByFacility.mockResolvedValue(null);
     model.findDefaultByFacility
       .mockResolvedValueOnce(null)
       .mockResolvedValue({
         id: 'def-1',
         facility_id: 'fac-1',
         is_default: true,
-        is_global_shared: true,
         name: DEFAULT_ACCESS_GROUP_NAME,
         group_type: 'access_code',
       });
@@ -144,7 +137,6 @@ describe('DeviceGroupService', () => {
       id: 'def-1',
       facility_id: 'fac-1',
       is_default: true,
-      is_global_shared: true,
       name: DEFAULT_ACCESS_GROUP_NAME,
     });
 
@@ -163,7 +155,6 @@ describe('DeviceGroupService', () => {
           id: 'free-1',
           facility_id: 'fac-1',
           is_default: false,
-          is_global_shared: true,
           name: 'free',
           group_type: 'access_code',
         };
@@ -175,7 +166,6 @@ describe('DeviceGroupService', () => {
       id: 'free-1',
       facility_id: 'fac-1',
       is_default: true,
-      is_global_shared: true,
       name: DEFAULT_ACCESS_GROUP_NAME,
       group_type: 'access_code',
     });
@@ -524,7 +514,6 @@ describe('DeviceGroupService', () => {
 
   it('assigns lock-less unit to default group as unit-anchored member', async () => {
     model.findByFacilityAndName.mockResolvedValue(null);
-    model.findOldestGlobalSharedByFacility.mockResolvedValue(null);
     model.findDefaultByFacility.mockResolvedValue({
       id: 'grp-default',
       facility_id: 'fac-1',
@@ -874,7 +863,6 @@ describe('DeviceGroupService', () => {
       id: 'grp-1',
       facility_id: 'fac-1',
       group_type: 'access_code',
-      is_global_shared: false,
       is_default: false,
       is_active: true,
       name: 'Entry Group',

@@ -12,20 +12,17 @@ import { ConflictError, ValidationError } from '@/middleware/error.middleware';
 const mockCreate = jest.fn().mockResolvedValue({
   id: 'grp-1',
   facility_id: '550e8400-e29b-41d4-a716-446655440001',
-  is_global_shared: false,
   name: 'Main Zone',
 });
 const mockFindByFacility = jest.fn().mockResolvedValue([]);
 const mockFindById = jest.fn().mockResolvedValue({
   id: 'grp-1',
   facility_id: '550e8400-e29b-41d4-a716-446655440001',
-  is_global_shared: false,
   name: 'Main Zone',
 });
 const mockUpdate = jest.fn().mockResolvedValue({
   id: 'grp-1',
   facility_id: '550e8400-e29b-41d4-a716-446655440001',
-  is_global_shared: false,
   name: 'Updated Zone',
 });
 const mockDelete = jest.fn().mockResolvedValue(undefined);

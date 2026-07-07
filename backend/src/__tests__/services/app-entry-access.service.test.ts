@@ -121,6 +121,40 @@ describe('AppEntryAccessService', () => {
     expect(deviceIds).toEqual(['ac-zone-1', 'ac-global-1']);
   });
 
+  it('returns default-group app-entry devices for facility default group', async () => {
+    const assignedRows = [{ device_id: 'lock-assigned-1' }];
+    const sharedRows: any[] = [];
+    const assignedFacilityRows = [{ facility_id: 'fac-1' }];
+    const sharedFacilityRows: any[] = [];
+    const globalRows = [{ id: 'ac-default-1' }];
+    const callCounts: Record<string, number> = {};
+    let globalQuery: any;
+    const db: any = jest.fn((table: string) => {
+      callCounts[table] = (callCounts[table] || 0) + 1;
+      if (table === 'unit_assignments as ua') {
+        return makeThenableQuery(callCounts[table] === 1 ? assignedRows : assignedFacilityRows);
+      }
+      if (table === 'key_sharing as ks') {
+        return makeThenableQuery(callCounts[table] === 1 ? sharedRows : sharedFacilityRows);
+      }
+      if (table === 'device_group_members as zone_access') {
+        globalQuery = makeThenableQuery(globalRows);
+        return globalQuery;
+      }
+      throw new Error(`Unexpected table: ${table}`);
+    });
+    db.fn = { now: () => new Date() };
+
+    const deviceIds = await AppEntryAccessService.resolveDeviceIds(db, {
+      userId: 'tenant-1',
+      userRole: UserRole.TENANT,
+      facilityId: 'fac-1',
+    });
+
+    expect(deviceIds).toEqual(['ac-default-1']);
+    expect(globalQuery.andWhere).toHaveBeenCalled();
+  });
+
   it('returns global app-entry devices for tenant even without lock group membership', async () => {
     const assignedRows: any[] = [];
     const sharedRows: any[] = [];

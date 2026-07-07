@@ -18,6 +18,10 @@ export const DEFAULT_GROUP_CONFIG: AccessCodeGroupConfig = {
 
 export const UNSCHEDULED_OPTION_ID = '__unscheduled__';
 
+/** Caps long member/user lists in the access groups workspace without stretching the host page. */
+export const ACCESS_GROUP_LIST_SCROLL_CLASS =
+  'status-area-scrollbar max-h-[min(32rem,calc(100vh-20rem))] overflow-y-auto overscroll-contain';
+
 export interface GroupMemberRef {
   device_id: string;
   device_type: 'access_control' | 'blulok';

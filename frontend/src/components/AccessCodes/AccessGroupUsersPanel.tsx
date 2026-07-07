@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { ChevronDownIcon, ChevronRightIcon, UserCircleIcon } from '@heroicons/react/24/outline';
 import { UserRole } from '@/types/auth.types';
 import { formatRoleName, getRoleBadgeColor } from '@/utils/user-role-display.utils';
-import type { GroupUserAccess } from '@/components/AccessCodes/access-groups.utils';
+import { ACCESS_GROUP_LIST_SCROLL_CLASS, type GroupUserAccess } from '@/components/AccessCodes/access-groups.utils';
 import { AccessGroupRowDetailLinks } from '@/components/AccessCodes/AccessGroupRowDetailLinks';
 
 interface AccessGroupUsersPanelProps {
@@ -85,6 +85,7 @@ export function AccessGroupUsersPanel({
       <p className="text-sm text-gray-500 dark:text-gray-400">
         Tenants and shared-key holders with access to units in this group. Expand a row for links.
       </p>
+      <div className={`${ACCESS_GROUP_LIST_SCROLL_CLASS} pr-0.5`}>
       <div className="overflow-hidden rounded-xl border border-gray-200 dark:border-gray-700">
         {users.map((user, index) => {
           const isExpanded = expandedUserId === user.user_id;
@@ -144,6 +145,7 @@ export function AccessGroupUsersPanel({
             </div>
           );
         })}
+      </div>
       </div>
     </div>
   );
