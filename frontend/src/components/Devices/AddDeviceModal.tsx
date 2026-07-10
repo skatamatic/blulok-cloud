@@ -25,6 +25,7 @@ type WizardStep = 'type' | 'location' | 'configure' | 'review';
 interface CreateAccessControlDeviceData extends CreateAccessControlDevicePayload {
   access_methods: Array<'app' | 'keypad' | 'fob'>;
   supports_remote_lock: boolean;
+  supports_widget_timed_open: boolean;
 }
 
 interface CreateBluLokDeviceData {
@@ -140,6 +141,7 @@ export function AddDeviceModal({ isOpen, onClose, onSuccess, facilityId, deviceT
     relay_channel: 1,
     access_methods: ['app'],
     supports_remote_lock: false,
+    supports_widget_timed_open: false,
     device_settings: {},
   });
 
@@ -176,6 +178,7 @@ export function AddDeviceModal({ isOpen, onClose, onSuccess, facilityId, deviceT
       relay_channel: 1,
       access_methods: ['app'],
       supports_remote_lock: false,
+      supports_widget_timed_open: false,
       device_settings: {},
     });
     setBluLokData({
@@ -355,6 +358,7 @@ export function AddDeviceModal({ isOpen, onClose, onSuccess, facilityId, deviceT
           relay_channel: accessControlData.relay_channel,
           access_methods: accessControlData.access_methods,
           supports_remote_lock: accessControlData.supports_remote_lock,
+          supports_widget_timed_open: accessControlData.supports_widget_timed_open,
         });
       } else {
         const deviceSettings = buildBluLokDeviceSettings(undefined, {
@@ -678,6 +682,19 @@ export function AddDeviceModal({ isOpen, onClose, onSuccess, facilityId, deviceT
               Supports remote lock (CLOSE) from cloud
             </label>
           </div>
+          <div className="flex items-center">
+            <label className="inline-flex cursor-pointer items-center gap-2 text-sm text-gray-700 dark:text-gray-300">
+              <input
+                type="checkbox"
+                checked={accessControlData.supports_widget_timed_open}
+                onChange={(e) =>
+                  setAccessControlData((p) => ({ ...p, supports_widget_timed_open: e.target.checked }))
+                }
+                className="rounded border-gray-300 text-primary-600"
+              />
+              Enable timed open for Remote Gate widget
+            </label>
+          </div>
         </>
       ) : (
         <>
@@ -884,6 +901,7 @@ export function AddDeviceModal({ isOpen, onClose, onSuccess, facilityId, deviceT
                 ['Location', accessControlData.location_description],
                 ['Access', accessControlData.access_methods.join(', ')],
                 ['Remote lock', accessControlData.supports_remote_lock ? 'Yes' : 'No'],
+                ['Widget timed open', accessControlData.supports_widget_timed_open ? 'Yes' : 'No'],
               ]),
         ].map(([label, value]) => (
           <div key={label} className="flex justify-between gap-4 bg-gray-50/50 dark:bg-gray-900/20 px-4 py-3 text-sm">

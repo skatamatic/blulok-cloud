@@ -30,6 +30,8 @@ export interface AccessDeviceInventoryItem {
   location_description?: string;
   online?: boolean;
   locked?: boolean;
+  /** Access methods the hardware advertises (app/keypad/fob); used to seed new devices. */
+  access_methods?: Array<'app' | 'keypad' | 'fob'>;
   last_seen?: string | Date;
 }
 

@@ -520,7 +520,12 @@ export class GatewayService extends EventEmitter {
    * signed JWTs (same path as dev-tools LOCK/UNLOCK). Otherwise uses the registered gateway
    * implementation (HTTP mesh, simulated, etc.).
    */
-  public async sendLockCommand(gatewayId: string, lockId: string, command: 'OPEN' | 'CLOSE'): Promise<ICommandResult> {
+  public async sendLockCommand(
+    gatewayId: string,
+    lockId: string,
+    command: 'OPEN' | 'CLOSE',
+    options?: { open_until?: number },
+  ): Promise<ICommandResult> {
     const start = Date.now();
     const row = await this.db('gateways').where('id', gatewayId).select('facility_id').first();
     const facilityId = row?.facility_id ? String(row.facility_id) : null;
@@ -536,11 +541,15 @@ export class GatewayService extends EventEmitter {
         const { Ed25519Service } = await import('@/services/crypto/ed25519.service');
         const cmd_type = command === 'CLOSE' ? 'LOCK' : 'UNLOCK';
         const jwtDeviceClaim = await this.resolveDeviceIdForLockCommandJwt(lockId);
-        const jwt = await Ed25519Service.signCommandJwt({
+        const jwtPayload: Record<string, unknown> = {
           cmd_type,
           device_id: jwtDeviceClaim,
           expires_at: expiresAt,
-        });
+        };
+        if (command === 'OPEN' && options?.open_until != null) {
+          jwtPayload.open_until = options.open_until;
+        }
+        const jwt = await Ed25519Service.signCommandJwt(jwtPayload);
         GatewayEventsService.getInstance().unicastToFacility(facilityId, jwt);
         return {
           success: true,
@@ -550,7 +559,10 @@ export class GatewayService extends EventEmitter {
       }
     }
 
-    return await this.executeDeviceCommand(gatewayId, lockId, command, { expires_at: expiresAt });
+    return await this.executeDeviceCommand(gatewayId, lockId, command, {
+      expires_at: expiresAt,
+      ...(options?.open_until != null ? { open_until: options.open_until } : {}),
+    });
   }
 
   /**

@@ -65,6 +65,10 @@ export interface AccessControlDevice {
    * When true, cloud may issue remote lock (CLOSE) commands. Default false: unlock-only from cloud.
    */
   supports_remote_lock?: boolean;
+  /**
+   * When true, Remote Gate widget may send timed OPEN commands with open_until (unix UTC seconds).
+   */
+  supports_widget_timed_open?: boolean;
   /** Timestamp of last device activity */
   last_activity?: Date;
   /** Device-specific configuration settings */
@@ -202,6 +206,8 @@ export interface CreateAccessControlDeviceData {
   device_settings?: Record<string, any>;
   access_methods?: AccessMethod[];
   metadata?: Record<string, any>;
+  supports_remote_lock?: boolean;
+  supports_widget_timed_open?: boolean;
 }
 
 export interface UpdateAccessControlDeviceData {
@@ -213,6 +219,7 @@ export interface UpdateAccessControlDeviceData {
   status?: 'online' | 'offline' | 'error' | 'maintenance';
   is_locked?: boolean;
   supports_remote_lock?: boolean;
+  supports_widget_timed_open?: boolean;
   /** Gateway `last_seen` maps here (access_control has no last_seen column). */
   last_activity?: Date;
   device_settings?: Record<string, any>;
@@ -367,12 +374,18 @@ export class DeviceModel {
     }
 
     const rows = await query;
-    return rows.map((row) => ({
-      ...row,
+    return rows.map((row) => this.deserializeAccessControlRow(row));
+  }
+
+  private deserializeAccessControlRow(row: Record<string, unknown>): AccessControlDevice {
+    return {
+      ...(row as unknown as AccessControlDevice),
+      supports_remote_lock: Boolean(row.supports_remote_lock),
+      supports_widget_timed_open: Boolean(row.supports_widget_timed_open),
       device_settings: this.safeParseJson(row.device_settings),
       access_methods: this.safeParseJson(row.access_methods) || ['app'],
       metadata: this.safeParseJson(row.metadata),
-    }));
+    };
   }
 
   async findBluLokDevices(filters: DeviceFilters = {}): Promise<DeviceWithContext[]> {
@@ -518,12 +531,7 @@ export class DeviceModel {
     const knex = this.db.connection;
     const device = await knex('access_control_devices').where('id', id).first();
     if (!device) return null;
-    return {
-      ...device,
-      device_settings: this.safeParseJson(device.device_settings),
-      access_methods: this.safeParseJson(device.access_methods) || ['app'],
-      metadata: this.safeParseJson(device.metadata),
-    };
+    return this.deserializeAccessControlRow(device as Record<string, unknown>);
   }
 
   /**
@@ -541,11 +549,9 @@ export class DeviceModel {
       .where('access_control_devices.id', id)
       .first();
     if (!result) return null;
-    return {
-      ...result,
-      device_settings: this.safeParseJson(result.device_settings),
-      access_methods: this.safeParseJson(result.access_methods) || ['app'],
-      metadata: this.safeParseJson(result.metadata),
+    return this.deserializeAccessControlRow(result as Record<string, unknown>) as AccessControlDevice & {
+      facility_id: string;
+      gateway_name: string;
     };
   }
 
@@ -569,12 +575,7 @@ export class DeviceModel {
       metadata: data.metadata ? JSON.stringify(data.metadata) : undefined,
     });
     const device = await knex('access_control_devices').where('id', id).first();
-    return {
-      ...(device as AccessControlDevice),
-      device_settings: this.safeParseJson(device.device_settings),
-      access_methods: this.safeParseJson(device.access_methods) || ['app'],
-      metadata: this.safeParseJson(device.metadata),
-    };
+    return this.deserializeAccessControlRow(device as Record<string, unknown>);
   }
 
   async findAccessControlBySerialAndRelay(
@@ -685,6 +686,9 @@ export class DeviceModel {
     if (data.is_locked !== undefined) updatePayload.is_locked = data.is_locked;
     if (data.last_activity !== undefined) updatePayload.last_activity = data.last_activity;
     if (data.supports_remote_lock !== undefined) updatePayload.supports_remote_lock = data.supports_remote_lock;
+    if (data.supports_widget_timed_open !== undefined) {
+      updatePayload.supports_widget_timed_open = data.supports_widget_timed_open;
+    }
     if (data.device_settings !== undefined) updatePayload.device_settings = JSON.stringify(data.device_settings);
     if (data.access_methods !== undefined) updatePayload.access_methods = JSON.stringify(data.access_methods);
     if (data.metadata !== undefined) updatePayload.metadata = JSON.stringify(data.metadata);

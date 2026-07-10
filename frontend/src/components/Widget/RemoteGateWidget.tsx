@@ -15,6 +15,12 @@ import { apiService } from '@/services/api.service';
 import { useWebSocket } from '@/contexts/WebSocketContext';
 import { useLockDeviceRealtime } from '@/hooks/useLockDeviceRealtime';
 import { AccessControlDevice } from '@/types/facility.types';
+import { isSupportsRemoteLockEnabled } from '@/utils/unitLock.utils';
+import {
+  computeOpenUntilUnixSec,
+  isSupportsWidgetTimedOpenEnabled,
+  WIDGET_TIMED_OPEN_MAX_MINUTES,
+} from '@/utils/accessControlOpen.utils';
 import { getApiErrorMessage } from '@/utils/apiError.utils';
 import { shouldRefreshDeviceListForPayload } from '@/utils/deviceStatusWs.utils';
 import { useToast } from '@/contexts/ToastContext';
@@ -34,13 +40,16 @@ interface GateDevice {
   isOpen: boolean;
   /** When false, cloud must not send CLOSE / remote lock (close on site). */
   supportsRemoteLock: boolean;
+  /** When true, widget may send timed OPEN with open_until. */
+  supportsWidgetTimedOpen: boolean;
   lastActivity: Date;
-  holdUntil?: Date;
+  /** Display hint when a timed open command was issued (from open_until). */
+  openUntilEnd?: Date;
   deviceType: 'gate' | 'elevator' | 'door';
 }
 
-const HOLD_REMINDER_TOOLTIP =
-  'Unlocks the gate. Timer is a local reminder only; re-lock behavior depends on hardware.';
+const TIMED_OPEN_TOOLTIP =
+  'Opens the gate and sends open_until (UTC unix time) so hardware can auto-close at the chosen time.';
 
 const MANUAL_CLOSE_HINT = 'Close manually at the gate — remote lock is not enabled for this hardware.';
 
@@ -68,7 +77,8 @@ const transformToGateDevice = (device: AccessControlDevice): GateDevice => {
     facilityId: device.facility_id ?? '',
     status: device.status,
     isOpen: !device.is_locked,
-    supportsRemoteLock: device.supports_remote_lock === true,
+    supportsRemoteLock: isSupportsRemoteLockEnabled(device.supports_remote_lock),
+    supportsWidgetTimedOpen: isSupportsWidgetTimedOpenEnabled(device.supports_widget_timed_open),
     lastActivity: device.last_activity ? new Date(device.last_activity) : new Date(),
     deviceType: device.device_type,
   };
@@ -201,10 +211,11 @@ export const RemoteGateWidget: React.FC<RemoteGateWidgetProps> = ({
     [size]
   );
 
-  const handleGateOperation = async (operation: 'open' | 'close' | 'hold') => {
+  const handleGateOperation = async (operation: 'open' | 'close' | 'timed-open') => {
     const gate = gates.find(g => g.id === selectedGate);
     if (!gate || gate.status !== 'online') return;
-    if ((operation === 'open' || operation === 'hold') && gate.isOpen) return;
+    if ((operation === 'open' || operation === 'timed-open') && gate.isOpen) return;
+    if (operation === 'timed-open' && !gate.supportsWidgetTimedOpen) return;
     if (operation === 'close' && !gate.supportsRemoteLock) {
       addToast({
         type: 'info',
@@ -220,10 +231,18 @@ export const RemoteGateWidget: React.FC<RemoteGateWidgetProps> = ({
     try {
       const lockStatus =
         operation === 'close' ? 'locked' : 'unlocked';
-      await apiService.updateAccessControlLockStatus(selectedGate, lockStatus);
+      const openUntil =
+        operation === 'timed-open' ? computeOpenUntilUnixSec(holdDuration) : undefined;
+      if (openUntil != null) {
+        await apiService.updateAccessControlLockStatus(selectedGate, lockStatus, {
+          open_until: openUntil,
+        });
+      } else {
+        await apiService.updateAccessControlLockStatus(selectedGate, lockStatus);
+      }
       await loadGates();
 
-      if (operation === 'open' || operation === 'hold') {
+      if (operation === 'open' || operation === 'timed-open') {
         const gateId = selectedGate;
         pendingGateOpenIdRef.current = gateId;
         gateOpenAckCancelRef.current?.();
@@ -242,13 +261,13 @@ export const RemoteGateWidget: React.FC<RemoteGateWidgetProps> = ({
         );
       }
 
-      if (operation === 'hold') {
+      if (operation === 'timed-open' && openUntil != null) {
         setGates((prev) =>
           prev.map((g) =>
             g.id === selectedGate
               ? {
                   ...g,
-                  holdUntil: new Date(Date.now() + holdDuration * 60 * 1000),
+                  openUntilEnd: new Date(openUntil * 1000),
                 }
               : g
           )
@@ -299,21 +318,27 @@ export const RemoteGateWidget: React.FC<RemoteGateWidgetProps> = ({
       onRemove={onRemove}
       readOnly={readOnly}
       enhancedMenu={
+        selectedGateData?.supportsWidgetTimedOpen ? (
         <div className="space-y-1">
           <div className="px-3 py-2">
             <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">
-              Hold Duration (minutes)
+              Timed open duration (minutes)
             </label>
             <input
               type="number"
               min="1"
-              max="60"
+              max={WIDGET_TIMED_OPEN_MAX_MINUTES}
               value={holdDuration}
-              onChange={(e) => setHoldDuration(parseInt(e.target.value) || 5)}
+              onChange={(e) =>
+                setHoldDuration(
+                  Math.max(1, Math.min(WIDGET_TIMED_OPEN_MAX_MINUTES, parseInt(e.target.value, 10) || 5)),
+                )
+              }
               className="w-full px-2 py-1 text-xs border border-gray-300 dark:border-gray-600 rounded bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
             />
           </div>
         </div>
+        ) : undefined
       }
     >
       {/* All-facilities mode requires a single facility selection */}
@@ -472,12 +497,12 @@ export const RemoteGateWidget: React.FC<RemoteGateWidgetProps> = ({
                 absoluteStyle: 'date',
               })}
             </p>
-            {selectedGateData.holdUntil && (
+            {selectedGateData.openUntilEnd && (
               <p
                 className="mt-0.5 text-[10px] text-blue-600 dark:text-blue-400 truncate"
-                title={`Local reminder until ${formatTime(selectedGateData.holdUntil)}`}
+                title={`Timed open until ${formatTime(selectedGateData.openUntilEnd)} (UTC)`}
               >
-                Reminder until {formatTime(selectedGateData.holdUntil)}
+                Open until {formatTime(selectedGateData.openUntilEnd)}
               </p>
             )}
           </div>
@@ -497,27 +522,29 @@ export const RemoteGateWidget: React.FC<RemoteGateWidgetProps> = ({
                   <span>{isOperating ? 'Opening...' : 'Open Once'}</span>
                 </button>
 
+                {selectedGateData.supportsWidgetTimedOpen && (
                 <div className="flex items-stretch gap-1">
                   <button
                     type="button"
-                    onClick={() => handleGateOperation('hold')}
+                    onClick={() => handleGateOperation('timed-open')}
                     disabled={isOperating || selectedGateData.isOpen}
-                    title={HOLD_REMINDER_TOOLTIP}
+                    title={TIMED_OPEN_TOOLTIP}
                     className="min-w-0 flex-1 flex items-center justify-center gap-2 py-2 px-3 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-400 text-white rounded-lg text-sm transition-colors disabled:cursor-not-allowed"
                   >
                     <ClockIcon className="h-4 w-4 shrink-0" />
                     <span className="truncate">
-                      {isOperating ? 'Setting...' : `Unlock & remind (${holdDuration}m)`}
+                      {isOperating ? 'Opening...' : `Open for ${holdDuration}m`}
                     </span>
                   </button>
                   <span
                     className="inline-flex shrink-0 items-center justify-center rounded-lg border border-gray-200 bg-gray-50 px-2 text-gray-400 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-500"
-                    title={HOLD_REMINDER_TOOLTIP}
-                    aria-label={HOLD_REMINDER_TOOLTIP}
+                    title={TIMED_OPEN_TOOLTIP}
+                    aria-label={TIMED_OPEN_TOOLTIP}
                   >
                     <InformationCircleIcon className="h-4 w-4" aria-hidden />
                   </span>
                 </div>
+                )}
 
                 {selectedGateData.isOpen && selectedGateData.supportsRemoteLock && (
                   <button

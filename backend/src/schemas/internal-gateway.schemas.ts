@@ -105,6 +105,7 @@ const accessInventoryFields = {
   location_description: Joi.string().trim().max(255).optional(),
   online: Joi.boolean().optional(),
   locked: Joi.boolean().optional(),
+  access_methods: Joi.array().items(Joi.string().valid('app', 'keypad', 'fob')).min(1).optional(),
   last_seen: Joi.alternatives().try(Joi.string().isoDate(), Joi.date()).optional(),
 };
 
@@ -174,6 +175,7 @@ const accessStateFields = {
   relay_channel: Joi.number().integer().min(1).max(8).default(1),
   online: Joi.boolean().optional(),
   locked: Joi.boolean().optional(),
+  access_methods: Joi.array().items(Joi.string().valid('app', 'keypad', 'fob')).min(1).optional(),
   last_seen: Joi.alternatives().try(Joi.string().isoDate(), Joi.date()).optional(),
 };
 

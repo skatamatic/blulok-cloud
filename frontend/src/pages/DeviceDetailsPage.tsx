@@ -7,10 +7,12 @@ import { useAuth } from '@/contexts/AuthContext';
 import { UserRole } from '@/types/auth.types';
 import { EffectiveAccessCode, AccessMethod } from '@/types/facility.types';
 import { useDetailsBackNavigation, replaceSearchParams } from '@/hooks/useBackNavigation';
-import { canRequestRemoteUnlock, isLockTransitionPending } from '@/utils/unitLock.utils';
+import { canRequestRemoteLock, canRequestRemoteUnlock, isLockTransitionPending, isSupportsRemoteLockEnabled } from '@/utils/unitLock.utils';
 import { lockHardwareFeedbackToasts } from '@/utils/lockHardwareFeedback.constants';
 import { useRemoteUnlockAction } from '@/hooks/useRemoteUnlockAction';
 import { resolveLockTimeoutMsForFacility } from '@/utils/facilityLockTimeout.utils';
+import { startLockHardwareFeedbackWatch } from '@/utils/lockHardwareFeedback.utils';
+import { getApiErrorMessage } from '@/utils/apiError.utils';
 import { useGlobalFacility } from '@/contexts/GlobalFacilityContext';
 import { useLockDeviceRealtime } from '@/hooks/useLockDeviceRealtime';
 import type { LockDeviceSnapshot } from '@/utils/deviceStatusWs.utils';
@@ -32,7 +34,7 @@ import {
   DetailsPageShell,
   DetailsTabNav,
 } from '@/components/Common/DetailsPageLayout';
-import { detailsBtnSecondarySm, detailsTabCountBadgeClass, detailsUnlockButtonClass } from '@/components/Common/details-page.styles';
+import { detailsBtnSecondarySm, detailsBtnDangerSm, detailsTabCountBadgeClass, detailsUnlockButtonClass } from '@/components/Common/details-page.styles';
 import { DeviceDetailsOverview } from '@/components/Devices/DeviceDetailsOverview';
 import { loadAccessGroupRefsForDevice } from '@/utils/access-groups-load.utils';
 import type { UnitAccessGroupRef } from '@/utils/device-group-membership.utils';
@@ -351,7 +353,7 @@ export default function DeviceDetailsPage() {
         // Normalize temperature to ensure it's a number
         const normalizedDevice = {
           ...response.device,
-          supports_remote_lock: Boolean((response.device as { supports_remote_lock?: boolean }).supports_remote_lock),
+          supports_remote_lock: isSupportsRemoteLockEnabled((response.device as { supports_remote_lock?: unknown }).supports_remote_lock),
           temperature: response.device.temperature !== undefined && response.device.temperature !== null
             ? (() => {
                 const temp = typeof response.device.temperature === 'number'
@@ -387,7 +389,7 @@ export default function DeviceDetailsPage() {
           gateway_name: ac.gateway_name,
           location_description: ac.location_description,
           metadata: ac.metadata,
-          supports_remote_lock: Boolean(ac.supports_remote_lock),
+          supports_remote_lock: isSupportsRemoteLockEnabled(ac.supports_remote_lock),
           facility_id: ac.facility_id ?? '',
           facility_name: ac.facility_name || String(ac.facility_id ?? ''),
           lock_status: ac.is_locked ? 'locked' : 'unlocked',
@@ -471,6 +473,77 @@ export default function DeviceDetailsPage() {
       refresh: refreshAfterUnlockAttempt,
     });
   }, [device, deviceId, deviceCategory, globalFacilities, selectedFacility, requestUnlock]);
+
+  const lockWatchCancelRef = useRef<(() => void) | null>(null);
+  const [lockSubmitting, setLockSubmitting] = useState(false);
+
+  useEffect(() => () => lockWatchCancelRef.current?.(), []);
+
+  const handleRemoteLock = useCallback(async () => {
+    if (!device || !deviceId || !canRequestRemoteLock(device.lock_status, device.supports_remote_lock)) return;
+    if (deviceCategory === 'access_control' && device.device_status !== 'online') return;
+    if (isLockTransitionPending(device.lock_status) || lockSubmitting || isSubmitting(deviceId)) return;
+
+    const previousStatus = device.lock_status ?? 'unlocked';
+    const facilityForTimeout =
+      globalFacilities.find((f) => f.id === device.facility_id) ?? selectedFacility;
+    const feedbackTimeoutMs = resolveLockTimeoutMsForFacility(facilityForTimeout);
+    const oneShot = feedbackTimeoutMs === 0;
+
+    setLockSubmitting(true);
+    const patchLockStatus = (lockStatus: DeviceDetails['lock_status']) => {
+      setDevice((prev) => (prev ? { ...prev, lock_status: lockStatus } : prev));
+    };
+
+    if (!oneShot) {
+      patchLockStatus('locking');
+      lockWatchCancelRef.current?.();
+      lockWatchCancelRef.current = startLockHardwareFeedbackWatch(
+        'locked',
+        () => deviceLockStatusRef.current,
+        () => {
+          patchLockStatus(previousStatus as DeviceDetails['lock_status']);
+          lockWatchCancelRef.current = null;
+          void loadDeviceDetails();
+          addToast(lockHardwareFeedbackToasts.failedToUpdateLockStatus());
+        },
+        feedbackTimeoutMs,
+      );
+    }
+
+    try {
+      if (deviceCategory === 'blulok') {
+        await apiService.updateLockStatus(device.id, 'locked');
+      } else {
+        await apiService.updateAccessControlLockStatus(device.id, 'locked');
+      }
+      addToast({
+        type: 'success',
+        title: deviceCategory === 'access_control' ? 'Close command sent' : 'Lock command sent',
+      });
+      await loadDeviceDetails();
+    } catch (error: unknown) {
+      lockWatchCancelRef.current?.();
+      lockWatchCancelRef.current = null;
+      patchLockStatus(previousStatus as DeviceDetails['lock_status']);
+      addToast({
+        ...lockHardwareFeedbackToasts.failedToUpdateLockStatus(),
+        message: getApiErrorMessage(error, 'Try again in a moment.'),
+      });
+      await loadDeviceDetails();
+    } finally {
+      setLockSubmitting(false);
+    }
+  }, [
+    addToast,
+    device,
+    deviceCategory,
+    deviceId,
+    globalFacilities,
+    isSubmitting,
+    lockSubmitting,
+    selectedFacility,
+  ]);
 
   const loadDenylist = async () => {
     if (!deviceId || deviceCategory !== 'blulok') return;
@@ -643,6 +716,7 @@ export default function DeviceDetailsPage() {
                 !canRequestRemoteUnlock(device.lock_status) ||
                 isLockTransitionPending(device.lock_status) ||
                 isSubmitting(deviceId) ||
+                lockSubmitting ||
                 (deviceCategory === 'access_control' && device.device_status !== 'online')
               }
               onClick={() => void handleRemoteUnlock()}
@@ -655,9 +729,26 @@ export default function DeviceDetailsPage() {
               {isLockTransitionPending(device.lock_status) || isSubmitting(deviceId)
                 ? 'Unlocking…'
                 : canRequestRemoteUnlock(device.lock_status)
-                  ? 'Unlock'
-                  : 'Unlocked'}
+                  ? deviceCategory === 'access_control' ? 'Open' : 'Unlock'
+                  : deviceCategory === 'access_control' ? 'Opened' : 'Unlocked'}
               </button>
+              {canRequestRemoteLock(device.lock_status, device.supports_remote_lock) && (
+                <button
+                  type="button"
+                  disabled={
+                    isLockTransitionPending(device.lock_status) ||
+                    isSubmitting(deviceId) ||
+                    lockSubmitting ||
+                    (deviceCategory === 'access_control' && device.device_status !== 'online')
+                  }
+                  onClick={() => void handleRemoteLock()}
+                  className={detailsBtnDangerSm}
+                >
+                  {device.lock_status === 'locking' || lockSubmitting
+                    ? deviceCategory === 'access_control' ? 'Closing…' : 'Locking…'
+                    : deviceCategory === 'access_control' ? 'Close' : 'Lock'}
+                </button>
+              )}
             </div>
           ) : undefined
         }

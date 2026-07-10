@@ -781,6 +781,31 @@ function assertLockCommandExpiresAt(cmd, expectedTimeoutSec, slackSec = 15) {
   }
 }
 
+/** UNLOCK with timed open must include open_until (unix UTC seconds) within slack of expected. */
+function assertLockCommandOpenUntil(cmd, expectedOpenUntil, slackSec = 15) {
+  if (!cmd || cmd.cmd_type !== 'UNLOCK') {
+    throw new Error(`Expected UNLOCK command, got ${JSON.stringify(cmd)}`);
+  }
+  if (typeof cmd.open_until !== 'number') {
+    throw new Error(`Timed UNLOCK missing numeric open_until: ${JSON.stringify(cmd)}`);
+  }
+  if (Math.abs(cmd.open_until - expectedOpenUntil) > slackSec) {
+    throw new Error(
+      `open_until ${cmd.open_until} not within ${slackSec}s of expected ${expectedOpenUntil}`,
+    );
+  }
+}
+
+/** One-shot UNLOCK must omit open_until. */
+function assertLockCommandOmitsOpenUntil(cmd) {
+  if (!cmd || cmd.cmd_type !== 'UNLOCK') {
+    throw new Error(`Expected UNLOCK command, got ${JSON.stringify(cmd)}`);
+  }
+  if (cmd.open_until != null) {
+    throw new Error(`Expected no open_until on one-shot UNLOCK, got ${cmd.open_until}`);
+  }
+}
+
 // -------------------------
 // HTTP and WS helpers
 // -------------------------
@@ -5379,6 +5404,101 @@ async function run() {
       );
     }
     ok('WebSocket shows lock_status locked after gate re-closed (open-then-close cycle)');
+
+    heading('Access control timed open (open_until on UNLOCK JWT)');
+    step('Enable supports_widget_timed_open on access control device');
+    const timedOpenMeta = await axios.put(
+      `${API_BASE}/devices/access-control/${acForWs.id}/metadata`,
+      { supports_widget_timed_open: true },
+      { headers: authHeaders(token) },
+    );
+    if (timedOpenMeta.status !== 200 || timedOpenMeta.data?.success === false) {
+      closeDeviceStatusWatcher(acStatusWs);
+      closeDeviceStatusWatcher(deviceStatusWs);
+      throw new Error(
+        `Failed to enable widget timed open: ${timedOpenMeta.status} ${JSON.stringify(timedOpenMeta.data)}`,
+      );
+    }
+    ok('supports_widget_timed_open enabled on access control device');
+
+    const timedOpenDurationSec = 5 * 60;
+    const expectedOpenUntil = Math.floor(Date.now() / 1000) + timedOpenDurationSec;
+    step('PUT /devices/access-control/:id/lock unlocked with open_until');
+    const expectTimedUnlockCmd = waitForCommand(
+      ws,
+      (cmd) =>
+        cmd.cmd_type === 'UNLOCK'
+        && (String(cmd.device_id) === String(accessSerialMulti)
+          || String(cmd.device_id) === String(acForWs.id)),
+    );
+    const timedUnlockHttp = await axios.put(
+      `${API_BASE}/devices/access-control/${acForWs.id}/lock`,
+      { lock_status: 'unlocked', open_until: expectedOpenUntil },
+      { headers: authHeaders(token) },
+    );
+    if (timedUnlockHttp.status !== 200 || timedUnlockHttp.data?.success === false) {
+      closeDeviceStatusWatcher(acStatusWs);
+      closeDeviceStatusWatcher(deviceStatusWs);
+      throw new Error(
+        `Timed access-control unlock failed: ${timedUnlockHttp.status} ${JSON.stringify(timedUnlockHttp.data)}`,
+      );
+    }
+    const timedUnlockCmd = await expectTimedUnlockCmd;
+    if (!timedUnlockCmd) {
+      closeDeviceStatusWatcher(acStatusWs);
+      closeDeviceStatusWatcher(deviceStatusWs);
+      throw new Error('Did not receive UNLOCK on gateway WebSocket for timed open');
+    }
+    assertLockCommandOpenUntil(timedUnlockCmd, expectedOpenUntil);
+    ok('Gateway UNLOCK JWT includes open_until for timed open');
+
+    step('Reject open_until when supports_widget_timed_open is disabled');
+    await axios.put(
+      `${API_BASE}/devices/access-control/${acForWs.id}/metadata`,
+      { supports_widget_timed_open: false },
+      { headers: authHeaders(token) },
+    );
+    let rejectedTimed = false;
+    try {
+      await axios.put(
+        `${API_BASE}/devices/access-control/${acForWs.id}/lock`,
+        { lock_status: 'unlocked', open_until: expectedOpenUntil },
+        { headers: authHeaders(token) },
+      );
+    } catch (err) {
+      const status = err?.response?.status;
+      if (status === 502 || status === 400) rejectedTimed = true;
+    }
+    if (!rejectedTimed) {
+      closeDeviceStatusWatcher(acStatusWs);
+      closeDeviceStatusWatcher(deviceStatusWs);
+      throw new Error('Expected timed open to be rejected when supports_widget_timed_open is false');
+    }
+    ok('Timed open rejected when widget timed open is disabled on device');
+
+    step('One-shot unlock omits open_until');
+    const expectOneShotAfterTimed = waitForCommand(
+      ws,
+      (cmd) =>
+        cmd.cmd_type === 'UNLOCK'
+        && (String(cmd.device_id) === String(accessSerialMulti)
+          || String(cmd.device_id) === String(acForWs.id)),
+    );
+    const oneShotUnlock = await axios.put(
+      `${API_BASE}/devices/access-control/${acForWs.id}/lock`,
+      { lock_status: 'unlocked' },
+      { headers: authHeaders(token) },
+    );
+    if (oneShotUnlock.status !== 200 || oneShotUnlock.data?.success === false) {
+      closeDeviceStatusWatcher(acStatusWs);
+      closeDeviceStatusWatcher(deviceStatusWs);
+      throw new Error(
+        `One-shot unlock after timed open test failed: ${oneShotUnlock.status}`,
+      );
+    }
+    const oneShotCmd = await expectOneShotAfterTimed;
+    assertLockCommandOmitsOpenUntil(oneShotCmd);
+    ok('One-shot UNLOCK JWT omits open_until');
 
     closeDeviceStatusWatcher(acStatusWs);
 

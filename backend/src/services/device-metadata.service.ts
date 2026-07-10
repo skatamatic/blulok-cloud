@@ -41,6 +41,7 @@ export interface UpdateAccessControlMetadataInput {
   device_type?: 'gate' | 'elevator' | 'door';
   access_methods?: ('app' | 'keypad' | 'fob')[];
   supports_remote_lock?: boolean;
+  supports_widget_timed_open?: boolean;
   device_settings?: Record<string, unknown>;
   metadata?: Record<string, unknown>;
 }
@@ -282,6 +283,7 @@ export class DeviceMetadataService {
       device_type: input.device_type,
       access_methods: input.access_methods,
       supports_remote_lock: input.supports_remote_lock,
+      supports_widget_timed_open: input.supports_widget_timed_open,
       device_settings:
         input.device_settings !== undefined ||
         input.device_serial !== undefined ||

@@ -933,7 +933,10 @@ export class DeviceSyncService {
             location_description:
               item.location_description?.trim() || `Gateway relay ${relayChannel}`,
             relay_channel: relayChannel,
-            access_methods: ['keypad'],
+            access_methods:
+              Array.isArray(item.access_methods) && item.access_methods.length > 0
+                ? item.access_methods
+                : ['keypad'],
             metadata: {
               createdFromGatewaySync: true,
             },

@@ -502,6 +502,37 @@ describe('Internal Gateway Routes', () => {
       );
     });
 
+    it('accepts access_methods on access_control inventory items and passes them through', async () => {
+      syncAccessDeviceInventoryMock.mockClear();
+
+      const res = await request(app)
+        .post('/api/v1/internal/gateway/devices/inventory')
+        .set('Authorization', `Bearer ${testData.users.facilityAdmin.token}`)
+        .send({
+          facility_id: 'facility-1',
+          devices: [{
+            kind: 'access_control',
+            access_id: 'f759bd50-a70e-5bba-81c5-25e9a7c695c1',
+            relay_channel: 1,
+            online: true,
+            locked: false,
+            access_methods: ['keypad', 'app'],
+            last_seen: '2026-07-09T14:13:50.390007Z',
+          }],
+        });
+
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+      expect(syncAccessDeviceInventoryMock).toHaveBeenCalledWith(
+        'gateway-1',
+        'facility-1',
+        [expect.objectContaining({
+          access_id: 'f759bd50-a70e-5bba-81c5-25e9a7c695c1',
+          access_methods: ['keypad', 'app'],
+        })],
+      );
+    });
+
     it('performs mixed lock and access_control inventory sync', async () => {
       syncDeviceInventoryMock.mockClear();
       syncAccessDeviceInventoryMock.mockClear();

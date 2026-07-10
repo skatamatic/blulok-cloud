@@ -99,6 +99,7 @@ import {
   updateAccessControlMetadataSchema,
   bluLokDeviceSchema,
   lockStatusSchema,
+  accessControlLockCommandSchema,
   deviceStatusSchema,
   assignBlulokDeviceBodySchema,
   devicesListResponseSchema,
@@ -1230,7 +1231,7 @@ registerPut(
     summary: 'Issue access control lock or unlock command',
     security: 'bearer',
     params: deviceIdParamSchema,
-    body: lockStatusSchema,
+    body: accessControlLockCommandSchema,
     responses: {
       200: lockCommandResponseSchema,
       400: errorEnvelopeSchema,
@@ -1285,6 +1286,7 @@ registerPut(
           userName: [user.firstName, user.lastName].filter(Boolean).join(' ').trim() || user.email || 'User',
           role: user.role,
         },
+        value.open_until !== undefined ? { openUntil: value.open_until } : undefined,
       );
 
       if (!result.success) {

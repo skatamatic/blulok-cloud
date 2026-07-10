@@ -63,6 +63,7 @@ describe('RemoteGateWidget', () => {
       relay_channel: 1,
       status: 'online',
       is_locked: true, // Closed
+      supports_widget_timed_open: true,
       last_activity: new Date().toISOString(),
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
@@ -457,7 +458,35 @@ describe('RemoteGateWidget', () => {
       }, { timeout: 3000 });
     });
 
-    it('holds gate open for specified duration', async () => {
+    it('enables Close Gate when supports_remote_lock is MySQL-style 1', async () => {
+      const openDock = {
+        ...mockAccessControlDevices[1],
+        supports_remote_lock: 1 as unknown as boolean,
+      };
+      mockGetDevices.mockResolvedValue({
+        devices: [openDock],
+        total: 1,
+      });
+
+      renderWithProviders(
+        <RemoteGateWidget
+          id="test-widget"
+          title="Remote Gate Control"
+          initialSize="large"
+        />
+      );
+
+      await waitFor(() => {
+        expect(screen.getByText('Close Gate')).toBeInTheDocument();
+      });
+
+      expect(screen.getByRole('button', { name: /Close Gate/i })).not.toBeDisabled();
+    });
+
+    it('opens gate for a duration with open_until when widget timed open is enabled', async () => {
+      const nowSec = 1_700_000_000;
+      jest.spyOn(Date, 'now').mockReturnValue(nowSec * 1000);
+
       mockGetDevices
         .mockResolvedValueOnce({
           devices: mockAccessControlDevices,
@@ -477,22 +506,49 @@ describe('RemoteGateWidget', () => {
       );
       
       await waitFor(() => {
-        expect(screen.getByText(/Unlock & remind/)).toBeInTheDocument();
+        expect(screen.getByText(/Open for 5m/)).toBeInTheDocument();
       });
       
-      const holdButton = screen.getByText(/Unlock & remind/);
+      const holdButton = screen.getByText(/Open for 5m/);
       
       await act(async () => {
         fireEvent.click(holdButton);
       });
       
       await waitFor(() => {
-        expect(mockUpdateAccessControlLockStatus).toHaveBeenCalledWith('gate-1', 'unlocked');
+        expect(mockUpdateAccessControlLockStatus).toHaveBeenCalledWith(
+          'gate-1',
+          'unlocked',
+          { open_until: nowSec + 5 * 60 },
+        );
       });
       
       await waitFor(() => {
-        expect(screen.getByText(/Reminder until/)).toBeInTheDocument();
+        expect(screen.getByText(/Open until/)).toBeInTheDocument();
       }, { timeout: 3000 });
+
+      jest.restoreAllMocks();
+    });
+
+    it('hides timed open control when widget timed open is disabled', async () => {
+      mockGetDevices.mockResolvedValue({
+        devices: [{ ...mockAccessControlDevices[0], supports_widget_timed_open: false }],
+        total: 1,
+      });
+
+      renderWithProviders(
+        <RemoteGateWidget
+          id="test-widget"
+          title="Remote Gate Control"
+          initialSize="large"
+        />
+      );
+
+      await waitFor(() => {
+        expect(screen.getByText('Open Once')).toBeInTheDocument();
+      });
+
+      expect(screen.queryByText(/Open for \d+m/)).not.toBeInTheDocument();
     });
 
     it('shows offline gate in medium layout when no gates are online', async () => {

@@ -516,9 +516,70 @@ describe('LockCommandService', () => {
       const svc = LockCommandService.getInstance();
       const res = await svc.issueAccessControlLockCommand('ac-1', 'unlocked');
       expect(res.success).toBe(true);
-      expect(sendLockCommand).toHaveBeenCalledWith('gw-1', 'ac-1', 'OPEN');
+      expect(sendLockCommand).toHaveBeenCalledWith('gw-1', 'ac-1', 'OPEN', undefined);
       expect(mockUpdateAccessControlDevice).not.toHaveBeenCalled();
       expect(svc.peekCommandAttribution('ac-1')).toBeNull();
+    });
+
+    it('forwards open_until on timed unlock when device supports widget timed open', async () => {
+      mockKnex.mockImplementation((table: string) => {
+        if (table === 'facilities') {
+          return {
+            where: jest.fn().mockReturnThis(),
+            select: jest.fn().mockReturnThis(),
+            first: jest.fn().mockResolvedValue({ lock_command_timeout_sec: 10 }),
+          };
+        }
+        if (table === 'access_control_devices') {
+          return buildJoinFirst({
+            id: 'ac-1',
+            gateway_id: 'gw-1',
+            facility_id: 'fac-1',
+            is_locked: true,
+            supports_remote_lock: false,
+            supports_widget_timed_open: true,
+          });
+        }
+        return buildJoinFirst(null);
+      });
+      sendLockCommand.mockResolvedValueOnce({ success: true });
+      const svc = LockCommandService.getInstance();
+      const openUntil = Math.floor(Date.now() / 1000) + 300;
+      const res = await svc.issueAccessControlLockCommand('ac-1', 'unlocked', undefined, {
+        openUntil,
+      });
+      expect(res.success).toBe(true);
+      expect(sendLockCommand).toHaveBeenCalledWith('gw-1', 'ac-1', 'OPEN', { open_until: openUntil });
+    });
+
+    it('rejects open_until when widget timed open is disabled on device', async () => {
+      mockKnex.mockImplementation((table: string) => {
+        if (table === 'facilities') {
+          return {
+            where: jest.fn().mockReturnThis(),
+            select: jest.fn().mockReturnThis(),
+            first: jest.fn().mockResolvedValue({ lock_command_timeout_sec: 10 }),
+          };
+        }
+        if (table === 'access_control_devices') {
+          return buildJoinFirst({
+            id: 'ac-1',
+            gateway_id: 'gw-1',
+            facility_id: 'fac-1',
+            is_locked: true,
+            supports_remote_lock: false,
+            supports_widget_timed_open: false,
+          });
+        }
+        return buildJoinFirst(null);
+      });
+      const svc = LockCommandService.getInstance();
+      const res = await svc.issueAccessControlLockCommand('ac-1', 'unlocked', undefined, {
+        openUntil: Math.floor(Date.now() / 1000) + 300,
+      });
+      expect(res.success).toBe(false);
+      expect(res.message).toMatch(/not enabled/i);
+      expect(sendLockCommand).not.toHaveBeenCalled();
     });
 
     it('sends CLOSE when requesting locked', async () => {
@@ -526,7 +587,7 @@ describe('LockCommandService', () => {
       const svc = LockCommandService.getInstance();
       const res = await svc.issueAccessControlLockCommand('ac-1', 'locked');
       expect(res.success).toBe(true);
-      expect(sendLockCommand).toHaveBeenCalledWith('gw-1', 'ac-1', 'CLOSE');
+      expect(sendLockCommand).toHaveBeenCalledWith('gw-1', 'ac-1', 'CLOSE', undefined);
       expect(mockUpdateAccessControlDevice).not.toHaveBeenCalled();
     });
 

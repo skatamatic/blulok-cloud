@@ -42,6 +42,7 @@ import {
 } from '@/utils/blulokDeviceDisplay.utils';
 import { readDisplayName } from '@/utils/deviceMetadataForm.utils';
 import { formatDateTime } from '@/utils/datetime.utils';
+import { isSupportsRemoteLockEnabled } from '@/utils/unitLock.utils';
 import { getUserDisplayName, getUserInitials, shouldShowUserEmail } from '@/utils/userDisplay.utils';
 import { DeviceConnectivityOverview } from '@/components/Devices/DeviceConnectivityOverview';
 import type { EffectiveAccessCode, AccessMethod } from '@/types/facility.types';
@@ -501,7 +502,7 @@ export function DeviceDetailsOverview({
         </div>
 
         {(deviceCategory === 'access_control' || deviceCategory === 'blulok') &&
-          device.supports_remote_lock !== true && (
+          !isSupportsRemoteLockEnabled(device.supports_remote_lock) && (
             <p className="border-t border-gray-100 px-5 py-3 text-xs text-gray-500 dark:border-gray-700/80 dark:text-gray-400">
               Remote control from the cloud is unlock-only for this hardware. Re-lock on site.
             </p>

@@ -64,6 +64,8 @@ export interface AccessControlDevice {
   is_locked: boolean;
   /** When true, cloud may send remote lock (CLOSE). Default false — unlock-only from cloud. */
   supports_remote_lock?: boolean;
+  /** When true, Remote Gate widget may send timed OPEN with open_until (unix UTC seconds). */
+  supports_widget_timed_open?: boolean;
   last_activity?: string;
   last_seen?: string;
   device_settings?: Record<string, unknown>;
@@ -83,6 +85,7 @@ export interface CreateAccessControlDevicePayload {
   relay_channel: number;
   access_methods?: AccessMethod[];
   supports_remote_lock?: boolean;
+  supports_widget_timed_open?: boolean;
   device_settings?: Record<string, unknown>;
 }
 
@@ -95,6 +98,7 @@ export interface UpdateAccessControlDevicePayload {
   status?: AccessControlDevice['status'];
   is_locked?: boolean;
   supports_remote_lock?: boolean;
+  supports_widget_timed_open?: boolean;
   access_methods?: AccessMethod[];
   device_settings?: Record<string, unknown>;
   metadata?: Record<string, unknown>;
@@ -116,6 +120,7 @@ export interface UpdateAccessControlDeviceMetadataPayload {
   relay_channel?: number;
   device_type?: 'gate' | 'elevator' | 'door';
   supports_remote_lock?: boolean;
+  supports_widget_timed_open?: boolean;
   access_methods?: AccessMethod[];
   device_settings?: Record<string, unknown>;
   metadata?: Record<string, unknown>;

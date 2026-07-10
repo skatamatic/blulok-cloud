@@ -1,3 +1,13 @@
+/** Normalize DB/API booleans (true, 1, "1") for supports_remote_lock. */
+export function isSupportsRemoteLockEnabled(value: unknown): boolean {
+  if (value === true || value === 1) return true;
+  if (typeof value === 'string') {
+    const normalized = value.trim().toLowerCase();
+    return normalized === 'true' || normalized === '1';
+  }
+  return false;
+}
+
 /**
  * Remote unlock is only offered when the device reports fully locked.
  * Transitional states block new commands.
@@ -69,9 +79,9 @@ export function canExecuteRemoteUnlock(input: RemoteUnlockDisabledReasonInput): 
  */
 export function canRequestRemoteLock(
   lockStatus: string | undefined,
-  supportsRemoteLock: boolean | undefined,
+  supportsRemoteLock: unknown,
 ): boolean {
-  return lockStatus === 'unlocked' && supportsRemoteLock === true;
+  return lockStatus === 'unlocked' && isSupportsRemoteLockEnabled(supportsRemoteLock);
 }
 
 export function isLockTransitionPending(lockStatus: string | undefined): boolean {

@@ -15,6 +15,8 @@ import {
   readLockNumber,
 } from '@/utils/deviceMetadataForm.utils';
 import { formatDateTime } from '@/utils/datetime.utils';
+import { isSupportsRemoteLockEnabled } from '@/utils/unitLock.utils';
+import { isSupportsWidgetTimedOpenEnabled } from '@/utils/accessControlOpen.utils';
 
 export type DeviceMetadataCategory = 'blulok' | 'access_control';
 
@@ -29,6 +31,7 @@ export interface EditDeviceMetadataSource {
   device_type?: 'gate' | 'elevator' | 'door';
   access_methods?: AccessMethod[];
   supports_remote_lock?: boolean;
+  supports_widget_timed_open?: boolean;
   firmware_version?: string;
   device_settings?: Record<string, unknown>;
   metadata?: Record<string, unknown>;
@@ -66,6 +69,7 @@ interface AccessControlForm {
   device_type: 'gate' | 'elevator' | 'door';
   access_methods: AccessMethod[];
   supports_remote_lock: boolean;
+  supports_widget_timed_open: boolean;
 }
 
 const RELAY_OPTIONS = [1, 2, 3, 4, 5, 6, 7, 8] as const;
@@ -98,6 +102,7 @@ export function EditDeviceMetadataModal({
     device_type: 'door',
     access_methods: ['app'],
     supports_remote_lock: false,
+    supports_widget_timed_open: false,
   });
   const [loading, setLoading] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
@@ -115,7 +120,7 @@ export function EditDeviceMetadataModal({
         display_name: readDisplayName(device.device_settings) || device.name || '',
         location_description:
           device.location_description ?? readLocationDescription(device.device_settings),
-        supports_remote_lock: device.supports_remote_lock === true,
+        supports_remote_lock: isSupportsRemoteLockEnabled(device.supports_remote_lock),
         firmware_version: device.firmware_version ?? '',
       });
     } else {
@@ -129,7 +134,8 @@ export function EditDeviceMetadataModal({
           device.access_methods && device.access_methods.length > 0
             ? device.access_methods
             : ['app'],
-        supports_remote_lock: device.supports_remote_lock === true,
+        supports_remote_lock: isSupportsRemoteLockEnabled(device.supports_remote_lock),
+        supports_widget_timed_open: isSupportsWidgetTimedOpenEnabled(device.supports_widget_timed_open),
       });
     }
     setAdvancedMetadataJson(
@@ -167,7 +173,7 @@ export function EditDeviceMetadataModal({
         bluForm.display_name.trim() !== readDisplayName(device.device_settings) ||
         bluForm.location_description.trim() !==
           (device.location_description ?? readLocationDescription(device.device_settings)).trim() ||
-        bluForm.supports_remote_lock !== (device.supports_remote_lock === true) ||
+        bluForm.supports_remote_lock !== isSupportsRemoteLockEnabled(device.supports_remote_lock) ||
         bluForm.firmware_version.trim() !== (device.firmware_version ?? '').trim() ||
         JSON.stringify(nextSettings) !== JSON.stringify(baseSettings) ||
         advancedMetadataJson !== JSON.stringify(device.metadata ?? {}, null, 2)
@@ -183,7 +189,9 @@ export function EditDeviceMetadataModal({
       acForm.device_serial.trim() !== device.device_serial.trim() ||
       acForm.relay_channel !== (device.relay_channel ?? 1) ||
       acForm.device_type !== (device.device_type ?? 'door') ||
-      acForm.supports_remote_lock !== (device.supports_remote_lock === true) ||
+      acForm.supports_remote_lock !== isSupportsRemoteLockEnabled(device.supports_remote_lock) ||
+      acForm.supports_widget_timed_open !==
+        isSupportsWidgetTimedOpenEnabled(device.supports_widget_timed_open) ||
       methodsChanged ||
       advancedMetadataJson !== JSON.stringify(device.metadata ?? {}, null, 2)
     );
@@ -251,6 +259,7 @@ export function EditDeviceMetadataModal({
           device_type: acForm.device_type,
           access_methods: acForm.access_methods,
           supports_remote_lock: acForm.supports_remote_lock,
+          supports_widget_timed_open: acForm.supports_widget_timed_open,
           metadata: parsedMetadata,
         });
         sideEffects = res.sideEffects;
@@ -576,6 +585,19 @@ export function EditDeviceMetadataModal({
                     className="rounded border-gray-300 text-primary-600 focus:ring-primary-500"
                   />
                   Supports remote lock (CLOSE) from cloud
+                </label>
+              </div>
+              <div className="md:col-span-2">
+                <label className="inline-flex cursor-pointer items-center gap-2 text-sm text-gray-700 dark:text-gray-300">
+                  <input
+                    type="checkbox"
+                    checked={acForm.supports_widget_timed_open}
+                    onChange={(e) =>
+                      setAcForm((p) => ({ ...p, supports_widget_timed_open: e.target.checked }))
+                    }
+                    className="rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+                  />
+                  Enable timed open for Remote Gate widget (sends open_until to hardware)
                 </label>
               </div>
             </div>

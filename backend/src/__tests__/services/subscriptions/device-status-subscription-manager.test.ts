@@ -492,6 +492,8 @@ describe('DeviceStatusSubscriptionManager', () => {
       const payload = JSON.parse(mockWs.send.mock.calls[0][0]);
       expect(payload.data.devices[0].lock_status).toBe('locked');
     });
+
+    it('should not send update when subscription filters for a different device', async () => {
       const mockWs = { send: jest.fn(), readyState: 1 };
       
       (manager as any).watchers = new Map([

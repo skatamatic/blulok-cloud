@@ -269,6 +269,7 @@ export class HttpGateway extends BaseGateway {
           lockId: deviceId,
           command: apiCommand,
           ...(_params?.expires_at != null ? { expires_at: _params.expires_at } : {}),
+          ...(_params?.open_until != null ? { open_until: _params.open_until } : {}),
         }
       );
 

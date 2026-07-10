@@ -634,7 +634,7 @@ describe('DeviceDetailsPage', () => {
       expect(screen.getByRole('heading', { level: 1, name: 'Main Door' })).toBeInTheDocument();
     });
 
-    const button = screen.getByRole('button', { name: /Unlock/i });
+    const button = screen.getByRole('button', { name: /Open/i });
     fireEvent.click(button);
 
     await waitFor(() => {

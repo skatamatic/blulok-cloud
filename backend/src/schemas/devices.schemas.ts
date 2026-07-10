@@ -43,6 +43,7 @@ export const accessControlDeviceSchema = Joi.object({
   relay_channel: Joi.number().integer().min(1).max(8).required(),
   access_methods: Joi.array().items(Joi.string().valid('app', 'keypad', 'fob')).min(1).optional(),
   supports_remote_lock: Joi.boolean().optional(),
+  supports_widget_timed_open: Joi.boolean().optional(),
 });
 
 export const updateAccessControlDeviceSchema = Joi.object({
@@ -53,6 +54,7 @@ export const updateAccessControlDeviceSchema = Joi.object({
   status: Joi.string().valid('online', 'offline', 'error', 'maintenance').optional(),
   is_locked: Joi.boolean().optional(),
   supports_remote_lock: Joi.boolean().optional(),
+  supports_widget_timed_open: Joi.boolean().optional(),
   device_settings: Joi.object().optional(),
   metadata: Joi.object().optional(),
   access_methods: Joi.array().items(Joi.string().valid('app', 'keypad', 'fob')).min(1).optional(),
@@ -74,6 +76,7 @@ export const updateAccessControlMetadataSchema = Joi.object({
   relay_channel: Joi.number().integer().min(1).max(8).optional(),
   device_type: Joi.string().valid('door', 'gate', 'elevator').optional(),
   supports_remote_lock: Joi.boolean().optional(),
+  supports_widget_timed_open: Joi.boolean().optional(),
   device_settings: Joi.object().optional(),
   metadata: Joi.object().optional(),
   access_methods: Joi.array().items(Joi.string().valid('app', 'keypad', 'fob')).min(1).optional(),
@@ -103,6 +106,11 @@ export const bluLokDeviceSchema = Joi.object({
   .messages({
     'any.invalid': 'serial and device_serial must match when both are provided',
   });
+
+export const accessControlLockCommandSchema = Joi.object({
+  lock_status: Joi.string().valid('locked', 'unlocked', 'error').required(),
+  open_until: Joi.number().integer().min(1).optional(),
+});
 
 export const lockStatusSchema = Joi.object({
   lock_status: Joi.string().valid('locked', 'unlocked', 'error').required(),

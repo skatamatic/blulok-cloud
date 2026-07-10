@@ -6,7 +6,23 @@ import {
   getRemoteUnlockDisabledReason,
   isDeviceReachableForRemoteUnlock,
   isLockTransitionPending,
+  isSupportsRemoteLockEnabled,
 } from '@/utils/unitLock.utils';
+
+describe('isSupportsRemoteLockEnabled', () => {
+  it('accepts boolean true and MySQL-style 1', () => {
+    expect(isSupportsRemoteLockEnabled(true)).toBe(true);
+    expect(isSupportsRemoteLockEnabled(1)).toBe(true);
+    expect(isSupportsRemoteLockEnabled('1')).toBe(true);
+    expect(isSupportsRemoteLockEnabled('true')).toBe(true);
+  });
+
+  it('rejects falsey values', () => {
+    expect(isSupportsRemoteLockEnabled(false)).toBe(false);
+    expect(isSupportsRemoteLockEnabled(0)).toBe(false);
+    expect(isSupportsRemoteLockEnabled(undefined)).toBe(false);
+  });
+});
 
 describe('canRequestRemoteUnlock', () => {
   it('allows only locked', () => {
@@ -23,6 +39,7 @@ describe('canRequestRemoteUnlock', () => {
 describe('canRequestRemoteLock', () => {
   it('allows only when flag is true and status is unlocked', () => {
     expect(canRequestRemoteLock('unlocked', true)).toBe(true);
+    expect(canRequestRemoteLock('unlocked', 1)).toBe(true);
     expect(canRequestRemoteLock('unlocked', false)).toBe(false);
     expect(canRequestRemoteLock('unlocked', undefined)).toBe(false);
     expect(canRequestRemoteLock('locked', true)).toBe(false);

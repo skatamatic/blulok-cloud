@@ -28,6 +28,8 @@ export type LockUnlockPayload = JwtCommandPayload & {
   cmd_type: 'LOCK' | 'UNLOCK';
   device_id: string;
   expires_at?: number;
+  /** Wall time (unix UTC seconds) until an access-control open should remain active. */
+  open_until?: number;
 };
 
 export type DenylistAddPayload = JwtCommandPayload & {

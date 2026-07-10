@@ -101,6 +101,32 @@ describe('GatewayService.sendLockCommand', () => {
     jest.restoreAllMocks();
   });
 
+  it('includes open_until on UNLOCK JWT when timed open is requested', async () => {
+    const svc = GatewayService.getInstance();
+    const now = 1_700_000_000;
+    jest.spyOn(Date, 'now').mockReturnValue(now * 1000);
+    const openUntil = now + 300;
+
+    jest
+      .spyOn(
+        svc as unknown as { resolveDeviceIdForLockCommandJwt: (id: string) => Promise<string> },
+        'resolveDeviceIdForLockCommandJwt',
+      )
+      .mockResolvedValue('HW-SERIAL-1');
+
+    const result = await svc.sendLockCommand('gw-1', 'dev-1', 'OPEN', { open_until: openUntil });
+
+    expect(result.success).toBe(true);
+    expect(mockSignCommandJwt).toHaveBeenCalledWith({
+      cmd_type: 'UNLOCK',
+      device_id: 'HW-SERIAL-1',
+      expires_at: now + 120,
+      open_until: openUntil,
+    });
+
+    jest.restoreAllMocks();
+  });
+
   it('sends expires_at=0 when facility timeout is 0', async () => {
     mockDb.mockImplementation((table: string) => {
       if (table === 'gateways') {

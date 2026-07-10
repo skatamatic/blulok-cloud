@@ -264,6 +264,7 @@ export class LockCommandService {
     deviceId: string,
     requestedStatus: 'locked' | 'unlocked',
     initiator?: LockCommandInitiator,
+    options?: { openUntil?: number },
   ): Promise<{ success: boolean; message: string }> {
     const knex = (this.deviceModel as any).db.connection as import('knex').Knex;
     const deviceRow = await knex('access_control_devices')
@@ -274,12 +275,33 @@ export class LockCommandService {
         'gateways.facility_id',
         'access_control_devices.is_locked',
         'access_control_devices.supports_remote_lock',
+        'access_control_devices.supports_widget_timed_open',
       )
       .where('access_control_devices.id', deviceId)
       .first();
 
     if (!deviceRow) {
       return { success: false, message: 'Device not found' };
+    }
+
+    const { validateAccessControlOpenUntil } = await import('@/utils/access-control-open.utils');
+    const openUntilValidation = validateAccessControlOpenUntil(options?.openUntil, {
+      lockStatus: requestedStatus,
+      supportsWidgetTimedOpen: (deviceRow as { supports_widget_timed_open?: boolean })
+        .supports_widget_timed_open,
+    });
+    if (!openUntilValidation.ok) {
+      const message = openUntilValidation.message;
+      this.recordCommandFailure({
+        facilityId: String((deviceRow as { facility_id: string }).facility_id),
+        deviceId,
+        gatewayId: String((deviceRow as { gateway_id: string }).gateway_id),
+        requestedStatus,
+        errorMessage: message,
+        initiator,
+        deviceType: 'access_control',
+      });
+      return { success: false, message };
     }
 
     const supportsRemoteLock = Boolean((deviceRow as { supports_remote_lock?: boolean }).supports_remote_lock);
@@ -319,9 +341,18 @@ export class LockCommandService {
     }
 
     const command: 'OPEN' | 'CLOSE' = requestedStatus === 'locked' ? 'CLOSE' : 'OPEN';
+    const lockCommandOptions =
+      command === 'OPEN' && openUntilValidation.openUntil > 0
+        ? { open_until: openUntilValidation.openUntil }
+        : undefined;
 
     try {
-      const result = await this.gatewayService.sendLockCommand(gatewayId, deviceId, command);
+      const result = await this.gatewayService.sendLockCommand(
+        gatewayId,
+        deviceId,
+        command,
+        lockCommandOptions,
+      );
       if (!result.success) {
         const message = result.error || 'Gateway reported failure executing lock command';
         logger.warn('LockCommandService: access-control gateway command failed', {
