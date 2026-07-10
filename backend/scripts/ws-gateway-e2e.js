@@ -6063,6 +6063,50 @@ async function run() {
       (x) => x.unit_id === shadowUnit.id && x.denial_reason === 'denylist_blocked',
     );
     if (shadowUnitLeakedToTenant) throw new Error('Tenant leaked secondary-unit event they should not see');
+
+    step('Validating tenant REST access-history includes non-self unit events on assigned unit');
+    const tenantLogs = tenantHistory.data.logs;
+    const tenantPrimaryUnitLogs = tenantLogs.filter((x) => x.unit_id === unitId);
+
+    const tenantAdminOpen = tenantPrimaryUnitLogs.find(
+      (x) => x.method === 'admin_remote' && x.user_id === platformAdmin.id && x.success === true,
+    );
+    if (!tenantAdminOpen) {
+      throw new Error('Tenant REST access-history missing admin_remote_open on assigned unit (performed by platform admin)');
+    }
+
+    const tenantKeypadDenied = tenantPrimaryUnitLogs.find(
+      (x) => x.action === 'unlock_attempt' && x.method === 'keypad' && x.denial_reason === 'out_of_schedule',
+    );
+    if (!tenantKeypadDenied) {
+      throw new Error('Tenant REST access-history missing keypad out_of_schedule event on assigned unit');
+    }
+
+    const tenantSharedDenied = tenantPrimaryUnitLogs.find(
+      (x) => x.denial_reason === 'route_pass_invalid_signature' && x.user_id === share1Id,
+    );
+    if (!tenantSharedDenied) {
+      throw new Error('Tenant REST access-history missing shared-user route_pass denial on assigned unit');
+    }
+
+    const tenantSelfGranted = tenantPrimaryUnitLogs.find(
+      (x) => x.user_id === primaryId && x.success === true && x.method === 'app',
+    );
+    if (!tenantSelfGranted) {
+      throw new Error('Tenant REST access-history missing primary tenant app access_granted on assigned unit');
+    }
+
+    if (created.accessControlDeviceIds.length > 0) {
+      const acLeakedToTenant = tenantLogs.some(
+        (x) => x.device_id === created.accessControlDeviceIds[0] && x.device_type === 'access_control',
+      );
+      if (acLeakedToTenant) {
+        throw new Error('Tenant REST access-history must not include access_control device events');
+      }
+      ok('Tenant REST access-history excludes access_control device events');
+    }
+
+    ok('Tenant REST access-history includes admin, keypad, shared-user, and self events on assigned unit');
     ok('Access-history API contains canonical denial taxonomy and keypad metadata');
 
     step('Validating realtime role-scoped activity subscriptions');
@@ -6183,6 +6227,25 @@ async function run() {
       throw new Error('Tenant realtime feed leaked secondary-unit event');
     }
     ok('Realtime role-scoped activity feeds propagated expected events without tenant leakage');
+
+    step('Validating tenant REST access-history includes realtime admin remote open');
+    await delay(500);
+    const tenantHistoryAfterRealtime = await axios.get(`${API_BASE}/access-history`, {
+      headers: authHeaders(primaryToken),
+      params: { facility_id: facilityId, limit: 50 },
+    });
+    const tenantAdminRemotesOnUnit = (tenantHistoryAfterRealtime.data?.logs || []).filter(
+      (x) => x.unit_id === unitId
+        && x.method === 'admin_remote'
+        && x.user_id === platformAdmin.id
+        && x.success === true,
+    );
+    if (tenantAdminRemotesOnUnit.length < 2) {
+      throw new Error(
+        `Expected at least 2 admin remote opens on tenant unit after realtime ingest (bulk + realtime), got ${tenantAdminRemotesOnUnit.length}`,
+      );
+    }
+    ok('Tenant REST access-history reflects ingested realtime admin remote open');
 
     for (const feed of [tenantFeed, facAdminFeed, adminFeed]) {
       if (feed.socket.readyState === WebSocket.OPEN) {

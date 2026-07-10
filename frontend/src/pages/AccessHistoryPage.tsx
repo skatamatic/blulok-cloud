@@ -243,7 +243,7 @@ export default function AccessHistoryPage() {
     return {
       facility_id: facilityId,
       unit_id: filters.unit_id,
-      user_id: isTenant ? authState.user?.id : filters.user_id,
+      user_id: filters.user_id,
       action: filters.action,
       method: filters.method,
       success: filters.success,
@@ -252,7 +252,7 @@ export default function AccessHistoryPage() {
       date_from: filters.date_from,
       date_to: filters.date_to,
     };
-  }, [filters, isFacilityScoped, selectedFacilityId, isTenant, authState.user?.id]);
+  }, [filters, isFacilityScoped, selectedFacilityId]);
 
   const canPrependLiveRows =
     currentPage === 1 && sortBy === 'occurred_at' && sortOrder === 'desc';
@@ -310,11 +310,7 @@ export default function AccessHistoryPage() {
 
       // Apply role-based filtering
       if (isTenant) {
-        // Tenants see only their own access
-        response = await apiService.getAccessHistory({
-          ...queryFilters,
-          user_id: authState.user?.id,
-        });
+        response = await apiService.getAccessHistory(queryFilters);
       } else if (isFacilityAdmin && authState.user?.facilityIds?.length) {
         // Facility admins see only their assigned facilities (unless global context overrides)
         if (selectedFacilityId && selectedFacilityId !== ALL_FACILITIES_ID) {

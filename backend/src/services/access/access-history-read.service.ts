@@ -91,12 +91,13 @@ export class AccessHistoryReadService {
       return { logs: [], total: 0, limit: filters.limit || 50, offset: filters.offset || 0 };
     }
 
-    const activityFilters = this.buildActivityFilters(filters, scope, ACCESS_HISTORY_ACTIVITY_TYPES);
+    const activityFilters = this.buildActivityFilters(filters, scope, ACCESS_HISTORY_ACTIVITY_TYPES, role);
 
     const rows = await this.activityLogModel.findWithContext(activityFilters);
 
     const scopedRows = this.applyPostQueryScope(rows, scope);
-    const filteredRows = scopedRows.filter((row) => this.matchesAccessFilters(row, filters));
+    const tenantScopedRows = this.excludeAccessControlForTenant(scopedRows, role);
+    const filteredRows = tenantScopedRows.filter((row) => this.matchesAccessFilters(row, filters));
     const mapped = filteredRows.map((row) => this.mapToAccessHistoryRecord(row));
 
     if (mapped.length === 0) {
@@ -143,6 +144,9 @@ export class AccessHistoryReadService {
           if (!hasUnitScope && !isOwn) {
             return false;
           }
+          if (log.device_type === 'access_control') {
+            return false;
+          }
         }
         if (role === UserRole.MAINTENANCE && scope.ownUserId && log.user_id !== scope.ownUserId) {
           return false;
@@ -173,6 +177,7 @@ export class AccessHistoryReadService {
       { ...filters, limit: undefined, offset: undefined },
       scope,
       ACCESS_HISTORY_ACTIVITY_TYPES,
+      role,
     );
     const total = await this.activityLogModel.count(countFilters);
 
@@ -220,14 +225,15 @@ export class AccessHistoryReadService {
     if (log && AccessHistoryReadService.ACCESS_HISTORY_ACTIVITY_TYPES.includes(log.activity_type)) {
       const scope = await this.scopeService.buildScope(userId, role, facilityIds);
       const postScoped = this.applyPostQueryScope([log], scope);
-      if (postScoped.length === 0) {
+      const tenantScoped = this.excludeAccessControlForTenant(postScoped, role);
+      if (tenantScoped.length === 0) {
         return null;
       }
       const withContext = await this.activityLogModel.findWithContext({
         id: log.id,
         limit: 1,
       });
-      const enriched = withContext[0] ?? postScoped[0];
+      const enriched = withContext[0] ?? tenantScoped[0];
       return this.mapToAccessHistoryRecord(enriched);
     }
 
@@ -240,13 +246,13 @@ export class AccessHistoryReadService {
     filters: QueryFilters,
     scope: AccessEventScope,
     activityTypes: ActivityType[],
+    role: UserRole,
   ): ActivityLogFilters {
     const activityFilters: ActivityLogFilters = {
       activity_types: activityTypes,
       facility_id: filters.facility_id,
       unit_id: filters.unit_id,
       device_id: filters.device_id,
-      actor_id: filters.user_id ?? scope.ownUserId,
       from_date: filters.date_from ? parseQueryDateFrom(filters.date_from) : undefined,
       to_date: filters.date_to ? parseQueryDateTo(filters.date_to) : undefined,
       limit: Math.min(filters.limit || 50, 100),
@@ -257,11 +263,33 @@ export class AccessHistoryReadService {
       facility_ids: scope.allowedFacilityIds && scope.allowedFacilityIds.length > 0 ? scope.allowedFacilityIds : undefined,
     };
 
-    if (scope.allowedUnitIds?.length) {
-      activityFilters.unit_ids = scope.allowedUnitIds;
+    if (role === UserRole.TENANT) {
+      if (filters.user_id) {
+        activityFilters.actor_id = filters.user_id;
+      } else if (filters.unit_id) {
+        // Unit-scoped route already verified access; do not default actor_id.
+      } else if (scope.allowedUnitIds?.length && scope.ownUserId) {
+        activityFilters.unit_or_actor_scope = {
+          unit_ids: scope.allowedUnitIds,
+          actor_id: scope.ownUserId,
+        };
+      } else if (scope.ownUserId) {
+        activityFilters.actor_id = scope.ownUserId;
+      }
+    } else if (role === UserRole.MAINTENANCE) {
+      activityFilters.actor_id = filters.user_id ?? scope.ownUserId;
+    } else if (filters.user_id) {
+      activityFilters.actor_id = filters.user_id;
     }
 
     return activityFilters;
+  }
+
+  private excludeAccessControlForTenant(rows: ActivityLog[], role: UserRole): ActivityLog[] {
+    if (role !== UserRole.TENANT) {
+      return rows;
+    }
+    return rows.filter((row) => this.inferDeviceType(this.extractMetadata(row)) !== 'access_control');
   }
 
   private applyPostQueryScope(rows: ActivityLog[], scope: { allowedUnitIds?: string[]; ownUserId?: string }): ActivityLog[] {

@@ -177,6 +177,24 @@ describe('AccessHistoryPage', () => {
     });
   });
 
+  it('does not force user_id filter for tenant users', async () => {
+    mockUseAuth.mockReturnValue({
+      authState: {
+        user: { id: 'tenant-1', role: 'tenant' as const },
+        isAuthenticated: true,
+      },
+    });
+
+    renderPage(<AccessHistoryPage />);
+
+    await waitFor(() => {
+      expect(mockGetAccessHistory).toHaveBeenCalled();
+    });
+
+    const initialQuery = mockGetAccessHistory.mock.calls[0][0] as { user_id?: string };
+    expect(initialQuery.user_id).toBeUndefined();
+  });
+
   it('shows a log row when API returns data', async () => {
     const ts = new Date().toISOString();
     mockGetAccessHistory.mockResolvedValue({
