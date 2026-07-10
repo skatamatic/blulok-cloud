@@ -116,6 +116,14 @@ export interface ActivityLogFilters {
   unit_id?: string;
   /** Filter by multiple units (alternative to unit_id) */
   unit_ids?: string[];
+  /**
+   * Tenant RBAC scope: rows on any of these units OR rows where actor_id matches.
+   * Mutually exclusive with actor_id / unit_ids for the same query.
+   */
+  unit_or_actor_scope?: {
+    unit_ids: string[];
+    actor_id: string;
+  };
   device_id?: string;
   from_date?: Date;
   to_date?: Date;
@@ -225,7 +233,16 @@ export class ActivityLogModel {
       query = query.where(`${tablePrefix}actor_type`, filters.actor_type);
     }
 
-    if (filters.actor_id) {
+    if (filters.unit_or_actor_scope) {
+      const { unit_ids, actor_id } = filters.unit_or_actor_scope;
+      query = query.where(function scopeUnitOrActor(this: import('knex').Knex.QueryBuilder) {
+        if (unit_ids.length > 0) {
+          this.whereIn(`${tablePrefix}unit_id`, unit_ids).orWhere(`${tablePrefix}actor_id`, actor_id);
+        } else {
+          this.where(`${tablePrefix}actor_id`, actor_id);
+        }
+      });
+    } else if (filters.actor_id) {
       query = query.where(`${tablePrefix}actor_id`, filters.actor_id);
     }
 
@@ -241,7 +258,7 @@ export class ActivityLogModel {
 
     if (filters.unit_id) {
       query = query.where(`${tablePrefix}unit_id`, filters.unit_id);
-    } else if (filters.unit_ids && filters.unit_ids.length > 0) {
+    } else if (!filters.unit_or_actor_scope && filters.unit_ids && filters.unit_ids.length > 0) {
       query = query.whereIn(`${tablePrefix}unit_id`, filters.unit_ids);
     }
 

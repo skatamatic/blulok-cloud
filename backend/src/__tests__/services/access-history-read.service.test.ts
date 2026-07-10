@@ -271,6 +271,93 @@ describe('AccessHistoryReadService', () => {
     expect(result.logs[0].action).toBe('unlock_attempt');
   });
 
+  it('uses unit-or-actor SQL scope for tenants so admin events on assigned units are returned', async () => {
+    mockBuildScope.mockResolvedValue({
+      allowedUnitIds: ['unit-1'],
+      ownUserId: 'tenant-1',
+    });
+    mockFindWithContext.mockResolvedValue([
+      {
+        id: 'log-admin-open',
+        activity_type: 'access_attempt',
+        entity_id: 'dev-1',
+        device_id: 'dev-1',
+        actor_type: 'user',
+        actor_id: 'admin-1',
+        actor_name: 'Platform Admin',
+        result: 'success',
+        unit_id: 'unit-1',
+        occurred_at: new Date(),
+        created_at: new Date(),
+        updated_at: new Date(),
+        metadata: {
+          action: 'admin_remote_open',
+          method: 'admin_remote',
+          device_type: 'blulok',
+        },
+      },
+    ]);
+
+    const service = new AccessHistoryReadService();
+    const result = await service.query('tenant-1', UserRole.TENANT, undefined, {});
+
+    expect(mockFindWithContext).toHaveBeenCalledWith(
+      expect.objectContaining({
+        unit_or_actor_scope: {
+          unit_ids: ['unit-1'],
+          actor_id: 'tenant-1',
+        },
+      }),
+    );
+    expect(mockFindWithContext.mock.calls[0][0]).not.toHaveProperty('actor_id');
+    expect(result.logs).toHaveLength(1);
+    expect(result.logs[0].user_id).toBe('admin-1');
+    expect(result.logs[0].unit_id).toBe('unit-1');
+  });
+
+  it('excludes access_control device events from tenant access history', async () => {
+    mockBuildScope.mockResolvedValue({
+      allowedUnitIds: ['unit-1'],
+      ownUserId: 'tenant-1',
+    });
+    mockFindWithContext.mockResolvedValue([
+      {
+        id: 'log-blulok',
+        activity_type: 'access_attempt',
+        entity_id: 'dev-1',
+        device_id: 'dev-1',
+        actor_type: 'user',
+        actor_id: 'admin-1',
+        result: 'success',
+        unit_id: 'unit-1',
+        occurred_at: new Date(),
+        created_at: new Date(),
+        updated_at: new Date(),
+        metadata: { device_type: 'blulok', action: 'access_granted', method: 'app' },
+      },
+      {
+        id: 'log-gate',
+        activity_type: 'access_attempt',
+        entity_id: 'gate-1',
+        device_id: 'gate-1',
+        actor_type: 'user',
+        actor_id: 'admin-1',
+        result: 'success',
+        unit_id: 'unit-1',
+        occurred_at: new Date(),
+        created_at: new Date(),
+        updated_at: new Date(),
+        metadata: { device_type: 'access_control', action: 'access_granted', method: 'app' },
+      },
+    ]);
+
+    const service = new AccessHistoryReadService();
+    const result = await service.query('tenant-1', UserRole.TENANT, undefined, {});
+
+    expect(result.logs).toHaveLength(1);
+    expect(result.logs[0].id).toBe('log-blulok');
+  });
+
   it('returns enriched lock/unlock records from findById', async () => {
     mockFindById.mockResolvedValue({
       id: 'log-2',
