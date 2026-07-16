@@ -44,6 +44,7 @@ import { DeviceGroupManager } from '@/components/AccessCodes/DeviceGroupManager'
 import { readFacilityAccessGroupId, FACILITY_ACCESS_GROUP_ID_PARAM } from '@/components/AccessCodes/access-groups.utils';
 import { ConfirmModal } from '@/components/Modal/ConfirmModal';
 import { useToast } from '@/contexts/ToastContext';
+import { useAfterFacilityDeleted } from '@/hooks/useAfterFacilityDeleted';
 import { AccessControlDeviceCard as ACDeviceCardShared, BluLokDeviceCard as BluLokDeviceCardShared, NetworkInfraDeviceCard } from '@/components/Devices/DeviceCards';
 import { DeviceTypeBadge, DeviceTypeIcon } from '@/components/Common/DeviceTypeIcon';
 import { ExpandableFilters } from '@/components/Common/ExpandableFilters';
@@ -131,6 +132,7 @@ export default function FacilityDetailsPage() {
   const { goBack, showBack, backLabel } = useDetailsBackNavigation({ showWithoutFromPath: false });
   const { authState } = useAuth();
   const { addToast } = useToast();
+  const afterFacilityDeleted = useAfterFacilityDeleted();
   const { selectedFacilityId, setSelectedFacilityId, isAllFacilitiesSelected, facilities } = useGlobalFacility();
   const [facility, setFacility] = useState<Facility | null>(null);
   const [deviceHierarchy, setDeviceHierarchy] = useState<DeviceHierarchy | null>(null);
@@ -614,7 +616,7 @@ const normalizeFacilityTab = (value: string | null): FacilityTab | null => {
     try {
       await apiService.deleteFacility(facility.id);
       addToast({ type: 'success', title: 'Facility deleted successfully' });
-      navigate('/facilities');
+      await afterFacilityDeleted();
     } catch (error: unknown) {
       const apiError = error as { response?: { data?: { message?: string } } };
       addToast({ type: 'error', title: apiError?.response?.data?.message || 'Failed to delete facility' });

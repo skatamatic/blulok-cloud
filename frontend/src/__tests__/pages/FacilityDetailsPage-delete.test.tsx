@@ -35,6 +35,8 @@ jest.mock('@/contexts/ToastContext', () => ({
   useToast: () => ({ addToast: jest.fn() }),
 }));
 
+const mockRefresh = jest.fn().mockResolvedValue(undefined);
+
 jest.mock('@/contexts/GlobalFacilityContext', () => ({
   GlobalFacilityProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
   useGlobalFacility: () => ({
@@ -45,7 +47,7 @@ jest.mock('@/contexts/GlobalFacilityContext', () => ({
     isLoading: false,
     hasMultipleFacilities: false,
     isAllFacilitiesSelected: false,
-    refresh: jest.fn(),
+    refresh: mockRefresh,
   }),
 }));
 
@@ -59,7 +61,7 @@ const renderWithProviders = (ui: React.ReactElement, initialPath = '/facilities/
       <BrowserRouter>
         <Routes>
           <Route path="/facilities/:id" element={ui} />
-          <Route path="/facilities" element={<div>Facilities List</div>} />
+          <Route path="/dashboard" element={<div>Dashboard</div>} />
         </Routes>
       </BrowserRouter>
     </QueryClientProvider>
@@ -99,9 +101,8 @@ describe('FacilityDetailsPage - Delete flow', () => {
     fireEvent.click(confirmButtons[confirmButtons.length - 1]);
 
     await waitFor(() => expect(mockApi.deleteFacility).toHaveBeenCalledWith('fac-1'));
-
-    // Navigates to facilities list
-    await waitFor(() => expect(screen.getByText('Facilities List')).toBeInTheDocument());
+    await waitFor(() => expect(mockRefresh).toHaveBeenCalled());
+    await waitFor(() => expect(screen.getByText('Dashboard')).toBeInTheDocument());
   });
 });
 
