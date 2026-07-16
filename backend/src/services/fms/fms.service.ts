@@ -67,6 +67,13 @@ import {
   stampFmsMappingRemoved,
 } from './fms-tenant-removal.utils';
 import {
+  buildFacilityUserLookupMaps,
+  findExistingUserForFmsTenant,
+  formatFmsTenantContactLabel,
+  validateFmsTenantSyncFields,
+  validateFmsTenantWebhookFields,
+} from './fms-tenant-validation.utils';
+import {
   summarizeFmsWebhookPayload,
 } from './fms-webhook-summary.utils';
 
@@ -749,12 +756,12 @@ export class FMSService {
     }
     const allRelevantUsers = [...facilityUsers, ...supplementUsers];
 
-    const usersByEmail = new Map(
-      allRelevantUsers
-        .filter((u: any) => typeof u.email === 'string' && u.email.trim().length > 0)
-        .map((u: any) => [u.email.toLowerCase(), u])
-    );
-    const usersById = new Map(allRelevantUsers.map((u: any) => [u.id, u]));
+    const {
+      usersById,
+      usersByEmail,
+      usersByPhone,
+      usersByLoginIdentifier,
+    } = buildFacilityUserLookupMaps(allRelevantUsers);
 
     // Pre-fetch data for unit-change detection
     const allFacilityAssignments = await this.unitAssignmentModel.findByFacilityId(facilityId);
@@ -777,30 +784,22 @@ export class FMSService {
     for (const fmsTenant of fmsTenants) {
       logger.debug(`[FMS-TENANT] Processing tenant: externalId=${fmsTenant.externalId}, email="${fmsTenant.email}"`);
       
-      const validationErrors: string[] = [];
-      let isValid = true;
-
-      if (!fmsTenant.email || (typeof fmsTenant.email === 'string' && fmsTenant.email.trim() === '')) {
-        validationErrors.push('Missing or empty username (email)');
-        isValid = false;
-      }
-      if (!fmsTenant.firstName || (typeof fmsTenant.firstName === 'string' && fmsTenant.firstName.trim() === '')) {
-        validationErrors.push('Missing or empty first name');
-        isValid = false;
-      }
-      if (!fmsTenant.lastName || (typeof fmsTenant.lastName === 'string' && fmsTenant.lastName.trim() === '')) {
-        validationErrors.push('Missing or empty last name');
-        isValid = false;
-      }
+      const validationErrors = validateFmsTenantSyncFields(fmsTenant);
+      const isValid = validationErrors.length === 0;
 
       if (!isValid) {
         logger.warn(`[FMS-TENANT-INVALID] Tenant ${fmsTenant.externalId} flagged as INVALID: errors=${JSON.stringify(validationErrors)}`);
       }
 
       const mapping = mappingsByExternalId.get(fmsTenant.externalId);
-      const existingUser = mapping
-        ? usersById.get(mapping.internal_id)
-        : (fmsTenant.email ? usersByEmail.get(fmsTenant.email.toLowerCase()) : null);
+      const existingUser = findExistingUserForFmsTenant(
+        fmsTenant,
+        mapping,
+        usersById,
+        usersByEmail,
+        usersByPhone,
+        usersByLoginIdentifier,
+      );
 
       processed++;
       if (onProgress && (processed % 10 === 0 || processed === total)) {
@@ -815,7 +814,7 @@ export class FMSService {
           external_id: fmsTenant.externalId,
           after_data: fmsTenant,
           required_actions: [FMSChangeAction.CREATE_USER, FMSChangeAction.ASSIGN_UNIT],
-          impact_summary: `New tenant: ${fmsTenant.firstName || 'Unknown'} ${fmsTenant.lastName || 'Unknown'} (${fmsTenant.email || 'no email'}) - Will be added to ${fmsTenant.unitIds.length} unit(s)`,
+          impact_summary: `New tenant: ${fmsTenant.firstName || 'Unknown'} ${fmsTenant.lastName || 'Unknown'} (${formatFmsTenantContactLabel(fmsTenant)}) - Will be added to ${fmsTenant.unitIds.length} unit(s)`,
           is_valid: isValid,
           validation_errors: validationErrors,
         });
@@ -874,8 +873,8 @@ export class FMSService {
             after_data: fmsTenant,
             required_actions: [FMSChangeAction.UPDATE_USER],
             impact_summary: needsFmsRestore && !hasInfoChanges
-              ? `Tenant restored in FMS: ${fmsTenant.email || 'no email'}`
-              : `Updated tenant info for: ${fmsTenant.email || 'no email'}`,
+              ? `Tenant restored in FMS: ${formatFmsTenantContactLabel(fmsTenant)}`
+              : `Updated tenant info for: ${formatFmsTenantContactLabel(fmsTenant)}`,
             is_valid: isValid,
             validation_errors: validationErrors,
           });
@@ -3207,14 +3206,7 @@ export class FMSService {
   }
 
   private validateTenantData(tenant: FMSTenant): string[] {
-    const errors: string[] = [];
-    if (!tenant.email && !tenant.phone) {
-      errors.push('Tenant must have an email or phone number');
-    }
-    if (!tenant.firstName && !tenant.lastName) {
-      errors.push('Tenant must have a first or last name');
-    }
-    return errors;
+    return validateFmsTenantWebhookFields(tenant);
   }
 
   /**

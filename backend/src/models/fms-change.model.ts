@@ -44,6 +44,7 @@ import { DatabaseService } from '@/services/database.service';
 import { FMSChange, FMSChangeType, FMSChangeAction } from '@/types/fms.types';
 import { logger } from '@/utils/logger';
 import { isFmsChangePending } from '@/services/fms/fms-apply-order.utils';
+import { deriveFmsTenantValidationErrors } from '@/services/fms/fms-tenant-validation.utils';
 
 export class FMSChangeModel {
   private db: Knex;
@@ -398,26 +399,13 @@ export class FMSChangeModel {
     // Derive validation errors if missing but the change is marked invalid
     let derivedInvalid = false;
     if ((record.is_valid === false || record.is_valid === 0) && (!validationErrors || validationErrors.length === 0)) {
-      const derived: string[] = [];
       const tenantPayload = parsedAfter ?? parsedBefore;
       if (record.entity_type === 'tenant' && tenantPayload) {
-        const email = (tenantPayload.email ?? tenantPayload.login_identifier) as string | null | undefined;
-        const firstName = (tenantPayload.firstName ?? tenantPayload.first_name) as string | null | undefined;
-        const lastName = (tenantPayload.lastName ?? tenantPayload.last_name) as string | null | undefined;
-
-        if (!email || (typeof email === 'string' && email.trim() === '')) {
-          derived.push('Missing or empty email address');
+        const derived = deriveFmsTenantValidationErrors(tenantPayload);
+        if (derived.length > 0) {
+          validationErrors = derived;
+          derivedInvalid = true;
         }
-        if (!firstName || (typeof firstName === 'string' && firstName.trim() === '')) {
-          derived.push('Missing or empty first name');
-        }
-        if (!lastName || (typeof lastName === 'string' && lastName.trim() === '')) {
-          derived.push('Missing or empty last name');
-        }
-      }
-      if (derived.length > 0) {
-        validationErrors = derived;
-        derivedInvalid = true;
       }
     }
 

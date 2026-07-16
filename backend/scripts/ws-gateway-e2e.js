@@ -2799,6 +2799,95 @@ async function run() {
     const applied = await axios.post(`${API_BASE}/fms/changes/apply`, { syncLogId, changeIds }, { headers: { Authorization: `Bearer ${token}` } });
     ok(`FMS changes applied: ${applied.data?.result?.changesApplied || changeIds.length}`);
 
+    step('FMS sync accepts phone-only tenant (no email)');
+    const extPhoneTenantId = `ext-phone-tenant-${nowTs}`;
+    const extPhoneUnitId = `ext-phone-unit-${nowTs}`;
+    const phoneOnlyNumber = `+1345${String(nowTs).slice(-7)}`;
+    const phoneOnlyUnitNumber = `E2E-FMS-PHONE-${nowTs}`;
+    datasetPhase1.tenants.push({
+      id: extPhoneTenantId,
+      email: null,
+      first_name: 'Kelvin',
+      last_name: 'Benjamin',
+      phone_numbers: [{ number: phoneOnlyNumber, primary: true }],
+      active: true,
+    });
+    datasetPhase1.units.push({
+      id: extPhoneUnitId,
+      name: phoneOnlyUnitNumber,
+      unit_type: { name: 'Small' },
+      size: '5x5',
+      status: 'occupied',
+      current_tenant_id: extPhoneTenantId,
+      price: 100,
+    });
+    datasetPhase1.ledgers.push({ tenant: { id: extPhoneTenantId }, unit: { id: extPhoneUnitId } });
+
+    const phoneSyncRes = await axios.post(`${API_BASE}/fms/sync/${facilityId}`, {}, { headers: { Authorization: `Bearer ${token}` } });
+    const phoneSyncLogId = phoneSyncRes.data?.result?.syncLogId;
+    if (!phoneSyncLogId) throw new Error('Phone-only FMS sync missing syncLogId');
+    const phonePending = await axios.get(`${API_BASE}/fms/changes/${phoneSyncLogId}/pending`, { headers: { Authorization: `Bearer ${token}` } });
+    const phoneTenantChange = (phonePending.data?.changes || []).find(
+      (c) => c.entity_type === 'tenant'
+        && c.change_type === 'tenant_added'
+        && c.after_data?.externalId === extPhoneTenantId,
+    );
+    if (!phoneTenantChange) throw new Error('Phone-only FMS tenant change not detected');
+    if (phoneTenantChange.is_valid === false) {
+      throw new Error(`Phone-only tenant incorrectly invalid: ${JSON.stringify(phoneTenantChange.validation_errors)}`);
+    }
+    await axios.post(`${API_BASE}/fms/changes/review`, {
+      syncLogId: phoneSyncLogId,
+      changeIds: [phoneTenantChange.id],
+      accepted: true,
+    }, { headers: { Authorization: `Bearer ${token}` } });
+    const phoneApplyRes = await axios.post(`${API_BASE}/fms/changes/apply`, {
+      syncLogId: phoneSyncLogId,
+      changeIds: [phoneTenantChange.id],
+    }, { headers: { Authorization: `Bearer ${token}` } });
+    if (phoneApplyRes.data?.result?.changesFailed > 0) {
+      throw new Error(`Phone-only tenant apply failed: ${JSON.stringify(phoneApplyRes.data?.result?.errors || [])}`);
+    }
+
+    async function findUserByPhone(authToken, phone) {
+      const res = await axios.get(`${API_BASE}/users`, {
+        headers: { Authorization: `Bearer ${authToken}` },
+        params: { search: phone, limit: 20 },
+      });
+      const normalized = phone.replace(/\D/g, '');
+      return (res.data?.users || []).find((u) => {
+        const stored = (u.phone_number || u.phoneNumber || u.login_identifier || u.loginIdentifier || '')
+          .replace(/\D/g, '');
+        return stored === normalized || stored.endsWith(normalized.slice(-10));
+      }) || null;
+    }
+
+    let phoneTenantUser = await findUserByPhone(token, phoneOnlyNumber);
+    if (!phoneTenantUser?.id) {
+      const byName = await axios.get(`${API_BASE}/users`, {
+        headers: { Authorization: `Bearer ${token}` },
+        params: { search: 'Kelvin Benjamin', limit: 20 },
+      });
+      phoneTenantUser = (byName.data?.users || []).find(
+        (u) => (u.firstName || u.first_name) === 'Kelvin' && (u.lastName || u.last_name) === 'Benjamin',
+      ) || null;
+    }
+    if (!phoneTenantUser?.id) throw new Error('Phone-only FMS tenant user not created');
+    const phoneLoginId = (
+      phoneTenantUser.login_identifier
+      || phoneTenantUser.loginIdentifier
+      || phoneTenantUser.phone_number
+      || phoneTenantUser.phoneNumber
+      || ''
+    ).toLowerCase();
+    if (!phoneLoginId.includes(phoneOnlyNumber.replace(/\D/g, '').slice(-10))) {
+      throw new Error(`Phone-only tenant missing phone login identity: login=${phoneTenantUser.login_identifier} phone=${phoneTenantUser.phone_number}`);
+    }
+    created.phoneOnlyTenantId = phoneTenantUser.id;
+    created.phoneOnlyNumber = phoneOnlyNumber;
+    created.users.push(phoneTenantUser.id);
+    ok(`Phone-only FMS tenant synced: user=${phoneTenantUser.id} login=${phoneLoginId}`);
+
     // Phase 1: Simulate realistic gateway inventory syncs (add, then remove)
     heading('Gateway Device Inventory');
     step('Initial inventory sync (add 3 devices)');
@@ -6229,6 +6318,14 @@ async function run() {
     primaryToken = await completeFirstTimeLogin(primaryId, primaryEmail);
     share1Token = await completeFirstTimeLogin(share1Id, share1Email);
     share2Token = await completeFirstTimeLogin(share2Id, share2Email);
+    if (created.phoneOnlyTenantId && created.phoneOnlyNumber) {
+      step('First-time login for phone-only FMS tenant');
+      const phoneOnlyToken = await completeFirstTimeLogin(created.phoneOnlyTenantId, created.phoneOnlyNumber);
+      const phoneLoginCheck = await tenantLogin(created.phoneOnlyNumber, 'TestUser123!');
+      if (!phoneLoginCheck) throw new Error('Phone-only tenant login failed after first-time setup');
+      ok(`Phone-only tenant can log in with phone identifier (${created.phoneOnlyNumber})`);
+      created.phoneOnlyToken = phoneOnlyToken;
+    }
     ok('First-time login flows completed for all users');
 
     step('Ensuring primary tenant has explicit unit assignment for RBAC scope checks');
