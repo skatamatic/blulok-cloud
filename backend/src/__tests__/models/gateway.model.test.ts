@@ -100,73 +100,136 @@ describe('GatewayModel', () => {
   });
 
   describe('createOrBindAsFirstGateway', () => {
-    function buildTrx(firstReturns: Array<unknown>) {
-      const first = jest.fn();
-      firstReturns.forEach((r) => first.mockResolvedValueOnce(r));
-      const trxBuilder = {
-        where: jest.fn().mockReturnThis(),
-        first,
-        insert: jest.fn().mockResolvedValue(undefined),
-        update: jest.fn().mockResolvedValue(1),
+    function buildTrx(options: {
+      existingBound: unknown;
+      existingRow: unknown;
+      facilityName?: string;
+      finalRow?: unknown;
+    }) {
+      const firstByTable: Record<string, jest.Mock> = {
+        gateways: jest
+          .fn()
+          .mockResolvedValueOnce(options.existingBound)
+          .mockResolvedValueOnce(options.existingRow)
+          .mockResolvedValueOnce(
+            options.finalRow ?? {
+              id: 'guid-1',
+              facility_id: 'fac-1',
+              name: options.facilityName ?? 'North Depot',
+            },
+          ),
+        facilities: jest.fn().mockResolvedValue({
+          id: 'fac-1',
+          name: options.facilityName ?? 'North Depot',
+        }),
       };
-      const trx = jest.fn(() => trxBuilder);
+      const builders: Record<string, { where: jest.Mock; first: jest.Mock; insert: jest.Mock; update: jest.Mock }> =
+        {};
+      const trx = jest.fn((table: string) => {
+        if (!builders[table]) {
+          builders[table] = {
+            where: jest.fn().mockReturnThis(),
+            first: firstByTable[table] || jest.fn().mockResolvedValue(null),
+            insert: jest.fn().mockResolvedValue(undefined),
+            update: jest.fn().mockResolvedValue(1),
+          };
+        }
+        return builders[table];
+      });
       mockKnex.transaction = jest.fn(async (cb: any) => cb(trx));
-      return trxBuilder;
+      return { trx, builders };
     }
 
-    it('creates and binds when the facility has no bound gateway', async () => {
-      const trxBuilder = buildTrx([
-        null, // existingBound
-        null, // existingRow
-        { id: 'guid-1', facility_id: 'fac-1' }, // final
-      ]);
+    it('creates and binds using the facility name', async () => {
+      const { builders } = buildTrx({
+        existingBound: null,
+        existingRow: null,
+        facilityName: 'North Depot',
+      });
 
       const result = await model.createOrBindAsFirstGateway({
         id: 'guid-1',
         facilityId: 'fac-1',
-        name: 'Gateway guid-1',
         metadata: { autoRegistered: true },
       });
 
       expect(result.bound).toBe(true);
       expect(result.created).toBe(true);
-      expect(trxBuilder.insert).toHaveBeenCalled();
+      expect(builders.gateways.insert).toHaveBeenCalledWith(
+        expect.objectContaining({
+          name: 'North Depot',
+          facility_id: 'fac-1',
+        }),
+      );
     });
 
-    it('binds an existing unbound row without inserting', async () => {
-      const trxBuilder = buildTrx([
-        null, // existingBound
-        { id: 'guid-2', facility_id: null }, // existingRow
-        { id: 'guid-2', facility_id: 'fac-1' }, // final
-      ]);
+    it('rebinds an unbound row and replaces a prior facility display name', async () => {
+      const { builders } = buildTrx({
+        existingBound: null,
+        existingRow: {
+          id: 'guid-2',
+          facility_id: null,
+          name: 'Other Facility Gateway',
+          metadata: JSON.stringify({ autoRegistered: true }),
+        },
+        facilityName: 'North Depot',
+      });
 
       const result = await model.createOrBindAsFirstGateway({
         id: 'guid-2',
         facilityId: 'fac-1',
-        name: 'Gateway guid-2',
       });
 
       expect(result.bound).toBe(true);
       expect(result.created).toBe(false);
-      expect(trxBuilder.insert).not.toHaveBeenCalled();
-      expect(trxBuilder.update).toHaveBeenCalled();
+      expect(builders.gateways.insert).not.toHaveBeenCalled();
+      expect(builders.gateways.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          facility_id: 'fac-1',
+          name: 'North Depot',
+        }),
+      );
+    });
+
+    it('preserves an operator-set display name on rebind', async () => {
+      const { builders } = buildTrx({
+        existingBound: null,
+        existingRow: {
+          id: 'guid-2',
+          facility_id: null,
+          name: 'Front Gate Hub',
+          metadata: JSON.stringify({ displayNameSetByOperator: true }),
+        },
+        facilityName: 'North Depot',
+      });
+
+      await model.createOrBindAsFirstGateway({
+        id: 'guid-2',
+        facilityId: 'fac-1',
+      });
+
+      expect(builders.gateways.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          name: 'Front Gate Hub',
+        }),
+      );
     });
 
     it('returns bound:false when a bound gateway already exists (race lost)', async () => {
-      const trxBuilder = buildTrx([
-        { id: 'existing-bound', facility_id: 'fac-1' }, // existingBound
-      ]);
+      const { builders } = buildTrx({
+        existingBound: { id: 'existing-bound', facility_id: 'fac-1' },
+        existingRow: null,
+      });
 
       const result = await model.createOrBindAsFirstGateway({
         id: 'guid-3',
         facilityId: 'fac-1',
-        name: 'Gateway guid-3',
       });
 
       expect(result.bound).toBe(false);
       expect(result.created).toBe(false);
-      expect(trxBuilder.insert).not.toHaveBeenCalled();
-      expect(trxBuilder.update).not.toHaveBeenCalled();
+      expect(builders.gateways.insert).not.toHaveBeenCalled();
+      expect(builders.gateways.update).not.toHaveBeenCalled();
     });
   });
 });

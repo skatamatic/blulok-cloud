@@ -84,7 +84,7 @@ AUTH received (token, facilityId, gatewayId)
 ### 4.2 First-install auto-bind (empty facility)
 
 - Atomic “create-and-bind if no bound gateway exists” (transaction) to avoid a race where two gateways connect at once. Loser of the race falls through to swap-candidate.
-- New row: `id = gatewayId`, `facility_id = facilityId`, `status = 'online'`, `last_seen = now`, `gateway_type = 'physical'`, `key_management_version = 'v2'`, `name = "<facility name> Gateway"` (operator-renamable), `metadata.autoRegistered = true`.
+- New row: `id = gatewayId`, `facility_id = facilityId`, `status = 'online'`, `last_seen = now`, `gateway_type = 'physical'`, `key_management_version = 'v2'`, `name = <facility name>` (operator-renamable), `metadata.autoRegistered = true`.
 - Set as the facility `active` session exactly like the current active path (`facilityToClient.set`).
 - Emit audit/activity event `gateway_auto_registered` (bound=true).
 
@@ -192,7 +192,7 @@ Dedup is on the existing `gateways.id` primary key. `facility_id` is already nul
 ## 8. Resolved decisions (implemented)
 
 1. **Candidate cap = 3** per facility; **rate limit = 5 auto-creates / 10 min / facility** (`MAX_SWAP_CANDIDATES_PER_FACILITY`, `AUTO_REGISTER_MAX_PER_WINDOW`, `AUTO_REGISTER_WINDOW_MS` in `websocket-gateway.transport.ts`).
-2. Auto-generated names: `"Gateway <short-guid>"` (bound first install) / `"Swap candidate <short-guid>"` (unbound). Operator-renamable.
+2. Auto-generated names: facility name when bound (fallback `"Gateway <short-guid>"`) / `"Swap candidate <short-guid>"` while unbound. Operator-renamable (sets `displayNameSetByOperator`).
 3. First-install auto-bind does **not** require a no-recovery guard (empty facility).
 4. `autoRegistered` **added** to `AUTH_OK` (true only on the connect that created the record).
 
@@ -202,3 +202,14 @@ Dedup is on the existing `gateways.id` primary key. `facility_id` is already nul
 - UUID format is validated **only before creating** a new record, so existing known (possibly legacy non-UUID) GUIDs keep working.
 - Auto-create branches reject with `AUTH_BAD_REQUEST` (bad UUID), `AUTH_FORBIDDEN` (other facility / cap), or `AUTH_RATE_LIMITED`.
 - Tests: `ws-gateway.transport.autoregister.test.ts`, `gateway.model.test.ts`, `gateway-auto-register.utils.test.ts`.
+
+## 10. Gateway display-name provenance
+
+`gateways.name` is the canonical cloud display name. It is never supplied by WebSocket `AUTH`: firmware sends only `token`, `facilityId`, `gatewayId`, and optional `firmware_version`.
+
+- First-install / bind defaults `gateways.name` to the **facility name** (fallback `"Gateway <short-guid>"` if the facility row has no name).
+- Swap-candidate auto-registration assigns `"Swap candidate <short-guid>"` until the candidate is promoted/bound.
+- Add Facility does **not** create a gateway row — operators create the facility, then point hardware at it; the gateway registers over WebSocket.
+- Reconnects and `kind: "gateway"` inventory updates do not change the name.
+- Authorized operators can rename the bound gateway from **Facility → Gateway → Overview**; that sets `metadata.displayNameSetByOperator=true` so later binds/promotes keep the custom name.
+- **Rebind safety:** binding an unbound GUID uses the current facility name unless the operator-set flag is present. After swap/recovery, the retired gateway is unbound as `"Unbound gateway <short-guid>"` with the operator-set flag cleared.

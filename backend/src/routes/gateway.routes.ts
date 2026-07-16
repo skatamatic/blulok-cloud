@@ -67,6 +67,7 @@ import {
   gatewayRecoveryInitiateSchema,
   gatewayRecoveryBypassSchema,
   gatewayStatusUpdateSchema,
+  gatewayUpdateSchema,
   gatewayTelemetryLogsQuerySchema,
   gatewaySyncLogsQuerySchema,
   gatewayRecoveryEventsQuerySchema,
@@ -735,13 +736,51 @@ registerPut(
     summary: 'Update gateway',
     security: 'bearer',
     params: gatewayResourceIdParamSchema,
+    body: gatewayUpdateSchema,
     responses: { 200: gatewayResponseSchema },
   },
-  requireAdmin,
+  requireRoles([UserRole.ADMIN, UserRole.DEV_ADMIN, UserRole.FACILITY_ADMIN]),
   asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   const id = req.params.id;
- 
-  const gatewayData = req.body;
+
+  const existing = await gatewayModel.findById(String(id));
+  if (!existing) {
+    res.status(404).json({
+      success: false,
+      message: 'Gateway not found'
+    });
+    return;
+  }
+
+  if (req.user?.role === UserRole.FACILITY_ADMIN) {
+    if (!existing.facility_id || !req.user.facilityIds?.includes(existing.facility_id)) {
+      res.status(403).json({ success: false, message: 'Access denied to this gateway' });
+      return;
+    }
+    const keys = Object.keys(req.body);
+    if (keys.some((key) => key !== 'name')) {
+      res.status(403).json({
+        success: false,
+        message: 'Facility admins may only rename gateways',
+      });
+      return;
+    }
+  }
+
+  const gatewayData = { ...req.body };
+  if (
+    typeof gatewayData.name === 'string' &&
+    gatewayData.name.trim() &&
+    gatewayData.name.trim() !== String(existing.name || '').trim()
+  ) {
+    const { withOperatorSetGatewayDisplayName } = await import(
+      '@/utils/gateway-display-name.utils'
+    );
+    gatewayData.metadata = withOperatorSetGatewayDisplayName(
+      gatewayData.metadata ?? existing.metadata,
+      true,
+    );
+  }
   const gateway = await gatewayModel.update(String(id), gatewayData);
 
   if (!gateway) {
@@ -752,14 +791,16 @@ registerPut(
     return;
   }
 
-  // Reinitialize gateway with updated configuration to ensure cached instance uses new settings
-  try {
-    const { GatewayService } = await import('../services/gateway/gateway.service');
-    const gatewayService = GatewayService.getInstance();
-    await gatewayService.reinitializeGateway(gateway);
-  } catch (reinitError) {
-    console.warn(`Failed to reinitialize gateway ${id} after update:`, reinitError);
-    // Don't fail the update if reinitialization fails, just log the warning
+  // A display-name-only update must not disturb an active gateway connection.
+  if (Object.keys(gatewayData).some((key) => key !== 'name')) {
+    try {
+      const { GatewayService } = await import('../services/gateway/gateway.service');
+      const gatewayService = GatewayService.getInstance();
+      await gatewayService.reinitializeGateway(gateway);
+    } catch (reinitError) {
+      console.warn(`Failed to reinitialize gateway ${id} after update:`, reinitError);
+      // Don't fail the update if reinitialization fails, just log the warning
+    }
   }
 
   res.json({

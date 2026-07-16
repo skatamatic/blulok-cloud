@@ -915,7 +915,6 @@ export class WebsocketGatewayTransport implements GatewayTransport {
               const result = await gatewayModel.createOrBindAsFirstGateway({
                 id: gatewayId,
                 facilityId,
-                name: `Gateway ${gatewayId.slice(0, 8)}`,
                 metadata: { autoRegistered: true },
               });
               if (result.bound) {

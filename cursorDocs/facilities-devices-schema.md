@@ -89,6 +89,7 @@ CREATE TABLE gateways (
 
 **Key Features**:
 - **1:1 Facility Relationship**: Each facility has exactly one gateway
+- **Cloud-owned display name**: when a gateway is bound, `gateways.name` defaults to the facility name unless `metadata.displayNameSetByOperator` is set (operator rename). Swap candidates use `Swap candidate <short-guid>` until promoted. AUTH/inventory never supply the name. Add Facility does not pre-create a gateway — hardware auto-registers over WebSocket.
 - **Network Information**: IP and MAC address tracking
 - **Health Monitoring**: Online status and last seen timestamps
 - **Configuration Storage**: JSON field for gateway-specific settings
@@ -110,6 +111,9 @@ CREATE TABLE access_control_devices (
   access_methods JSON NOT NULL, -- ['app' | 'keypad' | 'fob'], default ['app']
   status ENUM('online', 'offline', 'error', 'maintenance') DEFAULT 'offline',
   is_locked BOOLEAN DEFAULT TRUE,
+  has_lock_feedback BOOLEAN NOT NULL DEFAULT TRUE,
+  no_feedback_open_timeout_sec INTEGER NOT NULL DEFAULT 0,
+  no_feedback_unlock_until TIMESTAMP NULL,
   last_activity TIMESTAMP,
   device_settings JSON,
   metadata JSON,
@@ -147,6 +151,7 @@ The facility **gateway** itself remains in the `gateways` table and appears in t
 - **Relay Mapping**: Each access control device has its own relay channel (1–8). Multiple keypads on the same gateway may share the same relay number; identity is **`device_serial` + `relay_channel`**, not relay alone.
 - **Configurable Access Methods**: Per-device support for app, keypad, and fob access (any combination)
 - **Lock State**: Current locked/unlocked status
+- **Relay-only/no-feedback mode**: when `has_lock_feedback=false`, gateway `locked` telemetry is ignored. An accepted OPEN stays logically locked when `no_feedback_open_timeout_sec=0`; otherwise cloud sets `is_locked=false` until the durable `no_feedback_unlock_until` deadline and then returns it to locked. This keeps Open usable for hardware without position sensors.
 - **Activity Tracking**: Last activity timestamps for auditing
 
 ### 3.1 Access Groups (Unified Device Groups)
@@ -346,7 +351,7 @@ Response includes lock counts at the top level and, when access items were sent,
 
 **2. State Update** (`POST /api/v1/internal/gateway/devices/state`)
 - Partial updates for device telemetry and state
-- Lock updates use `lock_id`; access control uses `kind: "access_control"` + `access_id` + `relay_channel` (`online` → `status`, `locked` → `is_locked`)
+- Lock updates use `lock_id`; access control uses `kind: "access_control"` + `access_id` + `relay_channel` (`online` → `status`, `locked` → `is_locked`). For access-control rows with `has_lock_feedback=false`, cloud deliberately ignores `locked` while still applying connectivity and `last_seen`.
 
 ```json
 {
@@ -376,9 +381,9 @@ These endpoints are used by the web UI when an admin adds or edits access contro
 
 | Operation | Method | Path | Required fields |
 |-----------|--------|------|-----------------|
-| Create | `POST` | `/api/v1/devices/access-control` | `gateway_id`, `device_serial`, `name`, `device_type` (`gate` \| `elevator` \| `door`), `location_description`, `relay_channel` (1–8) |
+| Create | `POST` | `/api/v1/devices/access-control` | `gateway_id`, `device_serial`, `name`, `device_type` (`gate` \| `elevator` \| `door`), `location_description`, `relay_channel` (1–8); optional `has_lock_feedback`, `no_feedback_open_timeout_sec` (0–3600) |
 | Read | `GET` | `/api/v1/devices/access-control/:id` | — |
-| Update | `PUT` | `/api/v1/devices/access-control/:id` | Any of: `name`, `location_description`, `device_serial`, `relay_channel`, `access_methods`, `device_settings`, `metadata` |
+| Update | `PUT` | `/api/v1/devices/access-control/:id` | Any of: `name`, `location_description`, `device_serial`, `relay_channel`, `access_methods`, `supports_remote_lock`, `supports_widget_timed_open`, `has_lock_feedback`, `no_feedback_open_timeout_sec`, `device_settings`, `metadata` |
 | Lock/unlock | `PUT` | `/api/v1/devices/access-control/:id/lock` | `lock_status`: `locked` \| `unlocked` |
 
 **Create example (manual admin):**

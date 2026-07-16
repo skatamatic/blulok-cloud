@@ -13,6 +13,7 @@ import {
   DocumentDuplicateIcon,
   CpuChipIcon,
   DocumentTextIcon,
+  PencilIcon,
 } from '@heroicons/react/24/outline';
 import GatewayFirmwareTab from './GatewayFirmwareTab';
 import { useFacilityGatewayRecovery } from '@/hooks/useFacilityGatewayRecovery';
@@ -31,6 +32,7 @@ import { UserRole } from '@/types/auth.types';
 import { useFacilityGatewayLiveStatus } from '@/hooks/useFacilityGatewayLiveStatus';
 import { gatewayOperationalStatusColors } from '@/utils/facility-gateway-live-status.utils';
 import { formatDateTime, formatTime, formatUtcDateTime } from '@/utils/datetime.utils';
+import { getApiErrorMessage } from '@/utils/apiError.utils';
 
 interface SyncLogEntry {
   timestamp: Date;
@@ -65,6 +67,9 @@ function FacilityGatewayTab({ facilityId, facilityName, canManageGateway, liveSt
   } = liveStatus;
 
   const [syncing, setSyncing] = useState(false);
+  const [editingGatewayName, setEditingGatewayName] = useState(false);
+  const [gatewayNameDraft, setGatewayNameDraft] = useState('');
+  const [savingGatewayName, setSavingGatewayName] = useState(false);
   const [syncLogs, setSyncLogs] = useState<SyncLogEntry[]>([]);
   const [lastSyncTime, setLastSyncTime] = useState<Date | null>(null);
   const [lastSyncResults, setLastSyncResults] = useState<{
@@ -100,6 +105,40 @@ function FacilityGatewayTab({ facilityId, facilityName, canManageGateway, liveSt
     hasActiveRecovery,
     refetch: refetchRecoverySummary,
   } = useFacilityGatewayRecovery(facilityId, canManageGateway && activeTab !== 'swap-recovery');
+
+  useEffect(() => {
+    if (!editingGatewayName) {
+      setGatewayNameDraft(gateway?.name ?? '');
+    }
+  }, [editingGatewayName, gateway?.name]);
+
+  const saveGatewayName = useCallback(async () => {
+    if (!gateway || savingGatewayName) return;
+    const name = gatewayNameDraft.trim();
+    if (!name) {
+      addToast({ type: 'error', title: 'Gateway name is required' });
+      return;
+    }
+    if (name === gateway.name) {
+      setEditingGatewayName(false);
+      return;
+    }
+
+    setSavingGatewayName(true);
+    try {
+      await apiService.updateGateway(gateway.id, { name });
+      await reload();
+      setEditingGatewayName(false);
+      addToast({ type: 'success', title: 'Gateway renamed' });
+    } catch (error: unknown) {
+      addToast({
+        type: 'error',
+        title: getApiErrorMessage(error, 'Failed to rename gateway'),
+      });
+    } finally {
+      setSavingGatewayName(false);
+    }
+  }, [addToast, gateway, gatewayNameDraft, reload, savingGatewayName]);
 
   const handleRecoveryChange = useCallback(async (snapshot?: { status?: import('@/types/gateway-recovery.types').GatewayRecoveryStatus; terminal?: boolean }) => {
     await refetchRecoverySummary({ silent: true });
@@ -565,7 +604,63 @@ function FacilityGatewayTab({ facilityId, facilityName, canManageGateway, liveSt
             <dl className="space-y-3">
               <div>
                 <dt className="text-sm text-gray-500 dark:text-gray-400">Name</dt>
-                <dd className="mt-1 text-sm text-gray-900 dark:text-white">{gateway.name}</dd>
+                <dd className="mt-1">
+                  {editingGatewayName ? (
+                    <form
+                      className="flex flex-wrap items-center gap-2"
+                      onSubmit={(event) => {
+                        event.preventDefault();
+                        void saveGatewayName();
+                      }}
+                    >
+                      <label htmlFor="gateway-display-name" className="sr-only">Gateway name</label>
+                      <input
+                        id="gateway-display-name"
+                        value={gatewayNameDraft}
+                        onChange={(event) => setGatewayNameDraft(event.target.value)}
+                        maxLength={255}
+                        autoFocus
+                        disabled={savingGatewayName}
+                        className="min-w-0 flex-1 rounded-md border border-gray-300 bg-white px-3 py-1.5 text-sm text-gray-900 shadow-sm focus:border-primary-500 focus:outline-none focus:ring-2 focus:ring-primary-500/30 disabled:opacity-60 dark:border-gray-600 dark:bg-gray-900 dark:text-white"
+                      />
+                      <button
+                        type="submit"
+                        disabled={savingGatewayName || !gatewayNameDraft.trim()}
+                        className="rounded-md bg-primary-600 px-3 py-1.5 text-sm font-medium text-white transition-colors hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        {savingGatewayName ? 'Saving…' : 'Save'}
+                      </button>
+                      <button
+                        type="button"
+                        disabled={savingGatewayName}
+                        onClick={() => {
+                          setGatewayNameDraft(gateway.name);
+                          setEditingGatewayName(false);
+                        }}
+                        className="rounded-md px-3 py-1.5 text-sm font-medium text-gray-600 transition-colors hover:bg-gray-100 disabled:opacity-50 dark:text-gray-300 dark:hover:bg-gray-700"
+                      >
+                        Cancel
+                      </button>
+                    </form>
+                  ) : (
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="text-sm font-medium text-gray-900 dark:text-white">
+                        {gateway.name}
+                      </span>
+                      {canManageGateway && (
+                        <button
+                          type="button"
+                          onClick={() => setEditingGatewayName(true)}
+                          aria-label="Rename gateway"
+                          className="inline-flex items-center gap-1.5 rounded-md border border-gray-300 bg-white px-2.5 py-1 text-xs font-medium text-gray-700 shadow-sm transition-colors hover:border-primary-400 hover:bg-primary-50 hover:text-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-500/30 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-200 dark:hover:border-primary-500 dark:hover:bg-primary-900/20 dark:hover:text-primary-300"
+                        >
+                          <PencilIcon className="h-3.5 w-3.5" />
+                          Edit
+                        </button>
+                      )}
+                    </div>
+                  )}
+                </dd>
               </div>
               {gateway.model && (
                 <div>

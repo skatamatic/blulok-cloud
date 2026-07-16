@@ -993,17 +993,50 @@ export class GatewayRecoveryService {
     const newId = recovery.gateway_id;
 
     await knex.transaction(async (trx) => {
+      const {
+        resolveBoundGatewayDisplayName,
+        unboundGatewayDisplayName,
+        withOperatorSetGatewayDisplayName,
+      } = await import('@/utils/gateway-display-name.utils');
+
       if (oldId && oldId !== newId) {
         await trx('blulok_devices').where('gateway_id', oldId).update({ gateway_id: newId, updated_at: new Date() });
         await trx('access_control_devices').where('gateway_id', oldId).update({ gateway_id: newId, updated_at: new Date() });
         await trx('gateway_inventory_devices').where('gateway_id', oldId).update({ gateway_id: newId, updated_at: new Date() });
-        await trx('gateways').where('id', oldId).update({ facility_id: null, status: 'offline', updated_at: new Date() });
+        const retired = await trx('gateways').where('id', oldId).first();
+        // Neutralize display name + clear operator-set flag so a later rebind
+        // cannot surface this facility's branding on a different site.
+        await trx('gateways').where('id', oldId).update({
+          facility_id: null,
+          status: 'offline',
+          name: unboundGatewayDisplayName(String(oldId)),
+          metadata: JSON.stringify(withOperatorSetGatewayDisplayName(retired?.metadata, false)),
+          updated_at: new Date(),
+        });
       }
+
+      const promoted = await trx('gateways').where('id', newId).first();
+      const facility = await trx('facilities').where('id', recovery.facility_id).first();
+      const nextName = resolveBoundGatewayDisplayName({
+        facilityName: facility?.name,
+        gatewayId: String(newId),
+        existingName: promoted?.name,
+        metadata: promoted?.metadata,
+      });
+      const keepOperatorName = nextName === String(promoted?.name ?? '').trim();
 
       await trx('gateways').where('id', newId).update({
         facility_id: recovery.facility_id,
         status: 'online',
+        name: nextName,
         updated_at: new Date(),
+        ...(keepOperatorName
+          ? {}
+          : {
+              metadata: JSON.stringify(
+                withOperatorSetGatewayDisplayName(promoted?.metadata, false),
+              ),
+            }),
       });
     });
 

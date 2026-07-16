@@ -188,6 +188,42 @@ describe('FacilityGatewayTab', () => {
       });
     });
 
+    it('renames a gateway from the overview', async () => {
+      const user = userEvent.setup();
+      const reload = jest.fn().mockResolvedValue(undefined);
+      mockApiService.updateGateway.mockResolvedValue({
+        success: true,
+        gateway: { id: 'gateway-1', name: 'North Entry Gateway' },
+      } as any);
+
+      renderComponent(true, createLiveStatus({
+        gateway: {
+          id: 'gateway-1',
+          facility_id: facilityId,
+          name: 'Gateway f6655dca',
+          status: 'online',
+          gateway_type: 'physical',
+        },
+        effectiveStatus: 'online',
+        reload,
+      }));
+
+      await user.click(screen.getByRole('button', { name: /Rename gateway|Edit/i }));
+      const input = screen.getByRole('textbox', { name: 'Gateway name' });
+      await user.clear(input);
+      await user.type(input, 'North Entry Gateway');
+      await user.click(screen.getByRole('button', { name: 'Save' }));
+
+      await waitFor(() => {
+        expect(mockApiService.updateGateway).toHaveBeenCalledWith(
+          'gateway-1',
+          { name: 'North Entry Gateway' },
+        );
+        expect(reload).toHaveBeenCalled();
+        expect(mockAddToast).toHaveBeenCalledWith({ type: 'success', title: 'Gateway renamed' });
+      });
+    });
+
     it('shows swap recovery entry point when no gateway exists and user can manage gateway', async () => {
       renderComponent();
 

@@ -1,6 +1,10 @@
 import { v4 as uuidv4 } from 'uuid';
 import { DatabaseService } from '../services/database.service';
 import { isDuplicateKeyError } from '@/utils/gateway-auto-register.utils';
+import {
+  resolveBoundGatewayDisplayName,
+  withOperatorSetGatewayDisplayName,
+} from '@/utils/gateway-display-name.utils';
 
 /**
  * Gateway Entity Interface
@@ -234,7 +238,8 @@ export class GatewayModel {
   async createOrBindAsFirstGateway(params: {
     id: string;
     facilityId: string;
-    name: string;
+    /** @deprecated Ignored — bound name is resolved from the facility (unless operator-set). */
+    name?: string;
     metadata?: Record<string, any>;
   }): Promise<{ bound: boolean; created: boolean; gateway: Gateway | null }> {
     const knex = this.db.connection;
@@ -252,25 +257,50 @@ export class GatewayModel {
         return { bound: false, created: false, gateway: null };
       }
 
+      const facility = await trx('facilities').where('id', params.facilityId).first();
+      const displayName = resolveBoundGatewayDisplayName({
+        facilityName: facility?.name,
+        gatewayId: params.id,
+        existingName: existingRow?.name,
+        metadata: existingRow?.metadata,
+      });
+      const keepOperatorName =
+        displayName === String(existingRow?.name ?? '').trim() &&
+        Boolean(existingRow?.name);
+
       let created = false;
       if (existingRow) {
+        const nextMetadata = keepOperatorName
+          ? undefined
+          : withOperatorSetGatewayDisplayName(existingRow.metadata, false);
         await trx('gateways').where('id', params.id).update({
           facility_id: params.facilityId,
+          name: displayName,
           status: 'online',
           last_seen: new Date(),
           updated_at: new Date(),
+          ...(nextMetadata
+            ? { metadata: JSON.stringify(nextMetadata) }
+            : {}),
         });
       } else {
         created = true;
+        const cleanMeta = withOperatorSetGatewayDisplayName(
+          {
+            autoRegistered: true,
+            ...(params.metadata || {}),
+          },
+          false,
+        );
         await trx('gateways').insert({
           id: params.id,
           facility_id: params.facilityId,
-          name: params.name,
+          name: displayName,
           gateway_type: 'physical',
           key_management_version: 'v2',
           status: 'online',
           last_seen: new Date(),
-          ...(params.metadata ? { metadata: JSON.stringify(params.metadata) } : {}),
+          metadata: JSON.stringify(cleanMeta),
         });
       }
       const gateway = await trx('gateways').where('id', params.id).first();
@@ -285,6 +315,9 @@ export class GatewayModel {
     const cleanData = Object.fromEntries(
       Object.entries(data).filter(([_, value]) => value !== undefined && value !== null)
     );
+    if (cleanData.metadata && typeof cleanData.metadata === 'object') {
+      cleanData.metadata = JSON.stringify(cleanData.metadata);
+    }
     
     await knex('gateways').where('id', id).update({
       ...cleanData,

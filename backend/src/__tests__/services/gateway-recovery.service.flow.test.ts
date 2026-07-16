@@ -99,11 +99,17 @@ jest.mock('@/services/database.service', () => ({
       connection: Object.assign(jest.fn((table: string) => ({
         where: jest.fn().mockReturnThis(),
         update: mockTrxUpdate,
+        first: jest.fn().mockResolvedValue({ id: 'gw-new', name: 'Swap candidate deadbeef' }),
       })), {
         transaction: jest.fn(async (cb: (trx: jest.Mock) => Promise<void>) => {
           const trx = jest.fn((table: string) => ({
             where: jest.fn().mockReturnThis(),
             update: mockTrxUpdate,
+            first: jest.fn().mockResolvedValue(
+              table === 'facilities'
+                ? { id: 'fac-1', name: 'Test Facility' }
+                : { id: 'gw-new', name: 'Swap candidate deadbeef', metadata: {} },
+            ),
           }));
           await cb(trx);
         }),

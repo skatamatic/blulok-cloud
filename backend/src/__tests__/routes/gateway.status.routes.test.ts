@@ -32,4 +32,70 @@ describe('GET /api/v1/gateways/status/:facilityId', () => {
   });
 });
 
+describe('PUT /api/v1/gateways/:id', () => {
+  it('allows an admin to rename a gateway', async () => {
+    const app = createApp();
+    const testData = createMockTestData();
+
+    const res = await request(app)
+      .put('/api/v1/gateways/gateway-1')
+      .set('Authorization', `Bearer ${testData.users.admin.token}`)
+      .send({ name: 'North Entry Gateway' })
+      .expect(200);
+
+    expect(res.body).toMatchObject({
+      success: true,
+      gateway: { id: 'gateway-1', name: 'North Entry Gateway' },
+    });
+  });
+
+  it('allows a facility admin to rename a gateway in an assigned facility', async () => {
+    const app = createApp();
+    const testData = createMockTestData();
+
+    const res = await request(app)
+      .put('/api/v1/gateways/gateway-1')
+      .set('Authorization', `Bearer ${testData.users.facilityAdmin.token}`)
+      .send({ name: 'Facility Gateway' })
+      .expect(200);
+
+    expect(res.body.gateway.name).toBe('Facility Gateway');
+  });
+
+  it('forbids a facility admin from renaming another facility gateway', async () => {
+    const app = createApp();
+    const testData = createMockTestData();
+
+    await request(app)
+      .put('/api/v1/gateways/gateway-2')
+      .set('Authorization', `Bearer ${testData.users.facilityAdmin.token}`)
+      .send({ name: 'Unauthorized Rename' })
+      .expect(403);
+  });
+
+  it('forbids facility admins from editing non-name gateway fields', async () => {
+    const app = createApp();
+    const testData = createMockTestData();
+
+    const res = await request(app)
+      .put('/api/v1/gateways/gateway-1')
+      .set('Authorization', `Bearer ${testData.users.facilityAdmin.token}`)
+      .send({ status: 'maintenance' })
+      .expect(403);
+
+    expect(res.body.message).toMatch(/only rename/i);
+  });
+
+  it('rejects blank gateway names', async () => {
+    const app = createApp();
+    const testData = createMockTestData();
+
+    await request(app)
+      .put('/api/v1/gateways/gateway-1')
+      .set('Authorization', `Bearer ${testData.users.admin.token}`)
+      .send({ name: '   ' })
+      .expect(400);
+  });
+});
+
 
