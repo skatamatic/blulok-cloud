@@ -276,6 +276,8 @@ export class LockCommandService {
         'access_control_devices.is_locked',
         'access_control_devices.supports_remote_lock',
         'access_control_devices.supports_widget_timed_open',
+        'access_control_devices.has_lock_feedback',
+        'access_control_devices.no_feedback_open_timeout_sec',
       )
       .where('access_control_devices.id', deviceId)
       .first();
@@ -323,6 +325,13 @@ export class LockCommandService {
     const facilityId = String((deviceRow as { facility_id: string }).facility_id);
     const previousLocked = Boolean((deviceRow as { is_locked?: boolean }).is_locked);
     const previousStatus: LockStatus = previousLocked ? 'locked' : 'unlocked';
+    const hasLockFeedback =
+      (deviceRow as { has_lock_feedback?: boolean | number }).has_lock_feedback === undefined
+        ? true
+        : Boolean((deviceRow as { has_lock_feedback?: boolean | number }).has_lock_feedback);
+    const noFeedbackOpenTimeoutSec = Number(
+      (deviceRow as { no_feedback_open_timeout_sec?: number }).no_feedback_open_timeout_sec ?? 0,
+    );
 
     const { GatewayRecoveryService } = await import('@/services/gateway/gateway-recovery.service');
     if (await GatewayRecoveryService.isBlockingActiveForFacility(facilityId)) {
@@ -391,6 +400,44 @@ export class LockCommandService {
     }
 
     this.clearPending(deviceId);
+
+    if (!hasLockFeedback) {
+      try {
+        const { AccessControlNoFeedbackService } = await import(
+          '@/services/access-control-no-feedback.service'
+        );
+        await AccessControlNoFeedbackService.getInstance().applyAcceptedCommand({
+          deviceId,
+          requestedStatus,
+          timeoutSec: noFeedbackOpenTimeoutSec,
+        });
+      } catch (error) {
+        logger.error('LockCommandService: failed to update no-feedback logical lock state', {
+          deviceId,
+          requestedStatus,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+
+      if (initiator) {
+        await this.logRemoteCommandSuccess({
+          facilityId,
+          deviceId,
+          gatewayId,
+          initiator,
+          method: resolveRemoteAccessMethod(initiator.role),
+          activityType: requestedStatus === 'locked' ? 'lock' : 'unlock',
+        });
+      }
+
+      return {
+        success: true,
+        message:
+          requestedStatus === 'unlocked' && noFeedbackOpenTimeoutSec > 0
+            ? `Open command accepted for ${noFeedbackOpenTimeoutSec} seconds`
+            : 'Lock command sent',
+      };
+    }
 
     const timeoutMs = await this.resolveFacilityLockTimeoutMs(facilityId);
     const timeoutHandle =

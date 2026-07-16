@@ -17,6 +17,7 @@ import {
 import { formatDateTime } from '@/utils/datetime.utils';
 import { isSupportsRemoteLockEnabled } from '@/utils/unitLock.utils';
 import { isSupportsWidgetTimedOpenEnabled } from '@/utils/accessControlOpen.utils';
+import { NO_FEEDBACK_OPEN_TIMEOUT_MAX_SEC } from '@/constants/access-control-feedback.constants';
 
 export type DeviceMetadataCategory = 'blulok' | 'access_control';
 
@@ -32,6 +33,8 @@ export interface EditDeviceMetadataSource {
   access_methods?: AccessMethod[];
   supports_remote_lock?: boolean;
   supports_widget_timed_open?: boolean;
+  has_lock_feedback?: boolean;
+  no_feedback_open_timeout_sec?: number;
   firmware_version?: string;
   device_settings?: Record<string, unknown>;
   metadata?: Record<string, unknown>;
@@ -70,6 +73,8 @@ interface AccessControlForm {
   access_methods: AccessMethod[];
   supports_remote_lock: boolean;
   supports_widget_timed_open: boolean;
+  has_lock_feedback: boolean;
+  no_feedback_open_timeout_sec: number;
 }
 
 const RELAY_OPTIONS = [1, 2, 3, 4, 5, 6, 7, 8] as const;
@@ -103,6 +108,8 @@ export function EditDeviceMetadataModal({
     access_methods: ['app'],
     supports_remote_lock: false,
     supports_widget_timed_open: false,
+    has_lock_feedback: true,
+    no_feedback_open_timeout_sec: 0,
   });
   const [loading, setLoading] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
@@ -136,6 +143,8 @@ export function EditDeviceMetadataModal({
             : ['app'],
         supports_remote_lock: isSupportsRemoteLockEnabled(device.supports_remote_lock),
         supports_widget_timed_open: isSupportsWidgetTimedOpenEnabled(device.supports_widget_timed_open),
+        has_lock_feedback: device.has_lock_feedback !== false,
+        no_feedback_open_timeout_sec: device.no_feedback_open_timeout_sec ?? 0,
       });
     }
     setAdvancedMetadataJson(
@@ -192,6 +201,9 @@ export function EditDeviceMetadataModal({
       acForm.supports_remote_lock !== isSupportsRemoteLockEnabled(device.supports_remote_lock) ||
       acForm.supports_widget_timed_open !==
         isSupportsWidgetTimedOpenEnabled(device.supports_widget_timed_open) ||
+      acForm.has_lock_feedback !== (device.has_lock_feedback !== false) ||
+      acForm.no_feedback_open_timeout_sec !==
+        (device.has_lock_feedback === false ? device.no_feedback_open_timeout_sec ?? 0 : 0) ||
       methodsChanged ||
       advancedMetadataJson !== JSON.stringify(device.metadata ?? {}, null, 2)
     );
@@ -210,6 +222,14 @@ export function EditDeviceMetadataModal({
       if (!acForm.device_serial.trim()) next.device_serial = 'Hardware serial is required';
       if (!RELAY_OPTIONS.includes(acForm.relay_channel as (typeof RELAY_OPTIONS)[number])) {
         next.relay_channel = 'Relay must be between 1 and 8';
+      }
+      if (
+        !Number.isInteger(acForm.no_feedback_open_timeout_sec) ||
+        acForm.no_feedback_open_timeout_sec < 0 ||
+        acForm.no_feedback_open_timeout_sec > NO_FEEDBACK_OPEN_TIMEOUT_MAX_SEC
+      ) {
+        next.no_feedback_open_timeout_sec =
+          `Timeout must be between 0 and ${NO_FEEDBACK_OPEN_TIMEOUT_MAX_SEC} seconds`;
       }
     }
     if (showAdvanced) {
@@ -260,6 +280,10 @@ export function EditDeviceMetadataModal({
           access_methods: acForm.access_methods,
           supports_remote_lock: acForm.supports_remote_lock,
           supports_widget_timed_open: acForm.supports_widget_timed_open,
+          has_lock_feedback: acForm.has_lock_feedback,
+          no_feedback_open_timeout_sec: acForm.has_lock_feedback
+            ? 0
+            : acForm.no_feedback_open_timeout_sec,
           metadata: parsedMetadata,
         });
         sideEffects = res.sideEffects;
@@ -599,6 +623,64 @@ export function EditDeviceMetadataModal({
                   />
                   Enable timed open for Remote Gate widget (sends open_until to hardware)
                 </label>
+              </div>
+              <div className="md:col-span-2 rounded-lg border border-gray-200 bg-gray-50/70 p-4 dark:border-gray-700 dark:bg-gray-900/30">
+                <label className="inline-flex cursor-pointer items-center gap-2 text-sm font-medium text-gray-700 dark:text-gray-300">
+                  <input
+                    type="checkbox"
+                    checked={acForm.has_lock_feedback}
+                    onChange={(e) =>
+                      setAcForm((p) => ({
+                        ...p,
+                        has_lock_feedback: e.target.checked,
+                        no_feedback_open_timeout_sec: e.target.checked
+                          ? 0
+                          : p.no_feedback_open_timeout_sec,
+                      }))
+                    }
+                    className="rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+                  />
+                  Hardware reports open/closed state
+                </label>
+                <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                  Disable for relay-only access points that cannot report state. Cloud owns open/closed until the timeout below.
+                </p>
+                {!acForm.has_lock_feedback && (
+                  <div className="mt-3 max-w-xs">
+                    <label
+                      htmlFor="edit-access-control-no-feedback-timeout"
+                      className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300"
+                    >
+                      Assume open for (seconds)
+                    </label>
+                    <input
+                      id="edit-access-control-no-feedback-timeout"
+                      type="number"
+                      min={0}
+                      max={NO_FEEDBACK_OPEN_TIMEOUT_MAX_SEC}
+                      value={acForm.no_feedback_open_timeout_sec}
+                      onChange={(e) =>
+                        setAcForm((p) => ({
+                          ...p,
+                          no_feedback_open_timeout_sec: Number(e.target.value),
+                        }))
+                      }
+                      className={`block w-full rounded-lg border bg-white px-3 py-2 text-sm shadow-sm focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500 dark:bg-gray-700 dark:text-white ${
+                        errors.no_feedback_open_timeout_sec
+                          ? 'border-red-300 dark:border-red-600'
+                          : 'border-gray-300 dark:border-gray-600'
+                      }`}
+                    />
+                    <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                      Use 0 to keep the device logically closed so Open is always available.
+                    </p>
+                    {errors.no_feedback_open_timeout_sec && (
+                      <p className="mt-1 text-sm text-red-600 dark:text-red-400">
+                        {errors.no_feedback_open_timeout_sec}
+                      </p>
+                    )}
+                  </div>
+                )}
               </div>
             </div>
           )}

@@ -75,6 +75,46 @@ describe('EditDeviceMetadataModal', () => {
     });
   });
 
+  it('configures relay-only no-feedback behavior', async () => {
+    (apiService.updateAccessControlDeviceMetadata as jest.Mock).mockResolvedValue({
+      success: true,
+      sideEffects: { identityChanged: false, accessCodesPushed: false },
+    });
+
+    render(
+      <EditDeviceMetadataModal
+        isOpen
+        onClose={onClose}
+        onSuccess={onSuccess}
+        device={{
+          id: 'ac-1',
+          category: 'access_control',
+          device_serial: 'KP-1',
+          relay_channel: 1,
+          name: 'Main Gate',
+          location_description: 'Front',
+          access_methods: ['app'],
+          has_lock_feedback: true,
+        }}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole('checkbox', { name: /hardware reports open\/closed state/i }));
+    const timeout = screen.getByRole('spinbutton', { name: /assume open for/i });
+    fireEvent.change(timeout, { target: { value: '25' } });
+    fireEvent.click(screen.getByRole('button', { name: /save changes/i }));
+
+    await waitFor(() => {
+      expect(apiService.updateAccessControlDeviceMetadata).toHaveBeenCalledWith(
+        'ac-1',
+        expect.objectContaining({
+          has_lock_feedback: false,
+          no_feedback_open_timeout_sec: 25,
+        }),
+      );
+    });
+  });
+
   it('maps 409 conflict to relay_channel field', async () => {
     const axiosError = new axios.AxiosError('Conflict');
     axiosError.response = {

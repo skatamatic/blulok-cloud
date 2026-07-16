@@ -42,6 +42,8 @@ interface GateDevice {
   supportsRemoteLock: boolean;
   /** When true, widget may send timed OPEN with open_until. */
   supportsWidgetTimedOpen: boolean;
+  /** Whether hardware reports authoritative open/closed state. */
+  hasLockFeedback: boolean;
   lastActivity: Date;
   /** Display hint when a timed open command was issued (from open_until). */
   openUntilEnd?: Date;
@@ -79,7 +81,11 @@ const transformToGateDevice = (device: AccessControlDevice): GateDevice => {
     isOpen: !device.is_locked,
     supportsRemoteLock: isSupportsRemoteLockEnabled(device.supports_remote_lock),
     supportsWidgetTimedOpen: isSupportsWidgetTimedOpenEnabled(device.supports_widget_timed_open),
+    hasLockFeedback: device.has_lock_feedback !== false,
     lastActivity: device.last_activity ? new Date(device.last_activity) : new Date(),
+    openUntilEnd: device.no_feedback_unlock_until
+      ? new Date(device.no_feedback_unlock_until)
+      : undefined,
     deviceType: device.device_type,
   };
 };
@@ -242,7 +248,7 @@ export const RemoteGateWidget: React.FC<RemoteGateWidgetProps> = ({
       }
       await loadGates();
 
-      if (operation === 'open' || operation === 'timed-open') {
+      if ((operation === 'open' || operation === 'timed-open') && gate.hasLockFeedback) {
         const gateId = selectedGate;
         pendingGateOpenIdRef.current = gateId;
         gateOpenAckCancelRef.current?.();

@@ -8,6 +8,15 @@ jest.mock('@/models/device.model');
 jest.mock('@/models/activity-log.model');
 jest.mock('@/services/access-code.service');
 
+const mockCancelOpenWindow = jest.fn();
+jest.mock('@/services/access-control-no-feedback.service', () => ({
+  AccessControlNoFeedbackService: {
+    getInstance: jest.fn(() => ({
+      cancelOpenWindow: mockCancelOpenWindow,
+    })),
+  },
+}));
+
 describe('DeviceMetadataService', () => {
   const mockFindBluLok = jest.fn();
   const mockUpdateBluLok = jest.fn();
@@ -247,6 +256,111 @@ describe('DeviceMetadataService', () => {
       expect(result.sideEffects.identityChanged).toBe(false);
       expect(result.sideEffects.accessCodesPushed).toBe(false);
       expect(mockPushCodes).not.toHaveBeenCalled();
+    });
+
+    it('enables no-feedback mode and cancels any open window timer', async () => {
+      mockFindAcWithGateway
+        .mockResolvedValueOnce({
+          id: 'ac-1',
+          gateway_id: 'gw-1',
+          facility_id: 'fac-1',
+          device_serial: 'KP-1',
+          relay_channel: 1,
+          has_lock_feedback: true,
+          is_locked: false,
+          metadata: {},
+        })
+        .mockResolvedValueOnce({
+          id: 'ac-1',
+          has_lock_feedback: false,
+          no_feedback_open_timeout_sec: 20,
+        });
+      mockUpdateAc.mockResolvedValue({ id: 'ac-1' });
+
+      const svc = DeviceMetadataService.getInstance();
+      await svc.updateAccessControlMetadata(
+        'ac-1',
+        { has_lock_feedback: false, no_feedback_open_timeout_sec: 20 },
+        { userId: 'admin-1' },
+      );
+
+      expect(mockCancelOpenWindow).toHaveBeenCalledWith('ac-1');
+      expect(mockUpdateAc).toHaveBeenCalledWith(
+        'ac-1',
+        expect.objectContaining({
+          has_lock_feedback: false,
+          no_feedback_open_timeout_sec: 20,
+        }),
+      );
+      expect(mockUpdateAc.mock.calls[0][1]).not.toHaveProperty('no_feedback_unlock_until');
+      expect(mockUpdateAc.mock.calls[0][1]).not.toHaveProperty('is_locked');
+    });
+
+    it('does not re-arm no-feedback mode when saving other metadata fields', async () => {
+      mockFindAcWithGateway
+        .mockResolvedValueOnce({
+          id: 'ac-1',
+          gateway_id: 'gw-1',
+          facility_id: 'fac-1',
+          device_serial: 'KP-1',
+          relay_channel: 1,
+          has_lock_feedback: false,
+          no_feedback_open_timeout_sec: 30,
+          no_feedback_unlock_until: new Date('2026-07-15T20:01:00.000Z'),
+          is_locked: false,
+          name: 'Gate',
+          metadata: {},
+        })
+        .mockResolvedValueOnce({
+          id: 'ac-1',
+          name: 'Gate B',
+          has_lock_feedback: false,
+        });
+      mockUpdateAc.mockResolvedValue({ id: 'ac-1' });
+
+      const svc = DeviceMetadataService.getInstance();
+      await svc.updateAccessControlMetadata(
+        'ac-1',
+        {
+          name: 'Gate B',
+          has_lock_feedback: false,
+          no_feedback_open_timeout_sec: 30,
+        },
+        { userId: 'admin-1' },
+      );
+
+      expect(mockCancelOpenWindow).not.toHaveBeenCalled();
+      expect(mockUpdateAc).toHaveBeenCalledWith(
+        'ac-1',
+        expect.objectContaining({
+          name: 'Gate B',
+          no_feedback_open_timeout_sec: 30,
+        }),
+      );
+      expect(mockUpdateAc.mock.calls[0][1]).not.toHaveProperty('has_lock_feedback');
+      expect(mockUpdateAc.mock.calls[0][1]).not.toHaveProperty('is_locked');
+      expect(mockUpdateAc.mock.calls[0][1]).not.toHaveProperty('no_feedback_unlock_until');
+    });
+
+    it('rejects a no-feedback timeout while feedback remains enabled', async () => {
+      mockFindAcWithGateway.mockResolvedValue({
+        id: 'ac-1',
+        gateway_id: 'gw-1',
+        facility_id: 'fac-1',
+        device_serial: 'KP-1',
+        relay_channel: 1,
+        has_lock_feedback: true,
+        metadata: {},
+      });
+
+      const svc = DeviceMetadataService.getInstance();
+      await expect(
+        svc.updateAccessControlMetadata(
+          'ac-1',
+          { no_feedback_open_timeout_sec: 20 },
+          { userId: 'admin-1' },
+        ),
+      ).rejects.toBeInstanceOf(ConflictError);
     });
 
     it('throws ConflictError on duplicate access_id and relay identity', async () => {

@@ -18,6 +18,7 @@ import { apiService } from '@/services/api.service';
 import { Facility, Gateway, Unit, CreateAccessControlDevicePayload } from '@/types/facility.types';
 import { mapDeviceApiErrorToFields } from '@/utils/deviceApiErrors';
 import { buildBluLokDeviceSettings } from '@/utils/deviceMetadataForm.utils';
+import { NO_FEEDBACK_OPEN_TIMEOUT_MAX_SEC } from '@/constants/access-control-feedback.constants';
 
 type HardwareKind = 'access_control' | 'blulok';
 type WizardStep = 'type' | 'location' | 'configure' | 'review';
@@ -26,6 +27,8 @@ interface CreateAccessControlDeviceData extends CreateAccessControlDevicePayload
   access_methods: Array<'app' | 'keypad' | 'fob'>;
   supports_remote_lock: boolean;
   supports_widget_timed_open: boolean;
+  has_lock_feedback: boolean;
+  no_feedback_open_timeout_sec: number;
 }
 
 interface CreateBluLokDeviceData {
@@ -142,6 +145,8 @@ export function AddDeviceModal({ isOpen, onClose, onSuccess, facilityId, deviceT
     access_methods: ['app'],
     supports_remote_lock: false,
     supports_widget_timed_open: false,
+    has_lock_feedback: true,
+    no_feedback_open_timeout_sec: 0,
     device_settings: {},
   });
 
@@ -179,6 +184,8 @@ export function AddDeviceModal({ isOpen, onClose, onSuccess, facilityId, deviceT
       access_methods: ['app'],
       supports_remote_lock: false,
       supports_widget_timed_open: false,
+      has_lock_feedback: true,
+      no_feedback_open_timeout_sec: 0,
       device_settings: {},
     });
     setBluLokData({
@@ -359,6 +366,10 @@ export function AddDeviceModal({ isOpen, onClose, onSuccess, facilityId, deviceT
           access_methods: accessControlData.access_methods,
           supports_remote_lock: accessControlData.supports_remote_lock,
           supports_widget_timed_open: accessControlData.supports_widget_timed_open,
+          has_lock_feedback: accessControlData.has_lock_feedback,
+          no_feedback_open_timeout_sec: accessControlData.has_lock_feedback
+            ? 0
+            : accessControlData.no_feedback_open_timeout_sec,
         });
       } else {
         const deviceSettings = buildBluLokDeviceSettings(undefined, {
@@ -695,6 +706,61 @@ export function AddDeviceModal({ isOpen, onClose, onSuccess, facilityId, deviceT
               Enable timed open for Remote Gate widget
             </label>
           </div>
+          <div className="rounded-xl border border-gray-200 bg-gray-50/60 p-4 dark:border-gray-700 dark:bg-gray-900/30">
+            <label className="inline-flex cursor-pointer items-center gap-2 text-sm font-medium text-gray-700 dark:text-gray-300">
+              <input
+                type="checkbox"
+                checked={accessControlData.has_lock_feedback}
+                onChange={(e) =>
+                  setAccessControlData((p) => ({
+                    ...p,
+                    has_lock_feedback: e.target.checked,
+                    no_feedback_open_timeout_sec: e.target.checked
+                      ? 0
+                      : p.no_feedback_open_timeout_sec,
+                  }))
+                }
+                className="rounded border-gray-300 text-primary-600"
+              />
+              Hardware reports open/closed state
+            </label>
+            <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+              Disable for relay-only access points that cannot report state. Cloud owns open/closed until the timeout below.
+            </p>
+            {!accessControlData.has_lock_feedback && (
+              <div className="mt-3 max-w-xs">
+                <label
+                  htmlFor="add-access-control-no-feedback-timeout"
+                  className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300"
+                >
+                  Assume open for (seconds)
+                </label>
+                <input
+                  id="add-access-control-no-feedback-timeout"
+                  type="number"
+                  min={0}
+                  max={NO_FEEDBACK_OPEN_TIMEOUT_MAX_SEC}
+                  value={accessControlData.no_feedback_open_timeout_sec}
+                  onChange={(e) =>
+                    setAccessControlData((p) => ({
+                      ...p,
+                      no_feedback_open_timeout_sec: Math.max(
+                        0,
+                        Math.min(
+                          NO_FEEDBACK_OPEN_TIMEOUT_MAX_SEC,
+                          Number(e.target.value) || 0,
+                        ),
+                      ),
+                    }))
+                  }
+                  className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-gray-900 dark:border-gray-600 dark:bg-gray-700 dark:text-white"
+                />
+                <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                  Use 0 to keep the device logically closed so Open is always available.
+                </p>
+              </div>
+            )}
+          </div>
         </>
       ) : (
         <>
@@ -902,6 +968,15 @@ export function AddDeviceModal({ isOpen, onClose, onSuccess, facilityId, deviceT
                 ['Access', accessControlData.access_methods.join(', ')],
                 ['Remote lock', accessControlData.supports_remote_lock ? 'Yes' : 'No'],
                 ['Widget timed open', accessControlData.supports_widget_timed_open ? 'Yes' : 'No'],
+                ['Lock feedback', accessControlData.has_lock_feedback ? 'Reported by hardware' : 'Not available'],
+                ...(!accessControlData.has_lock_feedback
+                  ? [[
+                      'Assume open',
+                      accessControlData.no_feedback_open_timeout_sec > 0
+                        ? `${accessControlData.no_feedback_open_timeout_sec} seconds`
+                        : 'Never (always ready)',
+                    ]]
+                  : []),
               ]),
         ].map(([label, value]) => (
           <div key={label} className="flex justify-between gap-4 bg-gray-50/50 dark:bg-gray-900/20 px-4 py-3 text-sm">

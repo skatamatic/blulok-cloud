@@ -69,6 +69,12 @@ export interface AccessControlDevice {
    * When true, Remote Gate widget may send timed OPEN commands with open_until (unix UTC seconds).
    */
   supports_widget_timed_open?: boolean;
+  /** Whether the hardware reports authoritative open/closed state. Defaults to true. */
+  has_lock_feedback: boolean;
+  /** Cloud-owned open window in seconds when lock feedback is unavailable. */
+  no_feedback_open_timeout_sec: number;
+  /** Durable deadline for the current cloud-owned open window. */
+  no_feedback_unlock_until?: Date | null;
   /** Timestamp of last device activity */
   last_activity?: Date;
   /** Device-specific configuration settings */
@@ -208,6 +214,8 @@ export interface CreateAccessControlDeviceData {
   metadata?: Record<string, any>;
   supports_remote_lock?: boolean;
   supports_widget_timed_open?: boolean;
+  has_lock_feedback?: boolean;
+  no_feedback_open_timeout_sec?: number;
 }
 
 export interface UpdateAccessControlDeviceData {
@@ -220,6 +228,9 @@ export interface UpdateAccessControlDeviceData {
   is_locked?: boolean;
   supports_remote_lock?: boolean;
   supports_widget_timed_open?: boolean;
+  has_lock_feedback?: boolean;
+  no_feedback_open_timeout_sec?: number;
+  no_feedback_unlock_until?: Date | null;
   /** Gateway `last_seen` maps here (access_control has no last_seen column). */
   last_activity?: Date;
   device_settings?: Record<string, any>;
@@ -380,8 +391,18 @@ export class DeviceModel {
   private deserializeAccessControlRow(row: Record<string, unknown>): AccessControlDevice {
     return {
       ...(row as unknown as AccessControlDevice),
+      // mysql2 returns TINYINT(1) as 0/1 — normalize so API/clients never see numeric booleans.
+      is_locked: Boolean(row.is_locked),
       supports_remote_lock: Boolean(row.supports_remote_lock),
       supports_widget_timed_open: Boolean(row.supports_widget_timed_open),
+      has_lock_feedback:
+        row.has_lock_feedback === undefined || row.has_lock_feedback === null
+          ? true
+          : Boolean(row.has_lock_feedback),
+      no_feedback_open_timeout_sec: Number(row.no_feedback_open_timeout_sec ?? 0),
+      no_feedback_unlock_until: row.no_feedback_unlock_until
+        ? new Date(String(row.no_feedback_unlock_until))
+        : null,
       device_settings: this.safeParseJson(row.device_settings),
       access_methods: this.safeParseJson(row.access_methods) || ['app'],
       metadata: this.safeParseJson(row.metadata),
@@ -592,12 +613,7 @@ export class DeviceModel {
       })
       .first();
     if (!device) return null;
-    return {
-      ...(device as AccessControlDevice),
-      device_settings: this.safeParseJson(device.device_settings),
-      access_methods: this.safeParseJson(device.access_methods) || ['app'],
-      metadata: this.safeParseJson(device.metadata),
-    };
+    return this.deserializeAccessControlRow(device as Record<string, unknown>);
   }
 
   async findAccessControlByRelayChannel(
@@ -609,12 +625,25 @@ export class DeviceModel {
       .where({ gateway_id: gatewayId, relay_channel: relayChannel })
       .first();
     if (!device) return null;
-    return {
-      ...(device as AccessControlDevice),
-      device_settings: this.safeParseJson(device.device_settings),
-      access_methods: this.safeParseJson(device.access_methods) || ['app'],
-      metadata: this.safeParseJson(device.metadata),
-    };
+    return this.deserializeAccessControlRow(device as Record<string, unknown>);
+  }
+
+  async findNoFeedbackAccessControlDevicesWithOpenWindow(): Promise<
+    Array<AccessControlDevice & { facility_id: string }>
+  > {
+    const knex = this.db.connection;
+    const rows = await knex('access_control_devices')
+      .join('gateways', 'access_control_devices.gateway_id', 'gateways.id')
+      .where('access_control_devices.has_lock_feedback', false)
+      .whereNotNull('access_control_devices.no_feedback_unlock_until')
+      .select('access_control_devices.*', 'gateways.facility_id');
+
+    return rows.map(
+      (row) =>
+        this.deserializeAccessControlRow(row as Record<string, unknown>) as AccessControlDevice & {
+          facility_id: string;
+        },
+    );
   }
 
   async bulkCreateAccessControlDevices(
@@ -645,7 +674,11 @@ export class DeviceModel {
       relayChannel
     );
     if (!existing) return null;
-    return this.updateAccessControlDevice(existing.id, data);
+    const safeData =
+      !existing.has_lock_feedback && data.is_locked !== undefined
+        ? { ...data, is_locked: undefined }
+        : data;
+    return this.updateAccessControlDevice(existing.id, safeData);
   }
 
   async updateAccessControlDeviceByRelayChannel(
@@ -664,7 +697,8 @@ export class DeviceModel {
     const hasTelemetryChange =
       data.status !== undefined ||
       data.is_locked !== undefined ||
-      data.last_activity !== undefined;
+      data.last_activity !== undefined ||
+      data.has_lock_feedback !== undefined;
 
     const hasMetadataChange =
       data.name !== undefined ||
@@ -688,6 +722,32 @@ export class DeviceModel {
     if (data.supports_remote_lock !== undefined) updatePayload.supports_remote_lock = data.supports_remote_lock;
     if (data.supports_widget_timed_open !== undefined) {
       updatePayload.supports_widget_timed_open = data.supports_widget_timed_open;
+    }
+    if (data.has_lock_feedback !== undefined) {
+      updatePayload.has_lock_feedback = data.has_lock_feedback;
+    }
+    if (data.no_feedback_open_timeout_sec !== undefined) {
+      updatePayload.no_feedback_open_timeout_sec = data.no_feedback_open_timeout_sec;
+    }
+    if (data.no_feedback_unlock_until !== undefined) {
+      updatePayload.no_feedback_unlock_until = data.no_feedback_unlock_until;
+    }
+
+    // Side effects only when feedback mode actually changes — repeating
+    // has_lock_feedback:false on ordinary metadata edits must not kill an open window.
+    const previousHasLockFeedback =
+      before?.has_lock_feedback === undefined || before?.has_lock_feedback === null
+        ? true
+        : Boolean(before.has_lock_feedback);
+    if (data.has_lock_feedback !== undefined && data.has_lock_feedback !== previousHasLockFeedback) {
+      updatePayload.no_feedback_unlock_until = null;
+      if (data.has_lock_feedback === false) {
+        updatePayload.is_locked = true;
+      } else {
+        updatePayload.no_feedback_open_timeout_sec = 0;
+        // Leave virtual-open behind; hardware will own state after feedback returns.
+        updatePayload.is_locked = true;
+      }
     }
     if (data.device_settings !== undefined) updatePayload.device_settings = JSON.stringify(data.device_settings);
     if (data.access_methods !== undefined) updatePayload.access_methods = JSON.stringify(data.access_methods);
@@ -716,9 +776,15 @@ export class DeviceModel {
         statusChanged = true;
       }
 
-      if (data.is_locked !== undefined) {
-        const lockChanged =
-          Boolean(data.is_locked) !== Boolean(before.is_locked);
+      const effectiveIsLocked =
+        updatePayload.is_locked !== undefined
+          ? Boolean(updatePayload.is_locked)
+          : data.is_locked !== undefined
+            ? Boolean(data.is_locked)
+            : undefined;
+
+      if (effectiveIsLocked !== undefined) {
+        const lockChanged = effectiveIsLocked !== Boolean(before.is_locked);
         if (lockChanged) {
           this.eventService.emitDeviceTelemetryUpdated({
             deviceId,
@@ -728,23 +794,46 @@ export class DeviceModel {
           statusChanged = true;
         }
 
-        void import('@/services/lock-command.service').then(({ LockCommandService }) => {
-          const lockCommandService = LockCommandService.getInstance();
-          const hadPendingLockCommand = lockCommandService.hasPendingLockCommand(deviceId);
-          lockCommandService.handleAccessControlLockSettled(deviceId, data.is_locked as boolean);
+        const effectiveHasLockFeedback =
+          data.has_lock_feedback !== undefined
+            ? Boolean(data.has_lock_feedback)
+            : previousHasLockFeedback;
+        // Only hardware-driven is_locked updates settle pending remote commands.
+        // Skip cloud-owned no-feedback writes and feedback-mode side-effect resets.
+        const isHardwareLockUpdate =
+          data.is_locked !== undefined && effectiveHasLockFeedback;
+        if (isHardwareLockUpdate) {
+          void import('@/services/lock-command.service').then(({ LockCommandService }) => {
+            const lockCommandService = LockCommandService.getInstance();
+            const hadPendingLockCommand = lockCommandService.hasPendingLockCommand(deviceId);
+            lockCommandService.handleAccessControlLockSettled(deviceId, effectiveIsLocked);
 
-          // Gateway lock feedback while a remote command is in flight must reach clients
-          // even when is_locked is unchanged (e.g. unlock failed — gate stayed closed).
-          if (!lockChanged && hadPendingLockCommand) {
-            this.eventService.emitDeviceTelemetryUpdated({
-              deviceId,
-              gatewayId,
-              facilityId,
-            });
-          }
-        }).catch((err) => {
-          logger.warn('Failed to notify LockCommandService of access-control lock settlement', err);
-        });
+            // Gateway lock feedback while a remote command is in flight must reach clients
+            // even when is_locked is unchanged (e.g. unlock failed — gate stayed closed).
+            if (!lockChanged && hadPendingLockCommand) {
+              this.eventService.emitDeviceTelemetryUpdated({
+                deviceId,
+                gatewayId,
+                facilityId,
+              });
+            }
+          }).catch((err) => {
+            logger.warn('Failed to notify LockCommandService of access-control lock settlement', err);
+          });
+        }
+      }
+
+      if (
+        data.has_lock_feedback !== undefined &&
+        data.has_lock_feedback !== previousHasLockFeedback
+      ) {
+        void import('@/services/access-control-no-feedback.service')
+          .then(({ AccessControlNoFeedbackService }) => {
+            AccessControlNoFeedbackService.getInstance().cancelOpenWindow(deviceId);
+          })
+          .catch((err) => {
+            logger.warn('Failed to cancel no-feedback open window on mode change', err);
+          });
       }
 
       if (!statusChanged && data.last_activity !== undefined) {

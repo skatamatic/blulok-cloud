@@ -27,6 +27,18 @@ describe('gateway-access-state-map.utils', () => {
       });
     });
 
+    it('ignores locked telemetry when hardware has no lock feedback', () => {
+      expect(
+        mapGatewayAccessStateFieldsToDbUpdate(
+          { online: true, locked: false, last_seen: '2026-06-02T15:18:11.039532Z' },
+          { hasLockFeedback: false },
+        ),
+      ).toEqual({
+        status: 'online',
+        last_activity: expect.any(Date),
+      });
+    });
+
     it('returns empty object when no fields provided', () => {
       expect(mapGatewayAccessStateFieldsToDbUpdate({})).toEqual({});
     });

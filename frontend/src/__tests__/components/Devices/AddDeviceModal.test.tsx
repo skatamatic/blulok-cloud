@@ -179,6 +179,10 @@ describe('AddDeviceModal - Access control wizard', () => {
     fireEvent.change(screen.getByPlaceholderText('Main gate keypad'), { target: { value: 'Main Gate' } });
     fireEvent.change(screen.getByPlaceholderText('KP-7F2A-001'), { target: { value: 'KP-TEST-001' } });
     fireEvent.change(screen.getByPlaceholderText('North parking gate'), { target: { value: 'North entrance' } });
+    fireEvent.click(screen.getByRole('checkbox', { name: /hardware reports open\/closed state/i }));
+    fireEvent.change(screen.getByRole('spinbutton', { name: /assume open for/i }), {
+      target: { value: '15' },
+    });
 
     fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
     await waitFor(() => {
@@ -194,6 +198,8 @@ describe('AddDeviceModal - Access control wizard', () => {
           device_serial: 'KP-TEST-001',
           name: 'Main Gate',
           location_description: 'North entrance',
+          has_lock_feedback: false,
+          no_feedback_open_timeout_sec: 15,
         })
       );
     });

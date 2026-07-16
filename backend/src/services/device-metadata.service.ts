@@ -42,6 +42,8 @@ export interface UpdateAccessControlMetadataInput {
   access_methods?: ('app' | 'keypad' | 'fob')[];
   supports_remote_lock?: boolean;
   supports_widget_timed_open?: boolean;
+  has_lock_feedback?: boolean;
+  no_feedback_open_timeout_sec?: number;
   device_settings?: Record<string, unknown>;
   metadata?: Record<string, unknown>;
 }
@@ -255,6 +257,23 @@ export class DeviceMetadataService {
       }
     }
 
+    const previousHasLockFeedback = existing.has_lock_feedback ?? true;
+    const nextHasLockFeedback =
+      input.has_lock_feedback ?? previousHasLockFeedback;
+    if (
+      nextHasLockFeedback &&
+      input.no_feedback_open_timeout_sec !== undefined &&
+      input.no_feedback_open_timeout_sec !== 0
+    ) {
+      throw new ConflictError(
+        'no_feedback_open_timeout_sec must be 0 when lock feedback is enabled',
+      );
+    }
+
+    const feedbackModeChanged =
+      input.has_lock_feedback !== undefined &&
+      input.has_lock_feedback !== previousHasLockFeedback;
+
     let metadata = mergeMetadata(existing.metadata, input.metadata);
     let deviceSettings = mergeMetadata(existing.device_settings, input.device_settings);
 
@@ -275,6 +294,13 @@ export class DeviceMetadataService {
       );
     }
 
+    const nextTimeoutSec =
+      feedbackModeChanged && nextHasLockFeedback
+        ? 0
+        : nextHasLockFeedback
+          ? undefined
+          : input.no_feedback_open_timeout_sec;
+
     const updateData: UpdateAccessControlDeviceData = {
       name: input.name,
       location_description: input.location_description,
@@ -284,6 +310,11 @@ export class DeviceMetadataService {
       access_methods: input.access_methods,
       supports_remote_lock: input.supports_remote_lock,
       supports_widget_timed_open: input.supports_widget_timed_open,
+      // Model clears unlock window / forces locked only on real mode transitions.
+      ...(feedbackModeChanged ? { has_lock_feedback: input.has_lock_feedback } : {}),
+      ...(nextTimeoutSec !== undefined
+        ? { no_feedback_open_timeout_sec: nextTimeoutSec }
+        : {}),
       device_settings:
         input.device_settings !== undefined ||
         input.device_serial !== undefined ||
@@ -304,6 +335,17 @@ export class DeviceMetadataService {
         device: existing,
         sideEffects: { identityChanged: false, accessCodesPushed: false },
       };
+    }
+
+    if (feedbackModeChanged) {
+      try {
+        const { AccessControlNoFeedbackService } = await import(
+          '@/services/access-control-no-feedback.service'
+        );
+        AccessControlNoFeedbackService.getInstance().cancelOpenWindow(deviceId);
+      } catch (err) {
+        logger.warn('Failed to cancel no-feedback open window on mode change', err);
+      }
     }
 
     const updated = await this.deviceModel.updateAccessControlDevice(deviceId, updateData);

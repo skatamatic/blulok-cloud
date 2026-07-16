@@ -5500,6 +5500,116 @@ async function run() {
     assertLockCommandOmitsOpenUntil(oneShotCmd);
     ok('One-shot UNLOCK JWT omits open_until');
 
+    heading('Access control without lock-state feedback');
+    // Use a generous window so gateway-ignore assertions are not racing auto-relock.
+    const noFeedbackOpenWindowSec = 20;
+    step(`Enable no-feedback mode with a ${noFeedbackOpenWindowSec}s cloud open window`);
+    await axios.put(
+      `${API_BASE}/devices/access-control/${acForWs.id}/metadata`,
+      {
+        has_lock_feedback: false,
+        no_feedback_open_timeout_sec: noFeedbackOpenWindowSec,
+      },
+      { headers: authHeaders(token) },
+    );
+
+    const noFeedbackBaseline = acStatusEvents.length;
+    const expectNoFeedbackOpen = waitForCommand(
+      ws,
+      (cmd) =>
+        cmd.cmd_type === 'UNLOCK'
+        && (String(cmd.device_id) === String(accessSerialMulti)
+          || String(cmd.device_id) === String(acForWs.id)),
+    );
+    const noFeedbackOpenHttp = await axios.put(
+      `${API_BASE}/devices/access-control/${acForWs.id}/lock`,
+      { lock_status: 'unlocked' },
+      { headers: authHeaders(token) },
+    );
+    if (noFeedbackOpenHttp.status !== 200 || noFeedbackOpenHttp.data?.success === false) {
+      throw new Error(
+        `No-feedback access-control open failed: ${noFeedbackOpenHttp.status} ${JSON.stringify(noFeedbackOpenHttp.data)}`,
+      );
+    }
+    assertLockCommandOmitsOpenUntil(await expectNoFeedbackOpen);
+
+    const noFeedbackOpened = await waitForDeviceStatusLockStatus(
+      acStatusEvents,
+      acForWs.id,
+      'unlocked',
+      noFeedbackBaseline,
+      8000,
+    );
+    if (!noFeedbackOpened) {
+      throw new Error('No-feedback access point did not enter cloud-owned unlocked state');
+    }
+
+    step('Gateway locked telemetry is ignored while no-feedback mode owns state');
+    const reqNoFeedbackState = 'req-ac-no-feedback-ignore-state';
+    ws.send(JSON.stringify({
+      type: 'PROXY_REQUEST',
+      id: reqNoFeedbackState,
+      method: 'POST',
+      path: `/internal/gateway/devices/state`,
+      body: {
+        facility_id: facilityId,
+        updates: [
+          gwAccessDevice({
+            access_id: accessSerialMulti,
+            relay_channel: accessRelaySecondary,
+            online: true,
+            locked: true,
+          }),
+        ],
+      },
+    }));
+    const respNoFeedbackState = await waitForProxyResponse(ws, reqNoFeedbackState);
+    if (respNoFeedbackState.status !== 200 || !respNoFeedbackState.body?.success) {
+      throw new Error(`No-feedback state sync failed: ${respNoFeedbackState.status}`);
+    }
+    const noFeedbackDetail = await axios.get(
+      `${API_BASE}/devices/access-control/${acForWs.id}`,
+      { headers: authHeaders(token) },
+    );
+    const noFeedbackDevice = noFeedbackDetail.data?.device;
+    if (noFeedbackDevice?.has_lock_feedback !== false) {
+      throw new Error(
+        `No-feedback mode was not persisted (has_lock_feedback=${JSON.stringify(noFeedbackDevice?.has_lock_feedback)})`,
+      );
+    }
+    // Accept boolean false or mysql-style 0 (defense in depth; API should normalize booleans).
+    if (Boolean(noFeedbackDevice?.is_locked)) {
+      throw new Error(
+        noFeedbackDevice?.no_feedback_unlock_until
+          ? 'Gateway locked telemetry overwrote cloud-owned no-feedback open state'
+          : 'No-feedback open window expired before gateway-ignore assertion; increase timeout',
+      );
+    }
+    if (!noFeedbackDevice?.no_feedback_unlock_until) {
+      throw new Error('No-feedback open window missing durable unlock_until deadline');
+    }
+
+    const noFeedbackRelocked = await waitForDeviceStatusLockStatus(
+      acStatusEvents,
+      acForWs.id,
+      'locked',
+      noFeedbackBaseline,
+      (noFeedbackOpenWindowSec + 5) * 1000,
+    );
+    if (!noFeedbackRelocked) {
+      throw new Error('No-feedback access point did not auto-return to locked after timeout');
+    }
+    ok('No-feedback mode ignores gateway lock state and auto-relocks in cloud');
+
+    await axios.put(
+      `${API_BASE}/devices/access-control/${acForWs.id}/metadata`,
+      {
+        has_lock_feedback: true,
+        no_feedback_open_timeout_sec: 0,
+      },
+      { headers: authHeaders(token) },
+    );
+
     closeDeviceStatusWatcher(acStatusWs);
 
     step('Unsubscribing from device_status');

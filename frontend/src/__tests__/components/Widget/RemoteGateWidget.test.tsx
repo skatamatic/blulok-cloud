@@ -418,6 +418,45 @@ describe('RemoteGateWidget', () => {
       }, { timeout: 3000 });
     });
 
+    it('keeps Open available without a false hardware-feedback timeout in no-feedback mode', async () => {
+      jest.useFakeTimers();
+      const relayOnlyGate = {
+        ...mockAccessControlDevices[0],
+        has_lock_feedback: false,
+        no_feedback_open_timeout_sec: 0,
+        is_locked: true,
+      };
+      mockGetDevices.mockResolvedValue({
+        devices: [relayOnlyGate],
+        total: 1,
+      });
+
+      renderWithProviders(
+        <RemoteGateWidget
+          id="test-widget"
+          title="Remote Gate Control"
+          initialSize="large"
+        />,
+      );
+
+      await act(async () => {
+        await Promise.resolve();
+      });
+      const openButton = await screen.findByRole('button', { name: /Open Once/i });
+      fireEvent.click(openButton);
+
+      await act(async () => {
+        await Promise.resolve();
+        jest.advanceTimersByTime(10_000);
+        await Promise.resolve();
+      });
+
+      expect(mockUpdateAccessControlLockStatus).toHaveBeenCalledWith('gate-1', 'unlocked');
+      expect(screen.getByRole('button', { name: /Open Once/i })).not.toBeDisabled();
+      expect(screen.queryByText(/did not report open within 10 seconds/i)).not.toBeInTheDocument();
+      jest.useRealTimers();
+    });
+
     it('closes gate when Close Gate is clicked', async () => {
       const openDock = { ...mockAccessControlDevices[1] };
       const afterClose = [{ ...openDock, is_locked: true }];

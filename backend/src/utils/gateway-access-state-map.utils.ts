@@ -10,14 +10,15 @@ export type AccessControlStateDbUpdate = Parameters<DeviceModel['updateAccessCon
  */
 export function mapGatewayAccessStateFieldsToDbUpdate(
   fields: Pick<AccessDeviceInventoryItem, 'online' | 'locked' | 'last_seen'> &
-    Pick<AccessDeviceStateUpdate, 'online' | 'locked' | 'last_seen'>
+    Pick<AccessDeviceStateUpdate, 'online' | 'locked' | 'last_seen'>,
+  options: { hasLockFeedback?: boolean } = {},
 ): AccessControlStateDbUpdate {
   const dbUpdates: AccessControlStateDbUpdate = {};
 
   if (fields.online !== undefined) {
     dbUpdates.status = fields.online ? 'online' : 'offline';
   }
-  if (fields.locked !== undefined) {
+  if (options.hasLockFeedback !== false && fields.locked !== undefined) {
     dbUpdates.is_locked = fields.locked;
   }
 

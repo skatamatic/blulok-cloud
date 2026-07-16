@@ -55,6 +55,10 @@ interface DeviceDetails {
   metadata?: Record<string, unknown>;
   /** When true, cloud may issue remote lock; default false — unlock-only from cloud. */
   supports_remote_lock?: boolean;
+  supports_widget_timed_open?: boolean;
+  has_lock_feedback?: boolean;
+  no_feedback_open_timeout_sec?: number;
+  no_feedback_unlock_until?: string | null;
   /** Gateway-provided serial number (optional, separate from device_serial) */
   serial?: string;
   /** BluLok admin settings (lockNumber, displayName, locationDescription, …) */
@@ -390,6 +394,10 @@ export default function DeviceDetailsPage() {
           location_description: ac.location_description,
           metadata: ac.metadata,
           supports_remote_lock: isSupportsRemoteLockEnabled(ac.supports_remote_lock),
+          supports_widget_timed_open: ac.supports_widget_timed_open,
+          has_lock_feedback: ac.has_lock_feedback !== false,
+          no_feedback_open_timeout_sec: ac.no_feedback_open_timeout_sec ?? 0,
+          no_feedback_unlock_until: ac.no_feedback_unlock_until,
           facility_id: ac.facility_id ?? '',
           facility_name: ac.facility_name || String(ac.facility_id ?? ''),
           lock_status: ac.is_locked ? 'locked' : 'unlocked',
@@ -457,7 +465,10 @@ export default function DeviceDetailsPage() {
     await requestUnlock({
       deviceId: device.id,
       watchKey: deviceId,
-      timeoutMs: resolveLockTimeoutMsForFacility(facilityForTimeout),
+      timeoutMs:
+        deviceCategory === 'access_control' && device.has_lock_feedback === false
+          ? 0
+          : resolveLockTimeoutMsForFacility(facilityForTimeout),
       getLockStatus: () => deviceLockStatusRef.current,
       applyOptimisticUnlocking: () => patchLockStatus('unlocking'),
       revertOptimisticLockStatus: (status) => {
@@ -487,7 +498,10 @@ export default function DeviceDetailsPage() {
     const previousStatus = device.lock_status ?? 'unlocked';
     const facilityForTimeout =
       globalFacilities.find((f) => f.id === device.facility_id) ?? selectedFacility;
-    const feedbackTimeoutMs = resolveLockTimeoutMsForFacility(facilityForTimeout);
+    const feedbackTimeoutMs =
+      deviceCategory === 'access_control' && device.has_lock_feedback === false
+        ? 0
+        : resolveLockTimeoutMsForFacility(facilityForTimeout);
     const oneShot = feedbackTimeoutMs === 0;
 
     setLockSubmitting(true);
@@ -890,6 +904,9 @@ export default function DeviceDetailsPage() {
                 device_type: device.device_type,
                 access_methods: device.access_methods,
                 supports_remote_lock: device.supports_remote_lock,
+                supports_widget_timed_open: device.supports_widget_timed_open,
+                has_lock_feedback: device.has_lock_feedback,
+                no_feedback_open_timeout_sec: device.no_feedback_open_timeout_sec,
                 firmware_version: device.firmware_version,
                 device_settings: device.device_settings,
                 metadata: device.metadata,

@@ -66,6 +66,12 @@ export interface AccessControlDevice {
   supports_remote_lock?: boolean;
   /** When true, Remote Gate widget may send timed OPEN with open_until (unix UTC seconds). */
   supports_widget_timed_open?: boolean;
+  /** Whether the hardware reports authoritative open/closed state. Defaults to true. */
+  has_lock_feedback?: boolean;
+  /** Cloud-owned open window in seconds when hardware has no lock-state feedback. */
+  no_feedback_open_timeout_sec?: number;
+  /** Current cloud-owned open-window deadline. */
+  no_feedback_unlock_until?: string | null;
   last_activity?: string;
   last_seen?: string;
   device_settings?: Record<string, unknown>;
@@ -86,6 +92,8 @@ export interface CreateAccessControlDevicePayload {
   access_methods?: AccessMethod[];
   supports_remote_lock?: boolean;
   supports_widget_timed_open?: boolean;
+  has_lock_feedback?: boolean;
+  no_feedback_open_timeout_sec?: number;
   device_settings?: Record<string, unknown>;
 }
 
@@ -99,6 +107,8 @@ export interface UpdateAccessControlDevicePayload {
   is_locked?: boolean;
   supports_remote_lock?: boolean;
   supports_widget_timed_open?: boolean;
+  has_lock_feedback?: boolean;
+  no_feedback_open_timeout_sec?: number;
   access_methods?: AccessMethod[];
   device_settings?: Record<string, unknown>;
   metadata?: Record<string, unknown>;
@@ -121,6 +131,8 @@ export interface UpdateAccessControlDeviceMetadataPayload {
   device_type?: 'gate' | 'elevator' | 'door';
   supports_remote_lock?: boolean;
   supports_widget_timed_open?: boolean;
+  has_lock_feedback?: boolean;
+  no_feedback_open_timeout_sec?: number;
   access_methods?: AccessMethod[];
   device_settings?: Record<string, unknown>;
   metadata?: Record<string, unknown>;

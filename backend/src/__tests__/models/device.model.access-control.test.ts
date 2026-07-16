@@ -23,6 +23,15 @@ jest.mock('@/services/lock-command.service', () => ({
   },
 }));
 
+const mockCancelOpenWindow = jest.fn();
+jest.mock('@/services/access-control-no-feedback.service', () => ({
+  AccessControlNoFeedbackService: {
+    getInstance: jest.fn(() => ({
+      cancelOpenWindow: mockCancelOpenWindow,
+    })),
+  },
+}));
+
 import { DeviceModel } from '@/models/device.model';
 
 describe('DeviceModel access control telemetry', () => {
@@ -157,5 +166,92 @@ describe('DeviceModel access control telemetry', () => {
     await model.updateAccessControlDevice('ac-1', { name: 'Main Door' });
 
     expect(mockEmitDeviceTelemetryUpdated).not.toHaveBeenCalled();
+  });
+
+  it('strips gateway locked telemetry for no-feedback access points', async () => {
+    jest.spyOn(model, 'findAccessControlBySerialAndRelay').mockResolvedValue({
+      ...beforeRow,
+      has_lock_feedback: false,
+      no_feedback_open_timeout_sec: 30,
+    });
+    const updateSpy = jest
+      .spyOn(model, 'updateAccessControlDevice')
+      .mockResolvedValue({ ...beforeRow, status: 'online' });
+
+    await model.updateAccessControlDeviceBySerialAndRelay(
+      'gw-1',
+      'KP-001',
+      1,
+      { status: 'online', is_locked: false },
+    );
+
+    expect(updateSpy).toHaveBeenCalledWith('ac-1', {
+      status: 'online',
+      is_locked: undefined,
+    });
+  });
+
+  it('does not clear an open window when has_lock_feedback:false is repeated', async () => {
+    const unlockUntil = new Date('2026-07-15T20:01:00.000Z');
+    jest.spyOn(model, 'findAccessControlDeviceWithGateway').mockResolvedValue({
+      ...beforeRow,
+      has_lock_feedback: false,
+      is_locked: false,
+      no_feedback_unlock_until: unlockUntil,
+      no_feedback_open_timeout_sec: 30,
+    });
+
+    await model.updateAccessControlDevice('ac-1', {
+      name: 'Gate B',
+      has_lock_feedback: false,
+    });
+
+    const payload = mockUpdate.mock.calls[0][0];
+    expect(payload).toEqual(
+      expect.objectContaining({
+        name: 'Gate B',
+        has_lock_feedback: false,
+      }),
+    );
+    expect(payload).not.toHaveProperty('no_feedback_unlock_until');
+    expect(payload).not.toHaveProperty('is_locked');
+    expect(mockCancelOpenWindow).not.toHaveBeenCalled();
+  });
+
+  it('clears open window and forces locked when enabling lock feedback', async () => {
+    jest.spyOn(model, 'findAccessControlDeviceWithGateway').mockResolvedValue({
+      ...beforeRow,
+      has_lock_feedback: false,
+      is_locked: false,
+      no_feedback_unlock_until: new Date('2026-07-15T20:01:00.000Z'),
+      no_feedback_open_timeout_sec: 30,
+    });
+
+    await model.updateAccessControlDevice('ac-1', { has_lock_feedback: true });
+
+    expect(mockUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        has_lock_feedback: true,
+        no_feedback_open_timeout_sec: 0,
+        no_feedback_unlock_until: null,
+        is_locked: true,
+      }),
+    );
+    expect(mockEmitDeviceTelemetryUpdated).toHaveBeenCalled();
+    expect(mockHandleAccessControlLockSettled).not.toHaveBeenCalled();
+    expect(mockCancelOpenWindow).toHaveBeenCalledWith('ac-1');
+  });
+
+  it('does not settle pending lock commands for cloud-owned no-feedback lock updates', async () => {
+    jest.spyOn(model, 'findAccessControlDeviceWithGateway').mockResolvedValue({
+      ...beforeRow,
+      has_lock_feedback: false,
+      is_locked: true,
+    });
+
+    await model.updateAccessControlDevice('ac-1', { is_locked: false });
+
+    expect(mockEmitDeviceTelemetryUpdated).toHaveBeenCalled();
+    expect(mockHandleAccessControlLockSettled).not.toHaveBeenCalled();
   });
 });

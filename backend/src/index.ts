@@ -13,6 +13,7 @@ import { GenericRestProvider } from '@/services/fms/providers/generic-rest-provi
 import { StoredgeProvider } from '@/services/fms/providers/storedge-provider';
 import { FMSProviderType } from '@/types/fms.types';
 import { validateEd25519Env } from '@/utils/security-env';
+import { AccessControlNoFeedbackService } from '@/services/access-control-no-feedback.service';
 
 async function bootstrap(): Promise<void> {
   try {
@@ -93,6 +94,9 @@ async function bootstrap(): Promise<void> {
     const deviceEventService = DeviceEventService.getInstance();
     deviceEventService.initialize();
 
+    // Recover durable logical-open windows for access points without lock sensors.
+    await AccessControlNoFeedbackService.getInstance().start();
+
     // Outbound legacy gateway polling is deprecated and disabled.
     logger.info('Outbound legacy gateway polling is disabled (using inbound WS gateways)');
 
@@ -141,6 +145,7 @@ async function bootstrap(): Promise<void> {
       RoutePassPruningService.getInstance().stop();
       const { AccessCodeSchedulerService } = require('@/services/access-code-scheduler.service');
       AccessCodeSchedulerService.getInstance().stop();
+      AccessControlNoFeedbackService.getInstance().stop();
 
       // Destroy logger interceptor
       loggerInterceptor.destroy();

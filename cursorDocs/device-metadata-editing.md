@@ -10,7 +10,7 @@ From **Facility → Devices → Add device**:
 
 **BluLok locks** — required: gateway, hardware serial (`lock_id`). Optional: lock number, secondary serial, display name, location note, firmware version, remote lock support, unit assignment. Lock number, display name, and location are stored in `device_settings` (`lockNumber`, `displayName`, `locationDescription`).
 
-**Access control** — required: name, hardware serial (`access_id`), relay channel, location. Optional: device type (gate / elevator / door), access methods, remote lock support.
+**Access control** — required: name, hardware serial (`access_id`), relay channel, location. Optional: device type (gate / elevator / door), access methods, remote lock support, widget timed-open support, and lock-feedback behavior. Disable **Hardware reports open/closed state** for relay-only access points; configure **Assume open for** in seconds (`0` keeps Open immediately available).
 
 Create endpoints enforce **facility_admin** gateway scope, **duplicate serial** checks (409), **unit-in-facility** validation, and strip client `createdFromGatewaySync` flags while setting `metadata.manuallyAdded`. Facilities with multiple gateways show a gateway picker in the add-device wizard.
 
@@ -27,11 +27,16 @@ The edit dialog exposes the same admin-configurable inventory fields as add:
 | Location | `device_settings.locationDescription` / `location_description` | `location_description` |
 | Firmware | `firmware_version` | metadata (read-only in UI for AC) |
 | Remote lock | `supports_remote_lock` | `supports_remote_lock` |
+| Widget timed open | — | `supports_widget_timed_open` |
+| Hardware lock feedback | — | `has_lock_feedback` |
+| No-feedback open window | — | `no_feedback_open_timeout_sec` (0–3600 seconds) |
 | Device type | — | `device_type` |
 | Relay | — | `relay_channel` |
 | Access methods | — | `access_methods` |
 
-**Live telemetry** (lock status, online/offline, battery, signal, temperature, last seen) is shown read-only in edit — updated by gateway state sync, not editable in admin forms.
+**Live telemetry** (lock status, online/offline, battery, signal, temperature, last seen) is shown read-only in edit. Gateway state sync is authoritative when `has_lock_feedback=true`. In no-feedback mode, cloud ignores gateway `locked` and owns the temporary logical-open window using the durable `no_feedback_unlock_until` deadline.
+
+Saving other metadata fields while already in no-feedback mode must **not** clear an active open window. Cloud only resets `no_feedback_unlock_until` / forces locked when `has_lock_feedback` actually toggles (and cancels any in-memory open-window timer).
 
 ## API
 

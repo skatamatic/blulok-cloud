@@ -1,4 +1,14 @@
 import Joi from 'joi';
+import { NO_FEEDBACK_OPEN_TIMEOUT_MAX_SEC } from '@/constants/access-control-feedback.constants';
+
+const noFeedbackFields = {
+  has_lock_feedback: Joi.boolean().optional(),
+  no_feedback_open_timeout_sec: Joi.number()
+    .integer()
+    .min(0)
+    .max(NO_FEEDBACK_OPEN_TIMEOUT_MAX_SEC)
+    .optional(),
+};
 
 export const listQuerySchema = Joi.object({
   facility_id: Joi.string().optional(),
@@ -44,6 +54,7 @@ export const accessControlDeviceSchema = Joi.object({
   access_methods: Joi.array().items(Joi.string().valid('app', 'keypad', 'fob')).min(1).optional(),
   supports_remote_lock: Joi.boolean().optional(),
   supports_widget_timed_open: Joi.boolean().optional(),
+  ...noFeedbackFields,
 });
 
 export const updateAccessControlDeviceSchema = Joi.object({
@@ -55,6 +66,7 @@ export const updateAccessControlDeviceSchema = Joi.object({
   is_locked: Joi.boolean().optional(),
   supports_remote_lock: Joi.boolean().optional(),
   supports_widget_timed_open: Joi.boolean().optional(),
+  ...noFeedbackFields,
   device_settings: Joi.object().optional(),
   metadata: Joi.object().optional(),
   access_methods: Joi.array().items(Joi.string().valid('app', 'keypad', 'fob')).min(1).optional(),
@@ -77,6 +89,7 @@ export const updateAccessControlMetadataSchema = Joi.object({
   device_type: Joi.string().valid('door', 'gate', 'elevator').optional(),
   supports_remote_lock: Joi.boolean().optional(),
   supports_widget_timed_open: Joi.boolean().optional(),
+  ...noFeedbackFields,
   device_settings: Joi.object().optional(),
   metadata: Joi.object().optional(),
   access_methods: Joi.array().items(Joi.string().valid('app', 'keypad', 'fob')).min(1).optional(),

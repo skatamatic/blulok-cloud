@@ -8,6 +8,7 @@ const mockUpdateLockStatus = jest.fn().mockResolvedValue(undefined);
 const mockUpdateAccessControlDevice = jest.fn().mockResolvedValue({});
 const sendLockCommand = jest.fn();
 const mockNotifyRemoteLockCommandFailed = jest.fn().mockResolvedValue(undefined);
+const mockApplyNoFeedbackCommand = jest.fn().mockResolvedValue(undefined);
 
 let knexInvocation = 0;
 const buildJoinFirst = (row: Record<string, unknown> | null) => ({
@@ -85,6 +86,14 @@ const mockLogActivity = jest.fn().mockResolvedValue({});
 jest.mock('@/services/activity.service', () => ({
   ActivityService: {
     getInstance: jest.fn(() => ({ logActivity: mockLogActivity })),
+  },
+}));
+
+jest.mock('@/services/access-control-no-feedback.service', () => ({
+  AccessControlNoFeedbackService: {
+    getInstance: jest.fn(() => ({
+      applyAcceptedCommand: mockApplyNoFeedbackCommand,
+    })),
   },
 }));
 
@@ -470,6 +479,7 @@ describe('LockCommandService', () => {
       resetSingleton();
       jest.clearAllMocks();
       mockUpdateAccessControlDevice.mockClear();
+      mockApplyNoFeedbackCommand.mockClear();
       sendLockCommand.mockReset();
       mockKnex.mockImplementation((table: string) => {
         if (table === 'facilities') {
@@ -589,6 +599,67 @@ describe('LockCommandService', () => {
       expect(res.success).toBe(true);
       expect(sendLockCommand).toHaveBeenCalledWith('gw-1', 'ac-1', 'CLOSE', undefined);
       expect(mockUpdateAccessControlDevice).not.toHaveBeenCalled();
+    });
+
+    it('keeps a no-feedback access point logically locked when timeout is zero', async () => {
+      mockKnex.mockImplementation((table: string) => {
+        if (table === 'access_control_devices') {
+          return buildJoinFirst({
+            id: 'ac-1',
+            gateway_id: 'gw-1',
+            facility_id: 'fac-1',
+            is_locked: true,
+            supports_remote_lock: true,
+            has_lock_feedback: false,
+            no_feedback_open_timeout_sec: 0,
+          });
+        }
+        return buildJoinFirst(null);
+      });
+      sendLockCommand.mockResolvedValueOnce({ success: true });
+
+      const svc = LockCommandService.getInstance();
+      const res = await svc.issueAccessControlLockCommand('ac-1', 'unlocked');
+
+      expect(res.success).toBe(true);
+      expect(mockApplyNoFeedbackCommand).toHaveBeenCalledWith({
+        deviceId: 'ac-1',
+        requestedStatus: 'unlocked',
+        timeoutSec: 0,
+      });
+      expect(svc.hasPendingLockCommand('ac-1')).toBe(false);
+    });
+
+    it('starts a cloud-owned open window for a no-feedback access point', async () => {
+      mockKnex.mockImplementation((table: string) => {
+        if (table === 'access_control_devices') {
+          return buildJoinFirst({
+            id: 'ac-1',
+            gateway_id: 'gw-1',
+            facility_id: 'fac-1',
+            is_locked: true,
+            supports_remote_lock: true,
+            has_lock_feedback: false,
+            no_feedback_open_timeout_sec: 30,
+          });
+        }
+        return buildJoinFirst(null);
+      });
+      sendLockCommand.mockResolvedValueOnce({ success: true });
+
+      const svc = LockCommandService.getInstance();
+      const res = await svc.issueAccessControlLockCommand('ac-1', 'unlocked');
+
+      expect(res).toEqual({
+        success: true,
+        message: 'Open command accepted for 30 seconds',
+      });
+      expect(mockApplyNoFeedbackCommand).toHaveBeenCalledWith({
+        deviceId: 'ac-1',
+        requestedStatus: 'unlocked',
+        timeoutSec: 30,
+      });
+      expect(svc.hasPendingLockCommand('ac-1')).toBe(false);
     });
 
     it('rejects remote lock for access control when supports_remote_lock is false', async () => {
