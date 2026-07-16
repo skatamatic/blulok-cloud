@@ -10,11 +10,13 @@ import { apiService } from '@/services/api.service';
 import { CreateFacilityData } from '@/types/facility.types';
 import { AddressAutocomplete } from '@/components/GoogleMaps/AddressAutocomplete';
 import { MapCard } from '@/components/GoogleMaps/MapCard';
+import { useOpenCreatedFacility } from '@/hooks/useOpenCreatedFacility';
 
 interface AddFacilityModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onSuccess: () => void;
+  /** Called after the new facility is selected and Facility Setup navigation is kicked off. */
+  onSuccess?: (facilityId: string) => void;
 }
 
 const emptyForm = (): CreateFacilityData => ({
@@ -31,6 +33,7 @@ const emptyForm = (): CreateFacilityData => ({
 });
 
 export function AddFacilityModal({ isOpen, onClose, onSuccess }: AddFacilityModalProps) {
+  const openCreatedFacility = useOpenCreatedFacility();
   const [formData, setFormData] = useState<CreateFacilityData>(emptyForm);
   const [loading, setLoading] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
@@ -73,8 +76,10 @@ export function AddFacilityModal({ isOpen, onClose, onSuccess }: AddFacilityModa
         return;
       }
 
-      onSuccess();
+      const facilityId = String(facilityResponse.facility.id);
       handleClose();
+      await openCreatedFacility(facilityId);
+      onSuccess?.(facilityId);
     } catch (error) {
       console.error('Failed to create facility:', error);
       setErrors({ submit: 'Failed to create facility. Please try again.' });

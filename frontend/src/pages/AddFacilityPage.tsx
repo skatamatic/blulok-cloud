@@ -11,10 +11,12 @@ import { CreateFacilityData } from '@/types/facility.types';
 import { AddressAutocomplete } from '@/components/GoogleMaps/AddressAutocomplete';
 import { MapCard } from '@/components/GoogleMaps/MapCard';
 import { useDetailsBackNavigation } from '@/hooks/useBackNavigation';
+import { useOpenCreatedFacility } from '@/hooks/useOpenCreatedFacility';
 import { DetailsPageHeader, DetailsPageShell } from '@/components/Common/DetailsPageLayout';
 
 export default function AddFacilityPage() {
   const navigate = useNavigate();
+  const openCreatedFacility = useOpenCreatedFacility();
   const { goBack, showBack, backLabel } = useDetailsBackNavigation({ fallbackPath: '/settings' });
   const [formData, setFormData] = useState<CreateFacilityData>({
     name: '',
@@ -89,7 +91,7 @@ export default function AddFacilityPage() {
         return;
       }
 
-      navigate('/facilities');
+      await openCreatedFacility(facilityResponse.facility.id);
     } catch (error) {
       console.error('Failed to create facility:', error);
       setErrors({ submit: 'Failed to create facility. Please try again.' });

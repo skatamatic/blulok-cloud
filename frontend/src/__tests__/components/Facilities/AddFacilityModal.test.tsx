@@ -30,6 +30,10 @@ jest.mock('@/services/api.service', () => ({
   },
 }));
 
+jest.mock('@/hooks/useOpenCreatedFacility', () => ({
+  useOpenCreatedFacility: () => jest.fn().mockResolvedValue(undefined),
+}));
+
 describe('AddFacilityModal', () => {
   it('shows validation errors when required fields missing', async () => {
     const onClose = jest.fn();
