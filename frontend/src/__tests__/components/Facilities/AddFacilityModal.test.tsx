@@ -26,8 +26,7 @@ jest.mock('@/components/GoogleMaps/MapCard', () => ({
 
 jest.mock('@/services/api.service', () => ({
   apiService: {
-    createFacility: jest.fn().mockResolvedValue({ id: 'fac-1' }),
-    createGateway: jest.fn().mockResolvedValue({ id: 'gw-1' }),
+    createFacility: jest.fn().mockResolvedValue({ facility: { id: 'fac-1' } }),
   },
 }));
 
@@ -37,7 +36,7 @@ describe('AddFacilityModal', () => {
     const onSuccess = jest.fn();
     render(<AddFacilityModal isOpen onClose={onClose} onSuccess={onSuccess} />);
 
-    fireEvent.click(screen.getByRole('button', { name: /Next: Setup Gateway/i }));
+    fireEvent.click(screen.getByRole('button', { name: /Create Facility/i }));
     expect(await screen.findByText(/Facility name is required/i)).toBeInTheDocument();
   });
 
