@@ -4,7 +4,16 @@ import type { SignOptions } from 'jsonwebtoken';
 import { config } from '@/config/environment';
 import { UserModel, User } from '@/models/user.model';
 import { FacilityAccessService } from '@/services/facility-access.service';
-import { JWTPayload, LoginRequest, LoginResponse, CreateUserRequest, UserRole } from '@/types/auth.types';
+import {
+  JWTPayload,
+  LoginRequest,
+  LoginResponse,
+  CreateUserRequest,
+  CreateUserOptions,
+  CreateUserResult,
+  InactiveUserSummary,
+  UserRole,
+} from '@/types/auth.types';
 import { logger } from '@/utils/logger';
 import { toE164 } from '@/utils/phone.util';
 
@@ -179,18 +188,44 @@ export class AuthService {
     }
   }
 
-  public static async createUser(userData: CreateUserRequest): Promise<{ success: boolean; message: string; userId?: string }> {
+  private static toInactiveUserSummary(user: User): InactiveUserSummary {
+    return {
+      id: user.id,
+      email: user.email,
+      firstName: user.first_name,
+      lastName: user.last_name,
+      role: user.role,
+      phoneNumber: user.phone_number ?? null,
+    };
+  }
+
+  private static inactiveConflictResult(
+    user: User,
+    matchedBy: 'email' | 'phone',
+  ): CreateUserResult {
+    const identity = matchedBy === 'email' ? 'email' : 'phone number';
+    return {
+      success: false,
+      code: 'USER_INACTIVE',
+      message: `An inactive user with this ${identity} already exists. Confirm to reactivate and update their profile.`,
+      inactiveUser: this.toInactiveUserSummary(user),
+    };
+  }
+
+  /**
+   * Create a user, or reactivate an inactive account when confirmed.
+   *
+   * Inactive email/phone collisions return `code: USER_INACTIVE` (unless
+   * `reactivateIfInactive` is set). Active collisions remain hard errors.
+   */
+  public static async createUser(
+    userData: CreateUserRequest,
+    options: CreateUserOptions = {},
+  ): Promise<CreateUserResult> {
     try {
       const { email, password, firstName, lastName, role, phoneNumber } = userData;
-
-      // Check if user already exists
-      const existingUser = await UserModel.findByEmail(email.toLowerCase());
-      if (existingUser) {
-        return {
-          success: false,
-          message: 'User with this email already exists'
-        };
-      }
+      const reactivateIfInactive = Boolean(options.reactivateIfInactive);
+      const normalizedEmail = email.toLowerCase();
 
       let normalizedPhone: string | null = null;
       const rawPhone = phoneNumber != null ? String(phoneNumber).trim() : '';
@@ -199,16 +234,64 @@ export class AuthService {
         if (!normalizedPhone || normalizedPhone.replace(/\D/g, '').length < 10) {
           return {
             success: false,
-            message: 'Invalid phone number'
+            message: 'Invalid phone number',
           };
         }
-        const phoneOwner = await UserModel.findByPhone(normalizedPhone);
-        if (phoneOwner) {
-          return {
-            success: false,
-            message: 'Phone number already in use'
-          };
+      }
+
+      const emailOwner = await UserModel.findByEmail(normalizedEmail);
+      const phoneOwner = normalizedPhone
+        ? await UserModel.findByPhone(normalizedPhone)
+        : undefined;
+
+      if (
+        emailOwner &&
+        phoneOwner &&
+        emailOwner.id !== phoneOwner.id
+      ) {
+        return {
+          success: false,
+          code: 'IDENTITY_CONFLICT',
+          message: 'Email and phone belong to different existing users',
+        };
+      }
+
+      if (emailOwner?.is_active) {
+        return {
+          success: false,
+          message: 'User with this email already exists',
+        };
+      }
+
+      if (phoneOwner?.is_active && (!emailOwner || phoneOwner.id !== emailOwner.id)) {
+        return {
+          success: false,
+          message: 'Phone number already in use',
+        };
+      }
+
+      const inactiveCandidate = !emailOwner?.is_active && emailOwner
+        ? emailOwner
+        : !phoneOwner?.is_active && phoneOwner
+          ? phoneOwner
+          : undefined;
+
+      if (inactiveCandidate) {
+        if (!reactivateIfInactive) {
+          return this.inactiveConflictResult(
+            inactiveCandidate,
+            emailOwner?.id === inactiveCandidate.id ? 'email' : 'phone',
+          );
         }
+
+        return this.reactivateInactiveUser(inactiveCandidate, {
+          normalizedEmail,
+          normalizedPhone,
+          password,
+          firstName,
+          lastName,
+          role,
+        });
       }
 
       const trimmedPassword = typeof password === 'string' ? password.trim() : '';
@@ -225,8 +308,6 @@ export class AuthService {
         requiresPasswordReset = true;
       }
 
-      // Create user
-      const normalizedEmail = email.toLowerCase();
       const newUser = await UserModel.create({
         email: normalizedEmail,
         login_identifier: normalizedEmail,
@@ -244,16 +325,69 @@ export class AuthService {
       return {
         success: true,
         message: 'User created successfully',
-        userId: newUser.id
+        userId: newUser.id,
       };
-
     } catch (error) {
       logger.error(`Create user error: ${error}`);
       return {
         success: false,
-        message: 'An error occurred while creating user'
+        message: 'An error occurred while creating user',
       };
     }
+  }
+
+  private static async reactivateInactiveUser(
+    existing: User,
+    fields: {
+      normalizedEmail: string;
+      normalizedPhone: string | null;
+      password?: string;
+      firstName: string;
+      lastName: string;
+      role: UserRole;
+    },
+  ): Promise<CreateUserResult> {
+    const trimmedPassword =
+      typeof fields.password === 'string' ? fields.password.trim() : '';
+    const hasPassword = trimmedPassword.length > 0;
+
+    const updates: Record<string, unknown> = {
+      email: fields.normalizedEmail,
+      login_identifier: fields.normalizedEmail,
+      first_name: fields.firstName,
+      last_name: fields.lastName,
+      role: fields.role,
+      is_active: true,
+    };
+
+    if (hasPassword) {
+      updates.password_hash = await bcrypt.hash(trimmedPassword, this.SALT_ROUNDS);
+      updates.requires_password_reset = false;
+    } else {
+      // Same provisional semantics as create without a password (invite / first-time flow).
+      updates.password_hash = '!';
+      updates.requires_password_reset = true;
+    }
+
+    await UserModel.updateById(existing.id, updates);
+
+    if (fields.normalizedPhone) {
+      await UserModel.setPhoneNumber(existing.id, fields.normalizedPhone);
+    }
+
+    // Ensure model hooks run for status_change (denylist / related listeners).
+    await UserModel.activateUser(existing.id);
+
+    logger.info(
+      `Inactive user reactivated: ${fields.normalizedEmail} (id=${existing.id}) with role ${fields.role}`,
+    );
+
+    return {
+      success: true,
+      message: 'User reactivated successfully',
+      userId: existing.id,
+      reactivated: true,
+    };
   }
 
   public static async changePassword(userId: string, currentPassword: string, newPassword: string): Promise<{ success: boolean; message: string }> {

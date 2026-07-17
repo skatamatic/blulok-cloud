@@ -65,12 +65,36 @@ jest.mock('../services/auth.service', () => ({
         message: 'Invalid credentials'
       });
     }),
-    createUser: jest.fn().mockImplementation((userData: any) => {
+    createUser: jest.fn().mockImplementation((userData: any, options?: { reactivateIfInactive?: boolean }) => {
       // Check for duplicate email
       if (userData.email === 'tenant@test.com' || userData.email === 'existing@example.com') {
         return Promise.resolve({
           success: false,
           message: 'User with this email already exists'
+        });
+      }
+      if (userData.email === 'inactive@test.com') {
+        if (options?.reactivateIfInactive) {
+          return Promise.resolve({
+            success: true,
+            message: 'User reactivated successfully',
+            userId: 'inactive-user-1',
+            reactivated: true,
+          });
+        }
+        return Promise.resolve({
+          success: false,
+          code: 'USER_INACTIVE',
+          message:
+            'An inactive user with this email already exists. Confirm to reactivate and update their profile.',
+          inactiveUser: {
+            id: 'inactive-user-1',
+            email: 'inactive@test.com',
+            firstName: 'Inactive',
+            lastName: 'User',
+            role: 'tenant',
+            phoneNumber: null,
+          },
         });
       }
       return Promise.resolve({

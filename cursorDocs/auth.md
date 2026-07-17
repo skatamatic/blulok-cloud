@@ -95,9 +95,33 @@ CREATE TABLE users (
 - **password_hash**: bcrypt hashed password (12 salt rounds)
 - **first_name/last_name**: User's display name
 - **role**: User's permission level (see roles above)
-- **is_active**: Soft delete flag - inactive users cannot login
+- **is_active**: Soft-deactivation flag — inactive users cannot login. “Delete user” in the admin UI deactivates (`is_active = false`); the row and unique identifiers (`email`, `login_identifier`, `phone_number`) are retained.
 - **last_login**: Timestamp of most recent successful login
 - **created_at/updated_at**: Audit timestamps
+
+#### Re-adding a deactivated user (`POST /api/v1/users`)
+
+Creating a user whose email or phone matches an **inactive** account returns **409** with:
+
+```json
+{
+  "success": false,
+  "code": "USER_INACTIVE",
+  "message": "An inactive user with this email already exists. Confirm to reactivate and update their profile.",
+  "inactiveUser": {
+    "id": "…",
+    "email": "…",
+    "firstName": "…",
+    "lastName": "…",
+    "role": "tenant",
+    "phoneNumber": null
+  }
+}
+```
+
+The Add User UI prompts the admin to confirm. Retrying the same payload with `reactivateIfInactive: true` reactivates the existing row, applies the submitted profile fields (name, role, password/invite semantics, optional phone), syncs facility associations when provided, and runs activation side effects (denylist removal, share restore). Active-user identity collisions remain hard **400** errors. Callers outside the inactive user’s facility scope receive a generic “already exists” **400** (no `inactiveUser` payload).
+
+Dedicated reactivation also remains available via `POST /api/v1/users/:id/activate` and `PUT /api/v1/users/:id` with `isActive: true`.
 
 ### User Facility Associations Table
 

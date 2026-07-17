@@ -136,6 +136,36 @@ export interface CreateUserRequest {
   role: UserRole;
 }
 
+/** Structured create/reactivate outcome from AuthService.createUser */
+export type CreateUserConflictCode = 'USER_INACTIVE' | 'IDENTITY_CONFLICT';
+
+export interface InactiveUserSummary {
+  id: string;
+  email: string | null;
+  firstName: string;
+  lastName: string;
+  role: UserRole;
+  phoneNumber?: string | null;
+}
+
+export interface CreateUserResult {
+  success: boolean;
+  message: string;
+  userId?: string;
+  /** True when an inactive account was reactivated instead of inserting a new row */
+  reactivated?: boolean;
+  code?: CreateUserConflictCode;
+  inactiveUser?: InactiveUserSummary;
+}
+
+export interface CreateUserOptions {
+  /**
+   * When true and the email/phone matches an inactive user, reactivate and apply
+   * the submitted profile fields instead of creating a new row.
+   */
+  reactivateIfInactive?: boolean;
+}
+
 /**
  * User Update Request
  *

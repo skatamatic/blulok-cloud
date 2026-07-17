@@ -32,6 +32,7 @@ jest.mock('@heroicons/react/24/outline', () => ({
   DevicePhoneMobileIcon: () => <div data-testid="device-phone-mobile-icon" />,
   KeyIcon: () => <div data-testid="key-icon" />,
   TrashIcon: () => <div data-testid="trash-icon" />,
+  NoSymbolIcon: () => <div data-testid="no-symbol-icon" />,
   ExclamationTriangleIcon: () => <div data-testid="exclamation-triangle-icon" />,
   TicketIcon: () => <div data-testid="ticket-icon" />,
   ClockIcon: () => <div data-testid="clock-icon" />,

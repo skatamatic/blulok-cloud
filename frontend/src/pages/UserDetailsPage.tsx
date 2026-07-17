@@ -11,6 +11,7 @@ import {
   DevicePhoneMobileIcon,
   KeyIcon,
   TrashIcon,
+  NoSymbolIcon,
   ClockIcon,
   PaperAirplaneIcon,
   PencilIcon,
@@ -426,21 +427,22 @@ export default function UserDetailsPage() {
       if (response.success) {
         addToast({
           type: 'success',
-          title: 'User deleted successfully',
+          title: 'User deactivated',
+          message: 'Their access has been revoked. You can reactivate them later from Add User or Edit.',
         });
         navigate('/users');
       } else {
         addToast({
           type: 'error',
-          title: 'Failed to delete user',
+          title: 'Failed to deactivate user',
           message: response.message || 'An unexpected error occurred'
         });
       }
     } catch (error: any) {
-      console.error('Failed to delete user:', error);
+      console.error('Failed to deactivate user:', error);
       addToast({
         type: 'error',
-        title: 'Failed to delete user',
+        title: 'Failed to deactivate user',
         message: error?.response?.data?.message || 'An unexpected error occurred'
       });
     } finally {
@@ -555,11 +557,11 @@ export default function UserDetailsPage() {
               </button>
               <button
                 onClick={() => setDeleteUserModal(true)}
-                disabled={userDetails.id === authState.user?.id}
+                disabled={userDetails.id === authState.user?.id || !userDetails.isActive}
                 className="inline-flex items-center px-4 py-2 text-sm font-medium text-white bg-red-600 rounded-lg hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
               >
-                <TrashIcon className="h-4 w-4 mr-2" />
-                Delete
+                <NoSymbolIcon className="h-4 w-4 mr-2" />
+                Deactivate
               </button>
             </>
           ) : undefined
@@ -1340,18 +1342,18 @@ export default function UserDetailsPage() {
           isLoading={deletingDevice}
         />
 
-        {/* Delete User Confirmation Modal */}
+        {/* Deactivate User Confirmation Modal */}
         <ConfirmModal
           isOpen={deleteUserModal}
           onClose={() => setDeleteUserModal(false)}
           onConfirm={handleDeleteUser}
-          title="Delete User"
+          title="Deactivate User"
           message={
             userDetails
-              ? `Are you sure you want to delete the user "${userDetails.firstName} ${userDetails.lastName}"? This will deactivate their account and revoke all access. This action cannot be undone.`
+              ? `Deactivate "${userDetails.firstName} ${userDetails.lastName}"? They will lose access immediately. You can reactivate them later (for example via Add User with the same email).`
               : ''
           }
-          confirmText="Delete User"
+          confirmText="Deactivate User"
           variant="danger"
           isLoading={deletingUser}
         />

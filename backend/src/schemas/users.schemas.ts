@@ -25,6 +25,8 @@ export const createUserSchema = Joi.object({
   password: Joi.string().allow('').optional(),
   phoneNumber: Joi.string().trim().allow('').optional(),
   sendInvite: Joi.boolean().optional(),
+  /** After a USER_INACTIVE conflict, retry create with this flag to reactivate */
+  reactivateIfInactive: Joi.boolean().optional(),
   facilityIds: Joi.array().items(Joi.string().uuid()).optional().default([]),
   firstName: Joi.string().min(1).max(100).required(),
   lastName: Joi.string().min(1).max(100).required(),

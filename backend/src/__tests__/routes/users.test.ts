@@ -3,7 +3,8 @@ import { createApp } from '@/app';
 import { DatabaseService } from '@/services/database.service';
 import { UserModel } from '@/models/user.model';
 import { UserDeviceModel } from '@/models/user-device.model';
-import { createMockTestData, MockTestData, expectSuccess, expectUnauthorized, expectForbidden, expectNotFound, expectBadRequest } from '@/__tests__/utils/mock-test-helpers';
+import { UserRole } from '@/types/auth.types';
+import { createMockTestData, MockTestData, expectSuccess, expectUnauthorized, expectForbidden, expectNotFound, expectBadRequest, expectConflict } from '@/__tests__/utils/mock-test-helpers';
 
 const createMockQuery = (config: { rows?: any[]; reject?: boolean } = {}) => {
   const rows = config.rows ?? [];
@@ -353,6 +354,93 @@ describe('Users Routes', () => {
         .expect(400);
 
       expectBadRequest(response);
+    });
+
+    it('should return 409 with USER_INACTIVE when email matches an inactive user', async () => {
+      const response = await request(app)
+        .post('/api/v1/users')
+        .set('Authorization', `Bearer ${testData.users.admin.token}`)
+        .send({
+          ...validUserData,
+          email: 'inactive@test.com',
+        })
+        .expect(409);
+
+      expectConflict(response);
+      expect(response.body.code).toBe('USER_INACTIVE');
+      expect(response.body.inactiveUser).toEqual(
+        expect.objectContaining({
+          id: 'inactive-user-1',
+          email: 'inactive@test.com',
+        }),
+      );
+    });
+
+    it('should reactivate inactive user when reactivateIfInactive is true', async () => {
+      const { AuthService } = await import('@/services/auth.service');
+      const { UserFacilityAssociationModel } = await import(
+        '@/models/user-facility-association.model'
+      );
+      const createSpy = jest.spyOn(AuthService, 'createUser');
+      const setFacilitiesSpy = jest.spyOn(UserFacilityAssociationModel, 'setUserFacilities');
+
+      const response = await request(app)
+        .post('/api/v1/users')
+        .set('Authorization', `Bearer ${testData.users.admin.token}`)
+        .send({
+          ...validUserData,
+          email: 'inactive@test.com',
+          reactivateIfInactive: true,
+          facilityIds: ['550e8400-e29b-41d4-a716-446655440001'],
+        })
+        .expect(200);
+
+      expectSuccess(response);
+      expect(response.body.reactivated).toBe(true);
+      expect(response.body.userId).toBe('inactive-user-1');
+      expect(createSpy).toHaveBeenCalledWith(
+        expect.objectContaining({ email: 'inactive@test.com' }),
+        { reactivateIfInactive: true },
+      );
+      expect(setFacilitiesSpy).toHaveBeenCalledWith(
+        'inactive-user-1',
+        ['550e8400-e29b-41d4-a716-446655440001'],
+      );
+    });
+
+    it('should hide inactive collision details outside facility admin scope', async () => {
+      const { AuthService } = await import('@/services/auth.service');
+      const { UserListScopeService } = await import('@/services/user-list-scope.service');
+      jest.spyOn(AuthService, 'createUser').mockResolvedValueOnce({
+        success: false,
+        code: 'USER_INACTIVE',
+        message:
+          'An inactive user with this email already exists. Confirm to reactivate and update their profile.',
+        inactiveUser: {
+          id: 'out-of-scope-user',
+          email: 'hidden@test.com',
+          firstName: 'Hidden',
+          lastName: 'User',
+          role: UserRole.TENANT,
+          phoneNumber: null,
+        },
+      });
+      jest.spyOn(UserListScopeService, 'canRequesterViewUser').mockResolvedValueOnce(false);
+
+      const response = await request(app)
+        .post('/api/v1/users')
+        .set('Authorization', `Bearer ${testData.users.facilityAdmin.token}`)
+        .send({
+          ...validUserData,
+          email: 'hidden@test.com',
+          role: UserRole.TENANT,
+        })
+        .expect(400);
+
+      expectBadRequest(response);
+      expect(response.body.code).toBeUndefined();
+      expect(response.body.inactiveUser).toBeUndefined();
+      expect(response.body.message).toBe('User with this email already exists');
     });
 
     it('should return 400 for invalid role', async () => {

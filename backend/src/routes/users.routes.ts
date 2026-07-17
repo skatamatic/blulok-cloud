@@ -552,11 +552,13 @@ registerPost(
   {
     openApiPath: MOUNT,
     tags: ['Users'],
-    summary: 'Create a user',
+    summary: 'Create a user (or reactivate an inactive user when confirmed)',
     security: 'bearer',
     body: createUserSchema,
     responses: {
       201: usersResponseSchema,
+      200: usersResponseSchema,
+      409: usersResponseSchema,
     },
   },
   requireUserManagement,
@@ -600,12 +602,44 @@ registerPost(
     return;
   }
 
-  const result = await AuthService.createUser(userData);
+  const result = await AuthService.createUser(userData, {
+    reactivateIfInactive: Boolean(value.reactivateIfInactive),
+  });
+
   if (!result.success) {
+    if (result.code === 'USER_INACTIVE' && result.inactiveUser) {
+      const hasAccess = await checkFacilityAccess(req, result.inactiveUser.id);
+      const mayManageExistingRole =
+        !AuthService.isFacilityAdmin(req.user!.role) ||
+        FACILITY_ADMIN_CREATABLE_ROLES.includes(result.inactiveUser.role as UserRole);
+
+      if (!hasAccess || !mayManageExistingRole) {
+        // Avoid leaking inactive accounts outside the requester's scope.
+        const genericMessage =
+          result.message.includes('phone')
+            ? 'Phone number already in use'
+            : 'User with this email already exists';
+        logger.warn('Create user inactive collision outside requester scope', {
+          requester: req.user?.userId,
+          inactiveUserId: result.inactiveUser.id,
+        });
+        res.status(400).json({ success: false, message: genericMessage });
+        return;
+      }
+
+      logger.info('Create user blocked by inactive account; reactivation available', {
+        requester: req.user?.userId,
+        inactiveUserId: result.inactiveUser.id,
+      });
+      res.status(409).json(result);
+      return;
+    }
+
     logger.warn('Create user failed', {
       requester: req.user?.userId,
       role: req.user?.role,
       reason: result.message,
+      code: result.code,
     });
     res.status(400).json(result);
     return;
@@ -615,16 +649,25 @@ registerPost(
 
   try {
     if (facilityCheck.facilityIds.length > 0) {
-      for (const fid of facilityCheck.facilityIds) {
-        await UserFacilityAssociationModel.addUserToFacility(newUserId, fid);
+      if (result.reactivated) {
+        await UserFacilityAssociationModel.setUserFacilities(
+          newUserId,
+          facilityCheck.facilityIds,
+        );
+      } else {
+        for (const fid of facilityCheck.facilityIds) {
+          await UserFacilityAssociationModel.addUserToFacility(newUserId, fid);
+        }
       }
     }
   } catch (assocErr) {
-    logger.error('Failed to associate new user with facilities; rolling back user', assocErr);
-    try {
-      await UserModel.deleteById(newUserId);
-    } catch (delErr) {
-      logger.error('Failed to delete user after association error', delErr);
+    logger.error('Failed to associate user with facilities', assocErr);
+    if (!result.reactivated) {
+      try {
+        await UserModel.deleteById(newUserId);
+      } catch (delErr) {
+        logger.error('Failed to delete user after association error', delErr);
+      }
     }
     res.status(500).json({
       success: false,
@@ -633,11 +676,17 @@ registerPost(
     return;
   }
 
-  logger.info('User created', {
+  if (result.reactivated) {
+    void runUserActivationSideEffects(newUserId);
+  }
+
+  logger.info(result.reactivated ? 'User reactivated via create' : 'User created', {
     requester: req.user?.userId,
     role: req.user?.role,
     createdUserEmail: userData.email,
     createdRole: userData.role,
+    userId: newUserId,
+    reactivated: Boolean(result.reactivated),
   });
 
   const shouldSendInvite = Boolean(value.sendInvite) && !passwordTrimmed;
@@ -651,13 +700,19 @@ registerPost(
         inviteSent = true;
       }
     } catch (e) {
-      logger.error('Failed to send invite after user create', e);
-      inviteWarning =
-        'User was created but the invite could not be sent. You can resend from the user profile.';
+      logger.error(
+        result.reactivated
+          ? 'Failed to send invite after user reactivate'
+          : 'Failed to send invite after user create',
+        e,
+      );
+      inviteWarning = result.reactivated
+        ? 'User was reactivated but the invite could not be sent. You can resend from the user profile.'
+        : 'User was created but the invite could not be sent. You can resend from the user profile.';
     }
   }
 
-  res.status(201).json({
+  res.status(result.reactivated ? 200 : 201).json({
     ...result,
     inviteSent,
     ...(inviteWarning ? { inviteWarning } : {}),

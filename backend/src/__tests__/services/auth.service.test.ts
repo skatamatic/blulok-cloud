@@ -290,7 +290,10 @@ describe('AuthService', () => {
         role: UserRole.TENANT,
       };
 
-      jest.spyOn(UserModel, 'findByEmail').mockResolvedValue({ id: 'existing-user' } as any);
+      jest.spyOn(UserModel, 'findByEmail').mockResolvedValue({
+        id: 'existing-user',
+        is_active: true,
+      } as any);
 
       const result = await AuthService.createUser(userData);
 
@@ -298,8 +301,132 @@ describe('AuthService', () => {
       expect(result.message).toBe('User with this email already exists');
     });
 
+    it('returns USER_INACTIVE when email matches an inactive user', async () => {
+      jest.spyOn(UserModel, 'findByEmail').mockResolvedValue({
+        id: 'inactive-1',
+        email: 'gone@example.com',
+        first_name: 'Gone',
+        last_name: 'User',
+        role: UserRole.TENANT,
+        is_active: false,
+        phone_number: null,
+      } as any);
+
+      const result = await AuthService.createUser({
+        email: 'gone@example.com',
+        password: 'password123',
+        firstName: 'New',
+        lastName: 'Name',
+        role: UserRole.TENANT,
+      });
+
+      expect(result.success).toBe(false);
+      expect(result.code).toBe('USER_INACTIVE');
+      expect(result.inactiveUser).toEqual(
+        expect.objectContaining({
+          id: 'inactive-1',
+          email: 'gone@example.com',
+          firstName: 'Gone',
+          lastName: 'User',
+        }),
+      );
+    });
+
+    it('reactivates inactive user when reactivateIfInactive is set', async () => {
+      const inactive = {
+        id: 'inactive-1',
+        email: 'gone@example.com',
+        first_name: 'Gone',
+        last_name: 'User',
+        role: UserRole.TENANT,
+        is_active: false,
+        phone_number: null,
+      };
+      jest.spyOn(UserModel, 'findByEmail').mockResolvedValue(inactive as any);
+      jest.spyOn(UserModel, 'updateById').mockResolvedValue(undefined as any);
+      jest.spyOn(UserModel, 'activateUser').mockResolvedValue({ ...inactive, is_active: true } as any);
+
+      const result = await AuthService.createUser(
+        {
+          email: 'gone@example.com',
+          password: 'NewPass1!',
+          firstName: 'Restored',
+          lastName: 'Person',
+          role: UserRole.MAINTENANCE,
+        },
+        { reactivateIfInactive: true },
+      );
+
+      expect(result.success).toBe(true);
+      expect(result.reactivated).toBe(true);
+      expect(result.userId).toBe('inactive-1');
+      expect(UserModel.updateById).toHaveBeenCalledWith(
+        'inactive-1',
+        expect.objectContaining({
+          first_name: 'Restored',
+          last_name: 'Person',
+          role: UserRole.MAINTENANCE,
+          is_active: true,
+          requires_password_reset: false,
+        }),
+      );
+      expect(UserModel.activateUser).toHaveBeenCalledWith('inactive-1');
+    });
+
+    it('returns USER_INACTIVE when phone matches an inactive user', async () => {
+      jest.spyOn(UserModel, 'findByEmail').mockResolvedValue(undefined as any);
+      jest.spyOn(phoneUtil, 'toE164').mockReturnValue('+15551234567');
+      jest.spyOn(UserModel, 'findByPhone').mockResolvedValue({
+        id: 'inactive-phone',
+        email: 'old@example.com',
+        first_name: 'Old',
+        last_name: 'Phone',
+        role: UserRole.TENANT,
+        is_active: false,
+        phone_number: '+15551234567',
+      } as any);
+
+      const result = await AuthService.createUser({
+        email: 'brandnew@example.com',
+        password: 'password123',
+        firstName: 'Brand',
+        lastName: 'New',
+        role: UserRole.TENANT,
+        phoneNumber: '(555) 123-4567',
+      });
+
+      expect(result.success).toBe(false);
+      expect(result.code).toBe('USER_INACTIVE');
+      expect(result.inactiveUser?.id).toBe('inactive-phone');
+    });
+
+    it('rejects when email and phone belong to different users', async () => {
+      jest.spyOn(UserModel, 'findByEmail').mockResolvedValue({
+        id: 'user-a',
+        is_active: false,
+      } as any);
+      jest.spyOn(phoneUtil, 'toE164').mockReturnValue('+15559876543');
+      jest.spyOn(UserModel, 'findByPhone').mockResolvedValue({
+        id: 'user-b',
+        is_active: false,
+      } as any);
+
+      const result = await AuthService.createUser({
+        email: 'a@example.com',
+        password: 'password123',
+        firstName: 'A',
+        lastName: 'User',
+        role: UserRole.TENANT,
+        phoneNumber: '(555) 987-6543',
+      });
+
+      expect(result.success).toBe(false);
+      expect(result.code).toBe('IDENTITY_CONFLICT');
+    });
+
     it('rejects invalid phone number', async () => {
       jest.spyOn(UserModel, 'findByEmail').mockResolvedValue(undefined as any);
+      jest.spyOn(phoneUtil, 'toE164').mockReturnValue('12');
       const r = await AuthService.createUser({
         email: 'p@example.com',
         password: 'password123',
@@ -315,7 +442,10 @@ describe('AuthService', () => {
     it('rejects duplicate phone', async () => {
       jest.spyOn(UserModel, 'findByEmail').mockResolvedValue(undefined as any);
       jest.spyOn(phoneUtil, 'toE164').mockReturnValue('+15559876543');
-      jest.spyOn(UserModel, 'findByPhone').mockResolvedValue({ id: 'other' } as any);
+      jest.spyOn(UserModel, 'findByPhone').mockResolvedValue({
+        id: 'other',
+        is_active: true,
+      } as any);
       const r = await AuthService.createUser({
         email: 'newphone@example.com',
         password: 'password123',
