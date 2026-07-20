@@ -18,7 +18,6 @@ import {
 import { PanelSection } from './PanelSection';
 import { CloudApiLoginCard } from './CloudApiLoginCard';
 import { UserDeviceCard } from './UserDeviceCard';
-import { AppRealtimeSection } from './AppRealtimeSection';
 import { UserPanelTabs } from './UserPanelTabs';
 import {
   PanelTabTransition,
@@ -110,10 +109,7 @@ export function UserPanel({ user, gateways, onRefresh }: Props) {
       toast.success('Device added with fresh Ed25519 keys');
     });
 
-  const tabPaneClassName =
-    tab === 'app'
-      ? 'panel-tab-content flex h-full min-h-0 flex-col overflow-hidden p-4'
-      : 'panel-tab-content overflow-y-auto p-4';
+  const tabPaneClassName = 'panel-tab-content overflow-y-auto p-4';
 
   return (
     <div className="user-panel flex h-full min-h-0 flex-col">
@@ -269,34 +265,6 @@ export function UserPanel({ user, gateways, onRefresh }: Props) {
                 </div>
               </PanelSection>
             </div>
-          )}
-
-          {tab === 'app' && (
-            <AppRealtimeSection
-              user={user}
-              facilities={facilities}
-              facilityId={effectiveFacilityId}
-              onFacilityChange={setSelectedFacilityId}
-              busy={busy === 'app-open' || busy === 'app-close' || busy === 'app-clear'}
-              fillHeight
-              onOpenApp={() =>
-                void run('app-open', async () => {
-                  await window.simulator.connectUserAppRealtime(user.id, effectiveFacilityId);
-                  toast.success('App realtime connected');
-                })
-              }
-              onCloseApp={() =>
-                void run('app-close', async () => {
-                  await window.simulator.disconnectUserAppRealtime(user.id);
-                  toast.success('App closed');
-                })
-              }
-              onClearEvents={() =>
-                void run('app-clear', async () => {
-                  await window.simulator.clearUserAppRealtimeEvents(user.id);
-                })
-              }
-            />
           )}
         </PanelTabTransition>
       </div>

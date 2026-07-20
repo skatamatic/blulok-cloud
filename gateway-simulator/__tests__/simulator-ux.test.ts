@@ -183,11 +183,11 @@ describe('behavior defaults', () => {
     expect(DEFAULT_BEHAVIOR.liveStateSync).toBe(true);
   });
 
-  it('normalizeBehavior fills missing fields and forces always-on connectivity flags', () => {
+  it('normalizeBehavior fills missing fields from defaults without forcing overrides', () => {
     expect(normalizeBehavior({ autoReconnect: false }).commandLatencyMs).toBe(0);
-    expect(normalizeBehavior({ autoReconnect: false }).autoReconnect).toBe(true);
-    expect(normalizeBehavior({ respondToPing: false }).respondToPing).toBe(true);
-    expect(normalizeBehavior({ liveStateSync: false }).liveStateSync).toBe(true);
+    expect(normalizeBehavior({ autoReconnect: false }).autoReconnect).toBe(false);
+    expect(normalizeBehavior({ respondToPing: false }).respondToPing).toBe(false);
+    expect(normalizeBehavior({ liveStateSync: false }).liveStateSync).toBe(false);
     expect(normalizeBehavior({}).liveStateSync).toBe(true);
     expect(normalizeBehavior({ autoLockResponse: false }).lockUnlockMode).toBe('apply-only');
     expect(normalizeBehavior({ autoLockResponse: true }).lockUnlockMode).toBe('accept');

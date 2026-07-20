@@ -1,7 +1,6 @@
 export const USER_PANEL_TABS = [
   { id: 'session', label: 'Session', hint: 'Cloud JWT & identity' },
   { id: 'devices', label: 'Devices', hint: 'Phones, keys & route passes' },
-  { id: 'app', label: 'App', hint: 'Opt-in /ws/app realtime' },
 ] as const;
 
 export type UserPanelTabId = (typeof USER_PANEL_TABS)[number]['id'];
