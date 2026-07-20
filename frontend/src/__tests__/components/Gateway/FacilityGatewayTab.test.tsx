@@ -512,7 +512,7 @@ describe('FacilityGatewayTab', () => {
       await waitFor(() => expect(screen.getByText('Gateway Debug')).toBeInTheDocument());
 
       // Fallback (select textarea by traversing from label)
-      const fallbackLabel = screen.getByText('Fallback JWT (App-signed)');
+      const fallbackLabel = screen.getByText('Fallback token (app-signed)');
       const fallbackTextarea = fallbackLabel.parentElement?.querySelector('textarea') as HTMLTextAreaElement;
       fireEvent.change(fallbackTextarea, { target: { value: 'jwt' } });
       await act(async () => { fireEvent.click(screen.getByText('Submit Fallback')); });
