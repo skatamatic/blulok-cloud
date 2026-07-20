@@ -1,7 +1,7 @@
 # Design — Seamless Gateway Auto-Registration over WebSocket
 
 **Status:** Implemented  
-**Related:** [Gateway Swap / Recovery — Operator & Developer Guide](./gateway-swap-recovery-operators-guide.md), [Gateway Swap / Recovery Architecture](./gateway-swap-recovery-architecture.md), [Gateway ↔ Cloud integration](./gateway-integration.md)
+**Related:** [Gateway Swap / Recovery — Operator & Developer Guide](./gateway-swap-recovery-operators-guide.md), [Gateway Swap / Recovery Architecture](./gateway-swap-recovery-architecture.md), [Gateway ↔ Cloud integration](./gateway-integration.md), [Gateway ZTP sticker](./gateway-ztp-sticker-design.md)
 
 ---
 
@@ -22,10 +22,10 @@ Non-goal: changing the phased recovery pipeline or the “don’t trust new hard
 | Topic | Decision |
 |-------|----------|
 | **Identity** | Device sends its gateway **GUID** (`gateways.id`) in `AUTH.gatewayId` — the same GUID shown in the Swap / Recovery tab. Unknown GUID ⇒ find-or-create on that GUID. Dedup is on the **primary key**; no new MAC/serial column. |
-| **Gating** | The only gate is the **existing AUTH credential**: a valid JWT that is `facility_admin` **scoped to this facility**, or `admin` / `dev_admin` (any facility). No env flag. |
-| **First gateway (empty facility)** | If the facility has **no bound gateway**, auto-create **and auto-bind** the connecting gateway as the `active` session (first-time install). |
+| **Gating** | The only gate is the **existing AUTH credential**: a valid JWT that is `facility_admin` **scoped to this facility**, or `admin` / `dev_admin` (any facility). |
+| **First gateway (empty facility)** | If the facility has **no bound gateway**, auto-create **and auto-bind** the connecting gateway as the `active` session (first-time install) — **unless** `GATEWAY_ZTP_REQUIRED=true` (then sticker claim is required; JWT greenfield bind is rejected). |
 | **Existing bound gateway** | Auto-create an **unbound** gateway (`facility_id = null`) and park it as `swap_candidate`; the bound gateway keeps the `active` session. |
-| **Scope of this doc** | Design only. Implementation follows after review. |
+| **Coexistence with ZTP** | Lab default keeps this JWT auto-register path. Production may set `GATEWAY_ZTP_REQUIRED` so greenfield bind uses [sticker ZTP](./gateway-ztp-sticker-design.md) only. Swap/recovery is unchanged. |
 
 ---
 

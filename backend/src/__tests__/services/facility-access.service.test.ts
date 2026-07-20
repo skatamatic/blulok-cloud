@@ -33,6 +33,8 @@ function mockDbQueries(options: {
   keyShareFacilityIds?: string[];
   assignmentExists?: boolean;
   keyShareExists?: boolean;
+  /** When set, `gateways` lookups resolve facility_id for ZTP principals */
+  ztpGatewayFacilityId?: string | null;
 }) {
   const assignmentRows = (options.assignmentFacilityIds ?? []).map((facility_id) => ({ facility_id }));
   const shareRows = (options.keyShareFacilityIds ?? []).map((facility_id) => ({ facility_id }));
@@ -41,6 +43,7 @@ function mockDbQueries(options: {
     select: jest.fn().mockReturnThis(),
     join: jest.fn().mockReturnThis(),
     where: jest.fn().mockReturnThis(),
+    whereNull: jest.fn().mockReturnThis(),
     first: jest.fn().mockResolvedValue(firstResult),
     then: (resolve: (v: unknown) => void, reject?: (e: unknown) => void) =>
       Promise.resolve(rows).then(resolve, reject),
@@ -52,6 +55,13 @@ function mockDbQueries(options: {
     }
     if (table === 'key_sharing as ks') {
       return buildChain(shareRows, options.keyShareExists ? { id: 'k1' } : undefined);
+    }
+    if (table === 'gateways') {
+      const facilityId = options.ztpGatewayFacilityId;
+      return buildChain(
+        [],
+        facilityId ? { facility_id: facilityId } : facilityId === null ? { facility_id: null } : undefined,
+      );
     }
     return buildChain([]);
   });
@@ -72,11 +82,28 @@ describe('FacilityAccessService', () => {
     });
 
     it('returns associations for facility admins', async () => {
+      mockDbQueries({});
       mockGetIds.mockResolvedValueOnce(['fac-a', 'fac-b']);
       await expect(
         FacilityAccessService.getUserFacilityIds('u2', UserRole.FACILITY_ADMIN)
       ).resolves.toEqual(['fac-a', 'fac-b']);
       expect(mockGetIds).toHaveBeenCalledWith('u2');
+    });
+
+    it('scopes ZTP gateway principals to the bound facility', async () => {
+      mockDbQueries({ ztpGatewayFacilityId: 'fac-ztp' });
+      await expect(
+        FacilityAccessService.getUserFacilityIds('ztp:gw-1', UserRole.FACILITY_ADMIN),
+      ).resolves.toEqual(['fac-ztp']);
+      expect(mockGetIds).not.toHaveBeenCalled();
+    });
+
+    it('returns empty for unbound ZTP principals', async () => {
+      mockDbQueries({ ztpGatewayFacilityId: null });
+      await expect(
+        FacilityAccessService.getUserFacilityIds('ztp:gw-unbound', UserRole.FACILITY_ADMIN),
+      ).resolves.toEqual([]);
+      expect(mockGetIds).not.toHaveBeenCalled();
     });
 
     it('returns unit and key-share facilities for tenants (not association rows)', async () => {
@@ -111,6 +138,17 @@ describe('FacilityAccessService', () => {
         FacilityAccessService.hasAccessToFacility('u1', UserRole.FACILITY_ADMIN, 'fac-1')
       ).resolves.toBe(true);
       expect(mockHasAccess).toHaveBeenCalledWith('u1', 'fac-1');
+    });
+
+    it('allows ZTP principals only for their bound facility', async () => {
+      mockDbQueries({ ztpGatewayFacilityId: 'fac-1' });
+      await expect(
+        FacilityAccessService.hasAccessToFacility('ztp:gw-1', UserRole.FACILITY_ADMIN, 'fac-1'),
+      ).resolves.toBe(true);
+      await expect(
+        FacilityAccessService.hasAccessToFacility('ztp:gw-1', UserRole.FACILITY_ADMIN, 'fac-other'),
+      ).resolves.toBe(false);
+      expect(mockHasAccess).not.toHaveBeenCalled();
     });
 
     it('checks unit/key-share access for tenants instead of associations', async () => {

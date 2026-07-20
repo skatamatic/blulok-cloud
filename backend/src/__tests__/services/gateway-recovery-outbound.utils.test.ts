@@ -13,6 +13,7 @@ describe('gateway-recovery-outbound.utils', () => {
 
   it('identifies operational messages blocked during recovery', () => {
     expect(isOperationalOutboundBlockedDuringRecovery({ cmd_type: 'ACCESS_CODE_UPDATE' })).toBe(true);
+    expect(isOperationalOutboundBlockedDuringRecovery({ cmd_type: 'DENYLIST_SYNC' })).toBe(true);
     expect(isOperationalOutboundBlockedDuringRecovery({ cmd_type: 'LOCK' })).toBe(true);
     expect(isOperationalOutboundBlockedDuringRecovery({ cmd_type: 'DEVICE_DELETED' })).toBe(true);
     expect(isOperationalOutboundBlockedDuringRecovery({ type: 'FIRMWARE_CHUNK' })).toBe(false);

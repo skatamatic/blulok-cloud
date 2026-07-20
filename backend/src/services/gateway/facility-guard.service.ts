@@ -8,6 +8,7 @@ export class FacilityGuardService {
     body?: any,
     query?: any,
   ): void {
+    // FACILITY_ADMIN (including ZTP gateway principals) cannot proxy cross-facility
     if (userRole !== UserRole.FACILITY_ADMIN) return;
     const targetFacility = extractFacilityId(path, body, query);
     if (targetFacility && targetFacility !== connectionFacilityId) {

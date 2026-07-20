@@ -3,6 +3,8 @@ export const API_PATHS = {
   login: '/auth/login',
   facilities: '/facilities',
   gateways: '/gateways',
+  gatewaysClaim: '/gateways/claim',
+  gatewayRelease: (gatewayId: string) => `/gateways/${gatewayId}/release`,
   gatewayStatus: (facilityId: string) => `/gateways/status/${facilityId}`,
   users: '/users',
   user: (userId: string) => `/users/${userId}`,

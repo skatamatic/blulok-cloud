@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ArrowLeftIcon,
   MagnifyingGlassIcon,
@@ -9,9 +9,22 @@ import type { CloudUserSummary, UserInstanceState } from '@protocol/user-simulat
 import type { CatalogSessionSummary } from '@protocol/ipc-channels';
 import { useToast } from '../contexts/ToastContext';
 import { errorMessage } from '../utils/error-message.utils';
+import {
+  readUserPanelTab,
+  writeUserPanelTab,
+  USER_PANEL_TABS,
+  type UserPanelTabId,
+} from '../utils/user-panel.utils';
 import { PanelSection } from './PanelSection';
 import { CloudApiLoginCard } from './CloudApiLoginCard';
 import { UserDeviceCard } from './UserDeviceCard';
+import { AppRealtimeSection } from './AppRealtimeSection';
+import { UserPanelTabs } from './UserPanelTabs';
+import {
+  PanelTabTransition,
+  resolveOrderedTabSlideDirection,
+  type TabSlideDirection,
+} from './PanelTabTransition';
 import { DEV_CATALOG_LOGIN_ACCOUNTS } from '../config/devTestAccounts';
 
 type Props = {
@@ -20,11 +33,16 @@ type Props = {
   onRefresh: () => void;
 };
 
+const USER_TAB_ORDER = USER_PANEL_TABS.map((tab) => tab.id);
+
 export function UserPanel({ user, gateways, onRefresh }: Props) {
   const toast = useToast();
   const [busy, setBusy] = useState<string | null>(null);
   const [expandedDeviceIds, setExpandedDeviceIds] = useState<Set<string>>(() => new Set());
   const [selectedFacilityId, setSelectedFacilityId] = useState('');
+  const [tab, setTab] = useState<UserPanelTabId>(readUserPanelTab);
+  const [tabDirection, setTabDirection] = useState<TabSlideDirection>('right');
+  const previousTabRef = useRef(tab);
 
   const facilities = useMemo(() => {
     const map = new Map<string, string>();
@@ -46,6 +64,14 @@ export function UserPanel({ user, gateways, onRefresh }: Props) {
       return next.size === current.size ? current : next;
     });
   }, [user.devices]);
+
+  const selectTab = (next: UserPanelTabId) => {
+    if (next === tab) return;
+    setTabDirection(resolveOrderedTabSlideDirection(USER_TAB_ORDER, previousTabRef.current, next));
+    previousTabRef.current = next;
+    setTab(next);
+    writeUserPanelTab(next);
+  };
 
   const toggleDeviceExpanded = (deviceId: string) => {
     setExpandedDeviceIds((current) => {
@@ -84,121 +110,196 @@ export function UserPanel({ user, gateways, onRefresh }: Props) {
       toast.success('Device added with fresh Ed25519 keys');
     });
 
-  return (
-    <div className="user-panel space-y-5 p-6">
-      <div>
-        <p className="text-xs uppercase tracking-wide text-gray-500">Simulated user</p>
-        <h2 className="text-xl font-semibold">{user.label}</h2>
-        <p className="text-sm text-gray-500">{user.email}</p>
-      </div>
+  const tabPaneClassName =
+    tab === 'app'
+      ? 'panel-tab-content flex h-full min-h-0 flex-col overflow-hidden p-4'
+      : 'panel-tab-content overflow-y-auto p-4';
 
-      <PanelSection embedded className="space-y-4">
-        <h3 className="device-detail-section-title">Cloud session</h3>
-        <p className="text-sm text-gray-500">
-          Sessions are minted via dev admin and cached locally. Refresh when expired.
-        </p>
-        <dl className="grid gap-2 text-sm sm:grid-cols-2">
-          <div>
-            <dt className="text-xs uppercase tracking-wide text-gray-500">Email</dt>
-            <dd className="font-medium">{user.email}</dd>
-          </div>
-          <div>
-            <dt className="text-xs uppercase tracking-wide text-gray-500">Role</dt>
-            <dd className="font-medium">{user.role ?? '—'}</dd>
-          </div>
-          {user.cloudUserId && (
-            <div className="sm:col-span-2">
-              <dt className="text-xs uppercase tracking-wide text-gray-500">Cloud user ID</dt>
-              <dd className="font-mono text-xs text-gray-500 truncate">{user.cloudUserId}</dd>
+  return (
+    <div className="user-panel flex h-full min-h-0 flex-col">
+      <UserPanelTabs active={tab} user={user} onChange={selectTab} />
+
+      <div className="panel-tab-viewport min-h-0 flex-1">
+        <PanelTabTransition
+          tab={tab}
+          direction={tabDirection}
+          idPrefix="user"
+          className={tabPaneClassName}
+        >
+          {tab === 'session' && (
+            <div className="mx-auto max-w-2xl space-y-4">
+              <PanelSection embedded className="space-y-4">
+                <h3 className="device-detail-section-title">Cloud session</h3>
+                <p className="text-sm text-gray-500">
+                  Sessions are minted via dev admin and cached locally. Refresh when expired.
+                </p>
+                <dl className="grid gap-2 text-sm sm:grid-cols-2">
+                  <div>
+                    <dt className="text-xs uppercase tracking-wide text-gray-500">Email</dt>
+                    <dd className="font-medium">{user.email}</dd>
+                  </div>
+                  <div>
+                    <dt className="text-xs uppercase tracking-wide text-gray-500">Role</dt>
+                    <dd className="font-medium">{user.role ?? '—'}</dd>
+                  </div>
+                  {user.cloudUserId && (
+                    <div className="sm:col-span-2">
+                      <dt className="text-xs uppercase tracking-wide text-gray-500">Cloud user ID</dt>
+                      <dd className="font-mono text-xs text-gray-500 truncate">{user.cloudUserId}</dd>
+                    </div>
+                  )}
+                </dl>
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    className="btn-primary"
+                    disabled={busy === 'login'}
+                    onClick={handleRefreshSession}
+                  >
+                    {busy === 'login' ? 'Refreshing…' : 'Refresh session'}
+                  </button>
+                  <span
+                    className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs ${
+                      user.loggedIn
+                        ? 'bg-green-100 text-green-800 dark:bg-green-950 dark:text-green-300'
+                        : 'bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-400'
+                    }`}
+                  >
+                    {user.loggedIn ? 'Session active' : 'No cached session'}
+                  </span>
+                </div>
+                {user.opsPublicKeyB64 && (
+                  <p className="text-xs font-mono text-gray-400 truncate" title={user.opsPublicKeyB64}>
+                    Ops key: {user.opsPublicKeyB64.slice(0, 24)}…
+                  </p>
+                )}
+              </PanelSection>
             </div>
           )}
-        </dl>
-        <div className="flex flex-wrap gap-2">
-          <button type="button" className="btn-primary" disabled={busy === 'login'} onClick={handleRefreshSession}>
-            {busy === 'login' ? 'Refreshing…' : 'Refresh session'}
-          </button>
-          <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs ${user.loggedIn ? 'bg-green-100 text-green-800 dark:bg-green-950 dark:text-green-300' : 'bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-400'}`}>
-            {user.loggedIn ? 'Session active' : 'No cached session'}
-          </span>
-        </div>
-        {user.opsPublicKeyB64 && (
-          <p className="text-xs font-mono text-gray-400 truncate" title={user.opsPublicKeyB64}>
-            Ops key: {user.opsPublicKeyB64.slice(0, 24)}…
-          </p>
-        )}
-      </PanelSection>
 
-      <PanelSection embedded className="space-y-4">
-        <div className="flex items-center justify-between gap-3">
-          <h3 className="device-detail-section-title mb-0">App devices</h3>
-          <button type="button" className="btn-secondary inline-flex items-center gap-1 text-sm" disabled={busy === 'add-device'} onClick={handleAddDevice}>
-            <PlusIcon className="h-4 w-4" />
-            Add simulator device
-          </button>
-        </div>
+          {tab === 'devices' && (
+            <div className="mx-auto max-w-3xl space-y-4">
+              <PanelSection embedded className="space-y-4">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <h3 className="device-detail-section-title mb-0">App devices</h3>
+                    <p className="mt-1 text-sm text-gray-500">
+                      Register keys and fetch route passes for lock-side simulation.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    className="btn-secondary inline-flex shrink-0 items-center gap-1 text-sm"
+                    disabled={busy === 'add-device'}
+                    onClick={handleAddDevice}
+                  >
+                    <PlusIcon className="h-4 w-4" />
+                    Add simulator device
+                  </button>
+                </div>
 
-        {!user.devices.length && (
-          <p className="text-sm text-gray-500">
-            Import pulls registered devices from the backend. Add a simulator device to register new keys.
-          </p>
-        )}
+                {!user.devices.length && (
+                  <p className="text-sm text-gray-500">
+                    Import pulls registered devices from the backend. Add a simulator device to
+                    register new keys.
+                  </p>
+                )}
 
-        <div className="user-device-list space-y-2">
-          {user.devices.map((device) => (
-            <UserDeviceCard
-              key={device.id}
+                <div className="user-device-list space-y-2">
+                  {user.devices.map((device) => (
+                    <UserDeviceCard
+                      key={device.id}
+                      user={user}
+                      device={device}
+                      expanded={expandedDeviceIds.has(device.id)}
+                      onToggle={() => toggleDeviceExpanded(device.id)}
+                      facilities={facilities}
+                      effectiveFacilityId={effectiveFacilityId}
+                      onFacilityChange={setSelectedFacilityId}
+                      busy={busy !== null}
+                      onRegister={() =>
+                        void run(`register-${device.id}`, async () => {
+                          await window.simulator.registerUserDevice(user.id, device.id);
+                          toast.success('Device key registered');
+                        })
+                      }
+                      onRegenerateKeys={() =>
+                        void run(`regen-${device.id}`, async () => {
+                          await window.simulator.regenerateUserDeviceKeys(user.id, device.id);
+                          toast.success(
+                            device.linkedFromBackend
+                              ? 'Local keys generated — register with backend'
+                              : 'New keypair generated',
+                          );
+                        })
+                      }
+                      onRemove={() =>
+                        void run(`remove-${device.id}`, async () => {
+                          await window.simulator.removeUserDevice(user.id, device.id);
+                          setExpandedDeviceIds((current) => {
+                            const next = new Set(current);
+                            next.delete(device.id);
+                            return next;
+                          });
+                        })
+                      }
+                      onFetchPass={(facilityId, facilityName) =>
+                        run(`pass-${device.id}`, async () => {
+                          await window.simulator.fetchUserRoutePass(
+                            user.id,
+                            device.id,
+                            facilityId,
+                            facilityName,
+                          );
+                          toast.success('Route pass fetched');
+                        })
+                      }
+                      onTamperChange={(facilityId, tamper) =>
+                        void window.simulator
+                          .setUserRoutePassTamper(user.id, device.id, { facilityId, tamper })
+                          .then(onRefresh)
+                      }
+                      onClearPass={(facilityId) =>
+                        void window.simulator
+                          .clearUserRoutePass(user.id, device.id, facilityId)
+                          .then(onRefresh)
+                      }
+                    />
+                  ))}
+                </div>
+              </PanelSection>
+            </div>
+          )}
+
+          {tab === 'app' && (
+            <AppRealtimeSection
               user={user}
-              device={device}
-              expanded={expandedDeviceIds.has(device.id)}
-              onToggle={() => toggleDeviceExpanded(device.id)}
               facilities={facilities}
-              effectiveFacilityId={effectiveFacilityId}
+              facilityId={effectiveFacilityId}
               onFacilityChange={setSelectedFacilityId}
-              busy={busy !== null}
-              onRegister={() =>
-                void run(`register-${device.id}`, async () => {
-                  await window.simulator.registerUserDevice(user.id, device.id);
-                  toast.success('Device key registered');
+              busy={busy === 'app-open' || busy === 'app-close' || busy === 'app-clear'}
+              fillHeight
+              onOpenApp={() =>
+                void run('app-open', async () => {
+                  await window.simulator.connectUserAppRealtime(user.id, effectiveFacilityId);
+                  toast.success('App realtime connected');
                 })
               }
-              onRegenerateKeys={() =>
-                void run(`regen-${device.id}`, async () => {
-                  await window.simulator.regenerateUserDeviceKeys(user.id, device.id);
-                  toast.success(
-                    device.linkedFromBackend
-                      ? 'Local keys generated — register with backend'
-                      : 'New keypair generated',
-                  );
+              onCloseApp={() =>
+                void run('app-close', async () => {
+                  await window.simulator.disconnectUserAppRealtime(user.id);
+                  toast.success('App closed');
                 })
               }
-              onRemove={() =>
-                void run(`remove-${device.id}`, async () => {
-                  await window.simulator.removeUserDevice(user.id, device.id);
-                  setExpandedDeviceIds((current) => {
-                    const next = new Set(current);
-                    next.delete(device.id);
-                    return next;
-                  });
+              onClearEvents={() =>
+                void run('app-clear', async () => {
+                  await window.simulator.clearUserAppRealtimeEvents(user.id);
                 })
-              }
-              onFetchPass={(facilityId, facilityName) =>
-                run(`pass-${device.id}`, async () => {
-                  await window.simulator.fetchUserRoutePass(user.id, device.id, facilityId, facilityName);
-                  toast.success('Route pass fetched');
-                })
-              }
-              onTamperChange={(facilityId, tamper) =>
-                void window.simulator
-                  .setUserRoutePassTamper(user.id, device.id, { facilityId, tamper })
-                  .then(onRefresh)
-              }
-              onClearPass={(facilityId) =>
-                void window.simulator.clearUserRoutePass(user.id, device.id, facilityId).then(onRefresh)
               }
             />
-          ))}
-        </div>
-      </PanelSection>
+          )}
+        </PanelTabTransition>
+      </div>
     </div>
   );
 }
@@ -250,7 +351,8 @@ export function ImportUserForm({
   const importUser = async (cloudUser: CloudUserSummary) => {
     setBusyId(cloudUser.id);
     try {
-      const label = `${cloudUser.firstName} ${cloudUser.lastName}`.trim() || cloudUser.email || cloudUser.id;
+      const label =
+        `${cloudUser.firstName} ${cloudUser.lastName}`.trim() || cloudUser.email || cloudUser.id;
       const user = await window.simulator.importCloudUser({ cloudUserId: cloudUser.id, label });
       onImported(user);
     } catch (err) {
@@ -268,8 +370,8 @@ export function ImportUserForm({
       </button>
       <h2 className="mb-2 text-lg font-semibold">Import user from backend</h2>
       <p className="mb-4 text-sm text-gray-500 dark:text-gray-400">
-        Sign in with an Admin or Dev Admin account to browse users, mint cached JWTs, and pull registered devices.
-        This is separate from your gateway setup login.
+        Sign in with an Admin or Dev Admin account to browse users, mint cached JWTs, and pull
+        registered devices. This is separate from your gateway setup login.
       </p>
 
       <div className="mb-6">
@@ -294,7 +396,9 @@ export function ImportUserForm({
             />
           </div>
 
-          <p className="mb-2 text-xs text-gray-500">{total > 0 ? `${total} users` : loading ? 'Loading…' : 'No users found'}</p>
+          <p className="mb-2 text-xs text-gray-500">
+            {total > 0 ? `${total} users` : loading ? 'Loading…' : 'No users found'}
+          </p>
 
           <ul className="max-h-[min(24rem,50vh)] space-y-2 overflow-y-auto">
             {users.map((cloudUser) => {

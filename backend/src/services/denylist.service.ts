@@ -13,6 +13,15 @@ export interface DenylistEntry {
   exp: number;
 }
 
+/** Per-device row in a DENYLIST_SYNC replace snapshot. */
+export type DenylistSyncDeviceRow = {
+  cloud_device_id: string;
+  kind: 'lock' | 'access_control';
+  serial: string;
+  relay_channel?: number | null;
+  denylist: DenylistEntry[];
+};
+
 /**
  * Denylist Service
  *
@@ -79,6 +88,19 @@ export class DenylistService {
     }
     return Ed25519Service.signCommandJwt(payload);
   }
+
+  /**
+   * Full per-device denylist replace snapshot (connect / reconnect).
+   * Gateways replace local denylist for each listed device; empty arrays clear.
+   */
+  public static async buildDenylistSync(
+    facilityId: string,
+    devices: DenylistSyncDeviceRow[],
+  ): Promise<string> {
+    return Ed25519Service.signCommandJwt({
+      cmd_type: 'DENYLIST_SYNC',
+      facility_id: facilityId,
+      devices,
+    });
+  }
 }
-
-

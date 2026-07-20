@@ -21,8 +21,15 @@ jest.mock('axios', () => ({
   },
 }));
 
+jest.mock('@/services/websocket.service', () => ({
+  websocketService: {
+    disconnect: jest.fn(),
+  },
+}));
+
 // Import after mocking
 import { apiService } from '@/services/api.service';
+import { websocketService } from '@/services/websocket.service';
 
 describe('APIService', () => {
   beforeEach(() => {
@@ -896,6 +903,12 @@ describe('APIService', () => {
       mockAxios.post.mockResolvedValueOnce({ data: { queued: true } });
       await apiService.pushFirmware('fw1', 'gw1');
       expect(mockAxios.post).toHaveBeenCalledWith('/firmware/fw1/push/gw1', {});
+    });
+
+    it('pushFirmware includes delivery_mode when provided', async () => {
+      mockAxios.post.mockResolvedValueOnce({ data: { queued: true } });
+      await apiService.pushFirmware('fw1', 'gw1', { deliveryMode: 'v2' });
+      expect(mockAxios.post).toHaveBeenCalledWith('/firmware/fw1/push/gw1', { delivery_mode: 'v2' });
     });
 
     it('getFirmwarePushStatus passes include_events when false', async () => {

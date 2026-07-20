@@ -23,6 +23,15 @@ const dotenv = require('dotenv');
  */
 dotenv.config({ path: path.join(__dirname, '..', '.env') });
 
+const {
+  E2E_GATEWAY_AUTH,
+  deriveProvisionWsUrl,
+  ensureZtpFixture,
+  getZtpFixture,
+  provisionAndClaimGateway,
+  connectGatewayWsZtp,
+} = require('./ws-gateway-e2e-auth');
+
 /** Keep aligned with backend/src/constants/firmware-chunk.constants.ts */
 const FIRMWARE_CHUNK_SIZE_BYTES = 2356320;
 const FIRMWARE_BULK_E2E_SIZE_BYTES = 50 * 1024 * 1024;
@@ -91,6 +100,7 @@ function resolveE2eEndpoints() {
 }
 
 const { API_BASE, WS_URL, UI_WS_URL, port: E2E_RESOLVED_PORT, portSource: E2E_PORT_SOURCE } = resolveE2eEndpoints();
+const APP_WS_URL = process.env.APP_WS_URL?.trim() || UI_WS_URL.replace(/\/ws\/?$/, '/ws/app');
 
 /** Gateway PROXY inventory/state payloads require explicit kind. */
 function gwLockDevice(fields) {
@@ -280,6 +290,79 @@ async function waitForWsControlMessage(ws, predicate, timeoutMs = 8000) {
     };
     ws.on('message', onMessage);
   });
+}
+
+async function connectAppWs(token) {
+  const events = [];
+  const control = [];
+  const ws = new WebSocket(`${APP_WS_URL}?token=${encodeURIComponent(token)}`);
+  await new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => reject(new Error('App WS open timeout')), 5000);
+    ws.once('open', () => {
+      clearTimeout(timeout);
+      resolve(null);
+    });
+    ws.once('error', (err) => {
+      clearTimeout(timeout);
+      reject(err);
+    });
+  });
+  ws.on('message', (data) => {
+    try {
+      const msg = JSON.parse(data.toString());
+      if (VERBOSE) console.log('[WS-APP <-]', data.toString());
+      if (msg.type === 'app_event') events.push(msg);
+      else control.push(msg);
+    } catch {
+      /* ignore */
+    }
+  });
+  return { ws, events, control };
+}
+
+async function subscribeAppFacility(ws, facilityId, timeoutMs = 8000) {
+  return new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => reject(new Error('App subscribe timeout')), timeoutMs);
+    const onMessage = (data) => {
+      try {
+        const msg = JSON.parse(data.toString());
+        if (msg.type === 'subscription' && msg.subscriptionType === 'app') {
+          cleanup();
+          resolve(msg);
+        } else if (msg.type === 'error') {
+          cleanup();
+          reject(new Error(msg.error || 'App subscribe error'));
+        }
+      } catch {
+        /* ignore */
+      }
+    };
+    const cleanup = () => {
+      clearTimeout(timeout);
+      ws.off('message', onMessage);
+    };
+    ws.on('message', onMessage);
+    ws.send(JSON.stringify({
+      type: 'subscription',
+      subscriptionType: 'app',
+      data: { facility_id: facilityId },
+    }));
+  });
+}
+
+async function waitForAppEvent(events, eventName, startLen = 0, timeoutMs = 8000) {
+  return waitForWsEvent(
+    events,
+    (msg) => msg.type === 'app_event' && msg.event === eventName,
+    startLen,
+    timeoutMs,
+  );
+}
+
+function closeAppWs(ws) {
+  if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) {
+    try { ws.close(); } catch { /* ignore */ }
+  }
 }
 
 // Minimal ANSI color helpers (no external deps)
@@ -816,49 +899,70 @@ async function proxyWs(ws, id, method, path, { query, body } = {}) {
 
 async function connectGatewayWsAndAuth(wsUrl, token, facilityId, gatewayId, authExtras = {}) {
   if (!gatewayId) throw new Error('gatewayId required for gateway WS AUTH');
+
+  const attachHandlers = (ws) => {
+    ws.on('message', (data) => {
+      try {
+        if (VERBOSE) console.log('[WS <-]', data.toString());
+        const msg = JSON.parse(data.toString());
+        gatewayWsEvents.push(msg);
+        if (msg?.type === 'PING') ws.send(JSON.stringify({ type: 'PONG' }));
+        const cmd = normalizeCmd(msg);
+        if (cmd?.cmd_type === 'ACCESS_CODE_UPDATE' && cmd?.nonce) {
+          if (accessCodeAckMode === 'accept') {
+            ws.send(JSON.stringify({
+              type: 'ACCESS_CODE_UPDATE_ACK',
+              nonce: cmd.nonce,
+              accepted: true,
+            }));
+          } else if (accessCodeAckMode === 'reject') {
+            ws.send(JSON.stringify({
+              type: 'ACCESS_CODE_UPDATE_ACK',
+              nonce: cmd.nonce,
+              accepted: false,
+              message: 'e2e-forced-reject',
+            }));
+          }
+        }
+        if (cmd?.cmd_type === 'DEVICE_DELETED' && cmd?.nonce) {
+          if (deviceDeletionAckMode === 'accept') {
+            ws.send(JSON.stringify({
+              type: 'DEVICE_DELETED_ACK',
+              nonce: cmd.nonce,
+              success: true,
+            }));
+          } else if (deviceDeletionAckMode === 'reject') {
+            ws.send(JSON.stringify({
+              type: 'DEVICE_DELETED_ACK',
+              nonce: cmd.nonce,
+              success: false,
+              error: 'e2e-forced-reject',
+            }));
+          }
+        }
+      } catch {}
+    });
+  };
+
+  if (E2E_GATEWAY_AUTH === 'ztp') {
+    const fixture = getZtpFixture();
+    // Only the primary ZTP-claimed gateway uses ECDSA; swap/bulk JWT sections stay on legacy AUTH
+    if (fixture?.privateKeyPem && fixture.deviceId === gatewayId) {
+      const { ws, authOk } = await connectGatewayWsZtp(wsUrl, {
+        privateKeyPem: fixture.privateKeyPem,
+        gatewayId,
+        facilityId,
+        firmware_version: authExtras.firmware_version,
+        onMessageSetup: attachHandlers,
+      });
+      ws._authOkData = authOk;
+      return ws;
+    }
+  }
+
   const ws = new WebSocket(wsUrl);
   await new Promise((res, rej) => { ws.once('open', res); ws.once('error', rej); });
-  ws.on('message', (data) => {
-    try {
-      if (VERBOSE) console.log('[WS <-]', data.toString());
-      const msg = JSON.parse(data.toString());
-      gatewayWsEvents.push(msg);
-      if (msg?.type === 'PING') ws.send(JSON.stringify({ type: 'PONG' }));
-      const cmd = normalizeCmd(msg);
-      if (cmd?.cmd_type === 'ACCESS_CODE_UPDATE' && cmd?.nonce) {
-        if (accessCodeAckMode === 'accept') {
-          ws.send(JSON.stringify({
-            type: 'ACCESS_CODE_UPDATE_ACK',
-            nonce: cmd.nonce,
-            accepted: true,
-          }));
-        } else if (accessCodeAckMode === 'reject') {
-          ws.send(JSON.stringify({
-            type: 'ACCESS_CODE_UPDATE_ACK',
-            nonce: cmd.nonce,
-            accepted: false,
-            message: 'e2e-forced-reject',
-          }));
-        }
-      }
-      if (cmd?.cmd_type === 'DEVICE_DELETED' && cmd?.nonce) {
-        if (deviceDeletionAckMode === 'accept') {
-          ws.send(JSON.stringify({
-            type: 'DEVICE_DELETED_ACK',
-            nonce: cmd.nonce,
-            success: true,
-          }));
-        } else if (deviceDeletionAckMode === 'reject') {
-          ws.send(JSON.stringify({
-            type: 'DEVICE_DELETED_ACK',
-            nonce: cmd.nonce,
-            success: false,
-            error: 'e2e-forced-reject',
-          }));
-        }
-      }
-    } catch {}
-  });
+  attachHandlers(ws);
   const authMsg = { type: 'AUTH', token, facilityId, gatewayId };
   if (authExtras.firmware_version) authMsg.firmware_version = authExtras.firmware_version;
   if (VERBOSE) console.log('[WS ->]', JSON.stringify(authMsg));
@@ -2184,6 +2288,12 @@ function handleFirmwareDeliveryInstrumented(ws, opsKeyB64, options = {}) {
  * Force an abrupt gateway WS disconnect mid-OTA after acknowledging
  * the first firmware chunk.
  */
+/**
+ * Abruptly drop the gateway socket mid-transfer (after the first chunk arrives,
+ * before ACKing it). Must not ACK: with a single-chunk package an ACK completes
+ * delivery and moves the push to `verifying`, which uses the long verify
+ * disconnect grace instead of the short transfer grace the E2E asserts.
+ */
 function disconnectDuringFirmwareDelivery(ws, opsKeyB64, timeoutMs = 30000) {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => {
@@ -2210,13 +2320,7 @@ function disconnectDuringFirmwareDelivery(ws, opsKeyB64, timeoutMs = 30000) {
           const payload = verifyAndDecodeJwt(msg.jwt, opsKeyB64);
           if (payload.cmd_type !== 'FIRMWARE_CHUNK') return;
 
-          ws.send(JSON.stringify({
-            type: 'FIRMWARE_CHUNK_ACK',
-            nonce: payload.nonce,
-            chunkIndex: payload.chunk_index,
-            status: 'ok',
-          }));
-
+          // Do not ACK — leave the push in transferring so transfer disconnect grace applies.
           disconnected = true;
           try { ws.terminate(); } catch {}
           cleanup();
@@ -2345,6 +2449,7 @@ async function run() {
   console.log(C.gray(`API (HTTP)=${API_BASE}`));
   console.log(C.gray(`Gateway WS=${WS_URL}`));
   console.log(C.gray(`Dashboard WS=${UI_WS_URL}`));
+  console.log(C.gray(`Gateway AUTH mode=${E2E_GATEWAY_AUTH}`));
   console.log(C.gray(`Port ${E2E_RESOLVED_PORT} — ${E2E_PORT_SOURCE}`));
 
   const loginResult = await login();
@@ -2366,9 +2471,30 @@ async function run() {
   ok(`Facility created: ${facilityId}`);
   // Ensure a gateway record exists for this facility (required by inventory sync)
   step('Ensuring gateway exists for facility');
-  let gatewayId = await createGateway(token, facilityId, 'E2E Test Gateway').catch(() => null);
-  if (!gatewayId) throw new Error('Gateway record required for inventory sync');
-  ok(`Gateway record created: ${gatewayId}`);
+  let gatewayId;
+  if (E2E_GATEWAY_AUTH === 'ztp') {
+    const fixture = ensureZtpFixture();
+    const provisionWsUrl = deriveProvisionWsUrl(WS_URL);
+    const claimed = await provisionAndClaimGateway({
+      provisionWsUrl,
+      apiBase: API_BASE,
+      claimToken: token,
+      facilityId,
+      name: 'E2E ZTP Gateway',
+      fixture,
+    });
+    gatewayId = claimed.gatewayId;
+    if (claimed.bound !== true || claimed.sessionRole !== 'active') {
+      throw new Error(
+        `Expected primary ZTP claim bound=true/active, got bound=${claimed.bound} role=${claimed.sessionRole}`,
+      );
+    }
+    ok(`ZTP provision+claim gateway: ${gatewayId} (bound=true)`);
+  } else {
+    gatewayId = await createGateway(token, facilityId, 'E2E Test Gateway').catch(() => null);
+    if (!gatewayId) throw new Error('Gateway record required for inventory sync');
+    ok(`Gateway record created: ${gatewayId}`);
+  }
   // Track created resources for cleanup
   const created = {
     facilityId,
@@ -2508,7 +2634,153 @@ async function run() {
   // Connect gateway WS
   let ws = await connectGatewayWsAndAuth(WS_URL, token, facilityId, gatewayId);
   heading('Gateway WebSocket');
-  ok('Gateway AUTH_OK');
+  ok(`Gateway AUTH_OK (mode=${E2E_GATEWAY_AUTH})`);
+
+  if (E2E_GATEWAY_AUTH === 'ztp') {
+    heading('ZTP claim-for-swap (primary facility)');
+    step('Second ZTP claim to occupied facility parks as swap_candidate');
+    const { generateP256KeyPair, provisionAndClaimGateway: provisionClaimZtp, deriveProvisionWsUrl: derProvZtp, connectGatewayWsZtp: ztpConnectPrimary } = require('./ws-gateway-e2e-auth');
+    const swapKeysPrimary = generateP256KeyPair();
+    const swapFixturePrimary = { deviceId: crypto.randomUUID(), ...swapKeysPrimary };
+    const swapClaimPrimary = await provisionClaimZtp({
+      provisionWsUrl: derProvZtp(WS_URL),
+      apiBase: API_BASE,
+      claimToken: token,
+      facilityId,
+      name: 'E2E ZTP Swap on Primary Fac',
+      fixture: swapFixturePrimary,
+      persistFixture: false,
+    });
+    if (swapClaimPrimary.bound !== false || swapClaimPrimary.sessionRole !== 'swap_candidate') {
+      throw new Error(
+        `Expected swap-prep on primary facility, got bound=${swapClaimPrimary.bound} role=${swapClaimPrimary.sessionRole}`,
+      );
+    }
+    ok(`Swap-prep claim ${swapClaimPrimary.gatewayId}`);
+    const { ws: swapWsPrimary, authOk: swapAuthPrimary } = await ztpConnectPrimary(WS_URL, {
+      privateKeyPem: swapFixturePrimary.privateKeyPem,
+      gatewayId: swapClaimPrimary.gatewayId,
+      facilityId,
+    });
+    if (swapAuthPrimary?.sessionRole !== 'swap_candidate') {
+      throw new Error(`Expected AUTH_OK swap_candidate, got ${swapAuthPrimary?.sessionRole}`);
+    }
+    if (ws.readyState !== WebSocket.OPEN) {
+      throw new Error('Primary ZTP active session was displaced by swap-candidate AUTH');
+    }
+    ok('Primary active session preserved; second gateway parked as swap_candidate');
+    try {
+      swapWsPrimary.close();
+    } catch {
+      /* ignore */
+    }
+  }
+
+  // Additive ZTP smoke when running in legacy mode (does not replace primary gateway session)
+  if (E2E_GATEWAY_AUTH !== 'ztp') {
+    heading('ZTP Smoke (additive)');
+    step('Provision + claim secondary facility gateway via ECDSA');
+    const ztpFacilityId = await createTestFacility(token, 'E2E-ZTP-Smoke-Facility');
+    created.extraFacilityIds.push(ztpFacilityId);
+    const { generateP256KeyPair, provisionAndClaimGateway: provisionClaim, deriveProvisionWsUrl: derProv } = require('./ws-gateway-e2e-auth');
+    const smokeKeys = generateP256KeyPair();
+    const smokeFixture = { deviceId: crypto.randomUUID(), ...smokeKeys };
+    const smokeClaim = await provisionClaim({
+      provisionWsUrl: derProv(WS_URL),
+      apiBase: API_BASE,
+      claimToken: token,
+      facilityId: ztpFacilityId,
+      name: 'E2E ZTP Smoke GW',
+      fixture: smokeFixture,
+    });
+    ok(`ZTP smoke claimed ${smokeClaim.gatewayId}`);
+    if (smokeClaim.bound !== true || smokeClaim.sessionRole !== 'active') {
+      throw new Error(
+        `Expected greenfield claim bound=true/active, got bound=${smokeClaim.bound} role=${smokeClaim.sessionRole}`,
+      );
+    }
+    ok('ZTP greenfield claim returns bound=true sessionRole=active');
+    const { connectGatewayWsZtp: ztpConnect } = require('./ws-gateway-e2e-auth');
+    const { ws: ztpWs, authOk: ztpAuthOk } = await ztpConnect(WS_URL, {
+      privateKeyPem: smokeFixture.privateKeyPem,
+      gatewayId: smokeClaim.gatewayId,
+      facilityId: ztpFacilityId,
+    });
+    if (ztpAuthOk?.sessionRole !== 'active') {
+      throw new Error(`Expected ZTP AUTH_OK active, got ${ztpAuthOk?.sessionRole}`);
+    }
+    ok('ZTP smoke AUTH_OK via AUTH_HELLO/PROOF (active)');
+
+    step('ZTP claim when facility already bound → swap_candidate (no steal)');
+    const swapKeys = generateP256KeyPair();
+    const swapFixture = { deviceId: crypto.randomUUID(), ...swapKeys };
+    const swapClaim = await provisionClaim({
+      provisionWsUrl: derProv(WS_URL),
+      apiBase: API_BASE,
+      claimToken: token,
+      facilityId: ztpFacilityId,
+      name: 'E2E ZTP Swap-Prep GW',
+      fixture: swapFixture,
+      persistFixture: false,
+    });
+    if (swapClaim.bound !== false || swapClaim.sessionRole !== 'swap_candidate') {
+      throw new Error(
+        `Expected swap-prep claim bound=false/swap_candidate, got bound=${swapClaim.bound} role=${swapClaim.sessionRole}`,
+      );
+    }
+    if (swapClaim.assigned?.sessionRole && swapClaim.assigned.sessionRole !== 'swap_candidate') {
+      throw new Error(`PROVISION_ASSIGNED sessionRole=${swapClaim.assigned.sessionRole}`);
+    }
+    ok(`ZTP swap-prep claim ${swapClaim.gatewayId} (bound=false)`);
+
+    const { ws: swapWs, authOk: swapAuthOk } = await ztpConnect(WS_URL, {
+      privateKeyPem: swapFixture.privateKeyPem,
+      gatewayId: swapClaim.gatewayId,
+      facilityId: ztpFacilityId,
+    });
+    if (swapAuthOk?.sessionRole !== 'swap_candidate') {
+      throw new Error(`Expected ZTP AUTH_OK swap_candidate, got ${swapAuthOk?.sessionRole}`);
+    }
+    ok('ZTP swap-prep AUTH_OK parks as swap_candidate');
+
+    // Primary greenfield ZTP session must still be the active facility connection
+    const statusRes = await axios.get(`${API_BASE}/gateways/status/${ztpFacilityId}`, {
+      headers: { Authorization: `Bearer ${token}` },
+      validateStatus: () => true,
+    });
+    if (statusRes.status !== 200 || !statusRes.data?.connected) {
+      throw new Error(
+        `Expected facility still connected after swap park, got ${statusRes.status} ${JSON.stringify(statusRes.data)}`,
+      );
+    }
+    ok('Active ZTP session remains connected after swap-candidate park');
+
+    try {
+      ztpWs.close();
+    } catch {
+      /* ignore */
+    }
+    try {
+      swapWs.close();
+    } catch {
+      /* ignore */
+    }
+    step('ZTP claim while offline returns 425');
+    const offlineFac = await createTestFacility(token, 'E2E-ZTP-Offline-Facility');
+    created.extraFacilityIds.push(offlineFac);
+    const offlineKeys = generateP256KeyPair();
+    const offline2 = await axios.post(
+      `${API_BASE}/gateways/claim`,
+      {
+        facility_id: offlineFac,
+        device_id: crypto.randomUUID(),
+        public_key: offlineKeys.publicKeyCompressedB64url,
+      },
+      { headers: { Authorization: `Bearer ${token}` }, validateStatus: () => true },
+    );
+    if (offline2.status !== 425) throw new Error(`Expected 425 for offline claim, got ${offline2.status}`);
+    ok('Offline claim returns 425');
+  }
 
   // ---- Ops Public Key Distribution Tests ----
   heading('Ops Public Key Distribution');
@@ -2987,6 +3259,11 @@ async function run() {
       }
       if (!match.metadata?.createdFromGatewaySync) {
         throw new Error('Expected metadata.createdFromGatewaySync on inventory-provisioned device');
+      }
+      if (match.metadata?.manuallyAdded !== false) {
+        throw new Error(
+          `Expected metadata.manuallyAdded === false on inventory-provisioned device, got ${JSON.stringify(match.metadata?.manuallyAdded)}`,
+        );
       }
     } catch {}
     if (!deviceId) throw new Error('Remaining device not found after sync');
@@ -3613,6 +3890,58 @@ async function run() {
     created.units.push(manualUnit.id);
     const manualSerial = `MANUAL-E2E-${Date.now()}`;
     const manualDeviceId = await createBlulokDevice(token, gatewayId, manualUnit.id, manualSerial);
+    const manualAfterCreate = await axios.get(`${API_BASE}/devices/blulok/${manualDeviceId}`, {
+      headers: authHeaders(token),
+    });
+    const manualCreateMeta = manualAfterCreate.data?.device?.metadata || {};
+    if (manualCreateMeta.manuallyAdded !== true) {
+      throw new Error(
+        `Expected manuallyAdded=true after HTTP create, got ${JSON.stringify(manualCreateMeta)}`,
+      );
+    }
+    if (manualCreateMeta.createdFromGatewaySync !== false) {
+      throw new Error(
+        `Expected createdFromGatewaySync=false after HTTP create, got ${JSON.stringify(manualCreateMeta)}`,
+      );
+    }
+    ok(`Manual device created with dual metadata flags (manuallyAdded=true, createdFromGatewaySync=false)`);
+
+    step('Testing gateway inventory marks manual device as seen (keeps manuallyAdded)');
+    const reqInventoryManualSeen = 'req-inventory-manual-seen';
+    ws.send(JSON.stringify({
+      type: 'PROXY_REQUEST',
+      id: reqInventoryManualSeen,
+      method: 'POST',
+      path: `/internal/gateway/devices/inventory`,
+      body: {
+        facility_id: facilityId,
+        devices: [
+          gwLockDevice({ lock_id: remainingSerial }),
+          gwLockDevice({ lock_id: inventorySerial1, lock_number: 201 }),
+          gwLockDevice({ lock_id: manualSerial, lock_number: 301 }),
+        ],
+      },
+    }));
+    const respInventoryManualSeen = await waitForProxyResponse(ws, reqInventoryManualSeen);
+    if (respInventoryManualSeen.status !== 200 || !respInventoryManualSeen.body?.success) {
+      throw new Error(`Manual-seen inventory sync failed: ${respInventoryManualSeen.status}`);
+    }
+    const manualAfterSeen = await axios.get(`${API_BASE}/devices/blulok/${manualDeviceId}`, {
+      headers: authHeaders(token),
+    });
+    const manualSeenMeta = manualAfterSeen.data?.device?.metadata || {};
+    if (manualSeenMeta.manuallyAdded !== true) {
+      throw new Error(
+        `Expected manuallyAdded=true after gateway saw device, got ${JSON.stringify(manualSeenMeta)}`,
+      );
+    }
+    if (manualSeenMeta.createdFromGatewaySync !== true) {
+      throw new Error(
+        `Expected createdFromGatewaySync=true after gateway saw device, got ${JSON.stringify(manualSeenMeta)}`,
+      );
+    }
+    ok('Manual device marked createdFromGatewaySync=true after inventory match (still manuallyAdded)');
+
     const reqInventoryManualPreserve = 'req-inventory-manual-preserve';
     ws.send(JSON.stringify({
       type: 'PROXY_REQUEST',
@@ -3636,10 +3965,19 @@ async function run() {
     if (!manualStillPresent?.id) {
       throw new Error('Manual HTTP-created device was removed by gateway inventory delta');
     }
+    const manualAfterOmit = await axios.get(`${API_BASE}/devices/blulok/${manualDeviceId}`, {
+      headers: authHeaders(token),
+    });
+    const manualOmitMeta = manualAfterOmit.data?.device?.metadata || {};
+    if (manualOmitMeta.manuallyAdded !== true || manualOmitMeta.createdFromGatewaySync !== true) {
+      throw new Error(
+        `Expected dual flags preserved after omit, got ${JSON.stringify(manualOmitMeta)}`,
+      );
+    }
     if ((manualPreserveResult?.skipped_manual ?? 0) < 1) {
       warn('Inventory response did not report skipped_manual; verified manual device still exists in DB');
     }
-    ok(`Manual device ${manualDeviceId} preserved when omitted from gateway inventory (skipped_manual=${manualPreserveResult?.skipped_manual ?? 0})`);
+    ok(`Manual device ${manualDeviceId} preserved when omitted after gateway-seen (skipped_manual=${manualPreserveResult?.skipped_manual ?? 0})`);
 
     // Test devices/state - not_found tracking
     step('Testing POST /devices/state (not_found tracking)');
@@ -6340,6 +6678,181 @@ async function run() {
       info('Primary tenant already assigned to unit; continuing');
     }
 
+    // ================================================================
+    // App Realtime `/ws/app` — facility-scoped multiplexed stream
+    // ================================================================
+    heading('App Realtime /ws/app');
+    {
+      let appTenantWs = null;
+      let appShareWs = null;
+      let appFaWs = null;
+      let appIdleWs = null;
+      try {
+        step('Connecting tenant to /ws/app and subscribing to facility');
+        const tenantApp = await connectAppWs(primaryToken);
+        appTenantWs = tenantApp.ws;
+        const tenantAck = await subscribeAppFacility(appTenantWs, facilityId);
+        if (!tenantAck?.subscriptionId) throw new Error('App subscribe ack missing subscriptionId');
+        ok(`Tenant app subscription ack (${tenantAck.subscriptionId})`);
+
+        const snapshot = await waitForAppEvent(tenantApp.events, 'app_snapshot', 0, 10000);
+        if (!snapshot?.data?.facilityId || snapshot.data.facilityId !== facilityId) {
+          throw new Error('Expected app_snapshot for subscribed facility');
+        }
+        const snapDeviceIds = (snapshot.data.devices || []).map((d) => d.id);
+        if (!snapDeviceIds.includes(deviceId)) {
+          throw new Error(`Tenant app_snapshot missing assigned device ${deviceId}`);
+        }
+        ok(`Tenant received app_snapshot (devices=${snapDeviceIds.length}, unread=${snapshot.data.notifications?.unreadCount ?? '?'})`);
+
+        step('Denying subscribe to foreign facility on /ws/app');
+        const denyApp = await connectAppWs(primaryToken);
+        let denied = false;
+        try {
+          await subscribeAppFacility(denyApp.ws, unitsApiProbeFacilityId, 5000);
+        } catch (err) {
+          denied = String(err.message || '').toLowerCase().includes('access denied');
+        } finally {
+          closeAppWs(denyApp.ws);
+        }
+        if (!denied) throw new Error('Expected Access denied to facility for foreign facility_id');
+        ok('Foreign facility subscribe rejected with Access denied');
+
+        step('Triggering lock state via gateway PROXY — expect app_event device_status_update');
+        // Force a lock transition (OPEN→CLOSED). A no-op CLOSED when already locked does not fan out.
+        const reqAppUnlock = 'req-app-ws-unlock';
+        ws.send(JSON.stringify({
+          type: 'PROXY_REQUEST',
+          id: reqAppUnlock,
+          method: 'POST',
+          path: '/internal/gateway/devices/state',
+          body: {
+            facility_id: facilityId,
+            updates: [gwLockDevice({ lock_id: remainingSerial, state: 'OPENED' })],
+          },
+        }));
+        const respAppUnlock = await waitForProxyResponse(ws, reqAppUnlock);
+        if (respAppUnlock.status !== 200) {
+          throw new Error(`Gateway devices/state OPEN for app WS failed: ${respAppUnlock.status}`);
+        }
+        const preDeviceLen = tenantApp.events.length;
+        const reqAppLock = 'req-app-ws-lock';
+        ws.send(JSON.stringify({
+          type: 'PROXY_REQUEST',
+          id: reqAppLock,
+          method: 'POST',
+          path: '/internal/gateway/devices/state',
+          body: {
+            facility_id: facilityId,
+            updates: [gwLockDevice({ lock_id: remainingSerial, state: 'CLOSED' })],
+          },
+        }));
+        const respAppLock = await waitForProxyResponse(ws, reqAppLock);
+        if (respAppLock.status !== 200) {
+          throw new Error(`Gateway devices/state CLOSED for app WS failed: ${respAppLock.status}`);
+        }
+        const deviceEvt = await waitForAppEvent(tenantApp.events, 'device_status_update', preDeviceLen, 10000);
+        const updated = (deviceEvt?.data?.devices || []).find((d) => d.id === deviceId);
+        if (!updated) {
+          throw new Error('Did not receive app_event device_status_update for tenant unit device');
+        }
+        ok(`Tenant received device_status_update (lock_status=${updated.lock_status})`);
+
+        step('Facility admin /ws/app snapshot includes broader device set');
+        const faApp = await connectAppWs(created.facilityAdminToken || facilityAdmin.token);
+        appFaWs = faApp.ws;
+        await subscribeAppFacility(appFaWs, facilityId);
+        const faSnap = await waitForAppEvent(faApp.events, 'app_snapshot', 0, 10000);
+        const faDeviceIds = (faSnap?.data?.devices || []).map((d) => d.id);
+        if (!faDeviceIds.includes(deviceId)) {
+          throw new Error('Facility admin app_snapshot missing BluLok device');
+        }
+        if (faDeviceIds.length < snapDeviceIds.length) {
+          warn(`Facility admin device count (${faDeviceIds.length}) not greater than tenant (${snapDeviceIds.length}); AC devices may be absent`);
+        } else {
+          ok(`Facility admin snapshot devices=${faDeviceIds.length} (tenant=${snapDeviceIds.length})`);
+        }
+        closeAppWs(appFaWs);
+        appFaWs = null;
+
+        step('Creating key share — expect notification_created on sharee /ws/app');
+        // Dedicated temp sharee so we do not disturb share1/share2 denylist + route-pass coverage later.
+        // Seed share → subscribe → revoke → re-share while subscribed → live notification_created.
+        const appNotifEmail = `app-ws-notif-${Date.now()}@test.com`;
+        const appNotifUserId = await createUser(token, appNotifEmail, 'tenant', facilityId);
+        created.users.push(appNotifUserId);
+        const appNotifLogin = await axios.post(`${API_BASE}/auth/login`, {
+          email: appNotifEmail,
+          password: 'TestUser123!',
+        });
+        const appNotifToken = appNotifLogin.data?.token;
+        if (!appNotifToken) throw new Error('App notification probe user login failed');
+        const seedShareId = await shareKey(token, unitId, appNotifUserId, 'limited');
+        const shareApp = await connectAppWs(appNotifToken);
+        appShareWs = shareApp.ws;
+        await subscribeAppFacility(appShareWs, facilityId);
+        await waitForAppEvent(shareApp.events, 'app_snapshot', 0, 10000);
+        if (seedShareId) {
+          await revokeShare(token, seedShareId);
+        }
+        const preNotifLen = shareApp.events.length;
+        const appShareId = await shareKey(token, unitId, appNotifUserId, 'limited');
+        const notifEvt = await waitForAppEvent(shareApp.events, 'notification_created', preNotifLen, 15000);
+        if (!notifEvt?.data) {
+          throw new Error('Did not receive notification_created on sharee app stream after key share');
+        }
+        ok(`Sharee received notification_created (${notifEvt.data.type || 'unknown type'})`);
+        if (appShareId) {
+          await revokeShare(token, appShareId).catch(() => {});
+        }
+        closeAppWs(appShareWs);
+        appShareWs = null;
+
+        // Idle tear-down: requires server started with short APP_WS_IDLE_MS (e.g. 3000).
+        // Set E2E_APP_WS_IDLE_WAIT_MS (e.g. 10000) to enable this check.
+        const idleWaitMs = Number(process.env.E2E_APP_WS_IDLE_WAIT_MS) || 0;
+        if (idleWaitMs > 0) {
+          step(`Idle timeout: no client heartbeats for up to ${idleWaitMs}ms`);
+          const idleApp = await connectAppWs(primaryToken);
+          appIdleWs = idleApp.ws;
+          await subscribeAppFacility(appIdleWs, facilityId);
+          const closed = await new Promise((resolve) => {
+            const timer = setTimeout(() => resolve(false), idleWaitMs);
+            appIdleWs.once('close', (code) => {
+              clearTimeout(timer);
+              resolve(code === 1001 || true);
+            });
+          });
+          if (!closed) {
+            throw new Error(
+              `App WS did not idle-close within ${idleWaitMs}ms — start backend with APP_WS_IDLE_MS=3000 (or shorter) and retry`,
+            );
+          }
+          ok('App WS closed after idle timeout (no client heartbeats)');
+          appIdleWs = null;
+        } else {
+          step('Client heartbeat ack on /ws/app');
+          const hbAck = waitForWsControlMessage(
+            appTenantWs,
+            (msg) => msg.type === 'heartbeat' && msg.data?.message === 'Heartbeat received',
+            5000,
+          );
+          appTenantWs.send(JSON.stringify({ type: 'heartbeat' }));
+          await hbAck;
+          ok('Client heartbeat acknowledged (set E2E_APP_WS_IDLE_WAIT_MS to exercise idle close)');
+        }
+
+        closeAppWs(appTenantWs);
+        appTenantWs = null;
+        ok('App Realtime /ws/app checks complete');
+      } finally {
+        closeAppWs(appTenantWs);
+        closeAppWs(appShareWs);
+        closeAppWs(appFaWs);
+        closeAppWs(appIdleWs);
+      }
+    }
+
     heading('Access Event Canonical Pipeline');
     step('Subscribing role-scoped activity feeds');
 
@@ -8977,13 +9490,13 @@ async function run() {
     }
 
     // Step 7: Resilience — abrupt WS disconnect during transfer should fail after
-    // the transfer reconnect grace window (backend development default: 10s via
-    // FIRMWARE_TRANSFER_DISCONNECT_GRACE_SEC), then a fresh push after reconnect succeeds.
+    // the transfer reconnect grace window (default 180s; set FIRMWARE_TRANSFER_DISCONNECT_GRACE_SEC
+    // on the backend — and here — to a short value like 10 for a fast local E2E).
     step('Testing OTA disconnect failure handling and reconnect recovery');
     const transferGraceSec =
       Number(process.env.FIRMWARE_TRANSFER_DISCONNECT_GRACE_SEC) > 0
         ? Number(process.env.FIRMWARE_TRANSFER_DISCONNECT_GRACE_SEC)
-        : 10;
+        : 180;
     const maxDisconnectFailPolls = Math.ceil((transferGraceSec + 15) / 0.5);
     const disconnectPromise = disconnectDuringFirmwareDelivery(ws, loginOpsPublicKey, 30000);
     const resumePushResp = await axios.post(
@@ -8996,7 +9509,7 @@ async function run() {
     if (!resumePushId) throw new Error('Resume push initiated but no pushId returned');
 
     const disconnectInfo = await disconnectPromise;
-    ok(`Gateway socket terminated after chunk ${disconnectInfo.firstChunkIndex} for pushId=${resumePushId}`);
+    ok(`Gateway socket terminated mid-transfer at chunk ${disconnectInfo.firstChunkIndex} (no ACK) for pushId=${resumePushId}`);
 
     step('Polling disconnected push status until failed');
     let disconnectedPushStatus = null;

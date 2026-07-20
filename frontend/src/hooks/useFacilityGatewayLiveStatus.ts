@@ -18,6 +18,9 @@ export interface FacilityGatewayRecord {
   status: GatewayOperationalStatus;
   gateway_type?: GatewayType;
   last_seen?: Date | string;
+  /** Present when claimed via ZTP sticker — required for portal Release. */
+  public_key?: string | null;
+  released_at?: Date | string | null;
 }
 
 type GatewayStatusWsPayload = {
@@ -26,18 +29,14 @@ type GatewayStatusWsPayload = {
     facilityId?: string;
     status: GatewayOperationalStatus;
     lastSeen?: string;
-    // Live inbound /ws/gateway session signal (real-time). `null` when the backend
-    // could not resolve liveness for the facility.
     connected?: boolean | null;
     lastActivityAt?: number | null;
   }>;
 };
 
-const WS_STATUS_POLL_MS = 5000;
-
 /**
  * Live gateway connectivity for facility admin UI (Facility tab card + Gateway tab).
- * Do not duplicate with deviceHierarchy.gateway.status from getFacility — that field is a load-time snapshot only.
+ * Uses facility-scoped `gateway_status` WS — no HTTP polling.
  */
 export function useFacilityGatewayLiveStatus(
   facilityId: string | undefined,
@@ -46,8 +45,6 @@ export function useFacilityGatewayLiveStatus(
   const enabled = options?.enabled !== false && !!facilityId;
   const ws = useWebSocket();
   const [gateway, setGateway] = useState<FacilityGatewayRecord | null>(null);
-  // Live inbound session connectivity. `null` = not yet known (avoids a false "offline" flash
-  // and prevents transient cloud-API poll errors from flipping the pill).
   const [connected, setConnected] = useState<boolean | null>(null);
   const [lastActivityAt, setLastActivityAt] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
@@ -88,29 +85,6 @@ export function useFacilityGatewayLiveStatus(
   }, [enabled, reload]);
 
   useEffect(() => {
-    if (!enabled || !facilityId) return;
-
-    const pollWsStatus = async () => {
-      try {
-        const res = await apiService.getGatewayWsStatus(facilityId);
-        if (res?.success) {
-          setConnected(!!res.connected);
-          setLastActivityAt(
-            res.lastPongAt ? new Date(res.lastPongAt as string | number).getTime() : null,
-          );
-        }
-      } catch {
-        // A failed poll means we couldn't reach the cloud API — it says nothing about the
-        // gateway itself. Keep the last known connectivity instead of flapping to offline.
-      }
-    };
-
-    void pollWsStatus();
-    const timer = setInterval(pollWsStatus, WS_STATUS_POLL_MS);
-    return () => clearInterval(timer);
-  }, [enabled, facilityId]);
-
-  useEffect(() => {
     if (!enabled || !facilityId || !ws) return;
 
     const subscriptionId = ws.subscribe(
@@ -119,7 +93,6 @@ export function useFacilityGatewayLiveStatus(
         const gateways = (data as GatewayStatusWsPayload)?.gateways ?? [];
         gateways.forEach((row) => {
           if (row.facilityId && row.facilityId !== facilityId) return;
-          // Real-time liveness from the inbound /ws/gateway session — primary pill driver.
           if (typeof row.connected === 'boolean') {
             setConnected(row.connected);
           }
@@ -136,6 +109,8 @@ export function useFacilityGatewayLiveStatus(
           });
         });
       },
+      undefined,
+      { facility_id: facilityId },
     );
 
     return () => {
@@ -154,8 +129,6 @@ export function useFacilityGatewayLiveStatus(
 
   return {
     gateway,
-    // True only when the inbound session is confirmed up. Consumers use this for the
-    // "session active" affordances (e.g. unassigned-gateway banner).
     wsConnected: connected === true,
     lastActivityAt,
     effectiveStatus,

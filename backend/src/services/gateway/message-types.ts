@@ -22,6 +22,30 @@ export type AuthMessage = {
   firmware_version?: string;
 };
 
+/** ZTP challenge-response: gateway proves possession of flash/OTP private key. */
+export type AuthHelloMessage = {
+  type: 'AUTH_HELLO';
+  gatewayId: string;
+  /**
+   * Required when the gateway row is still unbound (swap-prep claim).
+   * Must match `metadata.ztpIntendedFacilityId` from claim. Bound gateways may omit
+   * (facility comes from the DB row); if present it must match `gateways.facility_id`.
+   */
+  facilityId?: string;
+  firmware_version?: string;
+};
+
+export type AuthChallengeMessage = {
+  type: 'AUTH_CHALLENGE';
+  nonce: string;
+  expires_in_seconds?: number;
+};
+
+export type AuthProofMessage = {
+  type: 'AUTH_PROOF';
+  signature: string;
+};
+
 export type GatewaySessionRole = 'active' | 'swap_candidate';
 
 export type AuthOkMessage = {
@@ -78,6 +102,29 @@ export type CommandAckMessage = {
 };
 
 // Firmware OTA Messages (Cloud -> Gateway)
+export type FirmwareDeliveryMode = 'v1' | 'v2';
+
+/** Decoded FIRMWARE_MANIFEST JWT payload (cloud → gateway). */
+export type FirmwareManifestJwtPayload = {
+  cmd_type: 'FIRMWARE_MANIFEST';
+  delivery_mode?: FirmwareDeliveryMode;
+  push_id: string;
+  target_type: 'gateway' | 'lock' | 'friend_node' | 'access_control';
+  version: string;
+  sha256: string;
+  size: number;
+  chunk_count: number;
+  chunk_size?: number;
+  nonce?: string;
+  /** Present when delivery_mode is v2 — short-lived GCS signed HTTPS GET URL */
+  download_url?: string;
+  filename?: string;
+  compatible_models?: string[];
+  iss?: string;
+  iat?: number;
+  exp?: number;
+};
+
 export type FirmwareManifestMessage = {
   type: 'FIRMWARE_MANIFEST';
   jwt: string;

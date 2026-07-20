@@ -114,4 +114,24 @@ describe('DenylistService', () => {
       expect(verified.cmd_type).toBe('DENYLIST_REMOVE');
     });
   });
+
+  describe('buildDenylistSync', () => {
+    it('builds signed replace snapshot JWT', async () => {
+      const devices = [
+        {
+          cloud_device_id: 'lock-1',
+          kind: 'lock' as const,
+          serial: 'L-001',
+          denylist: [{ sub: 'user-1', exp: 9999 }],
+        },
+      ];
+      const jwt = await DenylistService.buildDenylistSync('fac-1', devices);
+      const payload = decodeJwtPayload(jwt);
+      expect(payload.cmd_type).toBe('DENYLIST_SYNC');
+      expect(payload.facility_id).toBe('fac-1');
+      expect(payload.devices).toEqual(devices);
+      const verified = await Ed25519Service.verifyJwt(jwt);
+      expect(verified.cmd_type).toBe('DENYLIST_SYNC');
+    });
+  });
 });

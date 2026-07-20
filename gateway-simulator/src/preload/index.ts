@@ -37,6 +37,10 @@ const api = {
     ipcRenderer.invoke(IPC.FETCH_GATEWAY_CLOUD, id) as Promise<GatewayInstanceState>,
   updateGatewaySettings: (id: string, patch: UpdateGatewaySettingsRequest) =>
     ipcRenderer.invoke(IPC.UPDATE_GATEWAY_SETTINGS, id, patch) as Promise<GatewayInstanceState>,
+  enterProvisioning: (id: string, options?: { releaseCloud?: boolean }) =>
+    ipcRenderer.invoke(IPC.ENTER_PROVISIONING, id, options) as Promise<GatewayInstanceState>,
+  claimZtpGateway: (id: string) =>
+    ipcRenderer.invoke(IPC.CLAIM_ZTP_GATEWAY, id) as Promise<GatewayInstanceState>,
   addDevice: (id: string, kind: GatewayInventoryKind) => ipcRenderer.invoke(IPC.ADD_DEVICE, id, kind),
   updateDevice: (id: string, key: string, patch: Partial<DeviceInventoryItem>) =>
     ipcRenderer.invoke(IPC.UPDATE_DEVICE, id, key, patch),
@@ -92,6 +96,12 @@ const api = {
     ipcRenderer.invoke(IPC.ADD_USER_DEVICE, userId, req),
   removeUserDevice: (userId: string, deviceId: string) => ipcRenderer.invoke(IPC.REMOVE_USER_DEVICE, userId, deviceId),
   loginUser: (userId: string, appDeviceId?: string) => ipcRenderer.invoke(IPC.LOGIN_USER, userId, appDeviceId),
+  connectUserAppRealtime: (userId: string, facilityId: string) =>
+    ipcRenderer.invoke(IPC.CONNECT_USER_APP_REALTIME, userId, facilityId),
+  disconnectUserAppRealtime: (userId: string) =>
+    ipcRenderer.invoke(IPC.DISCONNECT_USER_APP_REALTIME, userId),
+  clearUserAppRealtimeEvents: (userId: string) =>
+    ipcRenderer.invoke(IPC.CLEAR_USER_APP_REALTIME_EVENTS, userId),
   registerUserDevice: (userId: string, deviceId: string) => ipcRenderer.invoke(IPC.REGISTER_USER_DEVICE, userId, deviceId),
   fetchUserRoutePass: (userId: string, deviceId: string, facilityId: string, facilityName?: string) =>
     ipcRenderer.invoke(IPC.FETCH_USER_ROUTE_PASS, userId, deviceId, facilityId, facilityName),

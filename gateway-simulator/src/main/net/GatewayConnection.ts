@@ -5,14 +5,26 @@ import { isAuthOkMessage, isErrorMessage, parseJsonMessage } from '@protocol/mes
 import { ConnectionHealthMonitor } from './ConnectionHealthMonitor';
 import { summarizeGatewayMessage } from './gateway-message.utils';
 import type { ITransport, TransportCloseHandler, TransportEventHandler } from './ITransport';
+import {
+  ZTP_GW_AUTH_PREFIX,
+  buildZtpSignPayload,
+  signZtpPayload,
+} from '../auth/ztp-keypair.utils';
+
+export type GatewayAuthMode = 'legacy_jwt' | 'ztp_keypair';
 
 export type GatewayConnectionOptions = {
   backendUrl: string;
-  token: string;
+  /** Required for legacy_jwt */
+  token?: string;
   facilityId: string;
   gatewayId: string;
   /** Reported on WS AUTH; seeds gateways.firmware_version on the cloud. */
   firmwareVersion?: string;
+  /** Default legacy_jwt */
+  authMode?: GatewayAuthMode;
+  /** PKCS8 PEM when authMode is ztp_keypair */
+  ztpPrivateKeyPem?: string;
   onLog?: (direction: 'in' | 'out' | 'system', summary: string, payload?: unknown) => void;
   /** Fired when AUTH_OK updates session role on an existing connection (e.g. after swap complete). */
   onSessionRoleChanged?: (auth: AuthOkMessage, previousRole?: GatewaySessionRole) => void;
@@ -90,6 +102,7 @@ export class GatewayConnection implements ITransport {
     });
 
     let authInterceptor: TransportEventHandler | null = null;
+    const authMode = this.options.authMode || 'legacy_jwt';
 
     const authPromise = new Promise<void>((resolve, reject) => {
       const timeout = setTimeout(() => reject(new Error('AUTH timeout')), 15000);
@@ -97,6 +110,25 @@ export class GatewayConnection implements ITransport {
         if (isErrorMessage(parsed)) {
           clearTimeout(timeout);
           reject(new Error(`${parsed.code}: ${parsed.message}`));
+          return;
+        }
+        if (
+          authMode === 'ztp_keypair' &&
+          parsed &&
+          typeof parsed === 'object' &&
+          (parsed as { type?: string }).type === 'AUTH_CHALLENGE'
+        ) {
+          const nonce = String((parsed as { nonce?: string }).nonce || '');
+          const pem = this.options.ztpPrivateKeyPem;
+          if (!pem || !nonce) {
+            clearTimeout(timeout);
+            reject(new Error('ZTP AUTH_CHALLENGE missing nonce or private key'));
+            return;
+          }
+          const payload = buildZtpSignPayload(ZTP_GW_AUTH_PREFIX, nonce, this.options.gatewayId);
+          const signature = signZtpPayload(pem, payload);
+          this.send({ type: 'AUTH_PROOF', signature });
+          this.options.onLog?.('out', 'AUTH_PROOF sent', { gatewayId: this.options.gatewayId });
           return;
         }
         if (isAuthOkMessage(parsed)) {
@@ -153,19 +185,39 @@ export class GatewayConnection implements ITransport {
       this.closeHandler?.(code, reason.toString());
     });
 
-    const authMsg: AuthMessage = {
-      type: 'AUTH',
-      token: this.options.token,
-      facilityId: this.options.facilityId,
-      gatewayId: this.options.gatewayId,
-      firmware_version: this.options.firmwareVersion?.trim() || undefined,
-    };
-    this.send(authMsg);
-    this.options.onLog?.('out', 'AUTH sent', {
-      facilityId: this.options.facilityId,
-      gatewayId: this.options.gatewayId,
-      firmware_version: authMsg.firmware_version,
-    });
+    if (authMode === 'ztp_keypair') {
+      if (!this.options.ztpPrivateKeyPem) {
+        throw new Error('ztpPrivateKeyPem required for ztp_keypair auth');
+      }
+      this.send({
+        type: 'AUTH_HELLO',
+        gatewayId: this.options.gatewayId,
+        facilityId: this.options.facilityId,
+        firmware_version: this.options.firmwareVersion?.trim() || undefined,
+      });
+      this.options.onLog?.('out', 'AUTH_HELLO sent', {
+        gatewayId: this.options.gatewayId,
+        facilityId: this.options.facilityId,
+        firmware_version: this.options.firmwareVersion,
+      });
+    } else {
+      if (!this.options.token) {
+        throw new Error('token required for legacy_jwt auth');
+      }
+      const authMsg: AuthMessage = {
+        type: 'AUTH',
+        token: this.options.token,
+        facilityId: this.options.facilityId,
+        gatewayId: this.options.gatewayId,
+        firmware_version: this.options.firmwareVersion?.trim() || undefined,
+      };
+      this.send(authMsg);
+      this.options.onLog?.('out', 'AUTH sent', {
+        facilityId: this.options.facilityId,
+        gatewayId: this.options.gatewayId,
+        firmware_version: authMsg.firmware_version,
+      });
+    }
 
     try {
       await authPromise;
@@ -209,4 +261,3 @@ export class GatewayConnection implements ITransport {
     // open completes before AUTH in connect()
   }
 }
-

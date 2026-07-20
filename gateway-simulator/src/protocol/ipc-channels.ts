@@ -18,7 +18,9 @@ export type LockUnlockMode =
   | 'ignore';
 
 export type BehaviorConfig = {
+  /** Always true — unexpected drops and app-launch restore reconnect. Kept for profile compatibility. */
   autoReconnect: boolean;
+  /** Always true — PING always gets PONG. Kept for profile compatibility. */
   respondToPing: boolean;
   accessCodeAckMode: AckMode;
   deviceDeletionAckMode: AckMode;
@@ -28,7 +30,7 @@ export type BehaviorConfig = {
   lockUnlockMode: LockUnlockMode;
   periodicTelemetryMs: number;
   forceOffline: boolean;
-  /** Push device state to cloud immediately when inventory rows change (requires WS connection). */
+  /** Always true — push state/inventory when connected. Kept for profile compatibility. */
   liveStateSync: boolean;
   /** @deprecated migrated to lockUnlockMode on load */
   autoLockResponse?: boolean;
@@ -55,6 +57,10 @@ export function normalizeBehavior(behavior?: Partial<BehaviorConfig>): BehaviorC
     merged.lockUnlockMode = behavior.autoLockResponse ? 'accept' : 'apply-only';
   }
   delete merged.autoLockResponse;
+  // These used to be Behavior-tab toggles; they are always on now.
+  merged.autoReconnect = true;
+  merged.respondToPing = true;
+  merged.liveStateSync = true;
   return merged;
 }
 
@@ -80,6 +86,10 @@ export const IPC = {
   GET_GATEWAY_STATE: 'sim:get-gateway-state',
   FETCH_GATEWAY_CLOUD: 'sim:fetch-gateway-cloud',
   UPDATE_GATEWAY_SETTINGS: 'sim:update-gateway-settings',
+  /** ZTP: enter factory/provisioning lifecycle (optional cloud release). */
+  ENTER_PROVISIONING: 'sim:enter-provisioning',
+  /** ZTP: claim current facility while sitting in provision WAITING. */
+  CLAIM_ZTP_GATEWAY: 'sim:claim-ztp-gateway',
 
   // Devices
   ADD_DEVICE: 'sim:add-device',
@@ -130,6 +140,10 @@ export const IPC = {
   REGENERATE_USER_DEVICE_KEYS: 'sim:regenerate-user-device-keys',
   TRY_OPEN_WITH_USER_DEVICE: 'sim:try-open-with-user-device',
   TRY_OPEN_WITH_ACCESS_CODE: 'sim:try-open-with-access-code',
+  /** Opt-in: open tenant /ws/app and subscribe to a facility. */
+  CONNECT_USER_APP_REALTIME: 'sim:connect-user-app-realtime',
+  DISCONNECT_USER_APP_REALTIME: 'sim:disconnect-user-app-realtime',
+  CLEAR_USER_APP_REALTIME_EVENTS: 'sim:clear-user-app-realtime-events',
 } as const;
 
 export type HistoryState = {
@@ -208,6 +222,8 @@ export type UpdateGatewaySettingsRequest = {
   gatewaySerial?: string;
   /** Running firmware reported on WS AUTH (`firmware_version`). */
   gatewayFirmwareVersion?: string;
+  /** Switch cloud auth mode (disconnects if connected). */
+  authMode?: 'legacy_jwt' | 'ztp_keypair';
 };
 
 export type CreateGatewayRequest = {
@@ -223,9 +239,14 @@ export type CreateGatewayRequest = {
   gatewaySerial?: string;
   /** Omit when the main process already has a saved session. */
   token?: string;
+  /** Default legacy_jwt — ZTP generates a keypair and uses challenge-response AUTH. */
+  authMode?: 'legacy_jwt' | 'ztp_keypair';
 };
 
-export type ConnectionStatus = 'disconnected' | 'connecting' | 'connected' | 'error';
+export type ConnectionStatus = 'disconnected' | 'connecting' | 'provisioning' | 'connected' | 'error';
+
+/** ZTP device lifecycle (persisted). Legacy JWT gateways stay `operational`. */
+export type ZtpLifecyclePhase = 'provisioning' | 'operational';
 
 export type GatewayEventEntry = {
   id: string;
@@ -252,6 +273,12 @@ export type GatewayInstanceState = {
   sessionRole?: GatewaySessionRole;
   autoRegistered?: boolean;
   opsPublicKey?: string;
+  /** Cloud auth strategy for this instance. */
+  authMode: 'legacy_jwt' | 'ztp_keypair';
+  /** ZTP lifecycle: factory/waiting-room vs claimed ops. */
+  ztpLifecyclePhase: ZtpLifecyclePhase;
+  /** Compressed P-256 public key (sticker QR payload) — safe to display. */
+  ztpPublicKeyB64?: string;
   devices: DeviceInventoryItem[];
   deviceSimByKey: Record<string, DeviceSimulatorState>;
   behavior: BehaviorConfig;

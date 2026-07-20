@@ -232,4 +232,161 @@ describe('GatewayModel', () => {
       expect(builders.gateways.update).not.toHaveBeenCalled();
     });
   });
+
+  describe('claimViaZtp', () => {
+    const DEVICE_ID = 'dddddddd-dddd-4ddd-8ddd-dddddddddddd';
+    const FACILITY_ID = 'fac-ztp';
+    const PUBLIC_KEY = 'pk-test-b64url';
+
+    function buildClaimTrx(options: {
+      existingBound: unknown;
+      existingRow: unknown;
+      finalRow?: unknown;
+    }) {
+      const gatewayFirst = jest
+        .fn()
+        .mockResolvedValueOnce(options.existingBound)
+        .mockResolvedValueOnce(options.existingRow)
+        .mockResolvedValue(
+          options.finalRow ?? {
+            id: DEVICE_ID,
+            facility_id: options.existingBound ? null : FACILITY_ID,
+            public_key: PUBLIC_KEY,
+          },
+        );
+      const builders: Record<string, { where: jest.Mock; first: jest.Mock; insert: jest.Mock; update: jest.Mock }> =
+        {};
+      const trx = jest.fn((table: string) => {
+        if (!builders[table]) {
+          builders[table] = {
+            where: jest.fn().mockReturnThis(),
+            first:
+              table === 'gateways'
+                ? gatewayFirst
+                : jest.fn().mockResolvedValue({ id: FACILITY_ID, name: 'Depot' }),
+            insert: jest.fn().mockResolvedValue(undefined),
+            update: jest.fn().mockResolvedValue(1),
+          };
+        }
+        return builders[table];
+      });
+      mockKnex.transaction = jest.fn(async (cb: any) => cb(trx));
+      return { builders };
+    }
+
+    it('binds greenfield claim when facility has no gateway', async () => {
+      const { builders } = buildClaimTrx({
+        existingBound: null,
+        existingRow: null,
+        finalRow: { id: DEVICE_ID, facility_id: FACILITY_ID, public_key: PUBLIC_KEY },
+      });
+
+      const result = await model.claimViaZtp({
+        deviceId: DEVICE_ID,
+        facilityId: FACILITY_ID,
+        publicKey: PUBLIC_KEY,
+        claimedByUserId: 'user-1',
+      });
+
+      expect(result.bound).toBe(true);
+      expect(result.created).toBe(true);
+      expect(builders.gateways.insert).toHaveBeenCalledWith(
+        expect.objectContaining({
+          id: DEVICE_ID,
+          facility_id: FACILITY_ID,
+          public_key: PUBLIC_KEY,
+        }),
+      );
+      const meta = JSON.parse(builders.gateways.insert.mock.calls[0][0].metadata);
+      expect(meta.ztpIntendedFacilityId).toBe(FACILITY_ID);
+      expect(meta.provisionedVia).toBe('ztp_sticker');
+    });
+
+    it('creates unbound swap-prep row when facility already has a different gateway', async () => {
+      const { builders } = buildClaimTrx({
+        existingBound: { id: 'bound-other', facility_id: FACILITY_ID },
+        existingRow: null,
+        finalRow: {
+          id: DEVICE_ID,
+          facility_id: null,
+          public_key: PUBLIC_KEY,
+          metadata: JSON.stringify({ ztpIntendedFacilityId: FACILITY_ID }),
+        },
+      });
+
+      const result = await model.claimViaZtp({
+        deviceId: DEVICE_ID,
+        facilityId: FACILITY_ID,
+        publicKey: PUBLIC_KEY,
+        claimedByUserId: 'user-1',
+        name: 'RMA Unit',
+      });
+
+      expect(result.bound).toBe(false);
+      expect(result.created).toBe(true);
+      expect(builders.gateways.insert).toHaveBeenCalledWith(
+        expect.objectContaining({
+          id: DEVICE_ID,
+          facility_id: null,
+          public_key: PUBLIC_KEY,
+          name: 'RMA Unit',
+        }),
+      );
+      const meta = JSON.parse(builders.gateways.insert.mock.calls[0][0].metadata);
+      expect(meta.ztpIntendedFacilityId).toBe(FACILITY_ID);
+    });
+
+    it('is idempotent for unbound swap-prep with matching intended facility', async () => {
+      const existing = {
+        id: DEVICE_ID,
+        facility_id: null,
+        public_key: PUBLIC_KEY,
+        metadata: JSON.stringify({ ztpIntendedFacilityId: FACILITY_ID }),
+      };
+      buildClaimTrx({
+        existingBound: { id: 'bound-other', facility_id: FACILITY_ID },
+        existingRow: existing,
+      });
+
+      const result = await model.claimViaZtp({
+        deviceId: DEVICE_ID,
+        facilityId: FACILITY_ID,
+        publicKey: PUBLIC_KEY,
+        claimedByUserId: 'user-1',
+      });
+
+      expect(result).toEqual({ gateway: existing, created: false, bound: false });
+    });
+  });
+
+  describe('releaseZtpClaim', () => {
+    it('clears facility binding and ztpIntendedFacilityId', async () => {
+      mockBuilder.first
+        .mockResolvedValueOnce({
+          id: 'gw-1',
+          facility_id: 'fac-1',
+          metadata: JSON.stringify({ ztpIntendedFacilityId: 'fac-1', provisionedVia: 'ztp_sticker' }),
+        })
+        .mockResolvedValueOnce({
+          id: 'gw-1',
+          facility_id: null,
+          released_at: new Date(),
+          metadata: JSON.stringify({ provisionedVia: 'ztp_sticker' }),
+        });
+      mockBuilder.update = jest.fn().mockResolvedValue(1);
+      mockBuilder.where = jest.fn().mockReturnThis();
+
+      await model.releaseZtpClaim('gw-1');
+
+      expect(mockBuilder.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          facility_id: null,
+          metadata: expect.stringContaining('"provisionedVia":"ztp_sticker"'),
+        }),
+      );
+      const meta = JSON.parse(mockBuilder.update.mock.calls[0][0].metadata);
+      expect(meta.ztpIntendedFacilityId).toBeUndefined();
+      expect(meta.provisionedVia).toBe('ztp_sticker');
+    });
+  });
 });

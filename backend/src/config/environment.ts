@@ -39,6 +39,12 @@ const envSchema = Joi.object({
 
   /** When true, serves Swagger UI at /api/docs (defaults on; set false to disable). */
   ENABLE_OPENAPI_DOCS: Joi.string().valid('true', 'false', '1', '0').default('true'),
+
+  /**
+   * When true, greenfield gateway bind via human JWT first-install auto-bind is disabled.
+   * Sticker claim + ECDSA AUTH is required for new binds. Default false (lab/legacy).
+   */
+  GATEWAY_ZTP_REQUIRED: Joi.string().valid('true', 'false', '1', '0').default('false'),
 }).unknown();
 
 const { error, value: envVars } = envSchema.validate(process.env);
@@ -67,6 +73,8 @@ export interface Config {
   corsOrigins: string[];
   logLevel: string;
   enableOpenApiDocs: boolean;
+  /** When true, disable JWT first-install auto-bind; require ZTP claim for greenfield. */
+  gatewayZtpRequired: boolean;
   security: {
     opsPrivateKeyB64: string;
     opsPublicKeyB64: string;
@@ -96,6 +104,7 @@ export const config: Config = {
   corsOrigins: envVars.CORS_ORIGINS.split(',').map((origin: string) => origin.trim()),
   logLevel: envVars.LOG_LEVEL,
   enableOpenApiDocs: envVars.ENABLE_OPENAPI_DOCS === 'true' || envVars.ENABLE_OPENAPI_DOCS === '1',
+  gatewayZtpRequired: envVars.GATEWAY_ZTP_REQUIRED === 'true' || envVars.GATEWAY_ZTP_REQUIRED === '1',
   security: {
     opsPrivateKeyB64: envVars.OPS_ED25519_PRIVATE_KEY_B64,
     opsPublicKeyB64: envVars.OPS_ED25519_PUBLIC_KEY_B64,
