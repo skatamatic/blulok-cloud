@@ -184,6 +184,31 @@ export class GCSBaseStorage implements BaseStorageProvider {
     });
   }
 
+  /**
+   * V4 signed URL for HTTPS GET downloads (e.g. firmware OTA v2).
+   * Requires a credential that can sign (key file or iam.serviceAccounts.signBlob).
+   */
+  async createSignedDownloadUrl(filePath: string, expiresInSeconds: number): Promise<string> {
+    const exists = await this.fileExists(filePath);
+    if (!exists) {
+      throw new StorageError(`File not found: ${filePath}`, StorageErrorCode.NOT_FOUND);
+    }
+    const file = this.bucket.file(filePath);
+    try {
+      const [url] = await file.getSignedUrl({
+        action: 'read',
+        expires: Date.now() + expiresInSeconds * 1000,
+      });
+      return url;
+    } catch (error: any) {
+      throw new StorageError(
+        `Failed to create signed download URL: ${error.message}`,
+        StorageErrorCode.PERMISSION_DENIED,
+        { originalError: error.message },
+      );
+    }
+  }
+
   async listFiles(prefix: string): Promise<string[]> {
     const normalised = prefix.endsWith('/') ? prefix : `${prefix}/`;
     try {

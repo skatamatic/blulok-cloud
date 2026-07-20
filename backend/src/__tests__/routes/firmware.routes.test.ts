@@ -44,6 +44,10 @@ jest.mock('@/services/firmware/firmware.service', () => ({
       status: 'pending',
       target_type: 'gateway',
     }),
+    getDeliveryCapabilities: jest.fn().mockResolvedValue({
+      v1_available: true,
+      v2_available: true,
+    }),
     getPushStatus: jest.fn().mockResolvedValue({
       id: 'push-1',
       status: 'transferring',
@@ -445,6 +449,50 @@ describe('Firmware Routes', () => {
 
       expect(response.status).toBe(200);
       expect(response.body.data.id).toBe('push-1');
+      const { FirmwareService } = require('@/services/firmware/firmware.service');
+      expect(FirmwareService.initiatePush).toHaveBeenCalledWith(
+        'fw-1',
+        'gw-1',
+        expect.any(String),
+        expect.any(String),
+        { deliveryMode: undefined },
+      );
+    });
+
+    it('should pass delivery_mode v2 to initiatePush', async () => {
+      const { FirmwareService } = require('@/services/firmware/firmware.service');
+      FirmwareService.initiatePush.mockResolvedValueOnce({
+        id: 'push-v2',
+        firmware_id: 'fw-1',
+        gateway_id: 'gw-1',
+        status: 'pending',
+        target_type: 'gateway',
+        delivery_mode: 'v2',
+      });
+
+      const response = await request(app)
+        .post('/api/v1/firmware/fw-1/push/gw-1')
+        .set('Authorization', `Bearer ${testData.users.admin.token}`)
+        .send({ delivery_mode: 'v2' });
+
+      expect(response.status).toBe(200);
+      expect(response.body.data.delivery_mode).toBe('v2');
+      expect(FirmwareService.initiatePush).toHaveBeenCalledWith(
+        'fw-1',
+        'gw-1',
+        expect.any(String),
+        expect.any(String),
+        { deliveryMode: 'v2' },
+      );
+    });
+
+    it('should reject invalid delivery_mode', async () => {
+      const response = await request(app)
+        .post('/api/v1/firmware/fw-1/push/gw-1')
+        .set('Authorization', `Bearer ${testData.users.admin.token}`)
+        .send({ delivery_mode: 'v9' });
+
+      expect(response.status).toBe(400);
     });
 
     it('should allow DEV_ADMIN to initiate push', async () => {

@@ -9,6 +9,9 @@ import { FirmwareTargetType } from './firmware.model';
  */
 export type FirmwarePushStatus = 'pending' | 'transferring' | 'verifying' | 'complete' | 'failed' | 'cancelled';
 
+/** v1 = WebSocket chunking; v2 = GCS signed download URL */
+export type FirmwareDeliveryMode = 'v1' | 'v2';
+
 const TERMINAL_STATUSES: FirmwarePushStatus[] = ['complete', 'failed', 'cancelled'];
 
 /**
@@ -28,6 +31,7 @@ export interface FirmwarePush {
   gateway_id: string;
   facility_id: string;
   target_type: FirmwareTargetType;
+  delivery_mode: FirmwareDeliveryMode;
   status: FirmwarePushStatus;
   chunks_total: number | null;
   chunks_sent: number;
@@ -49,6 +53,7 @@ export interface CreateFirmwarePushData {
   gateway_id: string;
   facility_id: string;
   target_type?: FirmwareTargetType;
+  delivery_mode?: FirmwareDeliveryMode;
   initiated_by: string;
   chunks_total?: number;
 }
@@ -117,6 +122,7 @@ export class FirmwarePushModel {
       id,
       ...data,
       target_type: data.target_type || 'gateway',
+      delivery_mode: data.delivery_mode || 'v1',
       status: 'pending',
       chunks_sent: 0,
       created_at: now,
@@ -159,6 +165,7 @@ export class FirmwarePushModel {
         id,
         ...data,
         target_type: targetType,
+        delivery_mode: data.delivery_mode || 'v1',
         status: 'pending',
         chunks_sent: 0,
         created_at: now,
@@ -259,6 +266,41 @@ export class FirmwarePushModel {
       .update({
         status: 'failed',
         error_message: errorMessage,
+        completed_at: new Date(),
+        updated_at: new Date(),
+      });
+    return updated > 0;
+  }
+
+  /**
+   * Fail only while still in transfer (pending/transferring).
+   * Used by disconnect grace so a push that already reached verifying is not failed.
+   */
+  async atomicFailIfTransferring(id: string, errorMessage: string): Promise<boolean> {
+    const knex = this.db.connection;
+    const updated = await knex('firmware_pushes')
+      .where('id', id)
+      .whereIn('status', ['pending', 'transferring'])
+      .update({
+        status: 'failed',
+        error_message: errorMessage,
+        completed_at: new Date(),
+        updated_at: new Date(),
+      });
+    return updated > 0;
+  }
+
+  /**
+   * Atomically complete a push if it is still non-terminal.
+   * Prevents late gateway success from resurrecting cancelled/failed pushes.
+   */
+  async atomicCompleteIfActive(id: string): Promise<boolean> {
+    const knex = this.db.connection;
+    const updated = await knex('firmware_pushes')
+      .where('id', id)
+      .whereNotIn('status', TERMINAL_STATUSES)
+      .update({
+        status: 'complete',
         completed_at: new Date(),
         updated_at: new Date(),
       });

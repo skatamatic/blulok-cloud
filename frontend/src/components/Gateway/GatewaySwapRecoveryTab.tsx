@@ -221,7 +221,9 @@ export default function GatewaySwapRecoveryTab({
   const [cancelConfirmOpen, setCancelConfirmOpen] = useState(false);
   const [firmwareOptions, setFirmwareOptions] = useState<RecoveryFirmwareOptions | null>(null);
   const [includeFirmwareMatch, setIncludeFirmwareMatch] = useState(true);
-  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const [firmwareDeliveryMode, setFirmwareDeliveryMode] = useState<'v1' | 'v2'>('v1');
+  const [v2Available, setV2Available] = useState(true);
+  const [v2UnavailableReason, setV2UnavailableReason] = useState<string | null>(null);
   const onRecoveryChangeRef = useRef(onRecoveryChange);
   const recoveryRef = useRef<GatewayRecovery | null>(null);
   const runningRecoveryIdRef = useRef<string | null>(null);
@@ -389,38 +391,96 @@ export default function GatewaySwapRecoveryTab({
   }, [facilityId]);
 
   useEffect(() => {
-    const subId = ws.subscribe('gateway_recovery_progress', (data: GatewayRecoveryProgress) => {
-      if (!data?.facilityId || data.facilityId !== facilityId) return;
-
-      const current = recoveryRef.current;
-      if (current?.id && data.recoveryId && data.recoveryId !== current.id) {
-        if (RECOVERY_TERMINAL_STATUSES.includes(current.status)) return;
-        void hydrateRef.current({ silent: true, force: true });
-        return;
-      }
-      if (
-        current
-        && RECOVERY_TERMINAL_STATUSES.includes(current.status)
-        && data.status
-        && !RECOVERY_TERMINAL_STATUSES.includes(data.status)
-      ) {
-        return;
-      }
-
-      setRecovery((prev) => (prev && data.status ? { ...prev, status: data.status } : prev));
-      setLiveProgress((prev) => {
-        const base = recoveryRef.current;
-        if (!base) return prev;
-        return mergeRecoveryProgress(base, data);
+    let cancelled = false;
+    void apiService.getFirmwareDeliveryCapabilities()
+      .then((res) => {
+        if (cancelled || !res?.data) return;
+        const available = res.data.v2_available !== false;
+        setV2Available(available);
+        setV2UnavailableReason(available ? null : (res.data.v2_unavailable_reason || 'v2 requires GCS storage'));
+        if (!available) {
+          setFirmwareDeliveryMode((prev) => (prev === 'v2' ? 'v1' : prev));
+        }
+      })
+      .catch(() => {
+        /* keep v2 selectable; push will fail with a clear API error if unsupported */
       });
-      if (data.status && RECOVERY_TERMINAL_STATUSES.includes(data.status)) {
-        void hydrateRef.current({ silent: true, force: true });
-      }
-    });
+    return () => { cancelled = true; };
+  }, []);
+
+  useEffect(() => {
+    const statusSubId = ws.subscribe(
+      'gateway_recovery_status',
+      (data: {
+        facilityId?: string;
+        candidates?: SwapCandidate[];
+        sessions?: FacilityGatewaySession[];
+        recovery?: GatewayRecovery | null;
+      }) => {
+        if (data?.facilityId && data.facilityId !== facilityId) return;
+        setCandidates(data?.candidates || []);
+        setSessions(data?.sessions || []);
+        const nextRecovery = data?.recovery ?? null;
+        setRecovery((prev) => {
+          if (nextRecovery && !RECOVERY_TERMINAL_STATUSES.includes(nextRecovery.status)) {
+            return nextRecovery;
+          }
+          if (prev && !RECOVERY_TERMINAL_STATUSES.includes(prev.status) && !nextRecovery) {
+            return prev;
+          }
+          return nextRecovery;
+        });
+        if (nextRecovery && !RECOVERY_TERMINAL_STATUSES.includes(nextRecovery.status)) {
+          setLiveProgress((prev) => mergeRecoveryProgress(nextRecovery, prev));
+        } else if (nextRecovery) {
+          setLiveProgress(deriveRecoveryProgress(nextRecovery));
+        }
+        notifyRecoveryChange(nextRecovery);
+        setLoading(false);
+      },
+      undefined,
+      { facility_id: facilityId },
+    );
+
+    const progressSubId = ws.subscribe(
+      'gateway_recovery_progress',
+      (data: GatewayRecoveryProgress) => {
+        if (!data?.facilityId || data.facilityId !== facilityId) return;
+
+        const current = recoveryRef.current;
+        if (current?.id && data.recoveryId && data.recoveryId !== current.id) {
+          if (RECOVERY_TERMINAL_STATUSES.includes(current.status)) return;
+          void hydrateRef.current({ silent: true, force: true });
+          return;
+        }
+        if (
+          current
+          && RECOVERY_TERMINAL_STATUSES.includes(current.status)
+          && data.status
+          && !RECOVERY_TERMINAL_STATUSES.includes(data.status)
+        ) {
+          return;
+        }
+
+        setRecovery((prev) => (prev && data.status ? { ...prev, status: data.status } : prev));
+        setLiveProgress((prev) => {
+          const base = recoveryRef.current;
+          if (!base) return prev;
+          return mergeRecoveryProgress(base, data);
+        });
+        if (data.status && RECOVERY_TERMINAL_STATUSES.includes(data.status)) {
+          void hydrateRef.current({ silent: true, force: true });
+        }
+      },
+      undefined,
+      { facility_id: facilityId },
+    );
+
     return () => {
-      if (subId) ws.unsubscribe(subId);
+      if (statusSubId) ws.unsubscribe(statusSubId);
+      if (progressSubId) ws.unsubscribe(progressSubId);
     };
-  }, [ws.subscribe, ws.unsubscribe, facilityId]);
+  }, [ws.subscribe, ws.unsubscribe, facilityId, notifyRecoveryChange]);
 
   const view = useMemo(
     () => resolveSwapView(recovery, candidates, sessions, boundGatewayId),
@@ -428,37 +488,47 @@ export default function GatewaySwapRecoveryTab({
   );
   const isInProgress = view.mode === 'in_progress';
 
+  // One-shot detail fetch (preview / options / events) when the status gateway changes — no polling.
   useEffect(() => {
-    if (!isInProgress) {
-      if (pollRef.current) {
-        clearInterval(pollRef.current);
-        pollRef.current = null;
-      }
+    const gatewayId = view.statusGatewayId;
+    if (!gatewayId) {
+      setInventoryPreview([]);
+      setFirmwareOptions(null);
+      setEvents([]);
       return;
     }
 
-    const pollMs = ws.isConnected ? 8000 : 4000;
-    pollRef.current = setInterval(() => {
-      void hydrateRef.current({ silent: true });
-    }, pollMs);
+    let cancelled = false;
+    void (async () => {
+      try {
+        const [previewRes, optionsRes] = await Promise.all([
+          apiService.getGatewayRecoveryInventoryPreview(gatewayId).catch(() => ({ data: { devices: [] } })),
+          apiService.getGatewayRecoveryOptions(gatewayId).catch(() => ({ data: null })),
+        ]);
+        if (cancelled) return;
+        setInventoryPreview(previewRes.data?.devices || []);
+        if (optionsRes.data) setFirmwareOptions(optionsRes.data);
+
+        const recoveryId = recoveryRef.current?.id;
+        if (recoveryId) {
+          try {
+            const eventsRes = await apiService.getGatewayRecoveryEvents(gatewayId, recoveryId, 50);
+            if (!cancelled) setEvents(eventsRes.data?.events || []);
+          } catch {
+            if (!cancelled) setEvents([]);
+          }
+        }
+      } catch {
+        /* keep last detail snapshot */
+      }
+    })();
 
     return () => {
-      if (pollRef.current) {
-        clearInterval(pollRef.current);
-        pollRef.current = null;
-      }
+      cancelled = true;
     };
-  }, [isInProgress, ws.isConnected]);
+  }, [view.statusGatewayId, recovery?.id, recovery?.status]);
 
-  // Keep the production/candidate display fresh while idle waiting for a candidate to
-  // connect or reconnect (e.g. right after a completed swap).
-  useEffect(() => {
-    if (isInProgress) return undefined;
-    const timer = setInterval(() => {
-      void hydrateRef.current({ silent: true });
-    }, 8000);
-    return () => clearInterval(timer);
-  }, [isInProgress]);
+  // Idle/ready/in-progress: live via WS; mount hydrate seeds REST once.
 
   const progress = useMemo(() => {
     if (recovery && liveProgress) return mergeRecoveryProgress(recovery, liveProgress);
@@ -488,7 +558,7 @@ export default function GatewaySwapRecoveryTab({
   const handleInitiate = async () => {
     const gatewayId = view.candidateGatewayId;
     if (!gatewayId) {
-      setActionError('No swap candidate is available — connect the replacement gateway and try again.');
+      setActionError('No swap candidate available. Connect the replacement gateway and try again.');
       return;
     }
     setSubmitting(true);
@@ -496,6 +566,7 @@ export default function GatewaySwapRecoveryTab({
     try {
       const res = await apiService.initiateGatewayRecovery(gatewayId, {
         includeFirmware: includeFirmwareMatch,
+        firmwareDeliveryMode: includeFirmwareMatch ? firmwareDeliveryMode : undefined,
       });
       setSessionResult(null);
       setRecovery(res.data);
@@ -503,8 +574,8 @@ export default function GatewaySwapRecoveryTab({
       setActionNotice({
         tone: 'info',
         message: includeFirmwareMatch
-          ? 'Swap started — production firmware will be matched if needed, then inventory push runs.'
-          : 'Swap started — inventory push is running (firmware step skipped).',
+          ? 'Swap started. Firmware will be matched if needed, then inventory is pushed.'
+          : 'Swap started. Pushing inventory (firmware step skipped).',
       });
       await hydrate({ silent: true, force: true });
     } catch (err: unknown) {
@@ -543,7 +614,7 @@ export default function GatewaySwapRecoveryTab({
       setLiveProgress(deriveRecoveryProgress(res.data));
       setBypassConfirmOpen(false);
       setShowBypass(false);
-      setActionNotice({ tone: 'warning', message: 'Swap bypassed — inventory sync is now unblocked.' });
+      setActionNotice({ tone: 'warning', message: 'Swap bypassed. Inventory sync is unblocked.' });
       notifyRecoveryChange(res.data);
       await hydrate({ silent: true, force: true });
     } catch (err: unknown) {
@@ -561,7 +632,7 @@ export default function GatewaySwapRecoveryTab({
     try {
       await apiService.cancelGatewayRecovery(gatewayId, recovery.id);
       setCancelConfirmOpen(false);
-      setActionNotice({ tone: 'info', message: 'Swap cancelled — you can start a new swap when ready.' });
+      setActionNotice({ tone: 'info', message: 'Swap cancelled.' });
       await hydrate({ force: true });
     } catch (err: unknown) {
       setActionError(err instanceof Error ? err.message : 'Cancel failed');
@@ -685,7 +756,7 @@ export default function GatewaySwapRecoveryTab({
               {!ws.isConnected && (
                 <p className="mb-3 text-xs text-amber-700 dark:text-amber-300 flex items-center gap-1.5">
                   <ClockIcon className="h-4 w-4 shrink-0" />
-                  Dashboard WebSocket disconnected — polling swap status every few seconds.
+                  Live updates disconnected. Checking swap status every few seconds.
                 </p>
               )}
 
@@ -811,7 +882,7 @@ export default function GatewaySwapRecoveryTab({
                     {view.mode === 'ready'
                       ? view.candidateConnected
                         ? 'Start a swap to make this gateway the production unit for the facility.'
-                        : 'The swap candidate is offline — reconnect it to start a swap.'
+                        : 'Swap candidate is offline. Reconnect it to start a swap.'
                       : 'Connect a replacement gateway as a swap candidate to begin a swap.'}
                   </p>
                 </div>
@@ -900,20 +971,54 @@ export default function GatewaySwapRecoveryTab({
                     </p>
                     {candidateMatchesProduction && (
                       <p className="text-emerald-700 dark:text-emerald-300 text-xs">
-                        Candidate already matches production — OTA will be skipped.
+                        Candidate already matches production. OTA will be skipped.
                       </p>
                     )}
                     {firmwareMatchBlocked && (
                       <p className="text-amber-700 dark:text-amber-300 text-xs">
-                        No firmware image is catalogued for the production version — disable matching or upload the image first.
+                        No firmware image for the production version. Disable matching or upload the image first.
                       </p>
                     )}
+                    <div className="flex flex-col gap-1 pt-2">
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs text-secondary-500 dark:text-secondary-400">OTA delivery</span>
+                        <div className="flex rounded-md border border-secondary-200 dark:border-secondary-600 overflow-hidden" role="group" aria-label="Firmware delivery mode">
+                          {(['v1', 'v2'] as const).map((mode) => {
+                            const disabled = mode === 'v2' && !v2Available;
+                            return (
+                              <button
+                                key={mode}
+                                type="button"
+                                onClick={() => !disabled && setFirmwareDeliveryMode(mode)}
+                                disabled={disabled}
+                                title={disabled ? (v2UnavailableReason || undefined) : undefined}
+                                className={`px-3 py-1 text-xs font-medium transition-colors ${
+                                  firmwareDeliveryMode === mode
+                                    ? 'bg-[#147FD4] text-white'
+                                    : disabled
+                                      ? 'bg-secondary-100 dark:bg-secondary-900 text-secondary-400 cursor-not-allowed'
+                                      : 'bg-white dark:bg-secondary-800 text-secondary-600 dark:text-secondary-300'
+                                }`}
+                              >
+                                {mode}
+                              </button>
+                            );
+                          })}
+                        </div>
+                        <span className="text-xs text-secondary-400 dark:text-secondary-500">
+                          {firmwareDeliveryMode === 'v1' ? 'WebSocket chunks' : 'GCS download'}
+                        </span>
+                      </div>
+                      {!v2Available && v2UnavailableReason && (
+                        <p className="text-xs text-amber-700 dark:text-amber-300">{v2UnavailableReason}</p>
+                      )}
+                    </div>
                   </div>
                 )}
 
                 {!includeFirmwareMatch && (
                   <p className="text-xs text-secondary-500 dark:text-secondary-400">
-                    Firmware step will be skipped — only the inventory snapshot is pushed to the swap candidate.
+                    Firmware step skipped. Only the inventory snapshot is pushed.
                   </p>
                 )}
               </div>
@@ -963,7 +1068,7 @@ export default function GatewaySwapRecoveryTab({
                     {event.phase.replace(/_/g, ' ')}
                   </span>
                   {event.message && (
-                    <span className="text-secondary-600 dark:text-secondary-300"> — {event.message}</span>
+                    <span className="text-secondary-600 dark:text-secondary-300">: {event.message}</span>
                   )}
                   {event.progress_percent != null && (
                     <span className="text-secondary-400"> ({event.progress_percent}%)</span>
@@ -1020,7 +1125,7 @@ export default function GatewaySwapRecoveryTab({
       <ConfirmDialog
         isOpen={cancelConfirmOpen}
         title="Cancel gateway swap?"
-        message="This stops the in-progress swap and unblocks inventory sync. You can start a new swap afterward without reconnecting the swap gateway."
+        message="Stops the swap and unblocks inventory sync."
         confirmLabel="Cancel swap"
         confirmTone="danger"
         onConfirm={() => void handleCancel()}

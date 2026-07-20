@@ -82,6 +82,9 @@ function setupDefaultMocks(overrides: {
   mockApi.listFirmware.mockResolvedValue({ data: overrides.firmware ?? [mkFirmware()] });
   mockApi.getFirmwarePushStatus.mockResolvedValue({ data: overrides.pushStatus ?? null });
   mockApi.getFirmwarePushHistory.mockResolvedValue({ data: overrides.pushHistory ?? [] });
+  mockApi.getFirmwareDeliveryCapabilities.mockResolvedValue({
+    data: { v1_available: true, v2_available: true },
+  });
 }
 
 function renderTab(props: Partial<React.ComponentProps<typeof GatewayFirmwareTab>> = {}) {
@@ -239,8 +242,26 @@ describe('GatewayFirmwareTab', () => {
       fireEvent.click(screen.getByText('Confirm'));
 
       await waitFor(() => {
-        expect(mockApi.pushFirmware).toHaveBeenCalledWith('fw-1', GATEWAY_ID);
+        expect(mockApi.pushFirmware).toHaveBeenCalledWith('fw-1', GATEWAY_ID, { deliveryMode: 'v1' });
         expect(screen.getByText(/Firmware push started/i)).toBeInTheDocument();
+      });
+    });
+
+    it('passes delivery mode v2 when selected', async () => {
+      setupDefaultMocks();
+      mockApi.pushFirmware.mockResolvedValue({ data: mkPush({ status: 'pending', delivery_mode: 'v2' }) });
+      renderTab();
+
+      await waitFor(() => {
+        expect(screen.getByText('v2.0.0')).toBeInTheDocument();
+      });
+
+      fireEvent.click(screen.getByRole('button', { name: 'v2' }));
+      fireEvent.click(screen.getByText('Push'));
+      fireEvent.click(screen.getByText('Confirm'));
+
+      await waitFor(() => {
+        expect(mockApi.pushFirmware).toHaveBeenCalledWith('fw-1', GATEWAY_ID, { deliveryMode: 'v2' });
       });
     });
 
@@ -257,8 +278,7 @@ describe('GatewayFirmwareTab', () => {
       fireEvent.click(screen.getByText('Confirm'));
 
       await waitFor(() => {
-        // pushFirmware should only be called with firmwareId and gatewayId (no facilityId)
-        expect(mockApi.pushFirmware).toHaveBeenCalledWith('fw-1', GATEWAY_ID);
+        expect(mockApi.pushFirmware).toHaveBeenCalledWith('fw-1', GATEWAY_ID, { deliveryMode: 'v1' });
       });
     });
 

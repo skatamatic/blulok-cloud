@@ -95,8 +95,9 @@ Tracks the state of each push operation.
 | `gateway_id`   | UUID FK | Target gateway                                     |
 | `facility_id`  | UUID FK | Facility the gateway belongs to                    |
 | `target_type`  | ENUM    | Denormalized from `firmware_images` for queries     |
+| `delivery_mode`| VARCHAR | `v1` (WebSocket chunks, default) or `v2` (GCS signed URL) |
 | `status`       | ENUM    | `pending`, `transferring`, `verifying`, `complete`, `failed`, `cancelled` |
-| `chunks_total` | INT     | Total chunk count                                  |
+| `chunks_total` | INT     | Total chunk count (`0` for v2)                     |
 | `chunks_sent`  | INT     | Progress counter                                   |
 
 **Index:** `(gateway_id, target_type, status)` — supports the active-push lookup scoped by target type.
@@ -111,6 +112,26 @@ Append-only event stream used for progress timelines and per-device status snaps
 - Latest-per-device optimization index:
   - `(push_id, event_type, device_id, created_at)` to accelerate "latest status per device" lookups used by push status hydration.
   - `(push_id, event_type, device_id, reported_at, created_at)` to support deterministic "latest per device" ranking (`reported_at DESC, created_at DESC`) without duplicate rows.
+
+## Delivery Modes (v1 / v2)
+
+| Mode | How binary is delivered | Gateway progress | Chunk ACKs |
+|------|-------------------------|------------------|------------|
+| **v1** (default) | Cloud downloads binary and pushes `FIRMWARE_CHUNK` over WebSocket with ACK flow control | Cloud derives % from chunks; optional `FIRMWARE_PROGRESS` | Required |
+| **v2** | Cloud issues a **GCS V4 signed read URL** in the manifest; gateway HTTPS GETs the package | Gateway must send `FIRMWARE_PROGRESS` with `progress_percent` | Not used |
+
+**Gateway implementers (v2 device contract):** [Gateway Firmware OTA v2 — firmware developer guide](./gateway-firmware-ota-v2-developer-guide.md)
+
+- Select mode from the **Firmware** tab or **Swap / Recovery** tab (Delivery: v1 | v2), or via API body.
+- **v2 requires GCS firmware storage.** Local/gdrive storage returns `400` with a clear error — no silent fallback.
+- Signed download URL TTL is **60 minutes**; v2 manifest JWT `exp` is aligned to the same window.
+- GCS signing needs a credential that can sign (service-account key or `iam.serviceAccounts.signBlob`).
+- Completion is still gated on `FIRMWARE_UPDATE_STATUS` + `push_id` for both modes.
+- On reconnect while v2 is `transferring`, cloud re-issues a fresh signed URL and re-sends the manifest (does not resume chunks).
+- Terminal status updates are atomic and **rejected** if the push is already `complete` / `failed` / `cancelled` (prevents late v2 success after cancel).
+- Transfer disconnect grace only fails pushes still in `pending`/`transferring` (cannot fail a push that already reached `verifying`).
+- v2 transfer wait uses `FIRMWARE_V2_TRANSFER_TIMEOUT_SEC` (default **3600s**, aligned with URL TTL) and is **extended** on each `FIRMWARE_PROGRESS` while transferring.
+- UI loads `GET /firmware/delivery-capabilities` and disables v2 when storage cannot issue signed downloads (non-GCS). Runtime IAM `signBlob` failures still surface as a clear push error.
 
 ## WebSocket Message Protocol
 
@@ -132,26 +153,30 @@ JWT payload fields:
 | Field              | Type   | Description                                |
 |--------------------|--------|--------------------------------------------|
 | `cmd_type`         | string | Always `FIRMWARE_MANIFEST`                 |
+| `delivery_mode`    | string | `v1` (chunked) or `v2` (GCS download URL); default/omit treated as v1 |
 | `push_id`          | string | **Cloud push record UUID** — required on all later `FIRMWARE_UPDATE_STATUS` / `FIRMWARE_PROGRESS` messages |
 | `target_type`      | string | `gateway`, `lock`, `friend_node`, or `access_control` |
 | `version`          | string | Firmware version                           |
 | `sha256`           | string | SHA-256 hex hash of the full binary        |
 | `size`             | number | Binary size in bytes                       |
-| `chunk_count`      | number | Total number of chunks                     |
-| `chunk_size`       | number | Chunk size in bytes (~2.25 MB; 80% of 5 MB WS budget) |
-| `nonce`            | string | UUID for chunk ACK correlation only (`FIRMWARE_CHUNK_ACK`) — **not** a substitute for `push_id` |
+| `chunk_count`      | number | Total chunks (v1); **`0` for v2**          |
+| `chunk_size`       | number | Chunk size in bytes (v1 only)              |
+| `nonce`            | string | UUID for chunk ACK correlation (v1 only)   |
+| `download_url`     | string | **v2 only** — short-lived GCS signed HTTPS GET URL |
 | `filename`         | string | Original firmware filename (optional)    |
 | `compatible_models`| array  | Compatible device models (optional)        |
 | `iss`              | string | `BluCloud:Root`                            |
 | `iat`              | number | Issued at (Unix timestamp)                 |
-| `exp`              | number | Expiration (Unix timestamp, default iat+1800) |
+| `exp`              | number | Expiration (Unix timestamp; v1 default iat+1800, v2 aligned to URL TTL) |
 
 **Correlation IDs:** The manifest JWT carries two different UUIDs. Gateways must keep both but use each only where documented:
 
 | Field | Use on gateway → cloud messages |
 |-------|----------------------------------|
-| `nonce` | `FIRMWARE_CHUNK_ACK` only |
+| `nonce` | `FIRMWARE_CHUNK_ACK` only (v1) |
 | `push_id` | `FIRMWARE_UPDATE_STATUS`, `FIRMWARE_PROGRESS` |
+
+**v2 gateway behavior:** When `delivery_mode` is `v2` (or `download_url` is present), HTTPS GET the URL, verify SHA-256/`size`, emit `FIRMWARE_PROGRESS` during download, then continue with the normal `FIRMWARE_UPDATE_STATUS` lifecycle. Do not expect `FIRMWARE_CHUNK` messages. Full device checklist: [Gateway Firmware OTA v2 developer guide](./gateway-firmware-ota-v2-developer-guide.md).
 
 ### 2. FIRMWARE_CHUNK
 
@@ -380,7 +405,8 @@ Tunables (optional env):
 ## Gateway Disconnect Handling
 
 - When a gateway WebSocket disconnects, the transport layer notifies `FirmwareService.handleFacilityDisconnect(facilityId)`.
-- **`pending` / `transferring` pushes** (still in `activePushes`) are **paused**, not failed. In-flight chunk ACK waits are unblocked so `executePush` can unwind quickly. A **transfer reconnect grace timeout** is armed (default **10s** in development/test, **180s** in production via `FIRMWARE_TRANSFER_DISCONNECT_GRACE_SEC` or `FIRMWARE_VERIFY_DISCONNECT_GRACE_SEC`). If the gateway reconnects and re-`AUTH`s before grace expires, `resumePendingForFacility` calls `executePush`, which **resumes from `chunks_sent`** (re-sends manifest with a new `nonce`, then remaining chunks only).
+- **`pending` / `transferring` pushes** (still in `activePushes`) are **paused**, not failed. In-flight chunk ACK waits are unblocked so `executePush` can unwind quickly. A **transfer reconnect grace timeout** is armed (default **180s** via `FIRMWARE_TRANSFER_DISCONNECT_GRACE_SEC` or `FIRMWARE_VERIFY_DISCONNECT_GRACE_SEC`). If the gateway reconnects and re-`AUTH`s before grace expires, `resumePendingForFacility` calls `executePush`, which **resumes from `chunks_sent`** (re-sends manifest with a new `nonce`, then remaining chunks only).
+- Mid-transfer **must not** hard-fail on “gateway offline” or on disconnect-rejected chunk ACKs — those paths pause + arm grace so AUTH resume can continue. Hard-fail only after grace expires without reconnect, or after true ACK timeouts while still connected.
 - **`verifying` pushes** (chunks already delivered; gateway may be rebooting) are **not** failed immediately. Instead a shorter grace timeout is armed (same default **180s**). On reconnect (`resumePendingForFacility`), the full verify timeout is re-armed and the cloud sends **`FIRMWARE_PUSH_RESUME`** listing verifying pushes so the gateway can resend terminal `FIRMWARE_UPDATE_STATUS`.
 - If the gateway does not reconnect within the grace window, the transfer or verify push is failed with a reconnect-timeout message.
 - This avoids pushes failing when Cloud Run / GLB recycles the WebSocket mid-transfer or mid-verify.
@@ -431,7 +457,7 @@ Migration `046_seed_default_storage_config.ts` seeds the default local provider 
 | GET    | `/firmware?target_type=lock`            | List firmware catalog (filterable)         |
 | GET    | `/firmware/:id`                         | Get firmware by ID                         |
 | DELETE | `/firmware/:id`                         | Soft-delete firmware + remove binary       |
-| POST   | `/firmware/:id/push/:gatewayId`         | Initiate push (target_type from firmware)  |
+| POST   | `/firmware/:id/push/:gatewayId`         | Initiate push (body optional `{ delivery_mode?: "v1"\|"v2" }`) |
 | GET    | `/firmware/push-status/:gwId?target_type=` | Current push status (filterable)       |
 | GET    | `/firmware/push-history/:gwId?target_type=&limit=&offset=` | Push history (paginated) |
 | POST   | `/firmware/push/:pushId/cancel`         | Cancel an active push (atomic)             |

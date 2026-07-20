@@ -41,6 +41,7 @@ import {
   firmwareGatewayIdParamSchema,
   firmwarePushIdParamSchema,
   firmwarePushGatewayParamSchema,
+  firmwarePushBodySchema,
   firmwareResponseSchema,
 } from '@/schemas/firmware.schemas';
 
@@ -336,6 +337,30 @@ registerGet(
 );
 
 // ============================================================================
+// Delivery mode capabilities (BEFORE /:id)
+// ============================================================================
+
+registerGet(
+  router,
+  '/delivery-capabilities',
+  {
+    openApiPath: `${MOUNT}/delivery-capabilities`,
+    tags: ['Firmware'],
+    summary: 'Firmware OTA delivery mode capabilities (v1/v2)',
+    security: 'bearer',
+    responses: {
+      200: firmwareResponseSchema,
+    },
+  },
+  authenticateToken,
+  requireAdminOrFacilityAdmin,
+  asyncHandler(async (_req: AuthenticatedRequest, res: Response): Promise<void> => {
+    const caps = await FirmwareService.getDeliveryCapabilities();
+    res.json({ success: true, data: caps });
+  }),
+);
+
+// ============================================================================
 // Get push status for a gateway (BEFORE /:id to avoid route conflict)
 // ============================================================================
 
@@ -589,6 +614,7 @@ registerPost(
     summary: 'Initiate firmware push to gateway',
     security: 'bearer',
     params: firmwarePushGatewayParamSchema,
+    body: firmwarePushBodySchema,
     responses: {
       200: firmwareResponseSchema,
     },
@@ -608,11 +634,20 @@ registerPost(
         gatewayId,
         facilityId,
         req.user!.userId,
+        { deliveryMode: req.body?.delivery_mode },
       );
-      logger.info(`Firmware push initiated pushId=${push.id} firmware=${firmwareId} gateway=${gatewayId}`);
+      logger.info(`Firmware push initiated pushId=${push.id} firmware=${firmwareId} gateway=${gatewayId} delivery=${push.delivery_mode}`);
       res.json({ success: true, data: push });
     } catch (err: any) {
-      if (err.message?.includes('not found') || err.message?.includes('inactive') || err.message?.includes('already has') || err.message?.includes('offline')) {
+      if (
+        err.message?.includes('not found')
+        || err.message?.includes('inactive')
+        || err.message?.includes('already has')
+        || err.message?.includes('offline')
+        || err.message?.includes('delivery mode')
+        || err.message?.includes('delivery_mode')
+        || err.message?.includes('GCS storage')
+      ) {
         res.status(400).json({ success: false, message: err.message });
         return;
       }

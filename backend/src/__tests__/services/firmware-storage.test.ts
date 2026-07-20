@@ -22,6 +22,13 @@ describe('Firmware Storage Factory', () => {
       expect(typeof provider.upload).toBe('function');
       expect(typeof provider.download).toBe('function');
       expect(typeof provider.remove).toBe('function');
+      expect(typeof provider.supportsSignedDownload).toBe('function');
+      expect(typeof provider.createSignedDownloadUrl).toBe('function');
+    });
+
+    it('GCS fallback supports signed download', () => {
+      const provider = getFirmwareStorageProviderSync();
+      expect(provider.supportsSignedDownload()).toBe(true);
     });
 
     it('should return cached instance on subsequent calls', () => {

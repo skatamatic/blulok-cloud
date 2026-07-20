@@ -36,6 +36,8 @@ export interface FirmwareSignedUploadSession {
 export interface FirmwareStorageProvider {
   initialize(): Promise<void>;
   supportsSignedUpload(): boolean;
+  /** v2 OTA: short-lived GCS read URL for gateway download */
+  supportsSignedDownload(): boolean;
   buildStoragePath(firmwareId: string, filename: string): string;
   createSignedUploadSession(
     firmwareId: string,
@@ -43,6 +45,7 @@ export interface FirmwareStorageProvider {
     sizeBytes: number,
     clientOrigin?: string,
   ): Promise<FirmwareSignedUploadSession>;
+  createSignedDownloadUrl(storagePath: string, expiresInSeconds: number): Promise<string>;
   fileExists(storagePath: string): Promise<boolean>;
   getStoredFileSize(storagePath: string): Promise<number>;
   hashStoredFile(storagePath: string): Promise<string>;
@@ -64,6 +67,10 @@ class FirmwareStorageAdapter implements FirmwareStorageProvider {
   }
 
   supportsSignedUpload(): boolean {
+    return this.base.type === StorageProviderType.GCS;
+  }
+
+  supportsSignedDownload(): boolean {
     return this.base.type === StorageProviderType.GCS;
   }
 
@@ -97,6 +104,15 @@ class FirmwareStorageAdapter implements FirmwareStorageProvider {
       upload_headers: session.headers,
       expires_in_seconds: 3600,
     };
+  }
+
+  async createSignedDownloadUrl(storagePath: string, expiresInSeconds: number): Promise<string> {
+    if (!this.supportsSignedDownload()) {
+      throw new Error('Signed download is not supported for this storage provider');
+    }
+    this.assertValidFirmwarePath(storagePath);
+    const gcs = this.base as import('@/services/storage/gcs-base.provider').GCSBaseStorage;
+    return gcs.createSignedDownloadUrl(storagePath, expiresInSeconds);
   }
 
   async fileExists(storagePath: string): Promise<boolean> {

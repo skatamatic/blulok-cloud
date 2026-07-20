@@ -2,6 +2,9 @@ export type FirmwareTargetType = 'gateway' | 'lock' | 'friend_node' | 'access_co
 
 export type FirmwarePushStatus = 'pending' | 'transferring' | 'verifying' | 'complete' | 'failed' | 'cancelled';
 
+/** v1 = WebSocket chunking; v2 = GCS signed download URL */
+export type FirmwareDeliveryMode = 'v1' | 'v2';
+
 export interface FirmwareImage {
   id: string;
   version: string;
@@ -22,6 +25,7 @@ export interface FirmwarePush {
   gateway_id: string;
   facility_id: string;
   target_type: FirmwareTargetType;
+  delivery_mode?: FirmwareDeliveryMode;
   status: FirmwarePushStatus;
   chunks_total: number | null;
   chunks_sent: number;

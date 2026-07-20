@@ -62,4 +62,8 @@ export const firmwarePushGatewayParamSchema = Joi.object({
   gatewayId: routeIdField(),
 });
 
+export const firmwarePushBodySchema = Joi.object({
+  delivery_mode: Joi.string().valid('v1', 'v2').optional(),
+});
+
 export const firmwareResponseSchema = successEnvelopeSchema.unknown(true);

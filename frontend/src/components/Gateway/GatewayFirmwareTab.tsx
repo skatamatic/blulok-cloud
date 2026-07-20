@@ -23,6 +23,7 @@ import {
   FirmwarePushProgress,
   FirmwarePushEvent,
   FirmwareDeviceStatus,
+  FirmwareDeliveryMode,
   TARGET_TYPE_LABELS,
   TARGET_TYPE_COLORS,
   TERMINAL_STATUSES,
@@ -92,6 +93,9 @@ export default function GatewayFirmwareTab({
   const [actionNotice, setActionNotice] = useState<InlineNotice>(null);
 
   const [selectedTargetType, setSelectedTargetType] = useState<FirmwareTargetType>('gateway');
+  const [deliveryMode, setDeliveryMode] = useState<FirmwareDeliveryMode>('v1');
+  const [v2Available, setV2Available] = useState(true);
+  const [v2UnavailableReason, setV2UnavailableReason] = useState<string | null>(null);
   const [firmware, setFirmware] = useState<FirmwareImage[]>([]);
   const [activePush, setActivePush] = useState<FirmwarePushWithEvents | null>(null);
   const [pushHistory, setPushHistory] = useState<FirmwarePush[]>([]);
@@ -113,13 +117,23 @@ export default function GatewayFirmwareTab({
         setLoading(true);
         setLoadError(null);
       }
-      const [fwRes, pushStatusRes, pushHistoryRes] = await Promise.all([
+      const [fwRes, pushStatusRes, pushHistoryRes, capsRes] = await Promise.all([
         apiService.listFirmware(selectedTargetType),
         // Keep initial load lightweight; live progress arrives via websocket updates.
         apiService.getFirmwarePushStatus(gatewayId, selectedTargetType, false),
         apiService.getFirmwarePushHistory(gatewayId, selectedTargetType, HISTORY_PAGE_SIZE),
+        apiService.getFirmwareDeliveryCapabilities().catch(() => null),
       ]);
       setFirmware(fwRes.data || []);
+
+      if (capsRes?.data) {
+        const available = capsRes.data.v2_available !== false;
+        setV2Available(available);
+        setV2UnavailableReason(available ? null : (capsRes.data.v2_unavailable_reason || 'v2 requires GCS storage'));
+        if (!available) {
+          setDeliveryMode((prev) => (prev === 'v2' ? 'v1' : prev));
+        }
+      }
 
       const pushData = pushStatusRes.data as FirmwarePushWithEvents | null;
       setActivePush(pushData || null);
@@ -266,7 +280,7 @@ export default function GatewayFirmwareTab({
     setActionNotice(null);
     try {
       setPushing(true);
-      const res = await apiService.pushFirmware(firmwareId, gatewayId);
+      const res = await apiService.pushFirmware(firmwareId, gatewayId, { deliveryMode });
       setActivePush(res.data);
       trackedPushIdRef.current = res.data.id;
       setLiveProgress({
@@ -283,7 +297,7 @@ export default function GatewayFirmwareTab({
       setLiveDevices([]);
       setLiveEvents([]);
       setLiveError(null);
-      setActionNotice({ tone: 'info', message: 'Firmware push started — progress will update below.' });
+      setActionNotice({ tone: 'info', message: 'Firmware push started.' });
       window.setTimeout(() => {
         void loadData({ silent: true });
       }, 1500);
@@ -301,7 +315,7 @@ export default function GatewayFirmwareTab({
     setActionNotice(null);
     try {
       await apiService.cancelFirmwarePush(activePush.id);
-      setActionNotice({ tone: 'info', message: 'Push cancellation requested — waiting for gateway acknowledgement.' });
+      setActionNotice({ tone: 'info', message: 'Cancellation requested. Waiting for gateway acknowledgement.' });
     } catch (err: unknown) {
       const message = (err as { response?: { data?: { message?: string } } })?.response?.data?.message
         || 'Failed to cancel push';
@@ -440,6 +454,49 @@ export default function GatewayFirmwareTab({
         ))}
       </div>
 
+      {/* Delivery mode */}
+      <div className="flex flex-col gap-1.5">
+        <div className="flex items-center gap-3">
+          <span className="text-xs font-semibold text-secondary-500 dark:text-secondary-400 uppercase tracking-wide">
+            Delivery
+          </span>
+          <div className="flex rounded-lg border border-secondary-200 dark:border-secondary-700 overflow-hidden" role="group" aria-label="Firmware delivery mode">
+            {([
+              { mode: 'v1' as const, label: 'v1', hint: 'WebSocket chunks' },
+              { mode: 'v2' as const, label: 'v2', hint: 'GCS download' },
+            ]).map(({ mode, label, hint }) => {
+              const disabled = mode === 'v2' && !v2Available;
+              return (
+                <button
+                  key={mode}
+                  type="button"
+                  onClick={() => !disabled && setDeliveryMode(mode)}
+                  disabled={disabled}
+                  title={disabled ? (v2UnavailableReason || hint) : hint}
+                  className={`px-4 py-1.5 text-sm font-medium transition-colors ${
+                    deliveryMode === mode
+                      ? 'bg-[#147FD4] text-white'
+                      : disabled
+                        ? 'bg-secondary-50 dark:bg-secondary-900 text-secondary-400 dark:text-secondary-600 cursor-not-allowed'
+                        : 'bg-white dark:bg-secondary-900 text-secondary-600 dark:text-secondary-300 hover:bg-secondary-50 dark:hover:bg-secondary-800'
+                  }`}
+                >
+                  {label}
+                </button>
+              );
+            })}
+          </div>
+          <span className="text-xs text-secondary-400 dark:text-secondary-500">
+            {deliveryMode === 'v1' ? 'Chunked over WebSocket' : 'Signed GCS download URL'}
+          </span>
+        </div>
+        {!v2Available && v2UnavailableReason && (
+          <p className="text-xs text-amber-700 dark:text-amber-300">
+            {v2UnavailableReason}
+          </p>
+        )}
+      </div>
+
       {/* Current Firmware Info */}
       <div className="rounded-xl border border-secondary-200 dark:border-secondary-700 bg-white dark:bg-secondary-900 p-5">
         <h3 className="text-xs font-semibold text-secondary-500 dark:text-secondary-400 uppercase tracking-wide mb-3">
@@ -459,7 +516,7 @@ export default function GatewayFirmwareTab({
         ) : (
           <p className="text-sm text-secondary-500 dark:text-secondary-400">
             {TARGET_TYPE_LABELS[selectedTargetType]} firmware version is reported by the gateway after deployment.
-            Push a firmware update below to get started.
+            Push a firmware update below.
           </p>
         )}
       </div>
@@ -507,6 +564,11 @@ export default function GatewayFirmwareTab({
                   {activePush?.target_type && (
                     <span className={`text-xs font-medium ${TARGET_TYPE_COLORS[activePush.target_type]}`}>
                       {TARGET_TYPE_LABELS[activePush.target_type]}
+                    </span>
+                  )}
+                  {activePush?.delivery_mode && (
+                    <span className="text-xs px-1.5 py-0.5 rounded bg-secondary-100 dark:bg-secondary-800 text-secondary-600 dark:text-secondary-300 font-medium">
+                      {activePush.delivery_mode}
                     </span>
                   )}
                 </div>
@@ -621,7 +683,7 @@ export default function GatewayFirmwareTab({
                     || 'Preparing...'}
                 </span>
                 <div className="flex items-center gap-3 text-xs text-gray-500 dark:text-gray-400">
-                  {liveProgress?.chunksTotal != null && (
+                  {liveProgress?.chunksTotal != null && liveProgress.chunksTotal > 0 && (
                     <span>{liveProgress.chunksSent || 0}/{liveProgress.chunksTotal} chunks</span>
                   )}
                   <span className="font-semibold text-sm text-blue-600 dark:text-blue-400">{effectivePercent}%</span>
@@ -645,7 +707,7 @@ export default function GatewayFirmwareTab({
 
               {isAwaitingGatewayConfirmation && (
                 <p className="text-xs text-indigo-600 dark:text-indigo-300 mt-2">
-                  Transfer complete — waiting for the gateway to confirm installation. This can take a few minutes if the device is rebooting.
+                  Transfer complete. Waiting for the gateway to confirm installation (may take a few minutes if it reboots).
                 </p>
               )}
 
@@ -865,6 +927,11 @@ export default function GatewayFirmwareTab({
                       }`}>
                         {p.status}
                       </span>
+                      {p.delivery_mode && (
+                        <span className="text-xs px-1.5 py-0.5 rounded bg-secondary-100 dark:bg-secondary-800 text-secondary-500 dark:text-secondary-400 font-medium">
+                          {p.delivery_mode}
+                        </span>
+                      )}
                     </div>
                     <div className="flex items-center gap-2 mt-0.5">
                       {p.progress_percent > 0 && (
@@ -878,7 +945,7 @@ export default function GatewayFirmwareTab({
                           {p.devices_complete}/{p.devices_total} devices
                         </span>
                       )}
-                      {p.chunks_total ? (
+                      {p.chunks_total != null && p.chunks_total > 0 ? (
                         <span className="text-xs text-gray-500 dark:text-gray-400">
                           {p.chunks_sent}/{p.chunks_total} chunks
                         </span>

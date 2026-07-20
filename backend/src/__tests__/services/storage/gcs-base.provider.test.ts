@@ -20,6 +20,9 @@ jest.mock('@google-cloud/storage', () => {
     createResumableUpload: jest.fn().mockResolvedValue([
       'https://storage.googleapis.com/upload/storage/v1/b/test-bucket/o?uploadType=resumable&upload_id=abc',
     ]),
+    getSignedUrl: jest.fn().mockResolvedValue([
+      'https://storage.googleapis.com/test-bucket/firmware/abc/v1.bin?X-Goog-Signature=signed',
+    ]),
   };
   const mockBucket = {
     exists: jest.fn().mockResolvedValue([true]),
@@ -378,6 +381,37 @@ describe('GCSBaseStorage', () => {
 
       await expect(
         storage.createResumableUploadSession('firmware/abc/v1.bin', {}),
+      ).rejects.toMatchObject({ code: StorageErrorCode.PERMISSION_DENIED });
+    });
+  });
+
+  describe('createSignedDownloadUrl', () => {
+    beforeEach(() => {
+      storage = new GCSBaseStorage(baseConfig);
+      mockFile.getSignedUrl.mockResolvedValue([
+        'https://storage.googleapis.com/test-bucket/firmware/abc/v1.bin?X-Goog-Signature=signed',
+      ]);
+    });
+
+    it('returns a V4 signed read URL', async () => {
+      const url = await storage.createSignedDownloadUrl('firmware/abc/v1.bin', 3600);
+      expect(url).toContain('storage.googleapis.com');
+      expect(mockFile.getSignedUrl).toHaveBeenCalledWith(
+        expect.objectContaining({ action: 'read' }),
+      );
+    });
+
+    it('throws NOT_FOUND when object is missing', async () => {
+      mockFile.exists.mockResolvedValue([false]);
+      await expect(
+        storage.createSignedDownloadUrl('firmware/missing.bin', 3600),
+      ).rejects.toMatchObject({ code: StorageErrorCode.NOT_FOUND });
+    });
+
+    it('throws PERMISSION_DENIED when signing fails', async () => {
+      mockFile.getSignedUrl.mockRejectedValue(new Error('signBlob denied'));
+      await expect(
+        storage.createSignedDownloadUrl('firmware/abc/v1.bin', 3600),
       ).rejects.toMatchObject({ code: StorageErrorCode.PERMISSION_DENIED });
     });
   });

@@ -44,6 +44,8 @@ const mockPushModel = {
   updateChunksTotal: jest.fn().mockResolvedValue(undefined),
   atomicCancel: jest.fn().mockResolvedValue(true),
   atomicFailIfActive: jest.fn().mockResolvedValue(true),
+  atomicFailIfTransferring: jest.fn().mockResolvedValue(true),
+  atomicCompleteIfActive: jest.fn().mockResolvedValue(true),
   atomicTransitionToVerifying: jest.fn().mockResolvedValue(true),
   updateProgressPercent: jest.fn().mockResolvedValue(undefined),
   updateDeviceCounts: jest.fn().mockResolvedValue(undefined),
@@ -66,6 +68,9 @@ const mockStorageProvider = {
   upload: jest.fn().mockResolvedValue('/storage/firmware/test/test.bin'),
   download: jest.fn(),
   remove: jest.fn().mockResolvedValue(undefined),
+  supportsSignedDownload: jest.fn().mockReturnValue(false),
+  hashStoredFile: jest.fn(),
+  createSignedDownloadUrl: jest.fn(),
 };
 
 const mockUnicast = jest.fn();
@@ -224,7 +229,29 @@ describe('FirmwareService', () => {
         firmware_id: 'fw-1',
         gateway_id: 'gw-1',
         target_type: 'gateway',
+        delivery_mode: 'v1',
       }));
+    });
+
+    it('persists delivery_mode v2 when requested and GCS is available', async () => {
+      mockStorageProvider.supportsSignedDownload.mockReturnValue(true);
+      await FirmwareService.initiatePush('fw-1', 'gw-1', 'fac-1', 'u1', { deliveryMode: 'v2' });
+      expect(mockPushModel.createIfNoActiveByGatewayTarget).toHaveBeenCalledWith(expect.objectContaining({
+        delivery_mode: 'v2',
+      }));
+    });
+
+    it('rejects v2 when storage does not support signed download', async () => {
+      mockStorageProvider.supportsSignedDownload.mockReturnValue(false);
+      await expect(
+        FirmwareService.initiatePush('fw-1', 'gw-1', 'fac-1', 'u1', { deliveryMode: 'v2' }),
+      ).rejects.toThrow('GCS storage');
+    });
+
+    it('rejects invalid delivery_mode', async () => {
+      await expect(
+        FirmwareService.initiatePush('fw-1', 'gw-1', 'fac-1', 'u1', { deliveryMode: 'v9' }),
+      ).rejects.toThrow('Invalid delivery_mode');
     });
 
     it('rejects missing firmware', async () => {
@@ -396,6 +423,7 @@ describe('FirmwareService', () => {
       await FirmwareService.executePush('push-1');
       const payload = (Ed25519Service.signCommandJwt as jest.Mock).mock.calls[0][0];
       expect(payload.cmd_type).toBe('FIRMWARE_MANIFEST');
+      expect(payload.delivery_mode).toBe('v1');
       expect(payload.version).toBe('2.0.0');
       expect(payload.target_type).toBe('gateway');
       expect(payload.filename).toBe('fw-2.0.0.bin');
@@ -403,6 +431,7 @@ describe('FirmwareService', () => {
       expect(payload.chunk_count).toBe(3);
       expect(payload.push_id).toBe('push-1');
       expect(payload.nonce).toBeDefined();
+      expect(payload.download_url).toBeUndefined();
     });
 
     it('sends manifest then N chunks over WS', async () => {
@@ -499,6 +528,238 @@ describe('FirmwareService', () => {
       expect(mockPushModel.updateProgress).toHaveBeenCalledWith('push-1', 3);
       expect(mockPushModel.updateStatus).not.toHaveBeenCalledWith('push-1', 'transferring');
     });
+
+    it('pauses instead of failing when gateway drops offline mid-transfer', async () => {
+      let connected = true;
+      (GatewayEventsService.getInstance as jest.Mock).mockReturnValue({
+        unicastToFacility: mockUnicast,
+        getFacilityConnectionStatus: jest.fn(() => ({ connected })),
+      });
+      mockUnicast.mockImplementation((_fac: string, msg: { type?: string }) => {
+        if (msg?.type === 'FIRMWARE_MANIFEST') {
+          connected = false;
+        }
+      });
+      const graceSpy = jest.spyOn(FirmwareService as any, 'scheduleTransferDisconnectGrace').mockImplementation(() => {});
+
+      await FirmwareService.executePush('push-1');
+
+      expect(mockPushModel.updateStatus).not.toHaveBeenCalledWith(
+        'push-1',
+        'failed',
+        expect.stringMatching(/offline/i),
+      );
+      expect(graceSpy).toHaveBeenCalledWith('push-1');
+      graceSpy.mockRestore();
+    });
+
+    it('pauses an in-flight resume when gateway is offline at executePush start', async () => {
+      (GatewayEventsService.getInstance as jest.Mock).mockReturnValue({
+        unicastToFacility: mockUnicast,
+        getFacilityConnectionStatus: jest.fn().mockReturnValue({ connected: false }),
+      });
+      mockPushModel.findById.mockResolvedValue({
+        ...mockPush,
+        status: 'transferring',
+        chunks_total: 3,
+        chunks_sent: 1,
+      });
+      const graceSpy = jest.spyOn(FirmwareService as any, 'scheduleTransferDisconnectGrace').mockImplementation(() => {});
+
+      await FirmwareService.executePush('push-1');
+
+      expect(mockPushModel.updateStatus).not.toHaveBeenCalledWith(
+        'push-1',
+        'failed',
+        expect.stringMatching(/offline/i),
+      );
+      expect(graceSpy).toHaveBeenCalled();
+      expect(mockUnicast).not.toHaveBeenCalled();
+      graceSpy.mockRestore();
+    });
+
+    it('does not mark failed when disconnect rejects ACK waiters', async () => {
+      ackSpy.mockImplementation(async (_pushId: string, _chunkIndex: number, pushState: { cancel: boolean }) => {
+        pushState.cancel = true;
+        throw new Error('Gateway disconnected during firmware push');
+      });
+
+      await FirmwareService.executePush('push-1');
+
+      expect(mockPushModel.updateStatus).not.toHaveBeenCalledWith(
+        'push-1',
+        'failed',
+        expect.stringContaining('ACK failed'),
+      );
+    });
+  });
+
+  // =========================================================================
+  // executePush v2 — GCS signed URL delivery
+  // =========================================================================
+  describe('executePush v2', () => {
+    const binSize = 1024;
+    const mockBinary = Buffer.alloc(binSize, 0xCD);
+    const mockBinarySha256 = crypto.createHash('sha256').update(mockBinary).digest('hex');
+    const mockPush = {
+      id: 'push-v2',
+      firmware_id: 'fw-1',
+      gateway_id: 'gw-1',
+      facility_id: 'fac-1',
+      target_type: 'gateway' as const,
+      delivery_mode: 'v2' as const,
+      status: 'pending' as const,
+      progress_percent: 0,
+    };
+    const mockFirmware = {
+      id: 'fw-1',
+      version: '3.0.0',
+      target_type: 'gateway' as const,
+      filename: 'fw-3.0.0.bin',
+      sha256_hash: mockBinarySha256,
+      size_bytes: binSize,
+      storage_path: 'firmware/fw-1/fw-3.0.0.bin',
+      compatible_models: [],
+    };
+
+    let broadcastSpy: jest.SpyInstance;
+
+    beforeEach(() => {
+      mockFirmwareModel.findById.mockResolvedValue(mockFirmware);
+      mockStorageProvider.supportsSignedDownload.mockReturnValue(true);
+      mockStorageProvider.hashStoredFile.mockResolvedValue(mockBinarySha256);
+      mockStorageProvider.createSignedDownloadUrl.mockResolvedValue(
+        'https://storage.googleapis.com/bucket/firmware/fw-1/fw-3.0.0.bin?X-Goog-Signature=abc',
+      );
+      broadcastSpy = jest.spyOn(FirmwareService as any, 'broadcastProgress').mockImplementation(() => {});
+
+      let pollCount = 0;
+      mockPushModel.findById.mockImplementation(async () => {
+        pollCount += 1;
+        // Initial lookup + a few wait polls stay transferring; then verifying so wait exits
+        const status = pollCount > 3 ? 'verifying' : 'transferring';
+        return { ...mockPush, status: pollCount === 1 ? 'pending' : status };
+      });
+    });
+
+    afterEach(() => {
+      broadcastSpy.mockRestore();
+    });
+
+    it('sends v2 manifest with download_url and no chunks', async () => {
+      await FirmwareService.executePush('push-v2');
+
+      expect(mockStorageProvider.download).not.toHaveBeenCalled();
+      expect(mockStorageProvider.hashStoredFile).toHaveBeenCalledWith('firmware/fw-1/fw-3.0.0.bin');
+      expect(mockStorageProvider.createSignedDownloadUrl).toHaveBeenCalledWith(
+        'firmware/fw-1/fw-3.0.0.bin',
+        3600,
+      );
+      expect(mockPushModel.updateChunksTotal).toHaveBeenCalledWith('push-v2', 0);
+
+      const payload = (Ed25519Service.signCommandJwt as jest.Mock).mock.calls[0][0];
+      expect(payload.cmd_type).toBe('FIRMWARE_MANIFEST');
+      expect(payload.delivery_mode).toBe('v2');
+      expect(payload.download_url).toContain('storage.googleapis.com');
+      expect(payload.chunk_count).toBe(0);
+      expect(payload.nonce).toBeUndefined();
+      expect(payload.chunk_size).toBeUndefined();
+
+      expect(mockUnicast).toHaveBeenCalledTimes(1);
+      expect(mockUnicast.mock.calls[0][1].type).toBe('FIRMWARE_MANIFEST');
+      expect(Ed25519Service.signCommandJwt as jest.Mock).toHaveBeenCalledTimes(1);
+    });
+
+    it('fails when signed download is unsupported mid-push', async () => {
+      mockStorageProvider.supportsSignedDownload.mockReturnValue(false);
+      await FirmwareService.executePush('push-v2');
+      expect(mockPushModel.updateStatus).toHaveBeenCalledWith(
+        'push-v2',
+        'failed',
+        expect.stringContaining('GCS storage'),
+      );
+      expect(mockUnicast).not.toHaveBeenCalled();
+    });
+
+    it('fails on hash mismatch without issuing URL', async () => {
+      mockStorageProvider.hashStoredFile.mockResolvedValue('deadbeef');
+      await FirmwareService.executePush('push-v2');
+      expect(mockPushModel.updateStatus).toHaveBeenCalledWith(
+        'push-v2',
+        'failed',
+        expect.stringContaining('SHA-256 mismatch'),
+      );
+      expect(mockStorageProvider.createSignedDownloadUrl).not.toHaveBeenCalled();
+    });
+
+    it('ignores chunk ACKs for v2 pushes (empty nonce)', async () => {
+      _testActivePushes.set('push-v2-active', {
+        cancel: false,
+        nonce: '',
+        facilityId: 'fac-1',
+        chunkAckResolvers: new Map(),
+      });
+      await FirmwareService.handleChunkAck('fac-1', {
+        nonce: 'some-nonce',
+        chunkIndex: 0,
+        status: 'ok',
+      });
+      // Should not throw; v2 empty-nonce push is not matched
+      _testActivePushes.delete('push-v2-active');
+    });
+
+    it('re-sends download manifest when resuming transferring v2 push', async () => {
+      mockPushModel.findById.mockImplementation(async () => ({
+        ...mockPush,
+        status: 'transferring',
+        progress_percent: 40,
+      }));
+      // Exit wait quickly via cancel after first poll by simulating verifying on 2nd+ find
+      let n = 0;
+      mockPushModel.findById.mockImplementation(async () => {
+        n += 1;
+        return {
+          ...mockPush,
+          status: n > 2 ? 'verifying' : 'transferring',
+          progress_percent: 40,
+        };
+      });
+
+      await FirmwareService.executePush('push-v2');
+
+      const payload = (Ed25519Service.signCommandJwt as jest.Mock).mock.calls[0][0];
+      expect(payload.delivery_mode).toBe('v2');
+      expect(payload.download_url).toBeDefined();
+      expect(mockUnicast).toHaveBeenCalledTimes(1);
+    });
+
+    it('fails when signed download URL creation fails with IAM hint', async () => {
+      mockStorageProvider.createSignedDownloadUrl.mockRejectedValue(
+        new Error('Permission denied on iam.serviceAccounts.signBlob'),
+      );
+      mockPushModel.findById.mockImplementation(async () => ({ ...mockPush, status: 'pending' }));
+      await FirmwareService.executePush('push-v2');
+      expect(mockPushModel.updateStatus).toHaveBeenCalledWith(
+        'push-v2',
+        'failed',
+        expect.stringContaining('IAM signing'),
+      );
+    });
+  });
+
+  describe('getDeliveryCapabilities', () => {
+    it('reports v2 available when storage supports signed download', async () => {
+      mockStorageProvider.supportsSignedDownload.mockReturnValue(true);
+      const caps = await FirmwareService.getDeliveryCapabilities();
+      expect(caps).toEqual({ v1_available: true, v2_available: true });
+    });
+
+    it('reports v2 unavailable with reason when storage cannot sign', async () => {
+      mockStorageProvider.supportsSignedDownload.mockReturnValue(false);
+      const caps = await FirmwareService.getDeliveryCapabilities();
+      expect(caps.v2_available).toBe(false);
+      expect(caps.v2_unavailable_reason).toMatch(/GCS/);
+    });
   });
 
   // =========================================================================
@@ -581,7 +842,7 @@ describe('FirmwareService', () => {
     it('updates push to complete when gateway reports success', async () => {
       mockPushModel.findById.mockResolvedValue(mkVerifyingPush());
       await FirmwareService.handleUpdateStatus('fac-1', { push_id: 'push-1', status: 'success', target_type: 'gateway', version: '2.0.0' });
-      expect(mockPushModel.updateStatus).toHaveBeenCalledWith('push-1', 'complete');
+      expect(mockPushModel.atomicCompleteIfActive).toHaveBeenCalledWith('push-1');
       expect(mockGatewayModel.update).toHaveBeenCalledWith('gw-1', { firmware_version: '2.0.0' });
     });
 
@@ -624,7 +885,7 @@ describe('FirmwareService', () => {
         version: '1.1',
       });
       expect(success).toEqual({ accepted: true, push_id: 'push-1', push_status: 'complete' });
-      expect(mockPushModel.updateStatus).toHaveBeenCalledWith('push-1', 'complete');
+      expect(mockPushModel.atomicCompleteIfActive).toHaveBeenCalledWith('push-1');
       expect(mockPushEventModel.createMany).toHaveBeenCalled();
     });
 
@@ -632,55 +893,80 @@ describe('FirmwareService', () => {
       mockPushModel.findActiveByFacilities.mockResolvedValue([]);
       await FirmwareService.handleUpdateStatus('fac-1', { status: 'success', target_type: 'gateway' });
       expect(mockPushModel.findById).not.toHaveBeenCalled();
-      expect(mockPushModel.updateStatus).not.toHaveBeenCalled();
+      expect(mockPushModel.atomicCompleteIfActive).not.toHaveBeenCalled();
     });
 
     it('resolves missing push_id to sole verifying push for facility', async () => {
       mockPushModel.findActiveByFacilities.mockResolvedValue([mkVerifyingPush()]);
       await FirmwareService.handleUpdateStatus('fac-1', { status: 'success', target_type: 'gateway' });
-      expect(mockPushModel.updateStatus).toHaveBeenCalledWith('push-1', 'complete');
+      expect(mockPushModel.atomicCompleteIfActive).toHaveBeenCalledWith('push-1');
     });
 
     it('accepts pushId camelCase alias', async () => {
       mockPushModel.findById.mockResolvedValue(mkVerifyingPush());
       await FirmwareService.handleUpdateStatus('fac-1', { pushId: 'push-1', status: 'success', target_type: 'gateway' });
-      expect(mockPushModel.updateStatus).toHaveBeenCalledWith('push-1', 'complete');
+      expect(mockPushModel.atomicCompleteIfActive).toHaveBeenCalledWith('push-1');
     });
 
     it('does not re-update an already complete push', async () => {
       mockPushModel.findById.mockResolvedValue(mkVerifyingPush({ status: 'complete' }));
-      await FirmwareService.handleUpdateStatus('fac-1', { push_id: 'push-1', status: 'success', target_type: 'gateway' });
-      expect(mockPushModel.updateStatus).not.toHaveBeenCalled();
+      const result = await FirmwareService.handleUpdateStatus('fac-1', { push_id: 'push-1', status: 'success', target_type: 'gateway' });
+      expect(result).toEqual({ accepted: true, push_id: 'push-1', push_status: 'complete' });
+      expect(mockPushModel.atomicCompleteIfActive).not.toHaveBeenCalled();
+    });
+
+    it('rejects late success after cancel (does not resurrect)', async () => {
+      mockPushModel.findById.mockResolvedValue(mkVerifyingPush({ status: 'cancelled' }));
+      const result = await FirmwareService.handleUpdateStatus('fac-1', {
+        push_id: 'push-1',
+        status: 'success',
+        target_type: 'gateway',
+      });
+      expect(result.accepted).toBe(false);
+      expect(result.reason).toContain('cancelled');
+      expect(mockPushModel.atomicCompleteIfActive).not.toHaveBeenCalled();
+    });
+
+    it('rejects late verifying after cancel', async () => {
+      mockPushModel.findById.mockResolvedValue(mkVerifyingPush({ status: 'cancelled' }));
+      const result = await FirmwareService.handleUpdateStatus('fac-1', {
+        push_id: 'push-1',
+        status: 'verifying',
+        target_type: 'gateway',
+      });
+      expect(result.accepted).toBe(false);
+      expect(mockPushModel.atomicTransitionToVerifying).not.toHaveBeenCalled();
     });
 
     it('updates push to failed when gateway reports failed', async () => {
       mockPushModel.findById.mockResolvedValue(mkVerifyingPush());
       await FirmwareService.handleUpdateStatus('fac-1', { push_id: 'push-1', status: 'failed', error: 'CRC mismatch', target_type: 'gateway' });
-      expect(mockPushModel.updateStatus).toHaveBeenCalledWith('push-1', 'failed', 'CRC mismatch');
+      expect(mockPushModel.atomicFailIfActive).toHaveBeenCalledWith('push-1', 'CRC mismatch');
     });
 
     it('updates push to verifying when gateway reports verifying', async () => {
       mockPushModel.findById.mockResolvedValue(mkVerifyingPush({ status: 'transferring' }));
       await FirmwareService.handleUpdateStatus('fac-1', { push_id: 'push-1', status: 'verifying', target_type: 'gateway' });
-      expect(mockPushModel.updateStatus).toHaveBeenCalledWith('push-1', 'verifying');
+      expect(mockPushModel.atomicTransitionToVerifying).toHaveBeenCalledWith('push-1');
     });
 
     it('maps applying gateway status to verifying', async () => {
       mockPushModel.findById.mockResolvedValue(mkVerifyingPush({ status: 'transferring' }));
       await FirmwareService.handleUpdateStatus('fac-1', { push_id: 'push-1', status: 'applying', target_type: 'gateway' });
-      expect(mockPushModel.updateStatus).toHaveBeenCalledWith('push-1', 'verifying');
+      expect(mockPushModel.atomicTransitionToVerifying).toHaveBeenCalledWith('push-1');
     });
 
     it('completes from transferring when success arrives without prior verifying', async () => {
       mockPushModel.findById.mockResolvedValue(mkVerifyingPush({ status: 'transferring' }));
       await FirmwareService.handleUpdateStatus('fac-1', { push_id: 'push-1', status: 'success', target_type: 'lock' });
-      expect(mockPushModel.updateStatus).toHaveBeenCalledWith('push-1', 'complete');
+      expect(mockPushModel.atomicCompleteIfActive).toHaveBeenCalledWith('push-1');
     });
 
     it('ignores non-success terminal aliases such as completed and applied', async () => {
       mockPushModel.findById.mockResolvedValue(mkVerifyingPush());
       await FirmwareService.handleUpdateStatus('fac-1', { push_id: 'push-1', status: 'completed', target_type: 'lock' });
       await FirmwareService.handleUpdateStatus('fac-1', { push_id: 'push-1', status: 'applied', target_type: 'lock' });
+      expect(mockPushModel.atomicCompleteIfActive).not.toHaveBeenCalled();
       expect(mockPushModel.updateStatus).not.toHaveBeenCalled();
     });
 
@@ -693,7 +979,7 @@ describe('FirmwareService', () => {
     it('applies success even when target_type does not match push record', async () => {
       mockPushModel.findById.mockResolvedValue(mkVerifyingPush({ target_type: 'lock' }));
       await FirmwareService.handleUpdateStatus('fac-1', { push_id: 'push-1', status: 'success', target_type: 'gateway' });
-      expect(mockPushModel.updateStatus).toHaveBeenCalledWith('push-1', 'complete');
+      expect(mockPushModel.atomicCompleteIfActive).toHaveBeenCalledWith('push-1');
     });
 
     it('rejects update when push_id does not exist', async () => {

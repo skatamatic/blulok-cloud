@@ -1,5 +1,6 @@
 import axios, { AxiosInstance, AxiosError, AxiosRequestConfig } from 'axios';
 import { getApiBaseUrl } from './appConfig';
+import { websocketService } from './websocket.service';
 import { LoginCredentials, LoginResponse } from '@/types/auth.types';
 import type { GroupUserAccess } from '@/components/AccessCodes/access-groups.utils';
 import { AccessCode, AccessCodeConfig, AccessCodeGroupConfig, DeviceGroup, EffectiveAccessCode, UserAccessCode, AccessControlDevice, CreateAccessControlDevicePayload, UpdateAccessControlDevicePayload } from '@/types/facility.types';
@@ -42,9 +43,14 @@ class ApiService {
       (response) => response,
       (error: AxiosError) => {
         if (error.response?.status === 401) {
-          // Token expired or invalid
+          // Token expired or invalid — tear down live WS quietly before leaving
           localStorage.removeItem('authToken');
           localStorage.removeItem('authUser');
+          try {
+            websocketService.disconnect();
+          } catch {
+            /* ignore */
+          }
           window.location.href = '/login';
         }
         return Promise.reject(error);
@@ -428,6 +434,12 @@ class ApiService {
 
   async updateGateway(id: string, data: object) {
     const response = await this.api.put(`/gateways/${id}`, data);
+    return response.data;
+  }
+
+  /** ZTP: unbind facility / RMA — force-closes ops WS with ztp_released. */
+  async releaseGateway(id: string) {
+    const response = await this.api.post(`/gateways/${id}/release`);
     return response.data;
   }
 
@@ -1252,8 +1264,21 @@ class ApiService {
     return response.data;
   }
 
-  async pushFirmware(firmwareId: string, gatewayId: string) {
-    const response = await this.api.post(`/firmware/${firmwareId}/push/${gatewayId}`, {});
+  async pushFirmware(
+    firmwareId: string,
+    gatewayId: string,
+    options?: { deliveryMode?: 'v1' | 'v2' },
+  ) {
+    const body: Record<string, string> = {};
+    if (options?.deliveryMode) {
+      body.delivery_mode = options.deliveryMode;
+    }
+    const response = await this.api.post(`/firmware/${firmwareId}/push/${gatewayId}`, body);
+    return response.data;
+  }
+
+  async getFirmwareDeliveryCapabilities() {
+    const response = await this.api.get('/firmware/delivery-capabilities');
     return response.data;
   }
 
@@ -1338,7 +1363,7 @@ class ApiService {
 
   async initiateGatewayRecovery(
     gatewayId: string,
-    body?: { firmwareId?: string; includeFirmware?: boolean },
+    body?: { firmwareId?: string; includeFirmware?: boolean; firmwareDeliveryMode?: 'v1' | 'v2' },
   ) {
     const response = await this.api.post(`/gateways/${gatewayId}/recovery/initiate`, body || {});
     return response.data;
