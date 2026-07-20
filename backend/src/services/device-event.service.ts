@@ -103,6 +103,10 @@ export interface DeviceRemovedEvent {
   deviceType: 'blulok' | 'access_control';
   /** Gateway that was managing the device */
   gatewayId: string;
+  /** Facility containing the device (preferred for fanout after delete) */
+  facilityId?: string;
+  /** Unit the device was assigned to, if any */
+  unitId?: string | null;
 }
 
 /**
@@ -212,7 +216,10 @@ export class DeviceEventService extends EventEmitter {
     this.on(DeviceEvent.LOCK_STATUS_CHANGED, async (event: LockStatusChangedEvent) => {
       try {
         if (this.wsService) {
-          await this.wsService.broadcastUnitsUpdate();
+          await this.wsService.broadcastUnitsUpdate({
+            unitId: event.unitId || null,
+            deviceId: event.deviceId,
+          });
           // Also broadcast device status update for the specific device
           await this.wsService.broadcastDeviceStatusUpdate(event.deviceId);
         } else {
@@ -236,7 +243,7 @@ export class DeviceEventService extends EventEmitter {
       try {
         if (this.wsService) {
           // Device status changes affect units display (device online/offline)
-          await this.wsService.broadcastUnitsUpdate();
+          await this.wsService.broadcastUnitsUpdate({ deviceId: event.deviceId });
           // Battery status updates affect battery monitoring
           await this.wsService.broadcastBatteryStatusUpdate();
           // Also broadcast device status update for the specific device
@@ -254,20 +261,28 @@ export class DeviceEventService extends EventEmitter {
       );
     });
 
-    this.on(DeviceEvent.DEVICE_UNASSIGNED, async () => {
+    this.on(DeviceEvent.DEVICE_UNASSIGNED, async (event: DeviceUnassignedEvent) => {
       try {
         if (this.wsService) {
-          await this.wsService.broadcastUnitsUpdate();
+          await this.wsService.broadcastUnitsUpdate({
+            facilityId: event.facilityId,
+            unitId: event.unitId,
+            deviceId: event.deviceId,
+          });
         }
       } catch (error) {
         console.error('Failed to broadcast units update after device unassigned:', error);
       }
     });
 
-    this.on(DeviceEvent.DEVICE_REMOVED, async () => {
+    this.on(DeviceEvent.DEVICE_REMOVED, async (event: DeviceRemovedEvent) => {
       try {
         if (this.wsService) {
-          await this.wsService.broadcastUnitsUpdate();
+          await this.wsService.broadcastUnitsUpdate({
+            facilityId: event.facilityId,
+            unitId: event.unitId,
+            deviceId: event.deviceId,
+          });
         }
       } catch (error) {
         console.error('Failed to broadcast units update after device removed:', error);
@@ -280,7 +295,10 @@ export class DeviceEventService extends EventEmitter {
       try {
         if (this.wsService) {
           // Telemetry updates may affect units display (low battery alerts, errors)
-          await this.wsService.broadcastUnitsUpdate();
+          await this.wsService.broadcastUnitsUpdate({
+            facilityId: event.facilityId,
+            deviceId: event.deviceId,
+          });
           // Telemetry updates affect device status and battery monitoring
           await this.wsService.broadcastDeviceStatusUpdate(event.deviceId, event.facilityId);
           await this.wsService.broadcastBatteryStatusUpdate();

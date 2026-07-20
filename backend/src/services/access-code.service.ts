@@ -1350,11 +1350,16 @@ export class AccessCodeService {
       existing.valid_codes.push(validCode);
     });
 
+    const codes = Array.from(codesByDevice.values());
+    const codeCount = codes.reduce((sum, entry) => sum + (entry.valid_codes?.length ?? 0), 0);
+    logger.info(
+      `Access code push payload facility=${facilityId} nonce=${nonce} devices=${codes.length} codes=${codeCount}`,
+    );
     const jwtPayload = {
       cmd_type: 'ACCESS_CODE_UPDATE',
       facility_id: facilityId,
       nonce,
-      codes: Array.from(codesByDevice.values()),
+      codes,
     };
     return Ed25519Service.signCommandJwt(jwtPayload);
   }

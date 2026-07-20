@@ -232,7 +232,7 @@ registerPost(
 
       if (success) {
         const wsService = WebSocketService.getInstance();
-        await wsService.broadcastUnitsUpdate();
+        await wsService.broadcastUnitsUpdate({ unitId });
         await wsService.broadcastBatteryStatusUpdate();
 
         res.json({
@@ -316,7 +316,10 @@ registerPost(
       const unit = await unitsService.createUnit(req.body, userId, userRole as UserRole);
 
       const wsService = WebSocketService.getInstance();
-      await wsService.broadcastUnitsUpdate();
+      await wsService.broadcastUnitsUpdate({
+        facilityId: unit.facility_id,
+        unitId: unit.id,
+      });
       await wsService.broadcastBatteryStatusUpdate();
 
       res.status(201).json({
@@ -386,7 +389,10 @@ registerPut(
       );
 
       const wsService = WebSocketService.getInstance();
-      await wsService.broadcastUnitsUpdate();
+      await wsService.broadcastUnitsUpdate({
+        facilityId: unit.facility_id,
+        unitId: unit.id,
+      });
 
       res.json({
         success: true,
@@ -455,7 +461,10 @@ registerPut(
       }
 
       const wsService = WebSocketService.getInstance();
-      await wsService.broadcastUnitsUpdate();
+      await wsService.broadcastUnitsUpdate({
+        facilityId: unit.facility_id,
+        unitId: unit.id,
+      });
       await wsService.broadcastBatteryStatusUpdate();
 
       res.json({
@@ -521,7 +530,7 @@ registerDelete(
       await unitsService.deleteUnit(unitId, userId, userRole);
 
       const wsService = WebSocketService.getInstance();
-      await wsService.broadcastUnitsUpdate();
+      await wsService.broadcastUnitsUpdate({ unitId });
       await wsService.broadcastBatteryStatusUpdate();
 
       res.json({

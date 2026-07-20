@@ -7,13 +7,33 @@ import {
 } from '@/utils/websocket-subscription.utils';
 import { isJwtExpired } from '@/utils/jwt.utils';
 
+/**
+ * Dashboard `/ws` liveness — keep in sync with backend defaults
+ * (`DASHBOARD_WS_HEARTBEAT_MS` / `DASHBOARD_WS_IDLE_MS`).
+ *
+ * Cadence: heartbeat every 5s; treat the socket as dead after 15s without
+ * server traffic (3× interval). That matches gateway inbound health practice
+ * (frequent probe, multi-miss budget) without reconnect storms from a single
+ * delayed timer tick.
+ */
+const HEARTBEAT_INTERVAL_MS = 5_000;
+const SERVER_IDLE_TIMEOUT_MS = 15_000;
+const RECONNECT_BASE_DELAY_MS = 1_000;
+const RECONNECT_MAX_DELAY_MS = 5_000;
+
+function isExpectedClientClose(code: number, reason: string): boolean {
+  if (code === 1000 || code === 1001) return true;
+  // Browser / proxy sometimes reports unclean close on tab discard with empty reason.
+  if (code === 1006 && !reason) return true;
+  return false;
+}
 class WebSocketService implements IWebSocketService {
   private ws: WebSocket | null = null;
   private reconnectAttempts = 0;
-  private reconnectDelay = 1000;
-  private maxReconnectDelayMs = 30000;
+  private reconnectDelay = RECONNECT_BASE_DELAY_MS;
+  private maxReconnectDelayMs = RECONNECT_MAX_DELAY_MS;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
-  private heartbeatInterval: NodeJS.Timeout | null = null;
+  private heartbeatInterval: ReturnType<typeof setInterval> | null = null;
   private subscriptions: Map<string, Record<string, unknown> | undefined> = new Map();
   private subscriptionIds: Map<string, string> = new Map();
   private messageHandlers: Map<string, Set<(data: unknown) => void>> = new Map();
@@ -22,8 +42,83 @@ class WebSocketService implements IWebSocketService {
   private scopeUpdateHandlers: Set<() => void> = new Set();
   private isConnected = false;
   private isReconnecting = false;
+  /** True for logout, pagehide, explicit disconnect — do not auto-reconnect or log loudly. */
+  private intentionalClose = false;
+  private lastServerMessageAt = 0;
+  private lifecycleBound = false;
 
   constructor() {
+    this.bindLifecycleHandlers();
+    this.connect();
+  }
+
+  private bindLifecycleHandlers(): void {
+    if (this.lifecycleBound || typeof window === 'undefined') return;
+    this.lifecycleBound = true;
+
+    window.addEventListener('pagehide', () => {
+      this.suspendForPageLifecycle('pagehide');
+    });
+
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible') {
+        this.resumeFromBackground();
+      }
+    });
+
+    window.addEventListener('pageshow', (event: PageTransitionEvent) => {
+      if (event.persisted) {
+        this.resumeFromBackground();
+      }
+    });
+  }
+
+  /** Tab close / refresh / bfcache — tear down quietly; subscriptions stay for resume. */
+  private suspendForPageLifecycle(reason: string): void {
+    this.intentionalClose = true;
+    this.stopHeartbeat();
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+    if (this.ws) {
+      try {
+        this.ws.close(1000, reason);
+      } catch {
+        /* ignore */
+      }
+      this.ws = null;
+    }
+    this.isConnected = false;
+    this.setReconnecting(false);
+  }
+
+  private resumeFromBackground(): void {
+    this.intentionalClose = false;
+    if (!localStorage.getItem('authToken')) return;
+
+    const stale =
+      this.isConnected
+      && this.lastServerMessageAt > 0
+      && Date.now() - this.lastServerMessageAt >= SERVER_IDLE_TIMEOUT_MS;
+
+    if (this.isWebSocketConnected() && !stale) return;
+
+    if (stale && this.ws) {
+      try {
+        this.ws.close(1001, 'Stale after background');
+      } catch {
+        /* ignore */
+      }
+      this.ws = null;
+      this.isConnected = false;
+    }
+
+    this.reconnectAttempts = 0;
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
     this.connect();
   }
 
@@ -72,9 +167,11 @@ class WebSocketService implements IWebSocketService {
   private handleOpen(_event: Event, socket: WebSocket): void {
     // Ignore stale socket callbacks after a newer socket has been created.
     if (socket !== this.ws) return;
+    this.intentionalClose = false;
     this.isConnected = true;
     this.setReconnecting(false);
     this.reconnectAttempts = 0;
+    this.lastServerMessageAt = Date.now();
     if (this.reconnectTimer) {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
@@ -109,6 +206,7 @@ class WebSocketService implements IWebSocketService {
 
   private handleMessage(event: MessageEvent): void {
     try {
+      this.lastServerMessageAt = Date.now();
       const message = JSON.parse(event.data);
       
       switch (message.type) {
@@ -165,6 +263,9 @@ class WebSocketService implements IWebSocketService {
           break;
         case 'gateway_recovery_progress_update':
           this.handleGatewayRecoveryProgressUpdate(message);
+          break;
+        case 'gateway_recovery_status_update':
+          this.handleGatewayRecoveryStatusUpdate(message);
           break;
         case 'gateway_telemetry_log_update':
           this.handleGatewayTelemetryLogUpdate(message);
@@ -288,6 +389,13 @@ class WebSocketService implements IWebSocketService {
     }
   }
 
+  private handleGatewayRecoveryStatusUpdate(message: { data?: unknown }): void {
+    const handlers = this.messageHandlers.get('gateway_recovery_status');
+    if (handlers) {
+      handlers.forEach(handler => handler(message.data));
+    }
+  }
+
   private handleGatewayTelemetryLogUpdate(message: { data?: unknown }): void {
     const handlers = this.messageHandlers.get('gateway_telemetry_logs');
     if (handlers) {
@@ -362,29 +470,34 @@ class WebSocketService implements IWebSocketService {
   private handleClose(event: CloseEvent, socket: WebSocket): void {
     // Ignore stale socket callbacks after a newer socket has been created.
     if (socket !== this.ws) return;
-    console.log('❌ WebSocket closed:', { code: event.code, reason: event.reason, wasClean: event.wasClean });
+
+    const expected = this.intentionalClose || isExpectedClientClose(event.code, event.reason || '');
+    if (!expected) {
+      console.warn('WebSocket unexpected close:', {
+        code: event.code,
+        reason: event.reason || '-',
+        wasClean: event.wasClean,
+      });
+      websocketDebugService.showDebugToast(
+        'warning',
+        'WebSocket Disconnected',
+        `Connection lost (Code: ${event.code}). Reconnecting…`,
+      );
+    }
+
     this.isConnected = false;
     this.stopHeartbeat();
     this.ws = null;
-
-    // Clear subscription state on disconnect so we can resubscribe properly on reconnect
-    // Note: We keep the subscriptions Map so we know what to resubscribe to, but clear the IDs
     this.subscriptionIds.clear();
-
-    // Notify connection handlers
     this.connectionHandlers.forEach(handler => handler(false));
 
-    // Debug toast
-    if (event.code === 1000) {
-      websocketDebugService.showDebugToast('info', 'WebSocket Disconnected', 'Connection closed normally');
-    } else {
-      websocketDebugService.showDebugToast('warning', 'WebSocket Disconnected', `Connection lost (Code: ${event.code}). Attempting to reconnect...`);
+    if (this.intentionalClose) {
+      this.setReconnecting(false);
+      return;
     }
 
-    if (event.code !== 1000) { // Not a normal closure
-      this.setReconnecting(true);
-      this.scheduleReconnect();
-    }
+    this.setReconnecting(true);
+    this.scheduleReconnect();
   }
 
   private setReconnecting(reconnecting: boolean): void {
@@ -395,10 +508,12 @@ class WebSocketService implements IWebSocketService {
 
   private handleError(error: Event, socket: WebSocket): void {
     if (socket !== this.ws) return;
-    console.error('❌ WebSocket error:', error);
+    if (this.intentionalClose) return;
+    console.warn('WebSocket transport error', error);
   }
 
   private scheduleReconnect(): void {
+    if (this.intentionalClose) return;
     if (this.reconnectTimer) {
       return;
     }
@@ -411,10 +526,14 @@ class WebSocketService implements IWebSocketService {
     }
 
     this.reconnectAttempts++;
-    const delay = Math.min(
-      this.maxReconnectDelayMs,
-      this.reconnectDelay * Math.pow(2, Math.min(this.reconnectAttempts - 1, 8)),
-    );
+    // First retry is immediate after a detected dead socket / unexpected close;
+    // subsequent attempts back off 1s → 2s → 4s → cap 5s.
+    const delay = this.reconnectAttempts <= 1
+      ? 0
+      : Math.min(
+          this.maxReconnectDelayMs,
+          this.reconnectDelay * Math.pow(2, this.reconnectAttempts - 2),
+        );
 
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = null;
@@ -423,14 +542,28 @@ class WebSocketService implements IWebSocketService {
   }
 
   private startHeartbeat(): void {
+    this.stopHeartbeat();
     this.heartbeatInterval = setInterval(() => {
-      if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-        this.send({
-          type: 'heartbeat',
-          timestamp: new Date().toISOString()
-        });
+      if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
+
+      if (
+        this.lastServerMessageAt > 0
+        && Date.now() - this.lastServerMessageAt >= SERVER_IDLE_TIMEOUT_MS
+      ) {
+        console.warn('WebSocket server heartbeat timeout — forcing reconnect');
+        try {
+          this.ws.close(1001, 'Server heartbeat timeout');
+        } catch {
+          /* ignore */
+        }
+        return;
       }
-    }, 30000); // Send heartbeat every 30 seconds
+
+      this.send({
+        type: 'heartbeat',
+        timestamp: new Date().toISOString(),
+      });
+    }, HEARTBEAT_INTERVAL_MS);
   }
 
   private stopHeartbeat(): void {
@@ -443,8 +576,6 @@ class WebSocketService implements IWebSocketService {
   private send(message: Record<string, unknown>): void {
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {
       this.ws.send(JSON.stringify(message));
-    } else {
-      console.warn('WebSocket not connected, message not sent:', message);
     }
   }
 
@@ -585,6 +716,11 @@ class WebSocketService implements IWebSocketService {
     return this.isConnected && this.ws?.readyState === WebSocket.OPEN;
   }
 
+  /** True after logout, pagehide, or explicit disconnect — not an unexpected outage. */
+  public isIntentionalDisconnect(): boolean {
+    return this.intentionalClose;
+  }
+
   public getSubscriptionStatus(): Record<string, { filters?: Record<string, unknown>; subscriptionId?: string }> {
     const status: Record<string, { filters?: Record<string, unknown>; subscriptionId?: string }> = {};
     this.subscriptions.forEach((filters, type) => {
@@ -606,6 +742,7 @@ class WebSocketService implements IWebSocketService {
 
   /** Close any open socket and connect with the latest auth token from localStorage. */
   public forceReconnect(): void {
+    this.intentionalClose = true;
     this.stopHeartbeat();
     if (this.reconnectTimer) {
       clearTimeout(this.reconnectTimer);
@@ -621,10 +758,12 @@ class WebSocketService implements IWebSocketService {
     }
     this.isConnected = false;
     this.reconnectAttempts = 0;
+    this.intentionalClose = false;
     this.connect();
   }
 
   public retryConnectionIfNeeded(): void {
+    this.intentionalClose = false;
     const token = localStorage.getItem('authToken');
     if (!token) {
       return;
@@ -651,16 +790,23 @@ class WebSocketService implements IWebSocketService {
   }
 
   public disconnect(): void {
+    this.intentionalClose = true;
     this.stopHeartbeat();
     if (this.reconnectTimer) {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
     }
     if (this.ws) {
-      this.ws.close(1000, 'Client disconnect');
+      try {
+        this.ws.close(1000, 'Client disconnect');
+      } catch {
+        /* ignore */
+      }
       this.ws = null;
     }
     this.isConnected = false;
+    this.setReconnecting(false);
+    this.connectionHandlers.forEach(handler => handler(false));
   }
 }
 

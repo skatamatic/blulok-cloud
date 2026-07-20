@@ -45,6 +45,10 @@ describe('DeviceEventService broadcast listeners', () => {
     await flushEventListeners();
 
     expect(mockBroadcastUnitsUpdate).toHaveBeenCalledTimes(1);
+    expect(mockBroadcastUnitsUpdate).toHaveBeenCalledWith({
+      facilityId: 'fac-1',
+      deviceId: 'dev-telemetry-1',
+    });
     expect(mockBroadcastDeviceStatusUpdate).toHaveBeenCalledWith('dev-telemetry-1', 'fac-1');
     expect(mockBroadcastBatteryStatusUpdate).toHaveBeenCalledTimes(1);
   });
@@ -63,7 +67,10 @@ describe('DeviceEventService broadcast listeners', () => {
 
     await flushEventListeners();
 
-    expect(mockBroadcastUnitsUpdate).toHaveBeenCalled();
+    expect(mockBroadcastUnitsUpdate).toHaveBeenCalledWith({
+      unitId: 'unit-1',
+      deviceId: 'dev-lock-1',
+    });
     expect(mockBroadcastDeviceStatusUpdate).toHaveBeenCalledWith('dev-lock-1');
   });
 
@@ -81,7 +88,7 @@ describe('DeviceEventService broadcast listeners', () => {
 
     await flushEventListeners();
 
-    expect(mockBroadcastUnitsUpdate).toHaveBeenCalled();
+    expect(mockBroadcastUnitsUpdate).toHaveBeenCalledWith({ deviceId: 'dev-status-1' });
     expect(mockBroadcastBatteryStatusUpdate).toHaveBeenCalled();
     expect(mockBroadcastDeviceStatusUpdate).toHaveBeenCalledWith('dev-status-1');
   });
@@ -112,6 +119,11 @@ describe('DeviceEventService broadcast listeners', () => {
     await flushEventListeners();
 
     expect(mockBroadcastUnitsUpdate).toHaveBeenCalledTimes(1);
+    expect(mockBroadcastUnitsUpdate).toHaveBeenCalledWith({
+      facilityId: 'fac-1',
+      unitId: 'unit-1',
+      deviceId: 'dev-unassign-1',
+    });
     expect(mockBroadcastDeviceStatusUpdate).not.toHaveBeenCalled();
   });
 
@@ -123,11 +135,18 @@ describe('DeviceEventService broadcast listeners', () => {
       deviceId: 'dev-removed-1',
       deviceType: 'blulok',
       gatewayId: 'gw-1',
+      facilityId: 'fac-1',
+      unitId: 'unit-1',
     });
 
     await flushEventListeners();
 
     expect(mockBroadcastUnitsUpdate).toHaveBeenCalledTimes(1);
+    expect(mockBroadcastUnitsUpdate).toHaveBeenCalledWith({
+      facilityId: 'fac-1',
+      unitId: 'unit-1',
+      deviceId: 'dev-removed-1',
+    });
     expect(mockBroadcastDeviceStatusUpdate).not.toHaveBeenCalled();
   });
 

@@ -86,6 +86,33 @@ export type CachedRoutePassState = {
   sub?: string;
 };
 
+/** Opt-in `/ws/app` session (not persisted — simulates opening the phone app). */
+export type AppRealtimeConnectionStatus = 'disconnected' | 'connecting' | 'connected' | 'error';
+
+export type AppRealtimeEventEntry = {
+  id: string;
+  timestamp: string;
+  direction: 'in' | 'out' | 'system';
+  summary: string;
+  /** Inner `event` name when envelope is `app_event`. */
+  eventName?: string;
+  payload?: unknown;
+};
+
+export type AppRealtimeState = {
+  status: AppRealtimeConnectionStatus;
+  facilityId?: string;
+  subscriptionId?: string;
+  lastError?: string;
+  connectedAt?: string;
+  events: AppRealtimeEventEntry[];
+};
+
+export const EMPTY_APP_REALTIME_STATE: AppRealtimeState = {
+  status: 'disconnected',
+  events: [],
+};
+
 export type UserInstanceState = {
   id: string;
   label: string;
@@ -97,6 +124,8 @@ export type UserInstanceState = {
   opsPublicKeyB64?: string;
   keyGenerationRequired?: boolean;
   devices: UserDeviceState[];
+  /** Live app realtime socket — disconnected until user explicitly opens the app. */
+  appRealtime: AppRealtimeState;
 };
 
 export type CreateUserRequest = {
