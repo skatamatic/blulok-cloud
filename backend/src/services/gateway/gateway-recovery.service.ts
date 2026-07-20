@@ -604,12 +604,9 @@ export class GatewayRecoveryService {
       await this.validateRecoveryOptionIds(firmwareId);
     }
 
-    const firmwareDeliveryMode = options?.firmwareDeliveryMode === 'v2' ? 'v2' : 'v1';
-
     await this.recoveryModel.updateFields(recovery.id, {
       status: 'awaiting_config',
       firmware_id: firmwareId,
-      firmware_delivery_mode: firmwareDeliveryMode,
       initiated_by: userId,
     });
     recovery = (await this.recoveryModel.findById(recovery.id))!;
@@ -788,7 +785,6 @@ export class GatewayRecoveryService {
         recovery.gateway_id,
         recovery.facility_id,
         recovery.initiated_by || recovery.gateway_id,
-        { deliveryMode: recovery.firmware_delivery_mode || 'v1' },
       );
       await this.recoveryModel.updateFields(recoveryId, { firmware_push_id: push.id });
       this.startWatch(recoveryId);

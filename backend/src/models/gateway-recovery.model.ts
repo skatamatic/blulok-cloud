@@ -1,5 +1,6 @@
 import { DatabaseService } from '../services/database.service';
 import { v4 as uuidv4 } from 'uuid';
+import type { FirmwareDeliveryMode } from './firmware-push.model';
 
 export type GatewayRecoveryStatus =
   | 'detected'
@@ -32,6 +33,7 @@ export interface GatewayRecovery {
   previous_gateway_id: string | null;
   status: GatewayRecoveryStatus;
   firmware_id: string | null;
+  firmware_delivery_mode: FirmwareDeliveryMode;
   inventory_snapshot_id: string | null;
   firmware_push_id: string | null;
   inventory_chunks_total: number | null;
@@ -51,6 +53,7 @@ export interface CreateGatewayRecoveryData {
   gateway_id: string;
   previous_gateway_id?: string | null;
   status?: GatewayRecoveryStatus;
+  firmware_delivery_mode?: FirmwareDeliveryMode;
   initiated_by?: string | null;
 }
 
@@ -121,6 +124,7 @@ export class GatewayRecoveryModel {
         gateway_id: data.gateway_id,
         previous_gateway_id: data.previous_gateway_id ?? null,
         status: data.status ?? 'detected',
+        firmware_delivery_mode: data.firmware_delivery_mode || 'v1',
         initiated_by: data.initiated_by ?? null,
         started_at: now,
         active_facility_key: data.facility_id,

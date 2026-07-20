@@ -337,7 +337,7 @@ describe('GatewaySwapRecoveryTab', () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByText(/Gateway swap recovery in progress/i)).toBeInTheDocument();
+      expect(screen.getByText(/Gateway swap in progress/i)).toBeInTheDocument();
     });
   });
 
