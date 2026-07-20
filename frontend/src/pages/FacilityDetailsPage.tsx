@@ -268,7 +268,11 @@ const normalizeFacilityTab = (value: string | null): FacilityTab | null => {
   const canManageGateway = ['admin', 'dev_admin', 'facility_admin'].includes(authState.user?.role || '');
   const isTenant = authState.user?.role === 'tenant';
   const facilityGatewayLiveStatus = useFacilityGatewayLiveStatus(facility?.id, {
-    enabled: !isTenant && !!facility?.id,
+    enabled:
+      !isTenant
+      && canManageGateway
+      && !!facility?.id
+      && (activeTab === 'facility' || activeTab === 'gateway'),
   });
   const canDelete = ['admin', 'dev_admin'].includes(authState.user?.role || '');
   const isNetworkInfraDeviceScope = deviceFilters.device_scope === 'network_infra';

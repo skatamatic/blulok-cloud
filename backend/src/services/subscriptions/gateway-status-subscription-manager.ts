@@ -1,40 +1,18 @@
 import { WebSocket } from 'ws';
+import { validate as uuidValidate } from 'uuid';
 import { UserRole } from '@/types/auth.types';
-import { BaseSubscriptionManager, SubscriptionClient } from './base-subscription-manager';
+import { BaseSubscriptionManager, SubscriptionClient, WebSocketMessage } from './base-subscription-manager';
 import { GatewayModel, Gateway } from '@/models/gateway.model';
 
 /**
  * Gateway Status Subscription Manager
  *
- * Manages real-time subscriptions to gateway connectivity and operational status.
- * Provides live monitoring of network infrastructure health and device connectivity.
- *
  * Subscription Type: 'gateway_status'
  *
- * Key Features:
- * - Real-time gateway status monitoring (online/offline/error/maintenance)
- * - Facility-scoped visibility for multi-tenant environments
- * - Last seen timestamps for connectivity tracking
- * - Targeted updates for specific gateway or facility changes
- * - Comprehensive network health dashboards
- *
- * Data Provided:
- * - Gateway operational status and connectivity state
- * - Facility association and gateway metadata
- * - Last communication timestamps
- * - Real-time status change notifications
- * - Network topology and health metrics
- *
- * Access Control:
- * - All authenticated users can subscribe
- * - Facility-scoped data based on user role and permissions
- * - Role-based filtering (TENANT sees facility gateways, ADMIN sees all)
- *
- * Gateway Status Types:
- * - online: Gateway connected and operational
- * - offline: Gateway unreachable or disconnected
- * - error: Gateway experiencing communication errors
- * - maintenance: Gateway under maintenance, limited functionality
+ * Filters:
+ * - facility_id (optional): scopes updates to one facility. When present, only
+ *   ADMIN / DEV_ADMIN / FACILITY_ADMIN may subscribe (facility Gateway setup UI).
+ * - Without facility_id: all authenticated roles (e.g. tenant lock realtime).
  */
 export class GatewayStatusSubscriptionManager extends BaseSubscriptionManager {
   private gatewayModel: GatewayModel;
@@ -44,6 +22,7 @@ export class GatewayStatusSubscriptionManager extends BaseSubscriptionManager {
   private dbBackoffUntilMs = 0;
   private readonly CACHE_TTL_MS = 5000;
   private readonly DB_BACKOFF_MS = 30_000;
+  private subscriptionFacilityIds = new Map<string, string | undefined>();
 
   constructor() {
     super();
@@ -60,21 +39,76 @@ export class GatewayStatusSubscriptionManager extends BaseSubscriptionManager {
     return 'gateway_status';
   }
 
-  canSubscribe(_userRole: UserRole): boolean {
-    // All roles can subscribe; RBAC enforced by facility scoping
+  canSubscribe(userRole: UserRole, opts?: { facilityScoped?: boolean }): boolean {
+    if (opts?.facilityScoped) {
+      return [UserRole.ADMIN, UserRole.DEV_ADMIN, UserRole.FACILITY_ADMIN].includes(userRole);
+    }
     return true;
+  }
+
+  async handleSubscription(ws: WebSocket, message: WebSocketMessage, client: SubscriptionClient): Promise<boolean> {
+    const filters = message.data || {};
+    const rawFacilityId = filters.facility_id || filters.facilityId;
+    const facilityId = rawFacilityId ? String(rawFacilityId).trim() : undefined;
+    const subscriptionId = message.subscriptionId || `${this.getSubscriptionType()}-${Date.now()}`;
+
+    if (facilityId) {
+      if (!uuidValidate(facilityId)) {
+        this.sendError(ws, 'Invalid facility ID format');
+        return false;
+      }
+      if (!this.canSubscribe(client.userRole, { facilityScoped: true })) {
+        this.sendError(ws, `Access denied: facility-scoped ${this.getSubscriptionType()} requires admin role`);
+        return false;
+      }
+      if (!this.canAccessFacility(client, facilityId)) {
+        this.sendError(ws, 'Access denied: You do not have access to this facility');
+        return false;
+      }
+    } else if (!this.canSubscribe(client.userRole)) {
+      this.sendError(ws, `Access denied: ${this.getSubscriptionType()} subscription requires appropriate role`);
+      return false;
+    }
+
+    this.clientContext.set(subscriptionId, client);
+    this.subscriptionFacilityIds.set(subscriptionId, facilityId);
+    this.addWatcher(subscriptionId, ws, client);
+    await this.sendInitialData(ws, subscriptionId, client);
+    this.logger.info(
+      `📡 ${this.getSubscriptionType()} subscription created: ${subscriptionId} for user ${client.userId}`
+      + (facilityId ? ` (facility: ${facilityId})` : ''),
+    );
+    return true;
+  }
+
+  handleUnsubscription(ws: WebSocket, message: WebSocketMessage, client: SubscriptionClient): void {
+    const subscriptionId = message.subscriptionId;
+    if (subscriptionId) {
+      this.subscriptionFacilityIds.delete(subscriptionId);
+    }
+    super.handleUnsubscription(ws, message, client);
+  }
+
+  cleanup(ws: WebSocket, client: SubscriptionClient): void {
+    for (const [subscriptionId, watchers] of this.watchers.entries()) {
+      if (watchers.has(ws)) {
+        this.subscriptionFacilityIds.delete(subscriptionId);
+      }
+    }
+    super.cleanup(ws, client);
   }
 
   protected async sendInitialData(ws: WebSocket, subscriptionId: string, client: SubscriptionClient): Promise<void> {
     try {
-      const gateways = await this.getScopedGateways(client);
+      const facilityFilter = this.subscriptionFacilityIds.get(subscriptionId);
+      const gateways = await this.getScopedGateways(client, facilityFilter);
       const payload = await this.toPayload(gateways);
 
       this.sendMessage(ws, {
         type: 'gateway_status_update',
         subscriptionId,
         data: payload,
-        timestamp: new Date().toISOString()
+        timestamp: new Date().toISOString(),
       });
     } catch (error) {
       if (this.isPoolAcquireTimeout(error)) {
@@ -86,47 +120,46 @@ export class GatewayStatusSubscriptionManager extends BaseSubscriptionManager {
   }
 
   public async broadcastUpdate(facilityId?: string, gatewayId?: string): Promise<void> {
-    // Always drop cache before reads so HTTP/BaseGateway DB updates (and inbound WS) fan out fresh rows.
     this.invalidateCache();
 
     try {
       const activeSubscriptions = Array.from(this.watchers.keys());
       if (activeSubscriptions.length === 0) return;
 
-      // Preload gateways once per unique facility set when possible
-      // For simplicity, load per subscription based on each client's facilities
       for (const subscriptionId of activeSubscriptions) {
         const client = this.clientContext.get(subscriptionId);
         if (!client) continue;
 
-        // Skip targeted broadcast only when the client has an explicit non-empty facility allow-list
-        // that excludes this facility. Empty [] must not skip (treat like "unscoped for this check";
-        // getScopedGateways still filters rows).
-        if (
-          facilityId &&
-          client.facilityIds &&
-          client.facilityIds.length > 0 &&
-          !client.facilityIds.includes(facilityId) &&
-          client.userRole !== UserRole.ADMIN &&
-          client.userRole !== UserRole.DEV_ADMIN
+        const scopedFacilityId = this.subscriptionFacilityIds.get(subscriptionId);
+        if (scopedFacilityId) {
+          if (facilityId && scopedFacilityId !== facilityId) continue;
+          if (!this.canAccessFacility(client, scopedFacilityId)) continue;
+        } else if (
+          facilityId
+          && client.facilityIds
+          && client.facilityIds.length > 0
+          && !client.facilityIds.includes(facilityId)
+          && client.userRole !== UserRole.ADMIN
+          && client.userRole !== UserRole.DEV_ADMIN
         ) {
           continue;
         }
 
-        const gateways = await this.getScopedGateways(client, facilityId, gatewayId);
+        const effectiveFacilityFilter = scopedFacilityId || facilityId;
+        const gateways = await this.getScopedGateways(client, effectiveFacilityFilter, gatewayId);
         const payload = await this.toPayload(gateways, gatewayId);
 
         const watchers = this.watchers.get(subscriptionId);
         if (!watchers) continue;
 
-        watchers.forEach(ws => {
+        watchers.forEach((ws) => {
           if (ws.readyState === WebSocket.OPEN) {
             try {
               ws.send(JSON.stringify({
                 type: 'gateway_status_update',
                 subscriptionId,
                 data: payload,
-                timestamp: new Date().toISOString()
+                timestamp: new Date().toISOString(),
               }));
             } catch (err) {
               this.logger.error('Error sending gateway status to WebSocket:', err);
@@ -134,6 +167,7 @@ export class GatewayStatusSubscriptionManager extends BaseSubscriptionManager {
               if (watchers.size === 0) {
                 this.watchers.delete(subscriptionId);
                 this.clientContext.delete(subscriptionId);
+                this.subscriptionFacilityIds.delete(subscriptionId);
               }
             }
           } else {
@@ -141,6 +175,7 @@ export class GatewayStatusSubscriptionManager extends BaseSubscriptionManager {
             if (watchers.size === 0) {
               this.watchers.delete(subscriptionId);
               this.clientContext.delete(subscriptionId);
+              this.subscriptionFacilityIds.delete(subscriptionId);
             }
           }
         });
@@ -153,17 +188,22 @@ export class GatewayStatusSubscriptionManager extends BaseSubscriptionManager {
     }
   }
 
+  private canAccessFacility(client: SubscriptionClient, facilityId: string): boolean {
+    if (client.userRole === UserRole.ADMIN || client.userRole === UserRole.DEV_ADMIN) {
+      return true;
+    }
+    return (client.facilityIds || []).includes(facilityId);
+  }
+
   private async getScopedGateways(client: SubscriptionClient, facilityIdFilter?: string, gatewayIdFilter?: string): Promise<Gateway[]> {
     const all = await this.getAllGatewaysCached();
 
-    // Admin roles can see all
     if (client.userRole === UserRole.ADMIN || client.userRole === UserRole.DEV_ADMIN) {
-      return all.filter(g => (!facilityIdFilter || g.facility_id === facilityIdFilter) && (!gatewayIdFilter || g.id === gatewayIdFilter));
+      return all.filter((g) => (!facilityIdFilter || g.facility_id === facilityIdFilter) && (!gatewayIdFilter || g.id === gatewayIdFilter));
     }
 
-    // Other roles limited to facilityIds
     const allowedFacilities = client.facilityIds || [];
-    return all.filter(g => !!g.facility_id && allowedFacilities.includes(g.facility_id) && (!facilityIdFilter || g.facility_id === facilityIdFilter) && (!gatewayIdFilter || g.id === gatewayIdFilter));
+    return all.filter((g) => !!g.facility_id && allowedFacilities.includes(g.facility_id) && (!facilityIdFilter || g.facility_id === facilityIdFilter) && (!gatewayIdFilter || g.id === gatewayIdFilter));
   }
 
   private async getAllGatewaysCached(): Promise<Gateway[]> {
@@ -192,13 +232,10 @@ export class GatewayStatusSubscriptionManager extends BaseSubscriptionManager {
   }
 
   private async toPayload(gateways: Gateway[], updatedGatewayId?: string) {
-    // Enrich each gateway with the live inbound /ws/gateway session signal so dashboards get
-    // real-time connectivity (any traffic within the keepalive window = online) without waiting
-    // on the HTTP status poll. The DB `status`/`lastSeen` remain for inventory/history context.
     const liveness = await this.getLivenessByFacility(gateways);
 
     return {
-      gateways: gateways.map(g => {
+      gateways: gateways.map((g) => {
         const live = g.facility_id ? liveness.get(g.facility_id) : undefined;
         return {
           id: g.id,
@@ -206,7 +243,6 @@ export class GatewayStatusSubscriptionManager extends BaseSubscriptionManager {
           name: g.name,
           status: g.status,
           lastSeen: g.last_seen,
-          // Live inbound session truth. `connected` is null when liveness can't be resolved.
           connected: live ? live.connected : null,
           lastActivityAt: live?.lastPongAt ?? null,
         };
@@ -216,11 +252,6 @@ export class GatewayStatusSubscriptionManager extends BaseSubscriptionManager {
     };
   }
 
-  /**
-   * Resolve live inbound `/ws/gateway` connectivity per facility from the gateway events transport.
-   * Uses a dynamic import to avoid a static circular dependency
-   * (GatewayEventsService → WebSocketService → subscription managers).
-   */
   private async getLivenessByFacility(
     gateways: Gateway[],
   ): Promise<Map<string, { connected: boolean; lastPongAt?: number }>> {
@@ -238,6 +269,3 @@ export class GatewayStatusSubscriptionManager extends BaseSubscriptionManager {
     return byFacility;
   }
 }
-
-
-

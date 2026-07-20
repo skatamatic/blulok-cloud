@@ -38,6 +38,7 @@ const RECOVERY_PUSH_STATUSES: GatewayRecoveryStatus[] = ['firmware', 'inventory_
 const startupInventoryPushInFlight = new Set<string>();
 const inventoryPhaseTransitionInFlight = new Set<string>();
 const productionInventorySeedArmed = new Set<string>();
+const statusBroadcastTimers = new Map<string, ReturnType<typeof setTimeout>>();
 const productionInventorySeedWaiters = new Map<
   string,
   { resolve: () => void; timer: ReturnType<typeof setTimeout> }
@@ -203,7 +204,10 @@ export class GatewayRecoveryService {
 
   static async handleRecoveryPushTargetDisconnect(facilityId: string, gatewayId: string): Promise<void> {
     const active = await this.recoveryModel.findActiveByFacility(facilityId);
-    if (!active || active.gateway_id !== gatewayId) return;
+    if (!active || active.gateway_id !== gatewayId) {
+      this.scheduleStatusBroadcast(facilityId);
+      return;
+    }
 
     const onlyPushIds = new Set(
       [active.firmware_push_id, active.id].filter(Boolean) as string[],
@@ -218,6 +222,7 @@ export class GatewayRecoveryService {
     if (active.status === 'inventory_push') {
       logger.info(`Recovery inventory push paused on swap candidate disconnect facility=${facilityId}`);
     }
+    this.scheduleStatusBroadcast(facilityId);
   }
 
   /**
@@ -337,7 +342,7 @@ export class GatewayRecoveryService {
     return this.recoveryModel.findLatestByFacility(facilityId);
   }
 
-  /** Resolve facility scope for an unbound gateway (swap candidate WS or recovery history). */
+  /** Resolve facility scope for an unbound gateway (swap candidate WS, ZTP intent, or recovery history). */
   static async resolveFacilityAccessForUnboundGateway(
     gatewayId: string,
     allowedFacilityIds: string[],
@@ -347,6 +352,17 @@ export class GatewayRecoveryService {
       if (candidates.some((c) => c.gatewayId === gatewayId)) {
         return facilityId;
       }
+    }
+    try {
+      const { GatewayModel } = await import('@/models/gateway.model');
+      const { getZtpIntendedFacilityId } = await import('@/utils/gateway-ztp-claim.utils');
+      const gateway = await new GatewayModel().findById(gatewayId);
+      const intended = getZtpIntendedFacilityId(gateway?.metadata);
+      if (intended && allowedFacilityIds.includes(intended)) {
+        return intended;
+      }
+    } catch {
+      /* ignore */
     }
     const recovery = await this.recoveryModel.findLatestByGateway(gatewayId);
     if (recovery?.facility_id && allowedFacilityIds.includes(recovery.facility_id)) {
@@ -390,7 +406,7 @@ export class GatewayRecoveryService {
     demotedPreviousGateway: { gatewayId: string; connected: boolean } | null;
   }> {
     const recovery = await this.getStatusForFacility(facilityId);
-    const allCandidates = this.getSwapCandidates(facilityId);
+    const allCandidates = this.getSwapCandidates(facilityId).filter((c) => c.connected);
     let candidates = allCandidates;
     let demotedPreviousGateway: { gatewayId: string; connected: boolean } | null = null;
 
@@ -408,6 +424,7 @@ export class GatewayRecoveryService {
         gatewayId: previousId,
         connected: transport.isGatewayWsConnected(facilityId, previousId),
       };
+      // Demoted previous is never listed under candidates until it reconnects as a live WS park
       candidates = candidates.filter(
         (candidate) => candidate.gatewayId.trim().toLowerCase() !== previousId.trim().toLowerCase(),
       );
@@ -568,7 +585,11 @@ export class GatewayRecoveryService {
     gatewayId: string,
     facilityId: string,
     userId: string,
-    options?: { firmwareId?: string; includeFirmware?: boolean },
+    options?: {
+      firmwareId?: string;
+      includeFirmware?: boolean;
+      firmwareDeliveryMode?: 'v1' | 'v2' | string;
+    },
   ): Promise<GatewayRecovery> {
     let recovery = await this.recoveryModel.findActiveByFacility(facilityId);
     if (!recovery || recovery.gateway_id !== gatewayId) {
@@ -583,9 +604,12 @@ export class GatewayRecoveryService {
       await this.validateRecoveryOptionIds(firmwareId);
     }
 
+    const firmwareDeliveryMode = options?.firmwareDeliveryMode === 'v2' ? 'v2' : 'v1';
+
     await this.recoveryModel.updateFields(recovery.id, {
       status: 'awaiting_config',
       firmware_id: firmwareId,
+      firmware_delivery_mode: firmwareDeliveryMode,
       initiated_by: userId,
     });
     recovery = (await this.recoveryModel.findById(recovery.id))!;
@@ -756,11 +780,15 @@ export class GatewayRecoveryService {
     this.broadcastProgress(recovery, 10, 'Firmware update starting');
 
     try {
+      if (!recovery.firmware_id) {
+        throw new Error('Recovery firmware_id is missing');
+      }
       const push = await FirmwareService.initiatePush(
         recovery.firmware_id,
         recovery.gateway_id,
         recovery.facility_id,
         recovery.initiated_by || recovery.gateway_id,
+        { deliveryMode: recovery.firmware_delivery_mode || 'v1' },
       );
       await this.recoveryModel.updateFields(recoveryId, { firmware_push_id: push.id });
       this.startWatch(recoveryId);
@@ -1297,6 +1325,41 @@ export class GatewayRecoveryService {
     } catch (err) {
       logger.warn('Failed to broadcast gateway recovery progress', err);
     }
+
+    this.scheduleStatusBroadcast(recovery.facility_id);
+  }
+
+  /**
+   * Debounced facility-scoped candidates/sessions/recovery snapshot for dashboard WS.
+   * Coalesces rapid progress/session churn (e.g. inventory chunks, reconnect flaps).
+   */
+  static scheduleStatusBroadcast(facilityId: string): void {
+    const existing = statusBroadcastTimers.get(facilityId);
+    if (existing) clearTimeout(existing);
+    const timer = setTimeout(() => {
+      statusBroadcastTimers.delete(facilityId);
+      void this.broadcastStatus(facilityId);
+    }, 300);
+    timer.unref?.();
+    statusBroadcastTimers.set(facilityId, timer);
+  }
+
+  static async broadcastStatus(facilityId: string): Promise<void> {
+    try {
+      const { WebSocketService } = require('../websocket.service');
+      const wsService = WebSocketService.getInstance();
+      if (!wsService) return;
+
+      const registry = wsService.getSubscriptionRegistry();
+      if (!registry) return;
+
+      const manager = registry.getGatewayRecoveryStatusManager();
+      if (!manager) return;
+
+      await manager.broadcastStatus(facilityId);
+    } catch (err) {
+      logger.warn('Failed to broadcast gateway recovery status', err);
+    }
   }
 }
 
@@ -1324,6 +1387,11 @@ export function _testClearPendingTimers(): void {
     clearTimeout(waiter.timer);
   }
   productionInventorySeedWaiters.clear();
+
+  for (const timer of statusBroadcastTimers.values()) {
+    clearTimeout(timer);
+  }
+  statusBroadcastTimers.clear();
 
   cancelledRecoveries.clear();
   resumeInFlightRecoveries.clear();

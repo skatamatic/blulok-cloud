@@ -18,6 +18,7 @@ import { GatewayTelemetryLogSubscriptionManager } from './gateway-telemetry-log-
 import { GatewayDeviceSyncLogSubscriptionManager } from './gateway-device-sync-log-subscription-manager';
 import { FirmwarePushSubscriptionManager } from './firmware-push-subscription-manager';
 import { GatewayRecoverySubscriptionManager } from './gateway-recovery-subscription-manager';
+import { GatewayRecoveryStatusSubscriptionManager } from './gateway-recovery-status-subscription-manager';
 import { AccessCodesSubscriptionManager } from './access-codes-subscription-manager';
 import { KeySharingSubscriptionManager } from './key-sharing-subscription-manager';
 
@@ -38,6 +39,8 @@ import { KeySharingSubscriptionManager } from './key-sharing-subscription-manage
  * - fms_sync_status: FMS synchronization status
  * - fms_sync_progress: FMS sync operation progress
  * - gateway_status: Gateway connectivity and health
+ * - gateway_recovery_progress: Live swap/recovery progress deltas
+ * - gateway_recovery_status: Facility-scoped candidates/sessions/recovery snapshot
  * - command_queue: Command execution queue status
  * - access_codes: Facility-scoped daily keypad codes for app users
  * - key_sharing: Facility-scoped shared key records for dashboard widgets
@@ -71,6 +74,7 @@ export class SubscriptionRegistry {
     this.registerManager(new ActivitySubscriptionManager());
     this.registerManager(new FirmwarePushSubscriptionManager());
     this.registerManager(new GatewayRecoverySubscriptionManager());
+    this.registerManager(new GatewayRecoveryStatusSubscriptionManager());
     this.registerManager(new GatewayTelemetryLogSubscriptionManager());
     this.registerManager(new GatewayDeviceSyncLogSubscriptionManager());
     this.registerManager(new AccessCodesSubscriptionManager());
@@ -181,6 +185,10 @@ export class SubscriptionRegistry {
 
   public getGatewayRecoveryProgressManager(): GatewayRecoverySubscriptionManager | undefined {
     return this.getManager('gateway_recovery_progress') as GatewayRecoverySubscriptionManager;
+  }
+
+  public getGatewayRecoveryStatusManager(): GatewayRecoveryStatusSubscriptionManager | undefined {
+    return this.getManager('gateway_recovery_status') as GatewayRecoveryStatusSubscriptionManager;
   }
 
   public getAccessCodesManager(): AccessCodesSubscriptionManager | undefined {

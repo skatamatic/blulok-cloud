@@ -88,12 +88,12 @@ describe('gateway-recovery-progress.utils', () => {
       status: 'complete',
       phase: 'complete',
       percent: 100,
-      message: 'Recovery complete — inventory sync unblocked',
+      message: 'Recovery complete. Inventory sync is unblocked.',
       chunksSent: 0,
       chunksTotal: 1,
     });
     expect(merged.percent).toBe(0);
-    expect(merged.message).toContain('configure recovery');
+    expect(merged.message).toContain('Configure recovery');
     expect(merged.chunksTotal).toBeUndefined();
   });
 
@@ -182,15 +182,26 @@ describe('gateway-recovery-progress.utils', () => {
       expect(result.connected).toBe(true);
     });
 
-    it('excludes the production gateway and prefers connected candidates', () => {
+    it('excludes the production gateway and ignores offline candidates', () => {
       const result = resolveAvailableCandidate(
         null,
         [{ gatewayId: 'gw-new', connected: true }, { gatewayId: 'gw-off', connected: false }],
         [activeSession('gw-new')],
         'gw-new',
       );
-      expect(result.gatewayId).toBe('gw-off');
-      expect(result.connected).toBe(false);
+      expect(result.gatewayId).toBeUndefined();
+      expect(result.connected).toBeNull();
+    });
+
+    it('returns no candidate when only offline swap sessions exist after complete', () => {
+      const result = resolveAvailableCandidate(
+        { ...baseRecovery, status: 'complete', gateway_id: 'gw-new', previous_gateway_id: 'gw-old' },
+        [],
+        [activeSession('gw-new'), candidateSession('gw-old', false)],
+        'gw-new',
+      );
+      expect(result.gatewayId).toBeUndefined();
+      expect(result.connected).toBeNull();
     });
 
     it('returns no candidate when none are available', () => {
@@ -238,15 +249,28 @@ describe('gateway-recovery-progress.utils', () => {
       expect(view.statusGatewayId).toBe('gw-new');
     });
 
-    it('is ready but cannot start when the candidate is offline', () => {
+    it('stays idle when the only candidate is offline', () => {
       const view = resolveSwapView(
         null,
         [{ gatewayId: 'gw-new', connected: false }],
         [activeSession('gw-old')],
         'gw-old',
       );
-      expect(view.mode).toBe('ready');
+      expect(view.mode).toBe('idle');
       expect(view.canStart).toBe(false);
+      expect(view.candidateGatewayId).toBeUndefined();
+    });
+
+    it('treats a completed recovery with offline previous gateway as idle', () => {
+      const view = resolveSwapView(
+        { ...baseRecovery, status: 'complete', gateway_id: 'gw-new', previous_gateway_id: 'gw-old' },
+        [],
+        [activeSession('gw-new'), candidateSession('gw-old', false)],
+        'gw-new',
+      );
+      expect(view.mode).toBe('idle');
+      expect(view.productionGatewayId).toBe('gw-new');
+      expect(view.candidateGatewayId).toBeUndefined();
     });
 
     it('treats a completed recovery with no candidate as idle (no persisted completion)', () => {

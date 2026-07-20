@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, fireEvent } from '@testing-library/react';
 import GatewaySwapRecoveryTab from '@/components/Gateway/GatewaySwapRecoveryTab';
 import { apiService } from '@/services/api.service';
 
@@ -13,6 +13,9 @@ jest.mock('@/services/api.service', () => ({
     bypassGatewayRecovery: jest.fn(),
     cancelGatewayRecovery: jest.fn(),
     retryGatewayRecovery: jest.fn(),
+    getFirmwareDeliveryCapabilities: jest.fn().mockResolvedValue({
+      data: { v1_available: true, v2_available: true },
+    }),
   },
 }));
 
@@ -155,16 +158,27 @@ describe('GatewaySwapRecoveryTab', () => {
     expect(screen.queryByRole('progressbar')).not.toBeInTheDocument();
   });
 
-  it('subscribes to gateway_recovery_progress websocket', async () => {
+  it('subscribes to gateway recovery status and progress websocket', async () => {
     render(
       <GatewaySwapRecoveryTab facilityId="fac-1" boundGatewayId="gw-old" wsConnected />,
     );
     await waitFor(() => {
-      expect(mockSubscribe).toHaveBeenCalledWith('gateway_recovery_progress', expect.any(Function));
+      expect(mockSubscribe).toHaveBeenCalledWith(
+        'gateway_recovery_status',
+        expect.any(Function),
+        undefined,
+        { facility_id: 'fac-1' },
+      );
+      expect(mockSubscribe).toHaveBeenCalledWith(
+        'gateway_recovery_progress',
+        expect.any(Function),
+        undefined,
+        { facility_id: 'fac-1' },
+      );
     });
   });
 
-  it('unsubscribes from gateway_recovery_progress on unmount', async () => {
+  it('unsubscribes from gateway recovery websockets on unmount', async () => {
     const { unmount } = render(
       <GatewaySwapRecoveryTab facilityId="fac-1" boundGatewayId="gw-old" wsConnected />,
     );
@@ -172,7 +186,7 @@ describe('GatewaySwapRecoveryTab', () => {
       expect(mockSubscribe).toHaveBeenCalled();
     });
     unmount();
-    expect(mockUnsubscribe).toHaveBeenCalledWith('sub-recovery-1');
+    expect(mockUnsubscribe).toHaveBeenCalled();
   });
 
   it('shows firmware matching checkbox before start', async () => {
@@ -183,6 +197,47 @@ describe('GatewaySwapRecoveryTab', () => {
       expect(screen.getByText('Include firmware matching')).toBeInTheDocument();
     });
     expect(screen.queryByText('Firmware image')).not.toBeInTheDocument();
+    expect(screen.getByLabelText('Firmware delivery mode')).toBeInTheDocument();
+  });
+
+  it('passes firmwareDeliveryMode v2 when starting swap', async () => {
+    (apiService.initiateGatewayRecovery as jest.Mock).mockResolvedValue({
+      data: {
+        id: 'rec-1',
+        status: 'firmware',
+        gateway_id: 'gw-candidate',
+        facility_id: 'fac-1',
+      },
+    });
+    (apiService.getGatewayRecoveryOptions as jest.Mock).mockResolvedValue({
+      data: {
+        productionFirmwareVersion: '2.0.0',
+        candidateFirmwareVersion: '1.0.0',
+        candidateMatchesProduction: false,
+        productionFirmwareImageAvailable: true,
+      },
+    });
+
+    render(
+      <GatewaySwapRecoveryTab facilityId="fac-1" boundGatewayId="gw-old" wsConnected />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /Start swap/i })).toBeEnabled();
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'v2' }));
+    fireEvent.click(screen.getByRole('button', { name: /Start swap/i }));
+
+    await waitFor(() => {
+      expect(apiService.initiateGatewayRecovery).toHaveBeenCalledWith(
+        'gw-new',
+        expect.objectContaining({
+          includeFirmware: true,
+          firmwareDeliveryMode: 'v2',
+        }),
+      );
+    });
   });
 
   it('allows start swap when candidate matches production even without catalogued firmware image', async () => {
@@ -203,7 +258,7 @@ describe('GatewaySwapRecoveryTab', () => {
       expect(screen.getByText(/Candidate already matches production/i)).toBeInTheDocument();
     });
     expect(
-      screen.queryByText(/No firmware image is catalogued for the production version/i),
+      screen.queryByText(/No firmware image for the production version/i),
     ).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: /Start swap/i })).toBeEnabled();
   });
@@ -224,7 +279,7 @@ describe('GatewaySwapRecoveryTab', () => {
 
     await waitFor(() => {
       expect(
-        screen.getByText(/No firmware image is catalogued for the production version/i),
+        screen.getByText(/No firmware image for the production version/i),
       ).toBeInTheDocument();
     });
     expect(screen.getByRole('button', { name: /Start swap/i })).toBeDisabled();
@@ -282,7 +337,7 @@ describe('GatewaySwapRecoveryTab', () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByText(/Gateway swap recovery is in progress/i)).toBeInTheDocument();
+      expect(screen.getByText(/Gateway swap recovery in progress/i)).toBeInTheDocument();
     });
   });
 

@@ -15,6 +15,7 @@ export interface GatewayRecovery {
   previous_gateway_id: string | null;
   status: GatewayRecoveryStatus;
   firmware_id: string | null;
+  firmware_delivery_mode?: 'v1' | 'v2';
   inventory_snapshot_id: string | null;
   firmware_push_id: string | null;
   inventory_chunks_total: number | null;
