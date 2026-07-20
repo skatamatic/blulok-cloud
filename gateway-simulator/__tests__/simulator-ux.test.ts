@@ -133,8 +133,8 @@ describe('gateway panel tabs', () => {
 });
 
 describe('user panel tabs', () => {
-  it('defines session, devices, and app with session as default', () => {
-    expect(USER_PANEL_TABS.map((t) => t.id)).toEqual(['session', 'devices', 'app']);
+  it('defines session and devices with session as default', () => {
+    expect(USER_PANEL_TABS.map((t) => t.id)).toEqual(['session', 'devices']);
     expect(readUserPanelTab()).toBe('session');
   });
 });
