@@ -92,11 +92,6 @@ async function bootstrap(): Promise<void> {
     const { GatewayEventsService } = await import('@/services/gateway/gateway-events.service');
     GatewayEventsService.getInstance().initialize(server);
 
-    // Gateway sticker ZTP provisioning waiting room
-    const { GatewayProvisionWebSocketService } = await import(
-      '@/services/gateway/ztp/gateway-provision-websocket.service'
-    );
-    GatewayProvisionWebSocketService.getInstance().initialize(server);
 
     const loggerInterceptor = LoggerInterceptorService.getInstance();
 
