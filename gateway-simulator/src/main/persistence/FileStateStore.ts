@@ -13,6 +13,9 @@ import {
   type JsonReadSource,
 } from './atomic-json-file';
 
+export type GatewayAuthMode = 'legacy_jwt' | 'ztp_keypair';
+export type ZtpLifecyclePhase = 'provisioning' | 'operational';
+
 export type GatewayProfile = {
   id: string;
   label: string;
@@ -25,6 +28,14 @@ export type GatewayProfile = {
   gatewayFirmwareVersion?: string;
   /** Auth token for reconnect — stored main-process only, never sent to renderer. */
   token: string;
+  /** Missing ⇒ legacy_jwt */
+  authMode?: GatewayAuthMode;
+  /** ZTP: factory waiting-room vs claimed ops. Missing ⇒ provisioning when ztp, else operational. */
+  ztpLifecyclePhase?: ZtpLifecyclePhase;
+  /** Compressed P-256 public key (base64url) when authMode is ztp_keypair */
+  ztpPublicKeyB64?: string;
+  /** PKCS8 PEM private key — main-process only */
+  ztpPrivateKeyPem?: string;
   /** @deprecated Legacy inventory-only persistence — migrated to deviceRecords on load. */
   devices?: DeviceInventoryItem[];
   deviceRecords?: SimulatedDeviceRecord[];

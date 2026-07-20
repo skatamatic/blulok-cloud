@@ -331,9 +331,6 @@ export class GatewayEventsService {
         const wsService = WebSocketService.getInstance();
         await wsService.broadcastGatewayStatusUpdate(facilityId, gw.id);
         void wsService.broadcastFacilityDeviceReachabilityRefresh(facilityId);
-        import('@/services/gateway/gateway-recovery.service').then(({ GatewayRecoveryService }) => {
-          GatewayRecoveryService.scheduleStatusBroadcast(facilityId);
-        }).catch(() => {});
         return;
       }
 
@@ -397,9 +394,6 @@ export class GatewayEventsService {
         const wsService = WebSocketService.getInstance();
         await wsService.broadcastGatewayStatusUpdate(facilityId, gw.id);
         void wsService.broadcastFacilityDeviceReachabilityRefresh(facilityId);
-        import('@/services/gateway/gateway-recovery.service').then(({ GatewayRecoveryService }) => {
-          GatewayRecoveryService.scheduleStatusBroadcast(facilityId);
-        }).catch(() => {});
         return;
       }
 
@@ -409,9 +403,6 @@ export class GatewayEventsService {
       const wsService = WebSocketService.getInstance();
       await wsService.broadcastGatewayStatusUpdate(facilityId, gw.id);
       void wsService.broadcastFacilityDeviceReachabilityRefresh(facilityId);
-      import('@/services/gateway/gateway-recovery.service').then(({ GatewayRecoveryService }) => {
-        GatewayRecoveryService.scheduleStatusBroadcast(facilityId);
-      }).catch(() => {});
     } catch (error) {
       logger.warn(`syncGatewayDbWithInboundConnection failed facility=${facilityId}`, error);
     }
