@@ -53,46 +53,9 @@ export function BehaviorConfigPanel({ gateway, connected, embedded, onChange }: 
       <div>
         <h3 className="font-semibold">Gateway behavior</h3>
         <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
-          How this simulator responds to cloud commands and pushes state.
+          How this simulator responds to cloud commands. Live state sync, auto-reconnect, and PING replies are always
+          on.
         </p>
-      </div>
-
-      <div className="space-y-2 rounded-lg bg-gray-50 p-3 dark:bg-gray-800/40">
-        <p className="text-xs font-medium uppercase tracking-wide text-gray-500">State & connectivity</p>
-        <label className="flex items-start gap-2 text-sm">
-          <input
-            type="checkbox"
-            className="mt-0.5"
-            checked={b.liveStateSync}
-            onChange={(e) => void update({ liveStateSync: e.target.checked })}
-          />
-          <span>
-            <span className="font-medium">Live state sync</span>
-            <span className="mt-0.5 block text-xs text-gray-500">
-              Push state whenever a device field changes
-              {!connected && b.liveStateSync ? ' (active once connected)' : ''}.
-            </span>
-          </span>
-        </label>
-        <label className="flex items-start gap-2 text-sm">
-          <input
-            type="checkbox"
-            className="mt-0.5"
-            checked={b.autoReconnect}
-            onChange={(e) => void update({ autoReconnect: e.target.checked })}
-          />
-          <span>
-            <span className="font-medium">Auto-reconnect</span>
-            <span className="mt-0.5 block text-xs text-gray-500">
-              Restores connection after an unexpected drop or on app launch if you were connected. Manual Disconnect
-              never auto-reconnects.
-            </span>
-          </span>
-        </label>
-        <label className="flex items-center gap-2 text-sm">
-          <input type="checkbox" checked={b.respondToPing} onChange={(e) => void update({ respondToPing: e.target.checked })} />
-          Respond to PING
-        </label>
       </div>
 
       <div className="space-y-4 rounded-lg bg-gray-50 p-3 dark:bg-gray-800/40">

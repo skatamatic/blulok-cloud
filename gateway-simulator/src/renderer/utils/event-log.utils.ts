@@ -1,4 +1,5 @@
 import type { GatewayEventEntry } from '@protocol/ipc-channels';
+import type { AppRealtimeEventEntry } from '@protocol/user-simulator-state';
 
 const HEARTBEAT_TYPES = new Set(['PING', 'PONG', 'PONG_OK']);
 
@@ -7,6 +8,14 @@ export function isHeartbeatEvent(entry: GatewayEventEntry): boolean {
   if (entry.payload && typeof entry.payload === 'object' && 'type' in entry.payload) {
     const type = (entry.payload as { type?: string }).type;
     return typeof type === 'string' && HEARTBEAT_TYPES.has(type);
+  }
+  return false;
+}
+
+export function isAppRealtimeHeartbeatEvent(entry: Pick<AppRealtimeEventEntry, 'summary' | 'payload'>): boolean {
+  if (entry.summary.startsWith('heartbeat')) return true;
+  if (entry.payload && typeof entry.payload === 'object' && 'type' in entry.payload) {
+    return (entry.payload as { type?: string }).type === 'heartbeat';
   }
   return false;
 }

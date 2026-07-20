@@ -5,6 +5,7 @@ import type { GatewayEventEntry } from '../src/protocol/ipc-channels';
 import { ACCESS_EVENT_PRESETS, ACCESS_EVENT_ACTIONS } from '../src/protocol/access-events';
 import { isHeartbeatEvent, formatEventLogLocalTime } from '../src/renderer/utils/event-log.utils';
 import { GATEWAY_PANEL_TABS, readGatewayPanelTab } from '../src/renderer/utils/gateway-panel.utils';
+import { USER_PANEL_TABS, readUserPanelTab } from '../src/renderer/utils/user-panel.utils';
 import { resolveTabSlideDirection } from '../src/renderer/components/PanelTabTransition';
 import {
   clampSidebarWidth,
@@ -131,6 +132,13 @@ describe('gateway panel tabs', () => {
   });
 });
 
+describe('user panel tabs', () => {
+  it('defines session, devices, and app with session as default', () => {
+    expect(USER_PANEL_TABS.map((t) => t.id)).toEqual(['session', 'devices', 'app']);
+    expect(readUserPanelTab()).toBe('session');
+  });
+});
+
 describe('event log heartbeat filter', () => {
   it('detects PING, PONG, and PONG_OK by summary or payload type', () => {
     expect(isHeartbeatEvent(entry({ summary: 'PING' }))).toBe(true);
@@ -175,8 +183,11 @@ describe('behavior defaults', () => {
     expect(DEFAULT_BEHAVIOR.liveStateSync).toBe(true);
   });
 
-  it('normalizeBehavior fills missing fields from saved profiles', () => {
+  it('normalizeBehavior fills missing fields and forces always-on connectivity flags', () => {
     expect(normalizeBehavior({ autoReconnect: false }).commandLatencyMs).toBe(0);
+    expect(normalizeBehavior({ autoReconnect: false }).autoReconnect).toBe(true);
+    expect(normalizeBehavior({ respondToPing: false }).respondToPing).toBe(true);
+    expect(normalizeBehavior({ liveStateSync: false }).liveStateSync).toBe(true);
     expect(normalizeBehavior({}).liveStateSync).toBe(true);
     expect(normalizeBehavior({ autoLockResponse: false }).lockUnlockMode).toBe('apply-only');
     expect(normalizeBehavior({ autoLockResponse: true }).lockUnlockMode).toBe('accept');

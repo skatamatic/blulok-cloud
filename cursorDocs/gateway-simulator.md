@@ -44,7 +44,7 @@ Device slider edits coalesce into one undo step per device field.
 | PROXY inventory/state/logs | `ProxyClient` → `/internal/gateway/*` |
 | PROXY access events | `ProxyClient.accessEvents()` → `/internal/gateway/access-events` |
 | JWT commands (LOCK, denylist, etc.) | `CommandRouter` + handlers — see **Device simulation** below |
-| Firmware OTA | `FirmwareReceiver` (chunk ACK + FIRMWARE_UPDATE_STATUS) |
+| Firmware OTA | `FirmwareReceiver` (v1 chunk ACK + status; v2 HTTPS download from `download_url` + `FIRMWARE_PROGRESS` + status) |
 | Device kinds | `lock`, `access_control`, `bridge`, `friend_node`, `gateway` |
 
 Canonical backend types: `backend/src/services/gateway/message-types.ts`
@@ -110,12 +110,17 @@ Excluded from coverage (integration-only): `GatewayConnection.ts`, IPC handlers,
 - **Tabbed panel**: Each gateway uses secondary navigation — **Devices**, **Connection**, **Behavior**, **Settings**, **Logs** (in the main content area). Gateway instances are listed in a **resizable, collapsible** left sidebar (drag the right edge; « / » toggle in the header). Width and collapsed state persist in localStorage. **Add gateway** at the bottom of the sidebar.
 - **Settings tab**: Edit the simulator sidebar **tab label** (local only), cloud **gateway name**, **hardware serial** (`mac_address` on the gateway record), and **running firmware** (sent as `firmware_version` on WebSocket AUTH). Name/serial changes call `PUT /api/gateways/:id`; firmware is local until the next reconnect seeds the cloud via AUTH.
 - **Devices tab**: Card layout with inline state fields plus **Details** on each card. **Device detail view** tabs: **Overview** (identity/binding + live telemetry), **Security** (trust keys, denylist, access codes for access_control), **Simulate** (lock/access_control only — route pass and access events), **Activity** (inbound command log). Legacy `keys` / `telemetry` tab ids in localStorage map to **Security** / **Overview**.
-- **Auto-reconnect**: When **Auto-reconnect** is enabled in Behavior, the simulator reconnects after an unexpected WebSocket drop (3s countdown shown in the toolbar and offline banner). **Disconnect** / **Disconnect all** clears the persisted “connect on restore” flag and never schedules a retry. On app launch, tabs that were connected when the app last closed reconnect automatically if auto-reconnect is still enabled.
+- **Auto-reconnect**: Always on. After an unexpected WebSocket drop, the simulator reconnects (3s countdown in the toolbar and offline banner). **Disconnect** / **Disconnect all** clears the persisted “connect on restore” flag and never schedules a retry. On app launch, tabs that were connected when the app last closed reconnect automatically.
 - **Device inventory**: Card layout with inline state fields (lock state, online, battery, firmware, etc.). Gateway self-device is shown but not addable. **Recovery inventory snapshot push** from the cloud (`INVENTORY_SNAPSHOT_*`) is applied via `InventorySnapshotReceiver` → `inventory-snapshot-applier` → `DeviceRegistry.loadInventorySnapshot` (full replace; preserves sim state for devices retained by serial/id). Inventory push is **not** gated by firmware test behavior (`firmwareMode`). `DEVICE_DELETED` tombstones remove matching local rows and refresh the Devices tab via `onDevicesChanged`.
 - **Session role UI**: `AUTH_OK.sessionRole` drives badges in the toolbar and Connection tab. The **sidebar uses the status dot** (green = bound, gray = offline) except **swap candidates**, which show a static blue arrow icon. After swap recovery completes, the cloud sends an updated `AUTH_OK` with `sessionRole: active` to the promoted gateway (and the demoted unit reconnects as `swap_candidate`).
-- **Live state sync**: Enabled by default for new gateways (Behavior tab). When on, pushes state to the cloud immediately on each device field change when connected. Access control telemetry uses `/devices/state` (online, locked, last_seen only); binding fields (relay channel, name, etc.) use inventory sync. Identity-only lock fields (e.g. lock number) also route to inventory sync.
-- **Remote LOCK/UNLOCK**: Inbound `COMMAND` JWTs from the cloud are routed to `LockUnlockHandler`. Behavior **LOCK / UNLOCK** mode controls the response: `accept` (apply + state sync), `apply-only` (local UI only), or `ignore`. The bound **active** gateway session receives commands — swap candidates do not. Sync inventory first so `device_id` in the JWT matches local `lock_id`.
+- **Live state sync**: Always on when connected. Pushes state to the cloud immediately on each device field change. Access control telemetry uses `/devices/state` (online, locked, last_seen only); binding fields (relay channel, name, etc.) use inventory sync. Identity-only lock fields (e.g. lock number) also route to inventory sync.
+- **Remote LOCK/UNLOCK**: Inbound `COMMAND` JWTs from the cloud are routed to `LockUnlockHandler`. Behavior **LOCK / UNLOCK** mode controls the response: `accept` (apply + state sync), `apply-only` (local UI only), or `ignore`. The bound **active** gateway session receives commands — swap candidates do not. Connect so live inventory sync binds `device_id` in the JWT to local `lock_id`.
 - **Access events**: Presets on each lock/access-control device card (app unlock, keypad denied, admin open, etc.); resolves cloud `device_id` via proxy `GET /devices` after inventory sync.
+- **PING**: Always answered with `PONG` while connected.
+
+**ZTP sticker QR:** On **Connection** → Cloud auth & provisioning, ZTP gateways show a scannable **factory sticker QR** (`blulok://gw/claim?device_id=&pk=`) matching [gateway-ztp-sticker-design.md](./gateway-ztp-sticker-design.md). Connect the gateway into provision WAITING, then either use **Claim to this facility** (lab shortcut for greenfield **or** swap-prep when the facility already has a gateway) or scan the QR with a real facility-admin phone. If claim returns `sessionRole: swap_candidate`, operational AUTH parks without stealing the live session — finish **Swap/Recovery** in the portal to promote. Device ID and URI can be copied for manual entry.
+
+**Factory reset / release:** **Reset to factory (local)** and **Release cloud + factory** both return lifecycle to `provisioning` and **disconnect** any live provision/ops WebSocket — provisioning is incompatible with an authenticated ops session. Cloud release matches firmware: portal `POST …/release` also force-closes the ops socket with reason `ztp_released`. The simulator calls cloud release first (while credentials still exist), then tears down the local socket.
 
 Addable device kinds: `lock`, `access_control`, `bridge`, `friend_node` — **`gateway` is excluded** (a site cannot nest gateways).
 
@@ -131,7 +136,7 @@ Each simulated device is a **`SimulatedDeviceRecord`**: cloud-facing **`item`** 
 | `rootKeyPublicB64` | Provisioned root **public** key — verifies `ROTATE_OPERATIONS_KEY` (root private stays in cloud/provisioning only) |
 | `operationsKeyPublicB64` | Ops **public** key the device trusts for gateway commands and route passes (from `AUTH_OK` + rotation) |
 | `operationsKeyRotatedAt` | Last `ROTATE_OPERATIONS_KEY` |
-| `denylist` | JWT `sub` entries from `DENYLIST_ADD` / removed by `DENYLIST_REMOVE`; also seeded from cloud on inventory sync and recovery snapshot |
+| `denylist` | JWT `sub` entries from `DENYLIST_SYNC` (full replace on connect), `DENYLIST_ADD` / `DENYLIST_REMOVE`, and inventory / recovery snapshot |
 | `accessCodes` | Keypad codes from `ACCESS_CODE_UPDATE` (access_control only) |
 | `lastSecureTimeSyncAt` / `lastSecureTimeSyncTs` | Last `SECURE_TIME_SYNC` |
 | `recentCommands` | Rolling log of inbound JWT commands |
@@ -141,7 +146,7 @@ Each simulated device is a **`SimulatedDeviceRecord`**: cloud-facing **`item`** 
 | Command | Effect |
 |---------|--------|
 | `LOCK` / `UNLOCK` | Inventory lock state + command log; optional cloud state sync when `lockUnlockMode=accept` |
-| `DENYLIST_ADD` / `DENYLIST_REMOVE` | Mutate target device denylist (targets match serial, `cloud_device_id`, or legacy lock/access id) |
+| `DENYLIST_ADD` / `DENYLIST_REMOVE` / `DENYLIST_SYNC` | Mutate or replace target device denylist (`SYNC` replaces from connect snapshot; ADD/REMOVE are incremental) |
 | `ACCESS_CODE_UPDATE` | Replace access codes on matching access_control devices |
 | `ROTATE_OPERATIONS_KEY` | Update ops key on all devices (+ gateway session key) |
 | `SECURE_TIME_SYNC` | Apply secure time to devices and gateway |
@@ -174,8 +179,13 @@ No manual email/password entry — users must already exist in the backend.
 | Take over locally | Regenerate keys + register | **Take over locally** on cloud-linked device |
 | Fetch route pass | `POST /passes/request` | **Fetch route pass** |
 | Present at lock | Local verify + access event + live state sync | **Try open with user device** on device detail |
+| Open phone app | `/ws/app` subscribe + live events | **Open app** on user panel (opt-in; not auto) |
 
-**Persistence:** `user-profiles.json` stores session JWT (+ expiry), ops public key, cloud user id, devices (cloud-linked or simulator-local), and cached route passes per facility.
+**App realtime (opt-in):** User panel **App** tab connects to `/ws/app` with the cached tenant JWT, subscribes to one facility, and stores every inbound/outbound frame in a readable event log (snapshot + live `app_event`s). Heartbeats are sent client-side so the idle timeout does not drop the socket. Closing the app (or removing the user) disconnects; there is **no** auto-connect on restore and **no** auto-reconnect after drops — reopen explicitly to simulate launching the app again.
+
+**User panel tabs** (same pattern as gateway panel): **Session** (JWT / identity), **Devices** (phones, keys, route passes), **App** (`/ws/app` + event log).
+
+**Persistence:** `user-profiles.json` stores session JWT (+ expiry), ops public key, cloud user id, devices (cloud-linked or simulator-local), and cached route passes per facility. App realtime sessions and their event logs are **ephemeral** (in-memory only).
 
 **Route pass tampering:** Each cached pass can be set to **Valid**, **Expired**, or **Bad sig** to simulate lock-side denial without re-fetching from the cloud.
 

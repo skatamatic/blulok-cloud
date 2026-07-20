@@ -29,6 +29,8 @@ export function sampleGateway(overrides: Partial<GatewayInstanceState> = {}): Ga
     gatewayId: 'cloud-gw-1',
     connectionStatus: 'connected',
     sessionRole: 'active',
+    authMode: 'legacy_jwt',
+    ztpLifecyclePhase: 'operational',
     devices: [],
     deviceSimByKey: {},
     behavior: DEFAULT_BEHAVIOR,

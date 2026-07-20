@@ -33,7 +33,7 @@ export function DeviceDetailSecuritySection({ gateway, item, sim }: DeviceDetail
 
       <DeviceDetailSection
         title={`Denylist (${denylistRows.length})`}
-        description="Subjects blocked from route-pass access. Populated when the cloud pushes DENYLIST_ADD or during inventory sync."
+        description="Subjects blocked from route-pass access. Populated by DENYLIST_SYNC on connect, DENYLIST_ADD/REMOVE, or inventory sync."
       >
         {denylistRows.length === 0 ? (
           <p className="device-detail-empty">No denylist entries yet.</p>

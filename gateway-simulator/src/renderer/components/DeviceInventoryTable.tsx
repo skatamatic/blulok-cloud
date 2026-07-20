@@ -36,7 +36,6 @@ export function DeviceInventoryTable({ gateway, connected, embedded, users = [],
   const [deviceToRemove, setDeviceToRemove] = useState<DeviceInventoryItem | null>(null);
   const [removeBusy, setRemoveBusy] = useState(false);
   const [skipDeleteConfirm, setSkipDeleteConfirm] = useState(false);
-  const liveSync = gateway.behavior.liveStateSync;
 
   useEffect(() => {
     setSelectedDeviceKey(null);
@@ -124,11 +123,7 @@ export function DeviceInventoryTable({ gateway, connected, embedded, users = [],
     }
   };
 
-  const syncLabel = liveSync && connected
-    ? 'Live sync on'
-    : liveSync
-      ? 'Live sync when connected'
-      : 'Manual sync';
+  const syncLabel = connected ? 'Live sync on' : 'Live sync when connected';
 
   return (
     <div className={embedded ? 'devices-view devices-view-embedded space-y-4' : 'devices-view card'}>
@@ -137,12 +132,12 @@ export function DeviceInventoryTable({ gateway, connected, embedded, users = [],
           <h3 className="devices-page-title">Devices</h3>
           <p className="devices-page-subtitle">
             Manage simulated inventory and quick controls. Open device details to simulate access events.
-            {!connected && ' Sync inventory after connecting so the cloud knows your devices.'}
+            {!connected && ' Connect to push device changes to the cloud.'}
           </p>
         </div>
         <div className="devices-page-header-actions">
           <span
-            className={`devices-sync-pill ${liveSync && connected ? 'devices-sync-pill-live' : ''}`}
+            className={`devices-sync-pill ${connected ? 'devices-sync-pill-live' : ''}`}
             title={syncLabel}
           >
             <SignalIcon className="h-3.5 w-3.5" aria-hidden />

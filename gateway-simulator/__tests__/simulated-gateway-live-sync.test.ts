@@ -138,7 +138,7 @@ describe('SimulatedGateway live state sync', () => {
     expect(inventorySync.mock.calls[0]?.[1]).toEqual([]);
   });
 
-  it('skips live sync when disabled or disconnected', async () => {
+  it('skips live sync when disconnected', async () => {
     const stateSync = vi.fn().mockResolvedValue(okProxyResponse());
     const inventorySync = vi.fn().mockResolvedValue(okProxyResponse());
 
@@ -152,10 +152,13 @@ describe('SimulatedGateway live state sync', () => {
       store: mockStore(),
       onUpdate: vi.fn(),
       onLog: vi.fn(),
-      behavior: { liveStateSync: false },
     });
 
-    connectWithLiveSync(gateway, { stateSync, inventorySync });
+    // Connected path would sync; leave disconnected (default) to verify the gate.
+    (gateway as unknown as { proxy: { stateSync: typeof stateSync; inventorySync: typeof inventorySync } }).proxy = {
+      stateSync,
+      inventorySync,
+    };
 
     const item = await gateway.addDevice('lock');
     const key = SimulatedGateway.deviceKeyForItem(item);
@@ -410,7 +413,7 @@ describe('SimulatedGateway live state sync', () => {
     });
   });
 
-  it('skips profile-restore sync when liveStateSync is disabled', async () => {
+  it('skips profile-restore sync when disconnected', async () => {
     const stateSync = vi.fn().mockResolvedValue(okProxyResponse());
 
     const gateway = new SimulatedGateway({
@@ -423,10 +426,9 @@ describe('SimulatedGateway live state sync', () => {
       store: mockStore(),
       onUpdate: vi.fn(),
       onLog: vi.fn(),
-      behavior: { liveStateSync: false },
     });
 
-    connectWithLiveSync(gateway, { stateSync });
+    (gateway as unknown as { proxy: { stateSync: typeof stateSync } }).proxy = { stateSync };
 
     const item = await gateway.addDevice('lock');
     const key = SimulatedGateway.deviceKeyForItem(item);

@@ -71,7 +71,11 @@ export class CommandRouter {
       case 'LOCK_UNLOCK':
         return payload.cmd_type === 'LOCK' || payload.cmd_type === 'UNLOCK';
       case 'DENYLIST':
-        return payload.cmd_type === 'DENYLIST_ADD' || payload.cmd_type === 'DENYLIST_REMOVE';
+        return (
+          payload.cmd_type === 'DENYLIST_ADD'
+          || payload.cmd_type === 'DENYLIST_REMOVE'
+          || payload.cmd_type === 'DENYLIST_SYNC'
+        );
       case 'ACCESS_CODE_UPDATE':
         return payload.cmd_type === 'ACCESS_CODE_UPDATE';
       case 'DEVICE_DELETED':

@@ -339,6 +339,18 @@ export class GatewayManager {
     return this.userManager.loginUser(userId, appDeviceId);
   }
 
+  async connectUserAppRealtime(userId: string, facilityId: string): Promise<UserInstanceState> {
+    return this.userManager.connectAppRealtime(userId, facilityId);
+  }
+
+  disconnectUserAppRealtime(userId: string): UserInstanceState {
+    return this.userManager.disconnectAppRealtime(userId);
+  }
+
+  clearUserAppRealtimeEvents(userId: string): UserInstanceState {
+    return this.userManager.clearAppRealtimeEvents(userId);
+  }
+
   async registerUserDevice(userId: string, deviceId: string): Promise<UserInstanceState> {
     return this.userManager.registerDevice(userId, deviceId);
   }
@@ -493,9 +505,22 @@ export class GatewayManager {
     await this.recordUndoable('Add gateway', async () => {
       const id = this.generateId();
       const gatewayId = req.gatewayId ?? this.generateId();
-      const token = await this.resolveAuthToken(req.token);
+      const authMode = req.authMode || 'legacy_jwt';
+      const token =
+        authMode === 'ztp_keypair'
+          ? (req.token || (await this.store.loadSession())?.token || '')
+          : await this.resolveAuthToken(req.token);
       const backendUrl = req.backendUrl || (await this.store.loadSession())?.backendUrl;
       if (!backendUrl) throw new Error('Backend URL is required');
+
+      let ztpPublicKeyB64: string | undefined;
+      let ztpPrivateKeyPem: string | undefined;
+      if (authMode === 'ztp_keypair') {
+        const { generateP256KeyPair } = await import('../auth/ztp-keypair.utils');
+        const keys = generateP256KeyPair();
+        ztpPublicKeyB64 = keys.publicKeyCompressedB64url;
+        ztpPrivateKeyPem = keys.privateKeyPem;
+      }
 
       const profile = emptyProfile({
         id,
@@ -507,6 +532,10 @@ export class GatewayManager {
         gatewayName: req.gatewayName?.trim() || undefined,
         gatewaySerial: req.gatewaySerial?.trim() || undefined,
         token,
+        authMode,
+        ztpLifecyclePhase: authMode === 'ztp_keypair' ? 'provisioning' : 'operational',
+        ztpPublicKeyB64,
+        ztpPrivateKeyPem,
       });
 
       const gateway = this.buildInstance(profile);
@@ -766,11 +795,29 @@ export class GatewayManager {
           (patch.gatewaySerial !== undefined ? patch.gatewaySerial.trim() : undefined),
         gatewayFirmwareVersion: patch.gatewayFirmwareVersion,
       });
+      if (patch.authMode !== undefined) {
+        await gw.setAuthMode(patch.authMode);
+      }
       await gw.persist();
       next = gw.getState();
       this.broadcastUpdate(next);
     });
     return next;
+  }
+
+  async enterProvisioning(id: string, options?: { releaseCloud?: boolean }): Promise<GatewayInstanceState> {
+    const gw = this.require(id);
+    await gw.enterProvisioningMode(options);
+    const next = gw.getState();
+    this.broadcastUpdate(next);
+    return next;
+  }
+
+  async claimZtpGateway(id: string): Promise<GatewayInstanceState> {
+    const gw = this.require(id);
+    await gw.claimNow();
+    // State updates as ASSIGNED arrives and connect continues
+    return gw.getState();
   }
 
   async saveProfile(id: string) {
@@ -805,6 +852,10 @@ export class GatewayManager {
       gatewaySerial: profile.gatewaySerial,
       gatewayFirmwareVersion: profile.gatewayFirmwareVersion,
       token: profile.token,
+      authMode: profile.authMode || 'legacy_jwt',
+      ztpLifecyclePhase: profile.ztpLifecyclePhase,
+      ztpPublicKeyB64: profile.ztpPublicKeyB64,
+      ztpPrivateKeyPem: profile.ztpPrivateKeyPem,
       devices: profile.devices,
       deviceRecords: profile.deviceRecords,
       behavior: profile.behavior,

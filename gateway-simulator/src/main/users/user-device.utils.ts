@@ -137,6 +137,7 @@ export function toUserInstanceState(profile: UserProfile): UserInstanceState {
     opsPublicKeyB64: profile.opsPublicKeyB64,
     keyGenerationRequired: profile.keyGenerationRequired,
     devices: profile.devices.map(toUserDeviceState),
+    appRealtime: { status: 'disconnected', events: [] },
   };
 }
 

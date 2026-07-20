@@ -74,7 +74,7 @@ describe('SimulatedGateway', () => {
     expect(gateway.getState().sessionRole).toBe('active');
   });
 
-  it('responds to PING when respondToPing is enabled', async () => {
+  it('responds to PING with PONG', async () => {
     const { gateway, getTransport } = buildGateway();
     await gateway.connect();
     const transport = getTransport()!;

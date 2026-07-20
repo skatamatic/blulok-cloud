@@ -207,7 +207,13 @@ export function SimulatorSidebar({
                     </span>
                     <span className="gateway-sidebar-item-label truncate">{u.label}</span>
                     {!collapsed && (
-                      <span className="gateway-sidebar-item-meta truncate">{u.loggedIn ? u.role : 'offline'}</span>
+                      <span className="gateway-sidebar-item-meta truncate">
+                        {u.appRealtime?.status === 'connected'
+                          ? 'app open'
+                          : u.loggedIn
+                            ? u.role
+                            : 'offline'}
+                      </span>
                     )}
                   </button>
                   {!collapsed && (

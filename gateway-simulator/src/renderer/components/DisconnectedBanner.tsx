@@ -1,7 +1,7 @@
 import { ReconnectIndicator } from './ReconnectIndicator';
 
 type Props = {
-  status: 'disconnected' | 'connecting' | 'connected' | 'error';
+  status: 'disconnected' | 'connecting' | 'provisioning' | 'connected' | 'error';
   reconnectAt?: number;
 };
 
