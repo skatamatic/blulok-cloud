@@ -211,6 +211,24 @@ describe('GatewayFirmwareTab', () => {
       });
     });
 
+    it('reloads data when Bridge target type tab is selected', async () => {
+      setupDefaultMocks();
+      renderTab();
+      await waitFor(() => {
+        expect(screen.getByText('Available Firmware')).toBeInTheDocument();
+      });
+      jest.clearAllMocks();
+      setupDefaultMocks({ firmware: [mkFirmware({ target_type: 'bridge', version: '0.4.0' })] });
+
+      fireEvent.click(screen.getByText('Bridge'));
+
+      await waitFor(() => {
+        expect(mockApi.listFirmware).toHaveBeenCalledWith('bridge');
+        expect(mockApi.getFirmwarePushStatus).toHaveBeenCalledWith(GATEWAY_ID, 'bridge', false);
+        expect(mockApi.getFirmwarePushHistory).toHaveBeenCalledWith(GATEWAY_ID, 'bridge', 10);
+      });
+    });
+
     it('shows inline error when API fails to load', async () => {
       mockApi.listFirmware.mockRejectedValue(new Error('Network'));
       mockApi.getFirmwarePushStatus.mockRejectedValue(new Error('Network'));

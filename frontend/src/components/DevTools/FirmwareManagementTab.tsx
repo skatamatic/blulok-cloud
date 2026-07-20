@@ -10,12 +10,13 @@ import { useToast } from '@/contexts/ToastContext';
 import { ConfirmDialog } from '@/components/Common/ConfirmDialog';
 import { formatDate } from '@/utils/datetime.utils';
 
-type FirmwareTargetType = 'gateway' | 'lock' | 'friend_node' | 'access_control';
+type FirmwareTargetType = 'gateway' | 'lock' | 'friend_node' | 'bridge' | 'access_control';
 
 const TARGET_TYPE_LABELS: Record<FirmwareTargetType, string> = {
   gateway: 'Gateway',
   lock: 'Lock',
   friend_node: 'Friend Node',
+  bridge: 'Bridge',
   access_control: 'Access Control',
 };
 
@@ -23,6 +24,7 @@ const TARGET_TYPE_COLORS: Record<FirmwareTargetType, string> = {
   gateway: 'bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300',
   lock: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300',
   friend_node: 'bg-purple-100 text-purple-700 dark:bg-purple-900/40 dark:text-purple-300',
+  bridge: 'bg-cyan-100 text-cyan-700 dark:bg-cyan-900/40 dark:text-cyan-300',
   access_control: 'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300',
 };
 
@@ -194,7 +196,7 @@ export default function FirmwareManagementTab() {
             <div>
               <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Target Device *</label>
               <div className="flex rounded-lg border border-gray-300 dark:border-gray-600 overflow-hidden w-fit">
-                {(['gateway', 'lock', 'friend_node', 'access_control'] as FirmwareTargetType[]).map((tt) => (
+                {(['gateway', 'lock', 'friend_node', 'bridge', 'access_control'] as FirmwareTargetType[]).map((tt) => (
                   <button
                     key={tt}
                     type="button"
@@ -291,7 +293,7 @@ export default function FirmwareManagementTab() {
         <div className="flex items-center justify-between mb-4">
           <h3 className="text-lg font-semibold text-gray-900 dark:text-white">Firmware Catalog</h3>
           <div className="flex rounded-lg border border-gray-300 dark:border-gray-600 overflow-hidden">
-            {(['all', 'gateway', 'lock', 'friend_node', 'access_control'] as const).map((tt) => (
+            {(['all', 'gateway', 'lock', 'friend_node', 'bridge', 'access_control'] as const).map((tt) => (
               <button
                 key={tt}
                 onClick={() => setFilterTargetType(tt)}

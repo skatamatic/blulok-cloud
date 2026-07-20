@@ -811,7 +811,7 @@
         "tags": [
           "Users"
         ],
-        "summary": "Create a user",
+        "summary": "Create a user (or reactivate an inactive user when confirmed)",
         "requestBody": {
           "required": true,
           "content": {
@@ -823,8 +823,28 @@
           }
         },
         "responses": {
+          "200": {
+            "description": "HTTP 200",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SuccessEnvelope"
+                }
+              }
+            }
+          },
           "201": {
             "description": "HTTP 201",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SuccessEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "HTTP 409",
             "content": {
               "application/json": {
                 "schema": {
@@ -3633,6 +3653,16 @@
             }
           }
         ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PutGatewaysIdRequest"
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
             "description": "HTTP 200",
@@ -4802,7 +4832,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/PutDevicesBlulokIdLockRequest"
+                "$ref": "#/components/schemas/PutDevicesAccessControlIdLockRequest"
               }
             }
           }
@@ -15916,6 +15946,32 @@
         ]
       }
     },
+    "/firmware/delivery-capabilities": {
+      "get": {
+        "tags": [
+          "Firmware"
+        ],
+        "summary": "Firmware OTA delivery mode capabilities (v1/v2)",
+        "responses": {
+          "200": {
+            "description": "HTTP 200",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SuccessEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "x-migration-status": "complete",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
     "/firmware/push-status/{gatewayId}": {
       "get": {
         "tags": [
@@ -16226,6 +16282,16 @@
             }
           }
         ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PostFirmwareIdPushGatewayIdRequest"
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
             "description": "HTTP 200",
@@ -17457,6 +17523,9 @@
           "sendInvite": {
             "type": "boolean"
           },
+          "reactivateIfInactive": {
+            "type": "boolean"
+          },
           "facilityIds": {
             "type": "array",
             "items": {
@@ -18651,6 +18720,13 @@
           },
           "includeFirmware": {
             "type": "boolean"
+          },
+          "firmwareDeliveryMode": {
+            "type": "string",
+            "enum": [
+              "v1",
+              "v2"
+            ]
           }
         },
         "additionalProperties": false
@@ -18665,6 +18741,87 @@
         "required": [
           "confirm"
         ],
+        "additionalProperties": false
+      },
+      "PutGatewaysIdRequest": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 255
+          },
+          "model": {
+            "type": "string",
+            "maxLength": 100
+          },
+          "firmware_version": {
+            "type": "string",
+            "maxLength": 128
+          },
+          "ip_address": {
+            "type": "string"
+          },
+          "mac_address": {
+            "type": "string",
+            "maxLength": 64
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "online",
+              "offline",
+              "error",
+              "maintenance"
+            ]
+          },
+          "configuration": {
+            "type": "object",
+            "properties": {},
+            "additionalProperties": false
+          },
+          "metadata": {
+            "type": "object",
+            "properties": {},
+            "additionalProperties": false
+          },
+          "gateway_type": {
+            "type": "string",
+            "enum": [
+              "physical",
+              "http",
+              "simulated"
+            ]
+          },
+          "connection_url": {
+            "type": "string"
+          },
+          "base_url": {
+            "type": "string"
+          },
+          "api_key": {
+            "type": "string"
+          },
+          "username": {
+            "type": "string"
+          },
+          "password": {
+            "type": "string"
+          },
+          "protocol_version": {
+            "type": "string"
+          },
+          "key_management_version": {
+            "type": "string",
+            "enum": [
+              "v1",
+              "v2"
+            ]
+          },
+          "ignore_ssl_cert": {
+            "type": "boolean"
+          }
+        },
         "additionalProperties": false
       },
       "PutGatewaysIdStatusRequest": {
@@ -18919,6 +19076,17 @@
           },
           "supports_remote_lock": {
             "type": "boolean"
+          },
+          "supports_widget_timed_open": {
+            "type": "boolean"
+          },
+          "has_lock_feedback": {
+            "type": "boolean"
+          },
+          "no_feedback_open_timeout_sec": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 3600
           }
         },
         "required": [
@@ -19019,6 +19187,17 @@
           },
           "supports_remote_lock": {
             "type": "boolean"
+          },
+          "supports_widget_timed_open": {
+            "type": "boolean"
+          },
+          "has_lock_feedback": {
+            "type": "boolean"
+          },
+          "no_feedback_open_timeout_sec": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 3600
           },
           "device_settings": {
             "type": "object",
@@ -19121,6 +19300,17 @@
           },
           "supports_remote_lock": {
             "type": "boolean"
+          },
+          "supports_widget_timed_open": {
+            "type": "boolean"
+          },
+          "has_lock_feedback": {
+            "type": "boolean"
+          },
+          "no_feedback_open_timeout_sec": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 3600
           },
           "device_settings": {
             "type": "object",
@@ -19269,6 +19459,27 @@
           "success",
           "message"
         ]
+      },
+      "PutDevicesAccessControlIdLockRequest": {
+        "type": "object",
+        "properties": {
+          "lock_status": {
+            "type": "string",
+            "enum": [
+              "locked",
+              "unlocked",
+              "error"
+            ]
+          },
+          "open_until": {
+            "type": "integer",
+            "minimum": 1
+          }
+        },
+        "required": [
+          "lock_status"
+        ],
+        "additionalProperties": false
       },
       "GetDevicesBlulokIdDenylistResponse200": {
         "type": "object",
@@ -20514,6 +20725,18 @@
                     "locked": {
                       "type": "boolean"
                     },
+                    "access_methods": {
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "enum": [
+                          "app",
+                          "keypad",
+                          "fob"
+                        ]
+                      },
+                      "minItems": 1
+                    },
                     "last_seen": {
                       "anyOf": [
                         {
@@ -20738,6 +20961,18 @@
                     },
                     "locked": {
                       "type": "boolean"
+                    },
+                    "access_methods": {
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "enum": [
+                          "app",
+                          "keypad",
+                          "fob"
+                        ]
+                      },
+                      "minItems": 1
                     },
                     "last_seen": {
                       "anyOf": [
@@ -23421,6 +23656,19 @@
           "limit",
           "offset"
         ],
+        "additionalProperties": false
+      },
+      "PostFirmwareIdPushGatewayIdRequest": {
+        "type": "object",
+        "properties": {
+          "delivery_mode": {
+            "type": "string",
+            "enum": [
+              "v1",
+              "v2"
+            ]
+          }
+        },
         "additionalProperties": false
       },
       "PostDeviceGroupsRequest": {

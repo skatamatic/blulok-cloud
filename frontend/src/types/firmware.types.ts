@@ -1,4 +1,13 @@
-export type FirmwareTargetType = 'gateway' | 'lock' | 'friend_node' | 'access_control';
+export type FirmwareTargetType = 'gateway' | 'lock' | 'friend_node' | 'bridge' | 'access_control';
+
+/** Tab / filter order used by DevTools and Gateway firmware UIs */
+export const FIRMWARE_TARGET_TYPES: readonly FirmwareTargetType[] = [
+  'gateway',
+  'lock',
+  'friend_node',
+  'bridge',
+  'access_control',
+] as const;
 
 export type FirmwarePushStatus = 'pending' | 'transferring' | 'verifying' | 'complete' | 'failed' | 'cancelled';
 
@@ -105,6 +114,7 @@ export const TARGET_TYPE_LABELS: Record<FirmwareTargetType, string> = {
   gateway: 'Gateway',
   lock: 'Lock',
   friend_node: 'Friend Node',
+  bridge: 'Bridge',
   access_control: 'Access Control',
 };
 
@@ -112,6 +122,7 @@ export const TARGET_TYPE_COLORS: Record<FirmwareTargetType, string> = {
   gateway: 'text-blue-600 dark:text-blue-400',
   lock: 'text-emerald-600 dark:text-emerald-400',
   friend_node: 'text-purple-600 dark:text-purple-400',
+  bridge: 'text-cyan-600 dark:text-cyan-400',
   access_control: 'text-amber-600 dark:text-amber-400',
 };
 

@@ -154,6 +154,8 @@ describe('DeviceRegistry firmware targeting', () => {
   it('applyFirmware targets device kinds', () => {
     const registry = new DeviceRegistry();
     registry.addDefault('lock', '1');
+    registry.addDefault('bridge', 'br1');
+    registry.addDefault('friend_node', 'fn1');
     registry.add(DeviceFactory.create({
       kind: 'gateway',
       serial: 'gw-self',
@@ -163,8 +165,12 @@ describe('DeviceRegistry firmware targeting', () => {
     registry.applyFirmware('gateway', '2.0.0');
     const lockItem = registry.list().find((d) => d.kind === 'lock') as { lock_id: string };
     registry.applyFirmware('lock', '3.0.0', lockItem.lock_id);
+    registry.applyFirmware('bridge', '4.0.0');
+    registry.applyFirmware('friend_node', '5.0.0');
     const items = registry.list();
     expect(items.find((d) => d.kind === 'gateway')?.firmware_version).toBe('2.0.0');
     expect(items.find((d) => d.kind === 'lock')?.firmware_version).toBe('3.0.0');
+    expect(items.find((d) => d.kind === 'bridge')?.firmware_version).toBe('4.0.0');
+    expect(items.find((d) => d.kind === 'friend_node')?.firmware_version).toBe('5.0.0');
   });
 });

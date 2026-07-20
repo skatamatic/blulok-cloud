@@ -127,7 +127,7 @@ async function assertFacilityAccess(
 // Upload firmware binary (DEV_ADMIN only)
 // ============================================================================
 
-const VALID_TARGET_TYPES: readonly FirmwareTargetType[] = ['gateway', 'lock', 'friend_node', 'access_control'];
+const VALID_TARGET_TYPES: readonly FirmwareTargetType[] = ['gateway', 'lock', 'friend_node', 'bridge', 'access_control'];
 
 function parseCompatibleModels(raw: string | undefined): string[] | undefined {
   if (!raw) return undefined;

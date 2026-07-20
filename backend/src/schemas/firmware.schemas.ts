@@ -2,7 +2,7 @@ import Joi from 'joi';
 import { FIRMWARE_MAX_SIZE_BYTES } from '@/services/firmware/firmware-storage.factory';
 import { successEnvelopeSchema, routeIdField, coercibleLimitQuery, coercibleOffsetQuery } from '@/openapi/common-schemas';
 
-const VALID_TARGET_TYPES = ['gateway', 'lock', 'friend_node', 'access_control'] as const;
+const VALID_TARGET_TYPES = ['gateway', 'lock', 'friend_node', 'bridge', 'access_control'] as const;
 
 export const firmwareUploadSchema = Joi.object({
   version: Joi.string().max(64).required(),

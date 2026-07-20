@@ -26,6 +26,7 @@ import {
   FirmwareDeliveryMode,
   TARGET_TYPE_LABELS,
   TARGET_TYPE_COLORS,
+  FIRMWARE_TARGET_TYPES,
   TERMINAL_STATUSES,
   PHASE_ORDER,
   PHASE_LABELS,
@@ -439,7 +440,7 @@ export default function GatewayFirmwareTab({
 
       {/* Target Type Tabs */}
       <div className="flex rounded-lg border border-secondary-200 dark:border-secondary-700 overflow-hidden w-fit">
-        {(['gateway', 'lock', 'friend_node', 'access_control'] as FirmwareTargetType[]).map((tt) => (
+        {FIRMWARE_TARGET_TYPES.map((tt) => (
           <button
             key={tt}
             onClick={() => { setSelectedTargetType(tt); setConfirmPushId(null); }}

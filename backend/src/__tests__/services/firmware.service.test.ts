@@ -143,6 +143,12 @@ describe('FirmwareService', () => {
       expect(mockFirmwareModel.create).toHaveBeenCalledWith(expect.objectContaining({ target_type: 'lock' }));
     });
 
+    it('uploads firmware with target_type bridge', async () => {
+      await FirmwareService.uploadFirmware(validFile, { ...meta, target_type: 'bridge' }, 'u1');
+      expect(mockFirmwareModel.findByVersion).toHaveBeenCalledWith('2.0.0', 'bridge');
+      expect(mockFirmwareModel.create).toHaveBeenCalledWith(expect.objectContaining({ target_type: 'bridge' }));
+    });
+
     it('version uniqueness is scoped by target_type (lock 2.0.0 does not conflict with gateway 2.0.0)', async () => {
       mockFirmwareModel.findByVersion.mockImplementation(async (version: string, targetType: string) => {
         return targetType === 'gateway' ? { id: 'existing-gw' } : null;

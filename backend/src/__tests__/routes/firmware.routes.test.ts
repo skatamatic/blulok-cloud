@@ -271,6 +271,23 @@ describe('Firmware Routes', () => {
       );
     });
 
+    it('should allow upload with target_type bridge', async () => {
+      const { FirmwareService } = require('@/services/firmware/firmware.service');
+      const response = await request(app)
+        .post('/api/v1/firmware/upload')
+        .set('Authorization', `Bearer ${testData.users.devAdmin.token}`)
+        .field('version', '1.0.0')
+        .field('target_type', 'bridge')
+        .attach('file', Buffer.from('bridge-fw'), 'bridge-firmware.bin');
+
+      expect(response.status).toBe(201);
+      expect(FirmwareService.uploadFirmware).toHaveBeenCalledWith(
+        expect.any(Object),
+        expect.objectContaining({ version: '1.0.0', target_type: 'bridge' }),
+        expect.any(String),
+      );
+    });
+
     it('should reject ADMIN (not DEV_ADMIN)', async () => {
       const response = await request(app)
         .post('/api/v1/firmware/upload')

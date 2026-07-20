@@ -11,6 +11,7 @@ The firmware OTA (Over-The-Air) system delivers signed firmware binaries from th
 | `gateway`         | Applied to the gateway hardware itself           | Cloud → Gateway WS → Gateway self-applies    |
 | `lock`            | Broadcast to all BluLok locks on the BLE network | Cloud → Gateway WS → Gateway relays via BLE  |
 | `friend_node`     | Broadcast to all friend nodes (BLE mesh relays)  | Cloud → Gateway WS → Gateway relays via BLE  |
+| `bridge`          | Broadcast to all bridges (mesh range extenders)  | Cloud → Gateway WS → Gateway relays via BLE  |
 | `access_control`  | Access-control hardware on the gateway           | Cloud → Gateway WS → Gateway relays/applies |
 
 The same firmware version string (e.g. `2.0.0`) can exist independently for different target types. Version uniqueness is scoped to `(version, target_type)`.
@@ -74,7 +75,7 @@ Stores the firmware binary catalog. Managed by DEV_ADMIN users.
 |-------------------|---------|-------------------------------------------------|
 | `id`              | UUID    | Primary key                                     |
 | `version`         | VARCHAR | e.g. `2.1.0`                                    |
-| `target_type`     | ENUM    | `gateway`, `lock`, `friend_node`                |
+| `target_type`     | ENUM    | `gateway`, `lock`, `friend_node`, `bridge`, `access_control` |
 | `filename`        | VARCHAR | Original upload filename                        |
 | `sha256_hash`     | CHAR(64)| SHA-256 of the raw binary                       |
 | `size_bytes`      | INT     | Binary size in bytes                            |
@@ -155,7 +156,7 @@ JWT payload fields:
 | `cmd_type`         | string | Always `FIRMWARE_MANIFEST`                 |
 | `delivery_mode`    | string | `v1` (chunked) or `v2` (GCS download URL); default/omit treated as v1 |
 | `push_id`          | string | **Cloud push record UUID** — required on all later `FIRMWARE_UPDATE_STATUS` / `FIRMWARE_PROGRESS` messages |
-| `target_type`      | string | `gateway`, `lock`, `friend_node`, or `access_control` |
+| `target_type`      | string | `gateway`, `lock`, `friend_node`, `bridge`, or `access_control` |
 | `version`          | string | Firmware version                           |
 | `sha256`           | string | SHA-256 hex hash of the full binary        |
 | `size`             | number | Binary size in bytes                       |
@@ -492,6 +493,8 @@ The Cloud Run service account needs **`storage.objectCreator`** (create resumabl
 |------|---------|
 | `backend/src/database/migrations/044_create_firmware_tables.ts` | Initial firmware tables |
 | `backend/src/database/migrations/045_add_firmware_target_type.ts` | Adds target_type columns |
+| `backend/src/database/migrations/048_add_access_control_firmware_type.ts` | Adds `access_control` target |
+| `backend/src/database/migrations/098_add_bridge_firmware_type.ts` | Adds `bridge` target |
 | `backend/src/models/firmware.model.ts` | FirmwareImage model + FirmwareTargetType |
 | `backend/src/models/firmware-push.model.ts` | FirmwarePush model (includes atomicCancel) |
 | `backend/src/services/firmware/firmware.service.ts` | Upload, push lifecycle, chunk delivery |

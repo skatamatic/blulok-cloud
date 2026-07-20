@@ -98,7 +98,7 @@ Cloud → gateway, inside the signed JWT:
 | `cmd_type` | string | `FIRMWARE_MANIFEST` |
 | `delivery_mode` | string | `v2` |
 | `push_id` | string | **Cloud push UUID** — required on every later status/progress |
-| `target_type` | string | `gateway` \| `lock` \| `friend_node` \| `access_control` |
+| `target_type` | string | `gateway` \| `lock` \| `friend_node` \| `bridge` \| `access_control` |
 | `version` | string | Firmware version string |
 | `sha256` | string | Hex SHA-256 of the **entire** binary |
 | `size` | number | Exact byte length |
@@ -177,7 +177,7 @@ Same product rules as v1 after the binary is local:
 | `target_type` | Typical gateway action |
 |---------------|------------------------|
 | `gateway` | Install / stage gateway image; may reboot |
-| `lock` / `friend_node` / `access_control` | BLE / mesh distribute and install |
+| `lock` / `friend_node` / `bridge` / `access_control` | BLE / mesh distribute and install |
 
 Recommended status sequence on `/ws/gateway` (JSON, **not** JWT):
 
@@ -372,7 +372,7 @@ Backend E2E (`ws:e2e`) historically stresses **v1** chunk transfer. Prefer the s
 | Signed URL / manifest JWT TTL | **3600s** | Finish GET before URL expires; reconnect gets a new URL |
 | `FIRMWARE_V2_TRANSFER_TIMEOUT_SEC` | **3600s** | Max silence in `transferring` without progress; **extended** on each `FIRMWARE_PROGRESS` |
 | Verify timeout (gateway target) | `FIRMWARE_GATEWAY_VERIFY_TIMEOUT_SEC` **300s** | After leaving transferring / entering verifying |
-| Verify timeout (other targets) | `FIRMWARE_VERIFY_TIMEOUT_SEC` **900s** | Same for lock / friend_node / access_control |
+| Verify timeout (other targets) | `FIRMWARE_VERIFY_TIMEOUT_SEC` **900s** | Same for lock / friend_node / bridge / access_control |
 | Disconnect grace | **180s** (default) | Transfer/verify pause window before fail |
 
 ---

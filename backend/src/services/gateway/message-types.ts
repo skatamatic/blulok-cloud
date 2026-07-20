@@ -109,7 +109,7 @@ export type FirmwareManifestJwtPayload = {
   cmd_type: 'FIRMWARE_MANIFEST';
   delivery_mode?: FirmwareDeliveryMode;
   push_id: string;
-  target_type: 'gateway' | 'lock' | 'friend_node' | 'access_control';
+  target_type: 'gateway' | 'lock' | 'friend_node' | 'bridge' | 'access_control';
   version: string;
   sha256: string;
   size: number;
@@ -189,7 +189,7 @@ export type FirmwareUpdateStatusMessage = {
   push_id: string;
   status: string;
   version?: string;
-  target_type?: 'gateway' | 'lock' | 'friend_node' | 'access_control';
+  target_type?: 'gateway' | 'lock' | 'friend_node' | 'bridge' | 'access_control';
   error?: string;
   message?: string;
 };
@@ -207,7 +207,7 @@ export type FirmwarePushResumeMessage = {
   type: 'FIRMWARE_PUSH_RESUME';
   pushes: Array<{
     push_id: string;
-    target_type: 'gateway' | 'lock' | 'friend_node' | 'access_control';
+    target_type: 'gateway' | 'lock' | 'friend_node' | 'bridge' | 'access_control';
     status: 'verifying';
     progress_percent?: number;
   }>;

@@ -281,7 +281,7 @@ Legacy inventory item `kind: "gateway"` (optional self-update on inventory POST)
 
 Bridge and friend_node rows are included in the recovery inventory snapshot (schema v2). During **`recovery_in_progress`**, defer inventory POSTs (§3.8) — do not treat a partial upload as authoritative for infra removal.
 
-See also: [Firmware OTA architecture](./firmware-ota-architecture.md) — `friend_node` is a firmware OTA target type.
+See also: [Firmware OTA architecture](./firmware-ota-architecture.md) — `friend_node` and `bridge` are firmware OTA target types.
 
 ### 3.7 Success response
 

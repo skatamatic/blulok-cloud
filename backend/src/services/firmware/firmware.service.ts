@@ -31,7 +31,7 @@ const V2_TRANSFER_TIMEOUT_MS = (Number(process.env.FIRMWARE_V2_TRANSFER_TIMEOUT_
 const VERIFY_TIMEOUT_MS = (Number(process.env.FIRMWARE_VERIFY_TIMEOUT_SEC) || 900) * 1000;
 const GATEWAY_VERIFY_TIMEOUT_MS = (Number(process.env.FIRMWARE_GATEWAY_VERIFY_TIMEOUT_SEC) || 300) * 1000;
 const VERIFY_DISCONNECT_GRACE_MS = (Number(process.env.FIRMWARE_VERIFY_DISCONNECT_GRACE_SEC) || 180) * 1000;
-const VALID_TARGET_TYPES: FirmwareTargetType[] = ['gateway', 'lock', 'friend_node', 'access_control'];
+const VALID_TARGET_TYPES: FirmwareTargetType[] = ['gateway', 'lock', 'friend_node', 'bridge', 'access_control'];
 const VALID_DELIVERY_MODES: FirmwareDeliveryMode[] = ['v1', 'v2'];
 
 export function normalizeFirmwareDeliveryMode(raw?: string | null): FirmwareDeliveryMode {

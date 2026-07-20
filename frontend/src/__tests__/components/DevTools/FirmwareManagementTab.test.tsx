@@ -88,6 +88,7 @@ describe('FirmwareManagementTab', () => {
         mkFirmware({ id: 'fw-1', target_type: 'gateway' }),
         mkFirmware({ id: 'fw-2', target_type: 'lock', version: '1.0.0' }),
         mkFirmware({ id: 'fw-3', target_type: 'friend_node', version: '0.5.0' }),
+        mkFirmware({ id: 'fw-4', target_type: 'bridge', version: '0.4.0' }),
       ]);
       render(<FirmwareManagementTab />);
       await waitFor(() => {
@@ -95,6 +96,7 @@ describe('FirmwareManagementTab', () => {
         expect(screen.getAllByText('Gateway').length).toBeGreaterThanOrEqual(2); // filter + badge
         expect(screen.getAllByText('Lock').length).toBeGreaterThanOrEqual(2);
         expect(screen.getAllByText('Friend Node').length).toBeGreaterThanOrEqual(2);
+        expect(screen.getAllByText('Bridge').length).toBeGreaterThanOrEqual(2);
       });
     });
 
@@ -128,8 +130,7 @@ describe('FirmwareManagementTab', () => {
         expect(screen.getByText('Firmware Catalog')).toBeInTheDocument();
       });
 
-      // The filter bar has All, Gateway, Lock, Friend Node buttons
-      // All is the first button in the filter group
+      // The filter bar has All, Gateway, Lock, Friend Node, Bridge, Access Control
       jest.clearAllMocks();
       setupMocks([mkFirmware({ target_type: 'lock' })]);
 
@@ -140,6 +141,24 @@ describe('FirmwareManagementTab', () => {
 
       await waitFor(() => {
         expect(mockApi.listFirmware).toHaveBeenCalledWith('lock');
+      });
+    });
+
+    it('filters catalog by Bridge target type', async () => {
+      setupMocks();
+      render(<FirmwareManagementTab />);
+      await waitFor(() => {
+        expect(screen.getByText('Firmware Catalog')).toBeInTheDocument();
+      });
+
+      jest.clearAllMocks();
+      setupMocks([mkFirmware({ target_type: 'bridge', version: '0.4.0' })]);
+
+      const bridgeButtons = screen.getAllByText('Bridge');
+      fireEvent.click(bridgeButtons[0]);
+
+      await waitFor(() => {
+        expect(mockApi.listFirmware).toHaveBeenCalledWith('bridge');
       });
     });
 

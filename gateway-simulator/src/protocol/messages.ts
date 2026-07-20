@@ -145,7 +145,7 @@ export type DeviceDeletedAckMessage = {
   error?: string;
 };
 
-export type FirmwareTargetType = 'gateway' | 'lock' | 'friend_node' | 'access_control';
+export type FirmwareTargetType = 'gateway' | 'lock' | 'friend_node' | 'bridge' | 'access_control';
 
 export type GatewayWsMessage =
   | AuthMessage

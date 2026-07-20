@@ -577,6 +577,10 @@ export class DeviceRegistry {
 
         if (!deviceId || item.serial === deviceId) device.applyFirmware(version);
 
+      } else if (targetType === 'bridge' && item.kind === 'bridge') {
+
+        if (!deviceId || item.serial === deviceId) device.applyFirmware(version);
+
       }
 
     }
