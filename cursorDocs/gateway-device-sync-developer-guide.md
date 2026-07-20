@@ -93,9 +93,9 @@ For each category, per device:
 | In payload, in cloud | **Update** properties + apply any state fields on the item | Same property refresh; never removed by omission |
 | Not in payload, in cloud | **Remove** (delete row) | **Preserved** — counted as `skipped_manual` |
 
-**Sync-managed** means `metadata.createdFromGatewaySync === true` and **not** `metadata.adminIdentityOverride === true`.
+**Sync-managed** means `metadata.createdFromGatewaySync === true`, `metadata.manuallyAdded !== true`, and **not** `metadata.adminIdentityOverride === true`.
 
-**Manual** means admin UI / REST created the row (`metadata.manuallyAdded === true`, or missing `createdFromGatewaySync`).
+**Manual** means admin UI / REST created the row (`metadata.manuallyAdded === true`). After the gateway reports that serial in inventory, cloud also sets `createdFromGatewaySync: true` for app visibility, but the row stays non-deletable by sync.
 
 ### 3.2 Auto-provision defaults (new lock)
 
@@ -105,6 +105,7 @@ When `lock_id` appears in inventory but not in DB:
 |-------------|---------|
 | `supports_remote_lock` | `true` |
 | `metadata.createdFromGatewaySync` | `true` |
+| `metadata.manuallyAdded` | `false` |
 | `lock_status` | From `state` / `locked` if sent; else `unknown` |
 | `device_status` | From `online` if sent; else `offline` |
 
@@ -120,6 +121,7 @@ State/telemetry fields on the **same inventory item** are applied immediately af
 | `location_description` | `"Gateway relay {n}"` if omitted |
 | `access_methods` | `["keypad"]` |
 | `metadata.createdFromGatewaySync` | `true` |
+| `metadata.manuallyAdded` | `false` |
 
 After access inventory changes, the cloud **pushes access codes** to the gateway for affected devices.
 
@@ -433,8 +435,14 @@ After state persists, the cloud emits dashboard WebSocket **`device_status_updat
 
 When an operator adds a BluLok lock or access device via admin REST/UI:
 
-- Row is created with `metadata.manuallyAdded: true`
-- **`createdFromGatewaySync` is stripped** — row is **not** sync-managed
+- Row is created with `metadata.manuallyAdded: true` and `metadata.createdFromGatewaySync: false`
+- Row is **not** sync-managed (omission from inventory never deletes it)
+
+**If the gateway later includes this device in inventory:**
+
+- Cloud sets `metadata.createdFromGatewaySync: true` while **keeping** `metadata.manuallyAdded: true`
+- App can detect “pre-provisioned and now seen by gateway” via both flags
+- Row remains **not** sync-managed — still preserved if omitted later
 
 **If the gateway omits this device from inventory:**
 
@@ -448,12 +456,15 @@ When an operator adds a BluLok lock or access device via admin REST/UI:
 When inventory **adds** a device:
 
 - `metadata.createdFromGatewaySync: true`
+- `metadata.manuallyAdded: false`
 - Device is **sync-managed**
 
 **If the gateway later omits it from inventory:**
 
 - Cloud **deletes** the row (`source: gateway_sync`)
 - No `DEVICE_DELETED` tombstone is sent to gateway (you already removed it locally)
+
+**Sync-managed** means `createdFromGatewaySync === true` **and** `manuallyAdded !== true` **and** not `adminIdentityOverride`.
 
 ### 5.3 Admin deletes a device in the cloud UI
 
@@ -535,7 +546,7 @@ Use **`online: false`** in state (or inventory) for connectivity loss. Use **inv
 
 ### 6.5 Access codes after inventory
 
-Expect cloud-initiated access-code pushes after access inventory changes. Your gateway should accept code delivery independently of inventory timing.
+Expect cloud-initiated access-code pushes on active-gateway `AUTH_OK` and after every access inventory sync (including unchanged reconnect payloads). Expect a **`DENYLIST_SYNC`** replace snapshot on the same `AUTH_OK` path (inventory `operational_devices` remains a second reconcile channel). Your gateway should accept code and denylist delivery independently of inventory timing.
 
 ---
 

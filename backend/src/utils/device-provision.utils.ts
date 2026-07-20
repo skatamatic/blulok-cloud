@@ -16,7 +16,8 @@ type ProvisionUser = {
 const SYNC_MANAGED_METADATA_KEYS = ['createdFromGatewaySync'] as const;
 
 /**
- * Build metadata for manually provisioned devices (never sync-managed).
+ * Metadata for admin UI / REST creates.
+ * Both flags are explicit so clients can distinguish pre-provisioned rows from gateway-seen ones.
  */
 export function buildManualProvisionMetadata(
   clientMetadata?: Record<string, unknown> | null
@@ -27,7 +28,40 @@ export function buildManualProvisionMetadata(
     delete base[key];
   }
   base.manuallyAdded = true;
+  base.createdFromGatewaySync = false;
   return base;
+}
+
+/**
+ * Metadata for gateway inventory auto-provision (sync-managed).
+ */
+export function buildGatewayProvisionMetadata(): Record<string, unknown> {
+  return {
+    createdFromGatewaySync: true,
+    manuallyAdded: false,
+  };
+}
+
+/**
+ * When inventory matches a manually pre-provisioned row, mark that the gateway reported it.
+ * Preserves `manuallyAdded` so the row stays non-deletable by sync.
+ * Returns null when the row is not manual or already marked seen.
+ */
+export function markGatewayInventorySeenMetadata(
+  existing?: Record<string, unknown> | null
+): Record<string, unknown> | null {
+  const base = existing && typeof existing === 'object' ? { ...existing } : {};
+  if (base.manuallyAdded !== true) {
+    return null;
+  }
+  if (base.createdFromGatewaySync === true) {
+    return null;
+  }
+  return {
+    ...base,
+    manuallyAdded: true,
+    createdFromGatewaySync: true,
+  };
 }
 
 export async function assertUserCanProvisionOnGateway(

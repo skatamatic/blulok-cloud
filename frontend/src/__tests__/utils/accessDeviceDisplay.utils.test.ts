@@ -2,6 +2,7 @@ import {
   formatAccessDeviceListSubtitle,
   formatAccessDevicePageTitle,
   isGatewaySyncProvisioned,
+  isManuallyAddedDevice,
 } from '@/utils/accessDeviceDisplay.utils';
 
 describe('accessDeviceDisplay.utils', () => {
@@ -60,9 +61,26 @@ describe('accessDeviceDisplay.utils', () => {
       expect(isGatewaySyncProvisioned({ createdFromGatewaySync: true })).toBe(true);
     });
 
-    it('returns false for manual devices', () => {
-      expect(isGatewaySyncProvisioned({ manuallyAdded: true })).toBe(false);
+    it('returns true when gateway has seen a manually added device', () => {
+      expect(
+        isGatewaySyncProvisioned({ manuallyAdded: true, createdFromGatewaySync: true }),
+      ).toBe(true);
+    });
+
+    it('returns false for manual devices not yet seen by gateway', () => {
+      expect(isGatewaySyncProvisioned({ manuallyAdded: true, createdFromGatewaySync: false })).toBe(
+        false,
+      );
       expect(isGatewaySyncProvisioned(undefined)).toBe(false);
+    });
+  });
+
+  describe('isManuallyAddedDevice', () => {
+    it('detects manuallyAdded', () => {
+      expect(isManuallyAddedDevice({ manuallyAdded: true })).toBe(true);
+      expect(isManuallyAddedDevice({ manuallyAdded: false, createdFromGatewaySync: true })).toBe(
+        false,
+      );
     });
   });
 });

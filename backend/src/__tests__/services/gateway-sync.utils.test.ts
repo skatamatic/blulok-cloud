@@ -47,13 +47,21 @@ describe('gateway-sync.utils', () => {
   });
 
   describe('isGatewaySyncManaged', () => {
-    it('returns true when createdFromGatewaySync is set', () => {
+    it('returns true when createdFromGatewaySync is set without manuallyAdded', () => {
       expect(isGatewaySyncManaged({ createdFromGatewaySync: true })).toBe(true);
+      expect(isGatewaySyncManaged({ createdFromGatewaySync: true, manuallyAdded: false })).toBe(true);
     });
 
     it('returns false for manual devices', () => {
       expect(isGatewaySyncManaged({})).toBe(false);
       expect(isGatewaySyncManaged(null)).toBe(false);
+      expect(isGatewaySyncManaged({ manuallyAdded: true })).toBe(false);
+    });
+
+    it('returns false for manuallyAdded even after gateway has reported the device', () => {
+      expect(
+        isGatewaySyncManaged({ manuallyAdded: true, createdFromGatewaySync: true })
+      ).toBe(false);
     });
 
     it('returns false when adminIdentityOverride is set', () => {
