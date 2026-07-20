@@ -328,8 +328,28 @@ describe('GatewaySwapRecoveryTab', () => {
   });
 
   it('shows facility blocking notice during active recovery', async () => {
+    (apiService.getGatewayRecoveryCandidates as jest.Mock).mockResolvedValue({
+      data: {
+        candidates: [{ gatewayId: 'gw-new', connected: true }],
+        recovery: {
+          id: 'rec-1',
+          status: 'inventory_push',
+          gateway_id: 'gw-new',
+          facility_id: 'fac-1',
+          inventory_chunks_sent: 2,
+          inventory_chunks_total: 4,
+        },
+      },
+    });
     (apiService.getGatewayRecoveryStatus as jest.Mock).mockResolvedValue({
-      data: { id: 'rec-1', status: 'inventory_push', gateway_id: 'gw-new', facility_id: 'fac-1', inventory_chunks_sent: 2, inventory_chunks_total: 4 },
+      data: {
+        id: 'rec-1',
+        status: 'inventory_push',
+        gateway_id: 'gw-new',
+        facility_id: 'fac-1',
+        inventory_chunks_sent: 2,
+        inventory_chunks_total: 4,
+      },
     });
 
     render(
