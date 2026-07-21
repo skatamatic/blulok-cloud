@@ -304,6 +304,8 @@ export class DevicesService {
       deviceId,
       deviceType: 'blulok',
       gatewayId: result.gatewayId,
+      facilityId: result.facilityId ?? undefined,
+      unitId: result.hadUnit ? result.unitId ?? null : null,
     });
 
     if (result.shouldPushAccessCodes && result.facilityId) {
@@ -412,6 +414,8 @@ export class DevicesService {
       deviceId,
       deviceType: 'access_control',
       gatewayId: result.gatewayId,
+      facilityId: result.facilityId ?? undefined,
+      unitId: null,
     });
 
     if (result.shouldPushAccessCodes && result.facilityId) {

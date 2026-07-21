@@ -493,6 +493,8 @@ describe('DevicesService (unit)', () => {
         deviceId: 'dev-1',
         deviceType: 'blulok',
         gatewayId: 'gw-1',
+        facilityId: 'fac-1',
+        unitId: 'unit-1',
       });
       expect(mockPushCodesToGateway).not.toHaveBeenCalled();
       expect(mockEnqueueDeletion).toHaveBeenCalledWith({
@@ -625,6 +627,8 @@ describe('DevicesService (unit)', () => {
         deviceId: 'ac-1',
         deviceType: 'access_control',
         gatewayId: 'gw-1',
+        facilityId: 'fac-1',
+        unitId: null,
       });
       expect(mockEnqueueDeletion).toHaveBeenCalledWith({
         facilityId: 'fac-1',

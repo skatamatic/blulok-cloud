@@ -16,6 +16,7 @@ import { FMSSyncProgressModal } from '@/components/FMS/FMSSyncProgressModal';
 import { FMSChangeReviewModal } from '@/components/FMS/FMSChangeReviewModal';
 import ToastContainer from '@/components/Toast/ToastContainer';
 import { useGatewayStatusToasts } from '@/hooks/useGatewayStatusToasts';
+import { useLiveDataToasts } from '@/hooks/useLiveDataToasts';
 import { ProtectedRoute } from '@/components/ProtectedRoute';
 import { DashboardLayout } from '@/components/Layout/DashboardLayout';
 import { UserRole } from '@/types/auth.types';
@@ -84,6 +85,12 @@ function FMSModals() {
 // Debounced gateway connectivity toasts (see useGatewayStatusToasts).
 function GatewayStatusListener() {
   useGatewayStatusToasts();
+  return null;
+}
+
+// Dashboard `/ws` live-data outage / resume toasts (see useLiveDataToasts).
+function LiveDataStatusListener() {
+  useLiveDataToasts();
   return null;
 }
 
@@ -301,6 +308,7 @@ function App() {
                         <Route path="*" element={<Navigate to="/dashboard" replace />} />
                       </Routes>
                       <GatewayStatusListener />
+                      <LiveDataStatusListener />
                       <ToastContainer />
                       <FMSSyncStatusBar />
                       <FMSModals />

@@ -9,6 +9,16 @@ import { GatewayTelemetryLogService } from './gateway-telemetry-log.service';
 import { GatewayDeviceSyncLogService } from './gateway-device-sync-log.service';
 import { FacilityAccessService } from '@/services/facility-access.service';
 
+function readPositiveMs(envName: string, fallback: number): number {
+  const raw = Number(process.env[envName]);
+  return Number.isFinite(raw) && raw > 0 ? raw : fallback;
+}
+
+/** Normal browser close/refresh, idle sever, or going-away — not operational incidents. */
+function isExpectedDashboardClose(code: number): boolean {
+  return code === 1000 || code === 1001;
+}
+
 /**
  * WebSocket Subscription Interface
  *
@@ -40,6 +50,8 @@ interface WebSocketClientContext {
   pendingSubscriptionKeys: Set<string>;
   facilityIds?: string[];
   heartbeatCount: number;
+  /** Last JSON heartbeat (or connect) from the browser client — used for idle sever. */
+  lastClientHeartbeat: Date;
 }
 
 /**
@@ -111,14 +123,24 @@ export class WebSocketService {
   private pendingMessages: Map<WebSocket, Buffer[]> = new Map();
   private subscriptions: Map<string, Subscription> = new Map();
   private heartbeatInterval: NodeJS.Timeout | null = null;
+  private idleSweepInterval: NodeJS.Timeout | null = null;
   private subscriptionRegistry: SubscriptionRegistry;
   private readonly path = '/ws';
+  /**
+   * Liveness defaults (override via env):
+   * - Heartbeat every 5s — frequent enough for interactive dashboard freshness
+   * - Idle sever at 15s (3× heartbeat) — detects dead sockets quickly while
+   *   tolerating one–two delayed client ticks (GC, brief tab pressure)
+   */
+  private readonly serverHeartbeatMs = readPositiveMs('DASHBOARD_WS_HEARTBEAT_MS', 5_000);
+  private readonly idleTimeoutMs = readPositiveMs('DASHBOARD_WS_IDLE_MS', 15_000);
 
   private constructor() {
     this.subscriptionRegistry = new SubscriptionRegistry();
     GatewayTelemetryLogService.getInstance().setSubscriptionRegistry(this.subscriptionRegistry);
     GatewayDeviceSyncLogService.getInstance().setSubscriptionRegistry(this.subscriptionRegistry);
     this.startHeartbeat();
+    this.startIdleSweep();
   }
 
   /**
@@ -169,13 +191,17 @@ export class WebSocketService {
       this.handleMessage(ws, data);
     });
 
-    ws.on('close', () => {
-      this.handleDisconnection(ws);
+    ws.on('close', (code: number, reasonBuf: Buffer) => {
+      const reason = reasonBuf?.toString?.() || '';
+      this.handleDisconnection(ws, code, reason);
     });
 
     ws.on('error', (error: Error) => {
-      logger.error('WebSocket error:', error);
-      this.handleDisconnection(ws);
+      logger.warn('Dashboard WS socket error', {
+        message: error.message,
+        userId: this.clients.get(ws)?.userId,
+      });
+      this.handleDisconnection(ws, 1011, error.message || 'socket error');
     });
 
     try {
@@ -202,6 +228,7 @@ export class WebSocketService {
         pendingSubscriptionKeys: new Set<string>(),
         facilityIds,
         heartbeatCount: 0,
+        lastClientHeartbeat: new Date(),
       };
 
       this.clients.set(ws, client);
@@ -398,10 +425,12 @@ export class WebSocketService {
   }
 
   private handleHeartbeat(ws: WebSocket, message: WebSocketMessage, client: WebSocketClientContext): void {
+    client.lastClientHeartbeat = new Date();
+
     if (message.subscriptionId) {
       const subscription = client.subscriptions.get(message.subscriptionId);
       if (subscription) {
-        subscription.lastHeartbeat = new Date();
+        subscription.lastHeartbeat = client.lastClientHeartbeat;
       }
     }
 
@@ -452,22 +481,31 @@ export class WebSocketService {
     });
   }
 
-  private handleDisconnection(ws: WebSocket): void {
+  private handleDisconnection(ws: WebSocket, code = 1006, reason = ''): void {
     const client = this.clients.get(ws);
     this.pendingMessages.delete(ws);
-    if (client) {
-      logger.info(`WebSocket client disconnected: ${client.userId}`);
+    if (!client) return;
 
-      // Clean up all subscriptions for this client from the global subscriptions map
-      client.subscriptions.forEach((subscription) => {
-        this.subscriptions.delete(subscription.id);
-      });
+    // Clean up all subscriptions for this client from the global subscriptions map
+    client.subscriptions.forEach((subscription) => {
+      this.subscriptions.delete(subscription.id);
+    });
 
-      // Clean up all subscriptions for this client
-      this.subscriptionRegistry.cleanup(ws, client);
+    // Clean up all subscriptions for this client
+    this.subscriptionRegistry.cleanup(ws, client);
 
-      this.clients.delete(ws);
+    this.clients.delete(ws);
+
+    if (isExpectedDashboardClose(code)) {
+      logger.debug(
+        `Dashboard WS closed normally user=${client.userId} code=${code} reason=${reason || '-'}`,
+      );
+      return;
     }
+
+    logger.warn(
+      `Dashboard WS unexpected disconnect user=${client.userId} code=${code} reason=${reason || '-'}`,
+    );
   }
 
   private startHeartbeat(): void {
@@ -481,7 +519,7 @@ export class WebSocketService {
           });
         }
       });
-    }, 30000); // 30 seconds
+    }, this.serverHeartbeatMs);
     this.heartbeatInterval.unref();
   }
 
@@ -489,6 +527,33 @@ export class WebSocketService {
     if (this.heartbeatInterval) {
       clearInterval(this.heartbeatInterval);
       this.heartbeatInterval = null;
+    }
+  }
+
+  private startIdleSweep(): void {
+    this.idleSweepInterval = setInterval(() => {
+      const now = Date.now();
+      for (const [ws, client] of this.clients.entries()) {
+        const idleMs = now - client.lastClientHeartbeat.getTime();
+        if (idleMs >= this.idleTimeoutMs && ws.readyState === WebSocket.OPEN) {
+          logger.info(
+            `Dashboard WS idle timeout user=${client.userId} idle=${idleMs}ms limit=${this.idleTimeoutMs}ms`,
+          );
+          try {
+            ws.close(1001, 'Idle timeout');
+          } catch {
+            /* ignore */
+          }
+        }
+      }
+    }, Math.min(2_000, Math.max(500, Math.floor(this.idleTimeoutMs / 6))));
+    this.idleSweepInterval.unref();
+  }
+
+  private stopIdleSweep(): void {
+    if (this.idleSweepInterval) {
+      clearInterval(this.idleSweepInterval);
+      this.idleSweepInterval = null;
     }
   }
 
@@ -539,10 +604,20 @@ export class WebSocketService {
     }
   }
 
-  public async broadcastUnitsUpdate(): Promise<void> {
+  public async broadcastUnitsUpdate(scope?: {
+    facilityId?: string;
+    unitId?: string | null;
+    deviceId?: string;
+  }): Promise<void> {
     const manager = this.subscriptionRegistry.getUnitsManager();
     if (manager) {
       await manager.broadcastUpdate();
+    }
+    try {
+      const { AppRealtimeHub } = await import('@/services/app-realtime.hub');
+      await AppRealtimeHub.getInstance().emitUnitsUpdate(scope);
+    } catch {
+      /* app hub optional during early boot/tests */
     }
   }
 
@@ -558,12 +633,24 @@ export class WebSocketService {
     if (manager) {
       await manager.broadcastDeviceUpdate(deviceId, facilityId);
     }
+    try {
+      const { AppRealtimeHub } = await import('@/services/app-realtime.hub');
+      await AppRealtimeHub.getInstance().emitDeviceStatusUpdate(deviceId, facilityId);
+    } catch {
+      /* app hub optional during early boot/tests */
+    }
   }
 
   public async broadcastGatewayStatusUpdate(facilityId?: string, gatewayId?: string): Promise<void> {
     const manager: any = this.subscriptionRegistry.getManager('gateway_status');
     if (manager && typeof manager.broadcastUpdate === 'function') {
       await manager.broadcastUpdate(facilityId, gatewayId);
+    }
+    try {
+      const { AppRealtimeHub } = await import('@/services/app-realtime.hub');
+      await AppRealtimeHub.getInstance().emitGatewayStatusUpdate(facilityId, gatewayId);
+    } catch {
+      /* app hub optional during early boot/tests */
     }
   }
 
@@ -572,7 +659,7 @@ export class WebSocketService {
     if (manager && typeof manager.broadcastFacilityReachabilityRefresh === 'function') {
       await manager.broadcastFacilityReachabilityRefresh(facilityId);
     }
-    await this.broadcastUnitsUpdate();
+    await this.broadcastUnitsUpdate({ facilityId });
     await this.broadcastBatteryStatusUpdate();
     await this.broadcastGeneralStatsUpdate();
   }
@@ -589,12 +676,24 @@ export class WebSocketService {
     if (manager) {
       await manager.broadcastUpdate(facilityId);
     }
+    try {
+      const { AppRealtimeHub } = await import('@/services/app-realtime.hub');
+      await AppRealtimeHub.getInstance().emitAccessCodesUpdate(facilityId);
+    } catch {
+      /* app hub optional during early boot/tests */
+    }
   }
 
   public async broadcastKeySharingUpdate(facilityId?: string): Promise<void> {
     const manager = this.subscriptionRegistry.getKeySharingManager();
     if (manager) {
       await manager.broadcastUpdate(facilityId);
+    }
+    try {
+      const { AppRealtimeHub } = await import('@/services/app-realtime.hub');
+      await AppRealtimeHub.getInstance().emitKeySharingUpdate(facilityId);
+    } catch {
+      /* app hub optional during early boot/tests */
     }
   }
 
@@ -629,9 +728,10 @@ export class WebSocketService {
 
   public destroy(): void {
     this.stopHeartbeat();
+    this.stopIdleSweep();
     for (const ws of this.clients.keys()) {
       try {
-        ws.close();
+        ws.close(1001, 'Server shutdown');
       } catch {
         // best-effort teardown for tests/runtime shutdown
       }

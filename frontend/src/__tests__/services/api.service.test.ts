@@ -29,6 +29,7 @@ jest.mock('@/services/websocket.service', () => ({
 
 // Import after mocking
 import { apiService } from '@/services/api.service';
+import { websocketService } from '@/services/websocket.service';
 
 describe('APIService', () => {
   beforeEach(() => {

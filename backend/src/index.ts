@@ -84,9 +84,14 @@ async function bootstrap(): Promise<void> {
     const wsService = WebSocketService.getInstance();
     wsService.initialize(server);
 
+    // App-centric multiplexed realtime (/ws/app)
+    const { AppWebSocketService } = await import('@/services/app-websocket.service');
+    AppWebSocketService.getInstance().initialize(server);
+
     // Initialize Gateway WS for site gateways
     const { GatewayEventsService } = await import('@/services/gateway/gateway-events.service');
     GatewayEventsService.getInstance().initialize(server);
+
 
     const loggerInterceptor = LoggerInterceptorService.getInstance();
 

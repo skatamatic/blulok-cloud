@@ -34,6 +34,7 @@ type WebSocketServiceInternals = {
   messageHandlers: Map<string, Set<(data: unknown) => void>>;
   connectionHandlers: Set<(connected: boolean) => void>;
   reconnectAttempts: number;
+  intentionalClose: boolean;
   connect: () => void;
   handleOpen: (event: Event, socket: WebSocket) => void;
   handleClose: (event: CloseEvent, socket: WebSocket) => void;
@@ -374,6 +375,42 @@ describe('WebSocketService', () => {
 
       expect(mockWebSocket.close).toHaveBeenCalled();
       expect(service.isConnected).toBe(false);
+    });
+  });
+
+  describe('Liveness / reconnect', () => {
+    it('does not reconnect after intentional disconnect', () => {
+      jest.useFakeTimers();
+      const socket = { ...mockWebSocket, readyState: WebSocket.OPEN, close: jest.fn() } as unknown as WebSocket;
+      service.ws = socket;
+      service.isConnected = true;
+      (global.WebSocket as unknown as jest.Mock).mockClear();
+
+      websocketService.disconnect();
+      expect(service.isConnected).toBe(false);
+
+      jest.advanceTimersByTime(20_000);
+      expect(global.WebSocket).not.toHaveBeenCalled();
+      jest.useRealTimers();
+    });
+
+    it('reconnects after unexpected close with capped backoff', () => {
+      jest.useFakeTimers();
+      const socket = { ...mockWebSocket, readyState: WebSocket.OPEN } as unknown as WebSocket;
+      service.ws = socket;
+      service.isConnected = true;
+      service.intentionalClose = false;
+      (global.WebSocket as unknown as jest.Mock).mockClear();
+
+      service.handleClose(
+        { code: 1006, reason: 'abnormal', wasClean: false } as CloseEvent,
+        socket,
+      );
+
+      expect(service.isConnected).toBe(false);
+      jest.advanceTimersByTime(0);
+      expect(global.WebSocket).toHaveBeenCalled();
+      jest.useRealTimers();
     });
   });
 });

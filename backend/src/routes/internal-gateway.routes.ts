@@ -83,10 +83,12 @@ function inventoryHadChanges(result: InventorySyncResult | null | undefined): bo
   );
 }
 
-async function broadcastDeviceListRefresh(reason: string): Promise<void> {
+async function broadcastDeviceListRefresh(reason: string, facilityId?: string): Promise<void> {
   try {
     const { WebSocketService } = await import('@/services/websocket.service');
-    await WebSocketService.getInstance().broadcastUnitsUpdate();
+    await WebSocketService.getInstance().broadcastUnitsUpdate(
+      facilityId ? { facilityId } : undefined,
+    );
   } catch (err) {
     logger.warn(`Failed to broadcast units update after ${reason}`, { err });
   }
@@ -333,7 +335,7 @@ registerPost(
     || inventoryHadChanges(accessResult)
     || inventoryHadChanges(networkInfraResult)
   ) {
-    await broadcastDeviceListRefresh('gateway inventory sync');
+    await broadcastDeviceListRefresh('gateway inventory sync', facilityId);
   }
 
   res.json({
@@ -447,7 +449,7 @@ registerPost(
     || (accessResult?.updated ?? 0) > 0
     || (networkInfraResult?.updated ?? 0) > 0;
   if (stateUpdatesApplied) {
-    await broadcastDeviceListRefresh('gateway devices/state');
+    await broadcastDeviceListRefresh('gateway devices/state', facilityId);
   }
 
   res.json({

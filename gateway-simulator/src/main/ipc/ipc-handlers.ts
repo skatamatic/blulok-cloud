@@ -89,6 +89,17 @@ export function registerIpcHandlers(): void {
     },
   );
 
+  ipcMain.handle(
+    IPC.ENTER_PROVISIONING,
+    async (_e, id: string, options?: { releaseCloud?: boolean }) => {
+      return gatewayManager.enterProvisioning(id, options);
+    },
+  );
+
+  ipcMain.handle(IPC.CLAIM_ZTP_GATEWAY, async (_e, id: string) => {
+    return gatewayManager.claimZtpGateway(id);
+  });
+
   ipcMain.handle(IPC.ADD_DEVICE, async (_e, id: string, kind: GatewayInventoryKind) => {
     gatewayManager.addDevice(id, kind);
     return gatewayManager.getInstance(id);
@@ -214,6 +225,15 @@ export function registerIpcHandlers(): void {
   });
   ipcMain.handle(IPC.LOGIN_USER, async (_e, userId: string, appDeviceId?: string) => {
     return gatewayManager.loginUser(userId, appDeviceId);
+  });
+  ipcMain.handle(IPC.CONNECT_USER_APP_REALTIME, async (_e, userId: string, facilityId: string) => {
+    return gatewayManager.connectUserAppRealtime(userId, facilityId);
+  });
+  ipcMain.handle(IPC.DISCONNECT_USER_APP_REALTIME, async (_e, userId: string) => {
+    return gatewayManager.disconnectUserAppRealtime(userId);
+  });
+  ipcMain.handle(IPC.CLEAR_USER_APP_REALTIME_EVENTS, async (_e, userId: string) => {
+    return gatewayManager.clearUserAppRealtimeEvents(userId);
   });
   ipcMain.handle(IPC.REGISTER_USER_DEVICE, async (_e, userId: string, deviceId: string) => {
     return gatewayManager.registerUserDevice(userId, deviceId);

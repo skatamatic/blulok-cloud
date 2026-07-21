@@ -44,7 +44,6 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
   useEffect(() => {
     // Set up connection status tracking
     const handleConnectionChange = (connected: boolean) => {
-      console.log('🔌 WebSocketContext connection change:', connected);
       setIsConnected(connected);
 
       if (connected) {
@@ -65,7 +64,6 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
 
     // Immediately check current status in case WebSocket connected before this effect ran
     const currentStatus = websocketService.isWebSocketConnected();
-    console.log('🔌 WebSocketContext initial status check:', currentStatus);
     if (currentStatus !== isConnected) {
       setIsConnected(currentStatus);
     }

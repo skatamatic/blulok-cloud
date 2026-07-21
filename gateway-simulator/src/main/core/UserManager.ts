@@ -1,6 +1,9 @@
+import { randomUUID } from 'crypto';
 import type { FileStateStore, UserProfile } from '../persistence/FileStateStore';
 import type {
   AddUserDeviceRequest,
+  AppRealtimeEventEntry,
+  AppRealtimeState,
   CreateUserRequest,
   ImportCloudUserRequest,
   SetRoutePassTamperRequest,
@@ -8,6 +11,7 @@ import type {
   RoutePassDetails,
   UserInstanceState,
 } from '@protocol/user-simulator-state';
+import { EMPTY_APP_REALTIME_STATE } from '@protocol/user-simulator-state';
 import {
   createLinkedUserDevice,
   createUserDevice,
@@ -22,6 +26,17 @@ import { mobileApiClient, type MobileApiClient } from '../auth/MobileApiClient';
 import type { CloudUserDetail, MintUserSessionResult } from '../auth/BackendClient';
 import { isJwtFresh, parseJwtExpiry } from '../auth/session-jwt.utils';
 import { parseRoutePassExpiry, buildRoutePassDetails } from '../users/route-pass-jwt.utils';
+import { AppRealtimeConnection } from '../net/AppRealtimeConnection';
+
+type AppRealtimeRuntime = {
+  status: AppRealtimeState['status'];
+  facilityId?: string;
+  subscriptionId?: string;
+  lastError?: string;
+  connectedAt?: string;
+  events: AppRealtimeEventEntry[];
+  connection: AppRealtimeConnection | null;
+};
 
 export type UserSessionProvider = {
   fetchCloudUser: (cloudUserId: string) => Promise<CloudUserDetail>;
@@ -39,6 +54,8 @@ export type UserManagerDeps = {
 
 export class UserManager {
   private profiles = new Map<string, UserProfile>();
+  /** Ephemeral /ws/app sessions — never persisted (opt-in “open the app”). */
+  private readonly appRealtime = new Map<string, AppRealtimeRuntime>();
   private readonly store: FileStateStore;
   private readonly generateId: () => string;
   private readonly mobileApi: MobileApiClient;
@@ -54,6 +71,9 @@ export class UserManager {
   }
 
   loadFromProfiles(profiles: UserProfile[]): void {
+    for (const id of this.appRealtime.keys()) {
+      this.teardownAppRealtime(id, { emit: false });
+    }
     this.profiles.clear();
     for (const profile of profiles) {
       this.profiles.set(profile.id, structuredClone(profile));
@@ -65,12 +85,12 @@ export class UserManager {
   }
 
   listStates(): UserInstanceState[] {
-    return [...this.profiles.values()].map((p) => toUserInstanceState(p));
+    return [...this.profiles.values()].map((p) => this.buildState(p));
   }
 
   getState(id: string): UserInstanceState | null {
     const profile = this.profiles.get(id);
-    return profile ? toUserInstanceState(profile) : null;
+    return profile ? this.buildState(profile) : null;
   }
 
   getProfile(id: string): UserProfile | null {
@@ -97,7 +117,7 @@ export class UserManager {
     });
     this.profiles.set(id, profile);
     void this.persist(profile);
-    const state = toUserInstanceState(profile);
+    const state = this.buildState(profile);
     this.onUserUpdated?.(state);
     return state;
   }
@@ -147,12 +167,13 @@ export class UserManager {
     profile.updatedAt = new Date().toISOString();
     this.profiles.set(id, profile);
     await this.persist(profile);
-    const state = toUserInstanceState(profile);
+    const state = this.buildState(profile);
     this.onUserUpdated?.(state);
     return state;
   }
 
   removeUser(id: string): void {
+    this.teardownAppRealtime(id, { emit: false });
     this.profiles.delete(id);
     void this.store.deleteUserProfile(id);
   }
@@ -165,7 +186,7 @@ export class UserManager {
     if (patch.password !== undefined) profile.password = patch.password;
     profile.updatedAt = new Date().toISOString();
     void this.persist(profile);
-    const state = toUserInstanceState(profile);
+    const state = this.buildState(profile);
     this.onUserUpdated?.(state);
     return state;
   }
@@ -176,7 +197,7 @@ export class UserManager {
     profile.devices.push(device);
     profile.updatedAt = new Date().toISOString();
     void this.persist(profile);
-    const state = toUserInstanceState(profile);
+    const state = this.buildState(profile);
     this.onUserUpdated?.(state);
     return state;
   }
@@ -186,7 +207,7 @@ export class UserManager {
     profile.devices = profile.devices.filter((d) => d.id !== deviceId);
     profile.updatedAt = new Date().toISOString();
     void this.persist(profile);
-    const state = toUserInstanceState(profile);
+    const state = this.buildState(profile);
     this.onUserUpdated?.(state);
     return state;
   }
@@ -196,7 +217,7 @@ export class UserManager {
     await this.ensureSession(profile, appDeviceId);
     profile.updatedAt = new Date().toISOString();
     await this.persist(profile);
-    const state = toUserInstanceState(profile);
+    const state = this.buildState(profile);
     this.onUserUpdated?.(state);
     return state;
   }
@@ -224,7 +245,7 @@ export class UserManager {
     profile.keyGenerationRequired = false;
     profile.updatedAt = new Date().toISOString();
     await this.persist(profile);
-    const state = toUserInstanceState(profile);
+    const state = this.buildState(profile);
     this.onUserUpdated?.(state);
     return state;
   }
@@ -257,7 +278,7 @@ export class UserManager {
     });
     profile.updatedAt = new Date().toISOString();
     await this.persist(profile);
-    const state = toUserInstanceState(profile);
+    const state = this.buildState(profile);
     this.onUserUpdated?.(state);
     return state;
   }
@@ -275,7 +296,7 @@ export class UserManager {
     pass.tamper = req.tamper;
     profile.updatedAt = new Date().toISOString();
     void this.persist(profile);
-    const state = toUserInstanceState(profile);
+    const state = this.buildState(profile);
     this.onUserUpdated?.(state);
     return state;
   }
@@ -287,7 +308,7 @@ export class UserManager {
     device.cachedRoutePasses = device.cachedRoutePasses.filter((p) => p.facilityId !== facilityId);
     profile.updatedAt = new Date().toISOString();
     void this.persist(profile);
-    const state = toUserInstanceState(profile);
+    const state = this.buildState(profile);
     this.onUserUpdated?.(state);
     return state;
   }
@@ -319,13 +340,98 @@ export class UserManager {
     });
     profile.updatedAt = new Date().toISOString();
     void this.persist(profile);
-    const state = toUserInstanceState(profile);
+    const state = this.buildState(profile);
     this.onUserUpdated?.(state);
     return state;
   }
 
   importProfile(profile: UserProfile): void {
     this.profiles.set(profile.id, structuredClone(profile));
+  }
+
+  /**
+   * Opt-in: simulate the user opening the phone app — connect `/ws/app` and subscribe.
+   * Does not auto-reconnect; call again after Close / unexpected drop.
+   */
+  async connectAppRealtime(userId: string, facilityId: string): Promise<UserInstanceState> {
+    const profile = this.require(userId);
+    const trimmedFacility = facilityId.trim();
+    if (!trimmedFacility) throw new Error('facility_id is required');
+
+    const existing = this.appRealtime.get(userId);
+    if (existing?.status === 'connecting' || existing?.status === 'connected') {
+      throw new Error('App realtime already open — close it first');
+    }
+
+    await this.ensureSession(profile);
+    if (!profile.sessionToken) throw new Error('No session token — refresh session first');
+
+    const runtime = this.ensureAppRealtimeRuntime(userId);
+    runtime.status = 'connecting';
+    runtime.facilityId = trimmedFacility;
+    runtime.lastError = undefined;
+    runtime.subscriptionId = undefined;
+    runtime.connectedAt = undefined;
+    this.emitUser(profile);
+
+    const connection = new AppRealtimeConnection({
+      backendUrl: profile.backendUrl,
+      token: profile.sessionToken,
+      facilityId: trimmedFacility,
+      onLog: (direction, summary, payload, eventName) => {
+        this.appendAppRealtimeLog(userId, { direction, summary, payload, eventName });
+      },
+      onClose: (code, reason) => {
+        const rt = this.appRealtime.get(userId);
+        if (!rt || rt.connection !== connection) return;
+        rt.connection = null;
+        rt.subscriptionId = undefined;
+        if (connection.wasClosedIntentionally()) {
+          rt.status = 'disconnected';
+          rt.lastError = undefined;
+        } else {
+          rt.status = 'error';
+          rt.lastError = `Closed (${code})${reason ? `: ${reason}` : ''}`;
+        }
+        this.emitUser(this.require(userId));
+      },
+    });
+
+    runtime.connection = connection;
+
+    try {
+      await connection.connect();
+      runtime.status = 'connected';
+      runtime.subscriptionId = connection.getSubscriptionId() ?? undefined;
+      runtime.connectedAt = new Date().toISOString();
+      runtime.lastError = undefined;
+      profile.updatedAt = new Date().toISOString();
+      await this.persist(profile);
+      return this.emitUser(profile);
+    } catch (err) {
+      runtime.connection = null;
+      runtime.status = 'error';
+      runtime.lastError = err instanceof Error ? err.message : String(err);
+      this.appendAppRealtimeLog(userId, {
+        direction: 'system',
+        summary: `Connect failed: ${runtime.lastError}`,
+      });
+      this.emitUser(profile);
+      throw err;
+    }
+  }
+
+  disconnectAppRealtime(userId: string): UserInstanceState {
+    this.require(userId);
+    this.teardownAppRealtime(userId, { emit: false });
+    return this.emitUser(this.require(userId));
+  }
+
+  clearAppRealtimeEvents(userId: string): UserInstanceState {
+    this.require(userId);
+    const runtime = this.ensureAppRealtimeRuntime(userId);
+    runtime.events = [];
+    return this.emitUser(this.require(userId));
   }
 
   private async ensureSession(profile: UserProfile, appDeviceId?: string): Promise<void> {
@@ -371,6 +477,82 @@ export class UserManager {
     const profile = this.profiles.get(id);
     if (!profile) throw new Error(`User not found: ${id}`);
     return profile;
+  }
+
+  private buildState(profile: UserProfile): UserInstanceState {
+    return {
+      ...toUserInstanceState(profile),
+      appRealtime: this.snapshotAppRealtime(profile.id),
+    };
+  }
+
+  private emitUser(profile: UserProfile): UserInstanceState {
+    const state = this.buildState(profile);
+    this.onUserUpdated?.(state);
+    return state;
+  }
+
+  private snapshotAppRealtime(userId: string): AppRealtimeState {
+    const runtime = this.appRealtime.get(userId);
+    if (!runtime) return { ...EMPTY_APP_REALTIME_STATE, events: [] };
+    return {
+      status: runtime.status,
+      facilityId: runtime.facilityId,
+      subscriptionId: runtime.subscriptionId,
+      lastError: runtime.lastError,
+      connectedAt: runtime.connectedAt,
+      events: [...runtime.events].slice(-200),
+    };
+  }
+
+  private ensureAppRealtimeRuntime(userId: string): AppRealtimeRuntime {
+    let runtime = this.appRealtime.get(userId);
+    if (!runtime) {
+      runtime = {
+        status: 'disconnected',
+        events: [],
+        connection: null,
+      };
+      this.appRealtime.set(userId, runtime);
+    }
+    return runtime;
+  }
+
+  private appendAppRealtimeLog(
+    userId: string,
+    entry: Omit<AppRealtimeEventEntry, 'id' | 'timestamp'> & { eventName?: string },
+  ): void {
+    const runtime = this.ensureAppRealtimeRuntime(userId);
+    runtime.events.push({
+      id: randomUUID(),
+      timestamp: new Date().toISOString(),
+      direction: entry.direction,
+      summary: entry.summary,
+      eventName: entry.eventName,
+      payload: entry.payload,
+    });
+    if (runtime.events.length > 500) runtime.events.shift();
+    const profile = this.profiles.get(userId);
+    if (profile) this.emitUser(profile);
+  }
+
+  private teardownAppRealtime(userId: string, opts: { emit: boolean }): void {
+    const runtime = this.appRealtime.get(userId);
+    if (!runtime) return;
+    try {
+      runtime.connection?.disconnect();
+    } catch {
+      /* ignore */
+    }
+    runtime.connection = null;
+    runtime.status = 'disconnected';
+    runtime.subscriptionId = undefined;
+    runtime.connectedAt = undefined;
+    runtime.lastError = undefined;
+    if (opts.emit) {
+      const profile = this.profiles.get(userId);
+      if (profile) this.emitUser(profile);
+    }
   }
 
   private async persist(profile: UserProfile): Promise<void> {
