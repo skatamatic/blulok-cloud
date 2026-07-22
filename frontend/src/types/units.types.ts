@@ -24,6 +24,16 @@ export interface Unit {
   error_code?: string | null;
   error_message?: string | null;
   firmware_version?: string;
+
+  /** Occupancy — returned by GET /units (and detail) for tenant unlock override. */
+  tenant_name?: string | null;
+  primary_tenant?: {
+    id: string;
+    first_name?: string;
+    last_name?: string;
+    email?: string;
+  } | null;
+  shared_tenants?: Array<{ id: string }> | null;
   
   // Joined data
   facility?: {
