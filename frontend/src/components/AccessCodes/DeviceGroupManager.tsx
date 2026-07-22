@@ -433,10 +433,7 @@ export function DeviceGroupManager({
           ? {
               status: pushStateResp.data.status,
               last_error: pushStateResp.data.last_error ?? null,
-              updated_at:
-                pushStateResp.data.updated_at instanceof Date
-                  ? pushStateResp.data.updated_at.toISOString()
-                  : pushStateResp.data.updated_at,
+              updated_at: pushStateResp.data.updated_at,
             }
           : null,
       );
