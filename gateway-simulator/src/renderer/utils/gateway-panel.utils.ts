@@ -1,7 +1,7 @@
 export const GATEWAY_PANEL_TABS = [
   { id: 'devices', label: 'Devices', hint: 'Inventory, state & access events' },
-  { id: 'connection', label: 'Connection', hint: 'WebSocket & cloud sync' },
-  { id: 'behavior', label: 'Behavior', hint: 'Command responses & sync' },
+  { id: 'connection', label: 'Connection', hint: 'WebSocket & provisioning' },
+  { id: 'behavior', label: 'Behavior', hint: 'Command response modes' },
   { id: 'settings', label: 'Settings', hint: 'Name, serial & identity' },
   { id: 'logs', label: 'Logs', hint: 'Protocol event stream' },
 ] as const;

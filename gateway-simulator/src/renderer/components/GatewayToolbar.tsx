@@ -9,15 +9,23 @@ type Props = {
 };
 
 export function GatewayToolbar({ gateway, connected, connecting, onRefresh }: Props) {
-  if (connected) {
+  if (connected || gateway.connectionStatus === 'provisioning') {
     return (
       <div className="gateway-toolbar">
         <div className="gateway-toolbar-actions">
           <button
             type="button"
             className="gateway-toolbar-icon-btn gateway-toolbar-icon-btn-disconnect"
-            title="Disconnect from backend"
-            aria-label="Disconnect from backend"
+            title={
+              gateway.connectionStatus === 'provisioning'
+                ? 'Abort provisioning session'
+                : 'Disconnect from backend'
+            }
+            aria-label={
+              gateway.connectionStatus === 'provisioning'
+                ? 'Abort provisioning session'
+                : 'Disconnect from backend'
+            }
             onClick={() => void window.simulator.disconnect(gateway.id).then(onRefresh)}
           >
             <SignalSlashIcon className="h-4 w-4" aria-hidden />
@@ -27,7 +35,12 @@ export function GatewayToolbar({ gateway, connected, connecting, onRefresh }: Pr
     );
   }
 
-  const connectLabel = connecting ? 'Connecting…' : 'Connect to backend';
+  const connectLabel =
+    connecting
+      ? 'Connecting…'
+      : gateway.authMode === 'ztp_keypair' && gateway.ztpLifecyclePhase === 'provisioning'
+        ? 'Connect (enter provision waiting room)'
+        : 'Connect to backend';
 
   return (
     <div className="gateway-toolbar">

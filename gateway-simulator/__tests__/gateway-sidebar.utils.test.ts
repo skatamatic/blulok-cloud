@@ -13,6 +13,8 @@ function gateway(
     backendUrl: 'http://localhost',
     gatewayId: overrides.id,
     connectionStatus: 'disconnected',
+    authMode: 'legacy_jwt',
+    ztpLifecyclePhase: 'operational',
     devices: [],
     deviceSimByKey: {},
     behavior: { liveStateSync: false, autoRespondLock: true, autoRespondUnlock: true },

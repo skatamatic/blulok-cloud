@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { ArrowPathIcon } from '@heroicons/react/24/outline';import type { GatewayInstanceState } from '@protocol/ipc-channels';
-import type { DeviceInventoryItem } from '@protocol/device-kinds';
+import { ArrowPathIcon } from '@heroicons/react/24/outline';
+import type { GatewayInstanceState } from '@protocol/ipc-channels';
 import type { UserInstanceState } from '@protocol/user-simulator-state';
 import { useToast } from '../contexts/ToastContext';
 import { errorMessage } from '../utils/error-message.utils';
@@ -18,6 +18,7 @@ import {
   writeDeviceDetailTab,
   type DeviceDetailTabId,
 } from '../utils/device-detail.utils';
+import { ConfirmDialog } from './ConfirmDialog';
 import { DeviceDetailNav } from './device-detail/DeviceDetailNav';
 import { DeviceDetailOverviewSection } from './device-detail/DeviceDetailOverviewSection';
 import { DeviceDetailSecuritySection } from './device-detail/DeviceDetailSecuritySection';
@@ -33,7 +34,10 @@ type Props = {
   onRefresh: () => void;
 };
 
-export function DeviceDetailView({ gateway, deviceKey, connected, users = [], onRefresh }: Props) {  const toast = useToast();
+export function DeviceDetailView({ gateway, deviceKey, connected, users = [], onRefresh }: Props) {
+  const toast = useToast();
+  const [confirmReset, setConfirmReset] = useState(false);
+  const [resetBusy, setResetBusy] = useState(false);
   const item = gateway.devices.find((d) => inventoryDeviceKey(d) === deviceKey);
   const sim = gateway.deviceSimByKey[deviceKey];
   const label = item ? inventoryDeviceLabel(item) : deviceKey;
@@ -75,13 +79,16 @@ export function DeviceDetailView({ gateway, deviceKey, connected, users = [], on
   );
 
   const resetDevice = async () => {
-    if (!confirm(`Reset ${label} to factory defaults? Identity fields are preserved.`)) return;
+    setResetBusy(true);
     try {
       await window.simulator.resetDevice(gateway.id, deviceKey);
       onRefresh();
       toast.success('Device reset to defaults');
+      setConfirmReset(false);
     } catch (err) {
       toast.error('Reset failed', errorMessage(err));
+    } finally {
+      setResetBusy(false);
     }
   };
 
@@ -146,8 +153,9 @@ export function DeviceDetailView({ gateway, deviceKey, connected, users = [], on
         <button
           type="button"
           className="btn-secondary device-detail-reset-btn inline-flex items-center gap-2 shrink-0"
-          onClick={() => void resetDevice()}
-        >          <ArrowPathIcon className="h-4 w-4" aria-hidden />
+          onClick={() => setConfirmReset(true)}
+        >
+          <ArrowPathIcon className="h-4 w-4" aria-hidden />
           Reset defaults
         </button>
       </header>
@@ -167,6 +175,24 @@ export function DeviceDetailView({ gateway, deviceKey, connected, users = [], on
           {renderActiveSection()}
         </div>
       </div>
+
+      <ConfirmDialog
+        isOpen={confirmReset}
+        title="Reset device defaults?"
+        message={
+          <>
+            Reset <strong>{label}</strong> to factory defaults? Identity fields are preserved.
+          </>
+        }
+        confirmLabel="Reset defaults"
+        confirmTone="danger"
+        isLoading={resetBusy}
+        onCancel={() => {
+          if (resetBusy) return;
+          setConfirmReset(false);
+        }}
+        onConfirm={() => void resetDevice()}
+      />
     </div>
   );
 }

@@ -144,6 +144,7 @@ export function App() {
     label: string;
     gatewayName: string;
     gatewaySerial: string;
+    authMode?: 'legacy_jwt' | 'ztp_keypair';
   }) => {
     try {
       const state = await window.simulator.createGateway({
@@ -155,6 +156,7 @@ export function App() {
         gatewayName: data.gatewayName,
         gatewaySerial: data.gatewaySerial,
         token: data.token,
+        authMode: data.authMode,
       });
       setInstances((prev) => [...prev.filter((g) => g.id !== state.id), state]);
       setActiveGatewayId(state.id);
@@ -334,7 +336,7 @@ export function App() {
           )}
 
           {!showSetup && !showCreateUser && sidebarCatalog === 'users' && activeUser && (
-            <div className="min-h-0 flex-1 overflow-y-auto">
+            <div className="min-h-0 flex-1">
               <UserPanel user={activeUser} gateways={instances} onRefresh={refresh} />
             </div>
           )}

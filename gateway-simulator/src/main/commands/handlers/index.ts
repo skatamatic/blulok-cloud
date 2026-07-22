@@ -2,6 +2,7 @@ import type {
   AccessCodeUpdatePayload,
   DenylistAddPayload,
   DenylistRemovePayload,
+  DenylistSyncPayload,
   DeviceDeletedPayload,
   JwtCommandPayload,
   LockUnlockPayload,
@@ -18,6 +19,10 @@ import {
   applyDenylistRemove,
   applySecureTimeSync,
 } from '../../devices/device-simulator.utils';
+import {
+  applyOperationalDenylistSync,
+  findRecordKeyForOperationalSync,
+} from '../../devices/denylist-sync.utils';
 
 export class LockUnlockHandler implements ICommandHandler {
   readonly cmdType = 'LOCK_UNLOCK';
@@ -115,9 +120,20 @@ export class DenylistHandler implements ICommandHandler {
   readonly cmdType = 'DENYLIST';
 
   async handle(payload: JwtCommandPayload, ctx: CommandContext): Promise<void> {
-    if (payload.cmd_type !== 'DENYLIST_ADD' && payload.cmd_type !== 'DENYLIST_REMOVE') return;
+    if (
+      payload.cmd_type !== 'DENYLIST_ADD'
+      && payload.cmd_type !== 'DENYLIST_REMOVE'
+      && payload.cmd_type !== 'DENYLIST_SYNC'
+    ) {
+      return;
+    }
 
     await delay(ctx.behavior.commandLatencyMs);
+
+    if (payload.cmd_type === 'DENYLIST_SYNC') {
+      await this.handleSync(payload as DenylistSyncPayload, ctx);
+      return;
+    }
 
     const isAdd = payload.cmd_type === 'DENYLIST_ADD';
     const entries = isAdd
@@ -148,6 +164,49 @@ export class DenylistHandler implements ICommandHandler {
     ctx.onNotify?.({
       summary: `${payload.cmd_type} applied to ${affected} device(s)`,
       payload: { entries, target: targetKeys },
+    });
+  }
+
+  private async handleSync(payload: DenylistSyncPayload, ctx: CommandContext): Promise<void> {
+    const rows = payload.devices ?? [];
+    const applied = applyOperationalDenylistSync(
+      ctx.registry,
+      rows.map((row) => ({
+        cloud_device_id: row.cloud_device_id,
+        kind: row.kind,
+        serial: row.serial,
+        relay_channel: row.relay_channel,
+        denylist: row.denylist ?? [],
+      })),
+    );
+
+    for (const row of rows) {
+      const key = findRecordKeyForOperationalSync(ctx.registry, {
+        cloud_device_id: row.cloud_device_id,
+        kind: row.kind,
+        serial: row.serial,
+        relay_channel: row.relay_channel,
+        denylist: row.denylist ?? [],
+      });
+      if (!key) continue;
+      ctx.registry.updateSimState(key, (sim) => {
+        appendCommandLog(sim, {
+          cmd_type: 'DENYLIST_SYNC',
+          summary: `Replaced denylist (${row.denylist?.length ?? 0} entries)`,
+          accepted: true,
+        });
+      });
+    }
+
+    if (applied > 0 || rows.length > 0) {
+      ctx.onPersist?.();
+      ctx.onDevicesChanged?.();
+    }
+
+    const entryCount = rows.reduce((sum, row) => sum + (row.denylist?.length ?? 0), 0);
+    ctx.onNotify?.({
+      summary: `DENYLIST_SYNC applied to ${applied} device(s) (${entryCount} entries)`,
+      payload: { devices: rows.length, entries: entryCount },
     });
   }
 }

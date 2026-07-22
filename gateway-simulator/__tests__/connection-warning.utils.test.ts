@@ -10,6 +10,8 @@ function gateway(partial: Partial<GatewayInstanceState>): GatewayInstanceState {
     facilityId: 'fac-1',
     gatewayId: 'cloud-gw',
     connectionStatus: 'connected',
+    authMode: 'legacy_jwt',
+    ztpLifecyclePhase: 'operational',
     devices: [],
     deviceSimByKey: {},
     behavior: {} as GatewayInstanceState['behavior'],

@@ -2,6 +2,60 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Theme-aware scrollbars (light / dark via `html.light` | `html.dark`) */
+:root,
+html.light {
+  --sim-scrollbar-size: 10px;
+  --sim-scrollbar-track: transparent;
+  --sim-scrollbar-thumb: rgb(148 163 184 / 0.55); /* slate-400 */
+  --sim-scrollbar-thumb-hover: #147fd4; /* brand primary */
+  --sim-scrollbar-thumb-active: #126bb3;
+  --sim-scrollbar-corner: transparent;
+}
+
+html.dark {
+  --sim-scrollbar-thumb: rgb(71 85 105 / 0.75); /* slate-600 */
+  --sim-scrollbar-thumb-hover: #47a7e7; /* primary-400 */
+  --sim-scrollbar-thumb-active: #147fd4;
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--sim-scrollbar-thumb) var(--sim-scrollbar-track);
+}
+
+*::-webkit-scrollbar {
+  width: var(--sim-scrollbar-size);
+  height: var(--sim-scrollbar-size);
+}
+
+*::-webkit-scrollbar-track {
+  background: var(--sim-scrollbar-track);
+  border-radius: 9999px;
+}
+
+*::-webkit-scrollbar-thumb {
+  background-color: var(--sim-scrollbar-thumb);
+  border-radius: 9999px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+  transition: background-color 160ms ease;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background-color: var(--sim-scrollbar-thumb-hover);
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+
+*::-webkit-scrollbar-thumb:active {
+  background-color: var(--sim-scrollbar-thumb-active);
+}
+
+*::-webkit-scrollbar-corner {
+  background: var(--sim-scrollbar-corner);
+}
+
 @layer components {
   .app-startup-splash {
     @apply fixed inset-0 z-[9999] flex items-center justify-center bg-gray-50 text-gray-900 transition-opacity duration-300 ease-out dark:bg-gray-950 dark:text-gray-100;
@@ -1027,6 +1081,15 @@ body.gateway-sidebar-resizing {
 }
 .confirm-dialog-panel {
   @apply w-full max-w-md overflow-hidden rounded-xl border border-gray-200 bg-white shadow-2xl dark:border-gray-700 dark:bg-gray-900;
+  animation: confirm-dialog-panel-in 280ms cubic-bezier(0.32, 0.72, 0, 1);
+}
+
+.ztp-qr-enlarge-backdrop {
+  z-index: 60;
+}
+
+.ztp-qr-enlarge-panel {
+  @apply w-full max-w-[28rem] rounded-2xl border border-gray-200 bg-white p-5 shadow-2xl dark:border-gray-700 dark:bg-gray-900;
   animation: confirm-dialog-panel-in 280ms cubic-bezier(0.32, 0.72, 0, 1);
 }
 .confirm-dialog-header {

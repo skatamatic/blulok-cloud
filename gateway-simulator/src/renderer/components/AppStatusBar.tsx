@@ -70,9 +70,7 @@ export function AppStatusBar({ gateway }: Props) {
                 variant="pill"
               />
               <ReconnectIndicator reconnectAt={gateway.reconnectAt} />
-              {gateway.behavior.liveStateSync && connected && (
-                <span className="live-sync-indicator">Live sync</span>
-              )}
+              {connected && <span className="live-sync-indicator">Live sync</span>}
             </div>
           )}
         </div>

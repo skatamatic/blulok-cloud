@@ -30,6 +30,14 @@ export function resolveGatewayBindingDisplay(
       description: 'Establishing WebSocket connection and authenticating.',
     };
   }
+  if (connectionStatus === 'provisioning') {
+    return {
+      label: 'Provisioning…',
+      shortLabel: 'Provisioning',
+      tone: 'connecting',
+      description: 'In ZTP waiting room (PROVISION_WAITING) until claimed.',
+    };
+  }
   if (connectionStatus === 'error') {
     return {
       label: 'Connection error',
@@ -113,7 +121,9 @@ export function sidebarStatusDotClass(
   _sessionRole?: GatewaySessionRole,
 ): string {
   if (connectionStatus === 'disconnected') return 'gateway-sidebar-status-dot-offline';
-  if (connectionStatus === 'connecting') return 'gateway-sidebar-status-dot-connecting';
+  if (connectionStatus === 'connecting' || connectionStatus === 'provisioning') {
+    return 'gateway-sidebar-status-dot-connecting';
+  }
   if (connectionStatus === 'error') return 'gateway-sidebar-status-dot-error';
   return 'gateway-sidebar-status-dot-bound';
 }
