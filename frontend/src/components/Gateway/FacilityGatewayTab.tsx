@@ -14,6 +14,7 @@ import {
   CpuChipIcon,
   DocumentTextIcon,
   PencilIcon,
+  ArrowRightOnRectangleIcon,
 } from '@heroicons/react/24/outline';
 import GatewayFirmwareTab from './GatewayFirmwareTab';
 import { useFacilityGatewayRecovery } from '@/hooks/useFacilityGatewayRecovery';
@@ -93,6 +94,8 @@ function FacilityGatewayTab({ facilityId, facilityName, canManageGateway, liveSt
     result: null
   });
   const [rotationSubmitting, setRotationSubmitting] = useState(false);
+  const [releaseModalOpen, setReleaseModalOpen] = useState(false);
+  const [releasing, setReleasing] = useState(false);
   const { authState } = useAuth();
   const userRole = authState.user?.role;
   const isDevAdmin = userRole === UserRole.DEV_ADMIN;
@@ -104,7 +107,9 @@ function FacilityGatewayTab({ facilityId, facilityName, canManageGateway, liveSt
     isBlocking: recoveryBlocking,
     hasActiveRecovery,
     refetch: refetchRecoverySummary,
-  } = useFacilityGatewayRecovery(facilityId, canManageGateway && activeTab !== 'swap-recovery');
+  } = useFacilityGatewayRecovery(facilityId, canManageGateway);
+
+  const isZtpGateway = Boolean(gateway?.public_key);
 
   useEffect(() => {
     if (!editingGatewayName) {
@@ -201,6 +206,30 @@ function FacilityGatewayTab({ facilityId, facilityName, canManageGateway, liveSt
     setRotationSubmitting(false);
   };
 
+  const handleReleaseGateway = useCallback(async () => {
+    if (!gateway || releasing) return;
+    setReleasing(true);
+    try {
+      await apiService.releaseGateway(gateway.id);
+      addToast({
+        type: 'success',
+        title: 'Gateway released',
+        message: 'Assign a gateway when you need remote control again.',
+      });
+      setReleaseModalOpen(false);
+      await reload();
+      void refetchRecoverySummary();
+    } catch (error) {
+      addToast({
+        type: 'error',
+        title: 'Release failed',
+        message: getApiErrorMessage(error, 'Could not release this gateway'),
+      });
+    } finally {
+      setReleasing(false);
+    }
+  }, [addToast, gateway, refetchRecoverySummary, releasing, reload]);
+
   const submitRotation = async () => {
     setRotationSubmitting(true);
     try {
@@ -284,8 +313,8 @@ function FacilityGatewayTab({ facilityId, facilityName, canManageGateway, liveSt
               </p>
               <p className="mt-1 text-sm text-gray-600 dark:text-gray-300">
                 {recoveryBlocking
-                  ? 'Inventory sync and remote lock commands are blocked until recovery completes or is bypassed.'
-                  : 'A replacement gateway connected — review swap recovery before trusting new inventory.'}
+                  ? 'Inventory sync and remote lock commands stay blocked until recovery finishes or is bypassed.'
+                  : 'A replacement gateway is online. Review Swap / Recovery before treating its inventory as current.'}
               </p>
             </div>
           </div>
@@ -383,8 +412,8 @@ function FacilityGatewayTab({ facilityId, facilityName, canManageGateway, liveSt
     return (
       <div className="mt-4 p-4 bg-gray-50 dark:bg-gray-900/30 rounded-lg text-sm space-y-3">
         <p className="text-gray-700 dark:text-gray-300">
-          Gateways connect with <strong className="font-semibold">WSS</strong> (or <strong className="font-semibold">WS</strong> in local dev). The server does{' '}
-          <strong className="font-semibold">not</strong> use <code className="text-xs">?token=</code> on the URL — after the socket opens, send{' '}
+          Gateways connect with <strong className="font-semibold">WSS</strong> (or <strong className="font-semibold">WS</strong> in local dev). Do{' '}
+          <strong className="font-semibold">not</strong> put <code className="text-xs">?token=</code> on the URL. After connect, send{' '}
           <strong className="font-semibold">AUTH</strong> as the first JSON message.
         </p>
         <div>
@@ -479,10 +508,10 @@ function FacilityGatewayTab({ facilityId, facilityName, canManageGateway, liveSt
               className="rounded-lg border border-amber-200 dark:border-amber-900/50 bg-amber-50 dark:bg-amber-950/30 px-4 py-3 text-sm text-amber-950 dark:text-amber-100"
               role="status"
             >
-              <p className="font-medium">WebSocket session active — no gateway assigned yet</p>
+              <p className="font-medium">Gateway connected, but not assigned yet</p>
               <p className="mt-1 text-amber-900/90 dark:text-amber-200/90">
-                A gateway has authenticated to this facility for <code className="text-xs font-mono px-1 rounded bg-white/60 dark:bg-black/20">/ws/gateway</code>, but this facility
-                does not have a bound gateway yet. Open <strong className="font-semibold">Swap / Recovery</strong> to complete first-install binding, or contact BluLok for setup assistance.
+                A gateway is talking to this facility, but none is assigned. Open{' '}
+                <strong className="font-semibold">Swap / Recovery</strong> to finish setup, or contact BluLok for help.
               </p>
               {lastActivityAt && (
                 <p className="mt-2 text-xs text-amber-800/80 dark:text-amber-300/80">
@@ -495,8 +524,8 @@ function FacilityGatewayTab({ facilityId, facilityName, canManageGateway, liveSt
             <ServerIcon className="h-12 w-12 text-gray-400 mx-auto mb-4" />
             <h3 className="text-lg font-medium text-gray-900 dark:text-white mb-2">No gateway assigned</h3>
             <p className="text-gray-600 dark:text-gray-400 max-w-lg mx-auto">
-              No gateway has been bound to this facility yet. Power on your gateway with the facility UUID configured, then use the{' '}
-              <strong className="font-semibold">Swap / Recovery</strong> tab to bind it. Contact BluLok if you need help with first-time setup.
+              This facility does not have a gateway yet. Power it on, then use{' '}
+              <strong className="font-semibold">Swap / Recovery</strong> to assign it. Contact BluLok if you need setup help.
             </p>
             {canManageGateway && (
               <button
@@ -520,8 +549,7 @@ function FacilityGatewayTab({ facilityId, facilityName, canManageGateway, liveSt
         <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6">
         <h3 className="text-lg font-medium text-gray-900 dark:text-white mb-2">Gateway Overview</h3>
         <p className="text-sm text-gray-600 dark:text-gray-400 mb-6">
-          On-site gateways open a secure WebSocket to <code className="text-xs font-mono bg-gray-100 dark:bg-gray-900/50 px-1 rounded">/ws/gateway</code> and authenticate
-          with a facility-scoped JWT. Use the URLs below in your gateway configuration (same values as <code className="text-xs">CLOUD_WS</code> and{' '}
+          Use these URLs in your gateway config (same as <code className="text-xs">CLOUD_WS</code> and{' '}
           <code className="text-xs">CLOUD_API</code> in the mesh bundle).
         </p>
 
@@ -698,6 +726,24 @@ function FacilityGatewayTab({ facilityId, facilityName, canManageGateway, liveSt
           </div>
         </div>
         </div>
+
+        {canManageGateway && isZtpGateway && (
+          <div className="rounded-lg border border-red-200 bg-red-50/70 p-6 dark:border-red-900/50 dark:bg-red-950/20">
+            <h3 className="text-lg font-medium text-red-900 dark:text-red-100">Release gateway</h3>
+            <p className="mt-2 text-sm text-red-900/80 dark:text-red-200/80">
+              Removes this gateway from <strong>{facilityName}</strong>. Remote lock and access control
+              stop for this site until you assign another gateway. Devices and units stay in place.
+            </p>
+            <button
+              type="button"
+              onClick={() => setReleaseModalOpen(true)}
+              className="btn-danger mt-4 inline-flex items-center gap-2"
+            >
+              <ArrowRightOnRectangleIcon className="h-4 w-4" aria-hidden />
+              Release from facility
+            </button>
+          </div>
+        )}
       </div>
     );
   };
@@ -710,7 +756,7 @@ function FacilityGatewayTab({ facilityId, facilityName, canManageGateway, liveSt
           <div className="text-center py-8">
             <ServerIcon className="h-12 w-12 text-gray-400 mx-auto mb-4" />
             <p className="text-gray-600 dark:text-gray-400">
-              Bind a gateway via Swap / Recovery before running sync. See Overview for the WebSocket and API URLs your gateway needs.
+              Bind a gateway via Swap / Recovery before syncing. See Overview for connection URLs.
             </p>
           </div>
         </div>
@@ -746,7 +792,7 @@ function FacilityGatewayTab({ facilityId, facilityName, canManageGateway, liveSt
               className="mb-4 rounded-lg border border-amber-300/60 dark:border-amber-800/60 bg-amber-50 dark:bg-amber-950/30 px-4 py-3 text-sm text-amber-900 dark:text-amber-200"
               role="status"
             >
-              Gateway recovery is in progress — manual sync is blocked until recovery completes or is bypassed.
+              Gateway recovery in progress. Manual sync is blocked until it finishes or is bypassed.
             </div>
           )}
           {renderGatewayModeInfo()}
@@ -884,6 +930,51 @@ function FacilityGatewayTab({ facilityId, facilityName, canManageGateway, liveSt
     );
   };
 
+  const renderReleaseModal = () => (
+    <Modal
+      isOpen={releaseModalOpen}
+      onClose={() => {
+        if (releasing) return;
+        setReleaseModalOpen(false);
+      }}
+      size="md"
+      showCloseButton={!releasing}
+    >
+      <ModalHeader>
+        <h3 className="text-lg font-semibold text-gray-900 dark:text-white">
+          Release {gateway?.name ?? 'gateway'} from {facilityName}?
+        </h3>
+      </ModalHeader>
+      <ModalBody>
+        <p className="text-sm text-gray-700 dark:text-gray-300">
+          Remote control for this facility will stop until another gateway is assigned. Your units
+          and devices are kept.
+        </p>
+        <p className="mt-3 text-sm text-gray-700 dark:text-gray-300">
+          After release, set up the same hardware again or install a replacement.
+        </p>
+      </ModalBody>
+      <ModalFooter>
+        <button
+          type="button"
+          className="btn-secondary"
+          disabled={releasing}
+          onClick={() => setReleaseModalOpen(false)}
+        >
+          Cancel
+        </button>
+        <button
+          type="button"
+          className="btn-danger"
+          disabled={releasing}
+          onClick={() => void handleReleaseGateway()}
+        >
+          {releasing ? 'Releasing…' : 'Release gateway'}
+        </button>
+      </ModalFooter>
+    </Modal>
+  );
+
   const renderRotationModal = () => (
     <Modal
       isOpen={rotationModal.isOpen}
@@ -904,7 +995,7 @@ function FacilityGatewayTab({ facilityId, facilityName, canManageGateway, liveSt
               <li>Capture the Ops key details shown after this confirmation.</li>
               <li>Update <code className="font-mono">OPS_ED25519_PRIVATE_KEY_B64</code> and <code className="font-mono">OPS_ED25519_PUBLIC_KEY_B64</code> in the backend environment.</li>
               <li>Restart backend services so the new private key takes effect.</li>
-              <li>Keep the root private key secure—it's only used to sign this packet and is never stored.</li>
+              <li>Keep the root private key secure. It only signs this packet and is never stored.</li>
             </ul>
           </ModalBody>
           <ModalFooter>
@@ -1184,7 +1275,7 @@ function FacilityGatewayTab({ facilityId, facilityName, canManageGateway, liveSt
             </div>
             
             <p className="mt-4 text-xs text-gray-500 dark:text-gray-400">
-              Commands are signed and sent directly to the gateway WebSocket connection.
+              Commands are signed and sent to the connected gateway.
             </p>
           </div>
         )}
@@ -1256,7 +1347,7 @@ function FacilityGatewayTab({ facilityId, facilityName, canManageGateway, liveSt
               <div className="border border-gray-200 dark:border-gray-700 rounded-lg bg-gray-50 dark:bg-gray-900/30 max-h-64 overflow-y-auto text-xs font-mono p-2 space-y-1">
                 {gatewayDebugEvents.length === 0 && (
                   <div className="text-gray-500 dark:text-gray-400">
-                    No events yet. Once a gateway connects and starts talking, events will appear here.
+                    No events yet. Events appear when a gateway connects.
                   </div>
                 )}
                 {gatewayDebugEvents
@@ -1295,7 +1386,7 @@ function FacilityGatewayTab({ facilityId, facilityName, canManageGateway, liveSt
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">
             <div>
               <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                Fallback JWT (App-signed)
+                Fallback token (app-signed)
               </label>
               <textarea
                 value={fallbackJwtInput}
@@ -1453,6 +1544,7 @@ function FacilityGatewayTab({ facilityId, facilityName, canManageGateway, liveSt
         )}
         {activeTab === 'devtools' && renderDevtoolsTab()}
         {renderRotationModal()}
+        {renderReleaseModal()}
       </div>
 
       {promptDialog}

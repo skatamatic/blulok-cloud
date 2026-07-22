@@ -1,5 +1,9 @@
 import { DeviceModel } from '@/models/device.model';
 import { DenylistEntryModel, DeviceDenylistEntry } from '@/models/denylist-entry.model';
+import { GatewayModel } from '@/models/gateway.model';
+import { DenylistService } from '@/services/denylist.service';
+import { GatewayEventsService } from '@/services/gateway/gateway-events.service';
+import { logger } from '@/utils/logger';
 
 /** Denylist row pushed to gateways (matches JWT denylist_add entry shape). */
 export type DenylistSyncEntry = {
@@ -22,6 +26,7 @@ const PERMANENT_DENYLIST_EXP = 4_102_444_800; // 2100-01-01T00:00:00Z
 export class DenylistSyncService {
   private static denylistModel: DenylistEntryModel | undefined;
   private static deviceModel: DeviceModel | undefined;
+  private static gatewayModel: GatewayModel | undefined;
 
   private static getDenylistModel(): DenylistEntryModel {
     if (!this.denylistModel) {
@@ -35,6 +40,13 @@ export class DenylistSyncService {
       this.deviceModel = new DeviceModel();
     }
     return this.deviceModel;
+  }
+
+  private static getGatewayModel(): GatewayModel {
+    if (!this.gatewayModel) {
+      this.gatewayModel = new GatewayModel();
+    }
+    return this.gatewayModel;
   }
 
   static toSyncEntry(entry: DeviceDenylistEntry): DenylistSyncEntry {
@@ -70,7 +82,12 @@ export class DenylistSyncService {
       this.getDeviceModel().findAccessControlDevices({ gateway_id: gatewayId }),
     ]);
 
-    const rows: Array<{ cloud_device_id: string; kind: 'lock' | 'access_control'; serial: string; relay_channel?: number | null }> = [
+    const rows: Array<{
+      cloud_device_id: string;
+      kind: 'lock' | 'access_control';
+      serial: string;
+      relay_channel?: number | null;
+    }> = [
       ...locks.map((lock) => ({
         cloud_device_id: lock.id,
         kind: 'lock' as const,
@@ -90,5 +107,32 @@ export class DenylistSyncService {
       ...row,
       denylist: denylistByDevice.get(row.cloud_device_id) ?? [],
     }));
+  }
+
+  /**
+   * Push a full replace snapshot (`DENYLIST_SYNC`) to the bound active gateway.
+   * No-ops when unbound or offline. Empty device denylists clear local state.
+   */
+  static async pushSnapshotToFacility(facilityId: string): Promise<void> {
+    const gateway = await this.getGatewayModel().findByFacilityId(facilityId);
+    if (!gateway?.id) {
+      logger.debug(`Denylist snapshot skipped — no bound gateway facility=${facilityId}`);
+      return;
+    }
+
+    const connection = GatewayEventsService.getInstance().getFacilityConnectionStatus(facilityId);
+    if (!connection.connected) {
+      logger.debug(`Denylist snapshot deferred — gateway offline facility=${facilityId}`);
+      return;
+    }
+
+    const devices = await this.buildOperationalSyncForGateway(gateway.id);
+    const jwt = await DenylistService.buildDenylistSync(facilityId, devices);
+    GatewayEventsService.getInstance().unicastToFacility(facilityId, jwt);
+
+    const entryCount = devices.reduce((sum, row) => sum + row.denylist.length, 0);
+    logger.info(
+      `Denylist snapshot pushed facility=${facilityId} gateway=${gateway.id} devices=${devices.length} entries=${entryCount}`,
+    );
   }
 }

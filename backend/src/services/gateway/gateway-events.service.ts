@@ -163,6 +163,22 @@ export class GatewayEventsService {
     this.transport.unicastToFacility(facilityId, payload);
   }
 
+  /** Force-close the active inbound gateway WS for a facility (release/revoke). */
+  public forceDisconnectFacility(facilityId: string, reason = 'force_disconnect'): void {
+    const t: any = this.transport as any;
+    if (t && typeof t.forceDisconnectFacility === 'function') {
+      t.forceDisconnectFacility(facilityId, reason);
+    }
+  }
+
+  /** Force-close active or swap-candidate WS for a specific gateway id. */
+  public forceDisconnectGatewayById(gatewayId: string, reason = 'force_disconnect'): void {
+    const t: any = this.transport as any;
+    if (t && typeof t.forceDisconnectGatewayById === 'function') {
+      t.forceDisconnectGatewayById(gatewayId, reason);
+    }
+  }
+
   // Lightweight connection status for a facility (for UI/status endpoints)
   public getFacilityConnectionStatus(facilityId: string): { connected: boolean; lastPongAt?: number } {
     const t: any = this.transport as any;

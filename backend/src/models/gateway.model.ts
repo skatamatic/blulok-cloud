@@ -3,8 +3,14 @@ import { DatabaseService } from '../services/database.service';
 import { isDuplicateKeyError } from '@/utils/gateway-auto-register.utils';
 import {
   resolveBoundGatewayDisplayName,
+  unboundGatewayDisplayName,
   withOperatorSetGatewayDisplayName,
 } from '@/utils/gateway-display-name.utils';
+import {
+  getZtpIntendedFacilityId,
+  withZtpIntendedFacilityId,
+  withoutZtpIntendedFacilityId,
+} from '@/utils/gateway-ztp-claim.utils';
 
 /**
  * Gateway Entity Interface
@@ -75,6 +81,13 @@ export interface Gateway {
   key_management_version: 'v1' | 'v2';
   /** Whether to ignore SSL certificate validation (for testing) */
   ignore_ssl_cert?: boolean;
+  /** Compressed P-256 public key (base64url) for ZTP / challenge-response AUTH */
+  public_key?: string | null;
+  /** User who completed sticker claim */
+  claimed_by_user_id?: string | null;
+  claimed_at?: Date | null;
+  released_at?: Date | null;
+  revoked_at?: Date | null;
   /** Gateway registration timestamp */
   created_at: Date;
   /** Last configuration update timestamp */
@@ -393,5 +406,185 @@ export class GatewayModel {
       blulokDevices,
       inventoryDevices,
     };
+  }
+
+  /**
+   * Create or re-bind a gateway via sticker ZTP claim.
+   * - Empty facility → bind as the active facility gateway (`bound: true`).
+   * - Facility already has a different bound gateway → persist unbound identity + intended
+   *   facility metadata for swap-candidate AUTH (`bound: false`). Does not steal the live binding.
+   */
+  async claimViaZtp(params: {
+    deviceId: string;
+    facilityId: string;
+    publicKey: string;
+    claimedByUserId: string;
+    name?: string;
+  }): Promise<{ gateway: Gateway; created: boolean; bound: boolean }> {
+    const knex = this.db.connection;
+
+    return await knex.transaction(async (trx) => {
+      const existingBound = await trx('gateways').where('facility_id', params.facilityId).first();
+      const facilityAlreadyBound =
+        Boolean(existingBound) && existingBound.id !== params.deviceId;
+
+      const existing = await trx('gateways').where('id', params.deviceId).first();
+      if (existing?.revoked_at) {
+        const err = new Error('GATEWAY_REVOKED') as Error & { code: string };
+        err.code = 'GATEWAY_REVOKED';
+        throw err;
+      }
+      if (existing?.facility_id && existing.facility_id !== params.facilityId) {
+        const err = new Error('ALREADY_CLAIMED') as Error & { code: string };
+        err.code = 'ALREADY_CLAIMED';
+        throw err;
+      }
+      // Idempotent: already bound to this facility with matching key
+      if (existing?.facility_id === params.facilityId && existing.public_key) {
+        if (existing.public_key !== params.publicKey) {
+          const err = new Error('PUBLIC_KEY_MISMATCH') as Error & { code: string };
+          err.code = 'PUBLIC_KEY_MISMATCH';
+          throw err;
+        }
+        return { gateway: existing as Gateway, created: false, bound: true };
+      }
+      // Idempotent swap-prep: unbound with matching key + intended facility
+      if (
+        existing &&
+        !existing.facility_id &&
+        existing.public_key &&
+        facilityAlreadyBound
+      ) {
+        if (existing.public_key !== params.publicKey) {
+          const err = new Error('PUBLIC_KEY_MISMATCH') as Error & { code: string };
+          err.code = 'PUBLIC_KEY_MISMATCH';
+          throw err;
+        }
+        if (getZtpIntendedFacilityId(existing.metadata) === params.facilityId) {
+          return { gateway: existing as Gateway, created: false, bound: false };
+        }
+      }
+      if (existing?.public_key && existing.public_key !== params.publicKey) {
+        const err = new Error('PUBLIC_KEY_MISMATCH') as Error & { code: string };
+        err.code = 'PUBLIC_KEY_MISMATCH';
+        throw err;
+      }
+
+      const facility = await trx('facilities').where('id', params.facilityId).first();
+      const now = new Date();
+
+      if (facilityAlreadyBound) {
+        const displayName =
+          params.name?.trim() ||
+          existing?.name ||
+          unboundGatewayDisplayName(params.deviceId);
+        const metadata = withZtpIntendedFacilityId(existing?.metadata, params.facilityId);
+
+        if (existing) {
+          await trx('gateways').where('id', params.deviceId).update({
+            facility_id: null,
+            name: displayName,
+            public_key: params.publicKey,
+            claimed_by_user_id: params.claimedByUserId,
+            claimed_at: now,
+            released_at: null,
+            status: 'offline',
+            metadata: JSON.stringify(metadata),
+            updated_at: now,
+          });
+          const gateway = await trx('gateways').where('id', params.deviceId).first();
+          return { gateway: gateway as Gateway, created: false, bound: false };
+        }
+
+        await trx('gateways').insert({
+          id: params.deviceId,
+          facility_id: null,
+          name: displayName,
+          gateway_type: 'physical',
+          key_management_version: 'v2',
+          status: 'offline',
+          public_key: params.publicKey,
+          claimed_by_user_id: params.claimedByUserId,
+          claimed_at: now,
+          metadata: JSON.stringify(metadata),
+        });
+        const gateway = await trx('gateways').where('id', params.deviceId).first();
+        return { gateway: gateway as Gateway, created: true, bound: false };
+      }
+
+      const displayName =
+        params.name?.trim() ||
+        resolveBoundGatewayDisplayName({
+          facilityName: facility?.name,
+          gatewayId: params.deviceId,
+          existingName: existing?.name,
+          metadata: existing?.metadata,
+        });
+
+      const metadata = withZtpIntendedFacilityId(existing?.metadata, params.facilityId);
+
+      if (existing) {
+        await trx('gateways').where('id', params.deviceId).update({
+          facility_id: params.facilityId,
+          name: displayName,
+          public_key: params.publicKey,
+          claimed_by_user_id: params.claimedByUserId,
+          claimed_at: now,
+          released_at: null,
+          status: 'offline',
+          metadata: JSON.stringify(metadata),
+          updated_at: now,
+        });
+        const gateway = await trx('gateways').where('id', params.deviceId).first();
+        return { gateway: gateway as Gateway, created: false, bound: true };
+      }
+
+      await trx('gateways').insert({
+        id: params.deviceId,
+        facility_id: params.facilityId,
+        name: displayName,
+        gateway_type: 'physical',
+        key_management_version: 'v2',
+        status: 'offline',
+        public_key: params.publicKey,
+        claimed_by_user_id: params.claimedByUserId,
+        claimed_at: now,
+        metadata: JSON.stringify(metadata),
+      });
+      const gateway = await trx('gateways').where('id', params.deviceId).first();
+      return { gateway: gateway as Gateway, created: true, bound: true };
+    });
+  }
+
+  async releaseZtpClaim(id: string): Promise<Gateway | null> {
+    const knex = this.db.connection;
+    const existing = await this.findById(id);
+    if (!existing) return null;
+    const now = new Date();
+    const metadata = withoutZtpIntendedFacilityId(existing.metadata);
+    await knex('gateways').where('id', id).update({
+      facility_id: null,
+      released_at: now,
+      status: 'offline',
+      metadata: JSON.stringify(metadata),
+      updated_at: now,
+    });
+    return this.findById(id);
+  }
+
+  async revokeZtp(id: string): Promise<Gateway | null> {
+    const knex = this.db.connection;
+    const existing = await this.findById(id);
+    if (!existing) return null;
+    const now = new Date();
+    const metadata = withoutZtpIntendedFacilityId(existing.metadata);
+    await knex('gateways').where('id', id).update({
+      facility_id: null,
+      revoked_at: now,
+      status: 'offline',
+      metadata: JSON.stringify(metadata),
+      updated_at: now,
+    });
+    return this.findById(id);
   }
 }

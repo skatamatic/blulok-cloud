@@ -90,6 +90,11 @@ describe('WebsocketGatewayTransport recovery routing', () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+    for (const facilityId of transport.getConnectedFacilityIds()) {
+      transport.forceDisconnectFacility(facilityId, 'test_cleanup');
+    }
+    transport.forceDisconnectGatewayById(BOUND_GATEWAY_ID, 'test_cleanup');
+    transport.forceDisconnectGatewayById(SWAP_GATEWAY_ID, 'test_cleanup');
   });
 
   it('parks swap candidate without replacing the bound gateway session', async () => {
@@ -188,6 +193,41 @@ describe('WebsocketGatewayTransport recovery routing', () => {
 
     expect(primaryMessages.some((msg) => (msg as { type?: string }).type === 'FIRMWARE_MANIFEST')).toBe(false);
 
+    primaryWs.close();
+  });
+
+  it('enrichSessionsForCompletedRecovery omits offline previous gateway', () => {
+    const sessions = transport.enrichSessionsForCompletedRecovery(
+      'facility-clean',
+      [{ gatewayId: SWAP_GATEWAY_ID, sessionRole: 'active', connected: true }],
+      SWAP_GATEWAY_ID,
+      BOUND_GATEWAY_ID,
+    );
+    expect(sessions).toHaveLength(1);
+    expect(sessions[0]).toEqual(
+      expect.objectContaining({ gatewayId: SWAP_GATEWAY_ID, sessionRole: 'active' }),
+    );
+    expect(sessions.some((s) => s.gatewayId === BOUND_GATEWAY_ID)).toBe(false);
+  });
+
+  it('enrichSessionsForCompletedRecovery includes previous gateway only when WS connected', async () => {
+    const primaryWs = await authGatewayWs(port, 'facility-1', SWAP_GATEWAY_ID);
+    const previousWs = await authGatewayWs(port, 'facility-1', BOUND_GATEWAY_ID);
+
+    const sessions = transport.enrichSessionsForCompletedRecovery(
+      'facility-1',
+      transport.getFacilityGatewaySessions('facility-1'),
+      SWAP_GATEWAY_ID,
+      BOUND_GATEWAY_ID,
+    );
+    expect(sessions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ gatewayId: SWAP_GATEWAY_ID, sessionRole: 'active', connected: true }),
+        expect.objectContaining({ gatewayId: BOUND_GATEWAY_ID, sessionRole: 'swap_candidate', connected: true }),
+      ]),
+    );
+
+    previousWs.close();
     primaryWs.close();
   });
 

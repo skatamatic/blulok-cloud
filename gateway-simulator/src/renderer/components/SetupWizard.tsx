@@ -20,6 +20,7 @@ type SetupCompleteData = {
   label: string;
   gatewayName: string;
   gatewaySerial: string;
+  authMode?: 'legacy_jwt' | 'ztp_keypair';
 };
 
 type Props = {
@@ -44,6 +45,7 @@ export function SetupWizard({ existingTabCount, onComplete, onCancel }: Props) {
   const [facilityName, setFacilityName] = useState('');
   const [gatewayId, setGatewayId] = useState('');
   const [useNewGateway, setUseNewGateway] = useState(true);
+  const [authMode, setAuthMode] = useState<'legacy_jwt' | 'ztp_keypair'>('legacy_jwt');
   const [fields, setFields] = useState<GatewaySetupFields>({
     label: `Gateway ${existingTabCount + 1}`,
     gatewayName: '',
@@ -180,6 +182,7 @@ export function SetupWizard({ existingTabCount, onComplete, onCancel }: Props) {
       label: fields.label.trim(),
       gatewayName: fields.gatewayName.trim(),
       gatewaySerial: fields.gatewaySerial.trim(),
+      authMode,
     });
   };
 
@@ -320,21 +323,58 @@ export function SetupWizard({ existingTabCount, onComplete, onCancel }: Props) {
             Facility: <span className="font-medium text-gray-900 dark:text-gray-100">{facilityName}</span>
           </p>
 
+          <div className="space-y-1">
+            <span className="text-sm font-medium text-gray-800 dark:text-gray-200">Cloud auth mode</span>
+            <label className="flex items-center gap-2 text-sm">
+              <input
+                type="radio"
+                checked={authMode === 'legacy_jwt'}
+                onChange={() => setAuthMode('legacy_jwt')}
+              />
+              Legacy JWT (default)
+            </label>
+            <label className="flex items-center gap-2 text-sm">
+              <input
+                type="radio"
+                checked={authMode === 'ztp_keypair'}
+                onChange={() => {
+                  setAuthMode('ztp_keypair');
+                  if (!useNewGateway) switchToNewGateway();
+                }}
+              />
+              ZTP keypair (ECDSA challenge-response)
+            </label>
+            {authMode === 'ztp_keypair' && (
+              <p className="text-xs text-gray-500 dark:text-gray-400">
+                Starts in factory provisioning mode. Connect opens the waiting room; claim via the
+                Connection panel (or mobile/API), then the simulator switches to ECDSA ops AUTH.
+              </p>
+            )}
+          </div>
+
           <label className="flex items-center gap-2 text-sm">
             <input
               type="radio"
               checked={useNewGateway}
               onChange={() => switchToNewGateway()}
             />
-            New simulated gateway (auto-register on connect)
+            {authMode === 'ztp_keypair'
+              ? 'New simulated gateway (sticker identity)'
+              : 'New simulated gateway (auto-register on connect)'}
           </label>
-          <label className="flex items-center gap-2 text-sm">
+          <label
+            className={`flex items-center gap-2 text-sm ${
+              authMode === 'ztp_keypair' ? 'cursor-not-allowed opacity-50' : ''
+            }`}
+          >
             <input
               type="radio"
               checked={!useNewGateway}
+              disabled={authMode === 'ztp_keypair'}
               onChange={() => switchToExistingGateway()}
             />
             Use existing gateway record
+            {authMode === 'ztp_keypair' ? ' (not available with ZTP — private key must match sticker)' : ''}
           </label>
 
           {!useNewGateway && (

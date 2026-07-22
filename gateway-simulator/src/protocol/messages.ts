@@ -1,6 +1,8 @@
 /** Gateway WebSocket message type literals (inbound: gateway → cloud). */
 export const GATEWAY_INBOUND_MESSAGE_TYPES = [
   'AUTH',
+  'AUTH_HELLO',
+  'AUTH_PROOF',
   'PONG',
   'PROXY_REQUEST',
   'COMMAND_ACK',
@@ -16,6 +18,7 @@ export const GATEWAY_INBOUND_MESSAGE_TYPES = [
 /** Gateway WebSocket message type literals (outbound: cloud → gateway). */
 export const GATEWAY_OUTBOUND_MESSAGE_TYPES = [
   'AUTH_OK',
+  'AUTH_CHALLENGE',
   'ERROR',
   'PING',
   'PONG_OK',
@@ -44,6 +47,25 @@ export type AuthMessage = {
   gatewayId: string;
   /** Running gateway firmware — canonical seed on the cloud gateways row. */
   firmware_version?: string;
+};
+
+export type AuthHelloMessage = {
+  type: 'AUTH_HELLO';
+  gatewayId: string;
+  /** Required for unbound ZTP swap-prep (must match claim metadata). */
+  facilityId?: string;
+  firmware_version?: string;
+};
+
+export type AuthChallengeMessage = {
+  type: 'AUTH_CHALLENGE';
+  nonce: string;
+  expires_in_seconds?: number;
+};
+
+export type AuthProofMessage = {
+  type: 'AUTH_PROOF';
+  signature: string;
 };
 
 export type AuthOkMessage = {

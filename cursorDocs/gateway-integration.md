@@ -7,7 +7,12 @@ This document ties together the **mesh-manager gateway** (Docker bundle under `g
 | Purpose | URL pattern | Notes |
 |--------|-------------|--------|
 | WebSocket | `wss://<BACKEND_HOST>/ws/gateway` | Use `wss` when the API is HTTPS. Path must be exactly `/ws/gateway`. |
+| Provision WS (ZTP) | `wss://<BACKEND_HOST>/ws/gateway-provision` | Sticker waiting room; see [Gateway ZTP](./gateway-ztp-sticker-design.md). |
 | REST (via env `CLOUD_API`) | `https://<BACKEND_HOST>/api/v1` | Same host as the API; internal routes are reached through the WS `PROXY_REQUEST` tunnel. |
+
+**Sticker zero-touch provisioning (implemented):** [Gateway ZTP sticker architecture](./gateway-ztp-sticker-design.md) — ECDSA P-256 public key on sticker, provision WS, `POST /gateways/claim`, challenge-response ops AUTH. Legacy human JWT AUTH remains the default lab path.
+
+**Firmware implementers:** [Gateway ZTP — firmware developer guide](./gateway-ztp-firmware-developer-guide.md) (wire formats, state machine, signing bytes, Release/Revoke). For **OTA delivery mode v2** (HTTPS signed URL): [Gateway Firmware OTA v2 — firmware developer guide](./gateway-firmware-ota-v2-developer-guide.md).
 
 Set these in **`gateway/mesh-manager-bundle/docker-compose.yml`** (or override with env):
 
@@ -27,7 +32,9 @@ In the web app, **Facility → Gateway → Overview** shows the same **WSS URL**
 
 ## WebSocket authentication (required)
 
-The server **does not** authenticate using `?token=` on the WebSocket URL. After the TCP/TLS upgrade, the **first** application message must be JSON:
+The server **does not** authenticate using `?token=` on the WebSocket URL. After the TCP/TLS upgrade, the **first** application message must be one of:
+
+### A. Legacy human JWT (lab / existing fleets — default)
 
 ```json
 {
@@ -39,6 +46,29 @@ The server **does not** authenticate using `?token=` on the WebSocket URL. After
 }
 ```
 
+When `GATEWAY_ZTP_REQUIRED=true`, **first-install auto-bind** via this path is rejected (`AUTH_FORBIDDEN` — ZTP claim required). Reconnect of an already-bound **legacy** (no `public_key`) gateway with a valid admin JWT still works. Gateways that have a `public_key` (ZTP-claimed) **must** use path B — human JWT `AUTH` is rejected.
+
+### B. ZTP ECDSA challenge-response (after sticker claim)
+
+```json
+{ "type": "AUTH_HELLO", "gatewayId": "<claimed device UUID>", "firmware_version": "<optional>" }
+```
+
+Cloud responds with `AUTH_CHALLENGE { nonce }`. Gateway signs `"blulok-gw-auth-v1" || 0x00 || nonce || 0x00 || gatewayId` with its P-256 private key and sends:
+
+```json
+{ "type": "AUTH_PROOF", "signature": "<base64url DER ECDSA>" }
+```
+
+Requires a prior successful `POST /api/v1/gateways/claim` that stored `gateways.public_key`.
+
+Both modes then receive `AUTH_OK` (ops public keys, session role, etc.) as before.
+
+### E2E / simulator
+
+- `npm run ws:e2e` — legacy JWT gateway AUTH (default)
+- `npm run ws:e2e:ztp` — `E2E_GATEWAY_AUTH=ztp` provision → claim → ECDSA AUTH for the primary gateway
+- Gateway simulator: optional `authMode: 'ztp_keypair'` on create (default `legacy_jwt`). ZTP instances start in **provisioning** lifecycle — Connect opens `/ws/gateway-provision` WAITING; claim via Connection panel or API; cloud `ztp_released` returns the sim to factory/provisioning with the same sticker keys.
 **Gateway firmware:** When `firmware_version` is present, the cloud **always** writes it to the bound gateway row on AUTH (connect/reconnect). This is the canonical version reported by the device. Cloud-initiated OTA may update `gateways.firmware_version` after a successful push; the **next AUTH overwrites** that value with the gateway's live seed.
 
 Successful path:
@@ -72,7 +102,7 @@ On-site gateways typically call internal APIs through **`PROXY_REQUEST`** on the
 
 ### Lock status and unit telemetry (dashboard WebSocket, not gateway socket)
 
-Gateways **do not** push lock state over operator REST from the browser. They use **`/ws/gateway`** and **`PROXY_REQUEST`** to reach internal routes (for example device state sync). The backend persists changes, then broadcasts to **dashboard** clients on the app WebSocket (`/ws` / `WebSocketContext`) as **`device_status_update`** (payload includes `devices[]`) and **`units_update`** when unit summaries change.
+Gateways **do not** push lock state over operator REST from the browser. They use **`/ws/gateway`** and **`PROXY_REQUEST`** to reach internal routes (for example device state sync). The backend persists changes, then broadcasts to **dashboard** clients on the operator WebSocket (`/ws` / `WebSocketContext`) as **`device_status_update`** (payload includes `devices[]`) and **`units_update`** when unit summaries change. The same device/unit/gateway fanout also feeds the **mobile app** channel [`/ws/app`](./app-realtime-websocket.md) ([mobile developer guide](./app-realtime-developer-guide.md) — JWT auth, facility subscribe, heartbeat idle tear-down; recommend session affinity when `max-instances > 1`).
 
 Any UI that shows BluLok lock or device telemetry should go through **`useLockDeviceRealtime`** and **`normalizeDeviceStatusWsPayload`** (`frontend/src/hooks/useLockDeviceRealtime.ts`, `frontend/src/utils/deviceStatusWs.utils.ts`) so subscription scope, debouncing, and payload parsing stay consistent.
 
@@ -174,8 +204,8 @@ Use **`wss://`** to match **`https://`** on the same host. Mixed `ws` to `https`
 | Source | What it is | Use in UI |
 |--------|------------|-----------|
 | **`GET /facilities/:id` → `deviceHierarchy.gateway.status`** | Snapshot of the `gateways` row bundled with the device tree | **Do not use for liveness badges** — load-time snapshot; identity/membership only |
-| **`gateway_status` WebSocket (`gateway_status_update`)** | Real-time broadcast; payload now carries the per-gateway live session signal **`connected`** + **`lastActivityAt`** alongside the DB `status`/`lastSeen` row | **Primary** — pushed instantly on connect/disconnect; drives the badge in real time |
-| **`GET /gateways/status/:facilityId`** | In-memory inbound `/ws/gateway` session (`GatewayEventsService.getFacilityConnectionStatus`) | **Backstop** — polled by `useFacilityGatewayLiveStatus` every 5s to reconcile if the dashboard socket misses an event; a failed poll does **not** flip the badge offline |
+| **`gateway_status` WebSocket (`gateway_status_update`)** | Real-time broadcast; payload carries live session signal **`connected`** + **`lastActivityAt`** alongside DB `status`/`lastSeen`. Facility setup passes `{ facility_id }` (ADMIN / DEV_ADMIN / FACILITY_ADMIN only for that filter). | **Primary** — drives the badge; no HTTP poll |
+| **`GET /gateways/status/:facilityId`** | In-memory inbound `/ws/gateway` session (`GatewayEventsService.getFacilityConnectionStatus`) | Still available for diagnostics / one-shot checks; **not** polled by the facility UI |
 
 ### Why the indicators were wrong before
 
@@ -202,7 +232,7 @@ For **all** gateway types with a `gateways` row (physical, simulated, http, or u
 
 ## Facility UI gateway status (Facility tab + Gateway tab)
 
-Both tabs on the facility details page share **`useFacilityGatewayLiveStatus`**, which loads the assigned gateway via **`GET /gateways?facility_id=`**, subscribes to **`gateway_status`** WebSocket updates (primary, real-time `connected` signal), and polls **`GET /gateways/status/:facilityId`** every 5s as a reconciliation backstop.
+Both the Facility overview card and Gateway tab share **`useFacilityGatewayLiveStatus`**, which loads the assigned gateway via **`GET /gateways?facility_id=`** once and subscribes to facility-scoped **`gateway_status`** (`{ facility_id }`) while Facility or Gateway setup is open (ADMIN / DEV_ADMIN / FACILITY_ADMIN). No HTTP status polling.
 
 **Display rule (`resolveEffectiveGatewayStatus`)** — one rule for every gateway type:
 
@@ -262,7 +292,7 @@ Unified internal routes (via `PROXY_REQUEST` or direct REST):
 }
 ```
 
-After access inventory changes, the backend enqueues an access-code push in **`access_code_push_outbox`** and attempts immediate WebSocket delivery when the gateway is online. If the gateway is offline, the row stays **`pending`** until reconnect (`AUTH_OK` flush) or the scheduler retries due rows. The gateway can still poll **`GET /api/v1/internal/gateway/access-codes`** as a fallback.
+After every access inventory sync (including unchanged reconnect payloads), and on active-gateway **`AUTH_OK`**, the backend enqueues a full access-code snapshot in **`access_code_push_outbox`** and attempts immediate WebSocket delivery. If the gateway is offline, the row stays **`pending`** until reconnect or the scheduler retries due rows. The gateway can still poll **`GET /api/v1/internal/gateway/access-codes`** as a fallback.
 
 ### Cloud inventory deletion (`DEVICE_DELETED`)
 
@@ -279,6 +309,8 @@ When an admin or facility admin removes a BluLok, access-control, or network-inf
 Gateway firmware should maintain a local exclusion set and **omit tombstoned devices** from future **`POST /devices/inventory`** payloads. Sync-driven cloud deletes (`source: gateway_sync`) do **not** enqueue tombstones — the gateway already omitted the device.
 
 Operational **`DEVICE_DELETED`** traffic is blocked during gateway recovery (same gating as `LOCK`, `ACCESS_CODE_UPDATE`, denylist commands).
+
+On active-gateway **`AUTH_OK`**, the cloud also pushes a full **`DENYLIST_SYNC`** replace snapshot (same per-device shape as inventory `operational_devices`) so restarted gateways reconcile revocation state without waiting for a subsequent inventory POST.
 
 ## Gateway telemetry logs
 
@@ -371,7 +403,7 @@ The Facility → Gateway → **DevTools/Diag** panel (DEV_ADMIN only) streams ra
 - **Dashboard client parsing:** `frontend/src/__tests__/services/websocket.service.test.ts` covers `gateway_status_update`, `device_status_update`, and `units_update` dispatch to `onMessage` handlers (same path the app uses for lock + gateway UI).
 - **Units management realtime:** `frontend/src/__tests__/pages/UnitsManagementPage.test.tsx` mocks `WebSocketContext` and asserts facility-scoped `device_status` + `units` subscriptions (`useLockDeviceRealtime`).
 - **Live backend E2E:** `backend/npm run ws:e2e` (`scripts/ws-gateway-e2e.js`) exercises `/ws/gateway` PROXY → `devices/state`, then dashboard `/ws` subscriptions for **`device_status_update`**, **`units_update`**, and **`gateway_status_update`** (plus stress paths). Includes **unified device sync**: mixed `devices/inventory` (locks + `kind: access_control` + **`bridge` / `friend_node` / `gateway` inventory update**), access-only state updates, relay delta add/remove, network-infra state/firmware refresh and sync-managed removal, and validation failures. **Gateway Swap Recovery** asserts `GET .../recovery/inventory-preview` includes bridge/friend_node (schema v2, facility gateway excluded) and that infra rows survive bypass/rebind. Includes **device commissioning** HTTP checks: `DELETE /devices/blulok/:id/unassign`, online/offline **`DELETE /devices/blulok/:id`** with **`DEVICE_DELETED`** / **`DEVICE_DELETED_ACK`**, facility-admin in-facility inventory delete, re-add cancels tombstone, post-tombstone sync, and access-control **`DELETE /devices/access-control/:id`**. While subscribed with **`device_id`** (same filter as `useLockDeviceRealtime` / the web app), it asserts **`lock_status`** after **HTTP** `PUT .../devices/blulok/:id/lock` and after **gateway** `devices/state` LOCKED/UNLOCKED, plus **`units_update`** after a gateway lock change. It also decodes route pass JWTs from **`POST /passes/request`** and asserts **`user_role`** (`tenant` for primary/shared users; **`facility_admin`** for the provisioned facility admin). **Access-code outbox:** disconnects inbound WS, facility admin **`PUT /access-codes/manual/set`** (same as Access Code UI) while offline → DB updated, **`push-state=pending`**, no unicast; reconnect **`AUTH_OK`** flushes outbox → **`ACCESS_CODE_UPDATE`** + **`push-state=active`**. Defaults: read **`PORT`** from the **`backend/.env` file** (local dev template uses **3000**; not shell `PORT`, so another process cannot steal the port), then `127.0.0.1`. Override with **`E2E_API_PORT`** / **`BACKEND_PORT`**, or **`API_BASE_URL`** (WebSocket defaults follow the same host:port unless `WS_URL` / `UI_WS_URL` are set), or **`E2E_HOST`** for host-only.
-- **Facility Gateway tab UI:** `frontend/src/__tests__/components/Gateway/FacilityGatewayTab.test.tsx` — amber “Inbound WebSocket session is active” when `getGatewayWsStatus.connected` but no gateway row; “Gateway status (database)” when a row exists.
+- **Facility Gateway tab UI:** `frontend/src/__tests__/components/Gateway/FacilityGatewayTab.test.tsx` — amber “Inbound WebSocket session is active” when `getGatewayWsStatus.connected` but no gateway row; “Gateway status (database)” when a row exists. ZTP gateways (`public_key` set) show **Release from facility** on Overview (`POST /gateways/:id/release`).
 
 ## Quick checklist
 

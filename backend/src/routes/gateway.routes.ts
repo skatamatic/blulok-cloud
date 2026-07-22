@@ -73,6 +73,9 @@ import {
   gatewayRecoveryEventsQuerySchema,
   gatewayResponseSchema,
 } from '@/schemas/gateway.schemas';
+import { gatewayClaimBodySchema } from '@/schemas/gateway-ztp.schemas';
+import { GatewayZtpClaimService } from '@/services/gateway/ztp/gateway-ztp-claim.service';
+import { FacilityAccessService } from '@/services/facility-access.service';
 
 const router = Router();
 const MOUNT = '/api/v1/gateways';
@@ -141,7 +144,10 @@ async function assertGatewayFacilityAccess(
   req: AuthenticatedRequest,
   res: Response,
   gatewayId: string,
-): Promise<{ gateway: Awaited<ReturnType<GatewayModel['findById']>>; facilityId: string } | null> {
+): Promise<{
+  gateway: NonNullable<Awaited<ReturnType<GatewayModel['findById']>>>;
+  facilityId: string;
+} | null> {
   const gateway = await gatewayModel.findById(gatewayId);
   if (!gateway) {
     res.status(404).json({ success: false, message: 'Gateway not found' });
@@ -159,6 +165,54 @@ async function assertGatewayFacilityAccess(
     return null;
   }
   return { gateway, facilityId: gateway.facility_id };
+}
+
+/**
+ * Release may target a bound ZTP gateway or an unbound swap-prep identity
+ * (`facility_id` null + metadata.ztpIntendedFacilityId).
+ */
+async function assertZtpReleaseAccess(
+  req: AuthenticatedRequest,
+  res: Response,
+  gatewayId: string,
+): Promise<{
+  gateway: NonNullable<Awaited<ReturnType<GatewayModel['findById']>>>;
+  facilityId: string | null;
+} | null> {
+  const gateway = await gatewayModel.findById(gatewayId);
+  if (!gateway) {
+    res.status(404).json({ success: false, message: 'Gateway not found' });
+    return null;
+  }
+  if (!gateway.public_key) {
+    res.status(400).json({
+      success: false,
+      message: 'Release is only for ZTP-claimed gateways (missing public_key)',
+    });
+    return null;
+  }
+
+  const { getZtpIntendedFacilityId } = await import('@/utils/gateway-ztp-claim.utils');
+  const intended = getZtpIntendedFacilityId(gateway.metadata);
+  const facilityId = gateway.facility_id || intended;
+
+  if (req.user?.role === UserRole.FACILITY_ADMIN) {
+    const allowed = req.user.facilityIds || [];
+    if (!facilityId || !allowed.includes(facilityId)) {
+      res.status(403).json({ success: false, message: 'Access denied to this gateway' });
+      return null;
+    }
+  }
+
+  if (!gateway.facility_id && !intended) {
+    res.status(409).json({
+      success: false,
+      message: 'Gateway is not assigned to a facility',
+    });
+    return null;
+  }
+
+  return { gateway, facilityId: facilityId ?? null };
 }
 
 async function assertFacilityAccess(
@@ -475,6 +529,121 @@ registerPost(
     res.status(400).json({ success: false, message: err?.message || 'Failed to cancel recovery' });
   }
 }));
+
+// POST /api/v1/gateways/claim - Sticker ZTP claim
+registerPost(
+  router,
+  '/claim',
+  {
+    openApiPath: `${MOUNT}/claim`,
+    tags: ['Gateway'],
+    summary: 'Claim a gateway via sticker ZTP (live provision session + public key)',
+    security: 'bearer',
+    body: gatewayClaimBodySchema,
+    responses: { 201: gatewayResponseSchema },
+  },
+  requireRoles([UserRole.ADMIN, UserRole.DEV_ADMIN, UserRole.FACILITY_ADMIN]),
+  asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+    const user = req.user!;
+    const facility_id = String(req.body.facility_id);
+    const device_id = String(req.body.device_id);
+    const public_key = String(req.body.public_key);
+    const name = req.body.name != null ? String(req.body.name) : undefined;
+
+    if (user.role === UserRole.FACILITY_ADMIN) {
+      const hasAccess = await FacilityAccessService.hasAccessToFacility(
+        user.userId,
+        user.role,
+        facility_id,
+      );
+      if (!hasAccess) {
+        res.status(403).json({ success: false, message: 'Access denied to this facility' });
+        return;
+      }
+    }
+
+    const result = await GatewayZtpClaimService.getInstance().claim({
+      facilityId: facility_id,
+      deviceId: device_id,
+      publicKey: public_key,
+      userId: user.userId,
+      name,
+    });
+
+    if (!result.ok) {
+      res.status(result.status).json({ success: false, code: result.code, message: result.message });
+      return;
+    }
+
+    const gateway = await gatewayModel.findById(result.gatewayId);
+    res.status(result.created ? 201 : 200).json({
+      success: true,
+      gateway,
+      created: result.created,
+      bound: result.bound,
+      sessionRole: result.sessionRole,
+    });
+  }),
+);
+
+// POST /api/v1/gateways/:id/release - Unbind for RMA / facility move
+registerPost(
+  router,
+  '/:id/release',
+  {
+    openApiPath: `${MOUNT}/{id}/release`,
+    tags: ['Gateway'],
+    summary: 'Release ZTP gateway binding (unbind facility; device returns to provision mode)',
+    security: 'bearer',
+    params: gatewayResourceIdParamSchema,
+    responses: { 200: gatewayResponseSchema },
+  },
+  requireRoles([UserRole.ADMIN, UserRole.DEV_ADMIN, UserRole.FACILITY_ADMIN]),
+  asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+    const gatewayId = String(req.params.id);
+    const access = await assertZtpReleaseAccess(req, res, gatewayId);
+    if (!access) return;
+
+    const updated = await gatewayModel.releaseZtpClaim(gatewayId);
+    try {
+      // Closes active or parked swap-candidate session for this gateway only
+      GatewayEventsService.getInstance().forceDisconnectGatewayById(gatewayId, 'ztp_released');
+    } catch {
+      /* optional */
+    }
+    res.json({ success: true, gateway: updated });
+  }),
+);
+
+// POST /api/v1/gateways/:id/revoke - Kill compromised identity
+registerPost(
+  router,
+  '/:id/revoke',
+  {
+    openApiPath: `${MOUNT}/{id}/revoke`,
+    tags: ['Gateway'],
+    summary: 'Revoke ZTP gateway public key (requires reflash)',
+    security: 'bearer',
+    params: gatewayResourceIdParamSchema,
+    responses: { 200: gatewayResponseSchema },
+  },
+  requireRoles([UserRole.ADMIN, UserRole.DEV_ADMIN]),
+  asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+    const gatewayId = String(req.params.id);
+    const gateway = await gatewayModel.findById(gatewayId);
+    if (!gateway) {
+      res.status(404).json({ success: false, message: 'Gateway not found' });
+      return;
+    }
+    const updated = await gatewayModel.revokeZtp(gatewayId);
+    try {
+      GatewayEventsService.getInstance().forceDisconnectGatewayById(gatewayId, 'ztp_revoked');
+    } catch {
+      /* optional */
+    }
+    res.json({ success: true, gateway: updated });
+  }),
+);
 
 // POST /api/gateways - Create new gateway
 registerPost(

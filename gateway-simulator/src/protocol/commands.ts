@@ -4,6 +4,7 @@ export const COMMAND_TYPES = [
   'UNLOCK',
   'DENYLIST_ADD',
   'DENYLIST_REMOVE',
+  'DENYLIST_SYNC',
   'ACCESS_CODE_UPDATE',
   'DEVICE_DELETED',
   'SECURE_TIME_SYNC',
@@ -42,6 +43,19 @@ export type DenylistRemovePayload = JwtCommandPayload & {
   cmd_type: 'DENYLIST_REMOVE';
   denylist_remove: Array<{ sub: string; exp?: number }>;
   target?: string[];
+};
+
+/** Full replace snapshot — same shape as inventory `operational_devices`. */
+export type DenylistSyncPayload = JwtCommandPayload & {
+  cmd_type: 'DENYLIST_SYNC';
+  facility_id: string;
+  devices: Array<{
+    cloud_device_id: string;
+    kind: 'lock' | 'access_control';
+    serial: string;
+    relay_channel?: number | null;
+    denylist: Array<{ sub: string; exp?: number }>;
+  }>;
 };
 
 export type AccessCodeUpdatePayload = JwtCommandPayload & {
@@ -85,8 +99,14 @@ export type FirmwareManifestPayload = JwtCommandPayload & {
   sha256: string;
   size: number;
   chunk_count: number;
-  chunk_size: number;
-  nonce: string;
+  /** Present for v1 chunked delivery */
+  chunk_size?: number;
+  /** Present for v1 chunk ACK correlation */
+  nonce?: string;
+  /** v1 = WebSocket chunks (default); v2 = HTTPS download via download_url */
+  delivery_mode?: 'v1' | 'v2';
+  /** Present when delivery_mode is v2 — short-lived signed HTTPS GET URL */
+  download_url?: string;
   compatible_models?: string[];
 };
 

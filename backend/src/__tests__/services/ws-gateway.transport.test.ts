@@ -27,6 +27,35 @@ jest.mock('@/services/gateway/gateway-recovery.service', () => ({
   },
 }));
 
+const mockPushCodesToGateway = jest.fn().mockResolvedValue(undefined);
+const mockFlushPendingDeletions = jest.fn().mockResolvedValue(undefined);
+
+jest.mock('@/services/access-code.service', () => ({
+  AccessCodeService: {
+    getInstance: jest.fn(() => ({
+      pushCodesToGateway: (...args: unknown[]) => mockPushCodesToGateway(...args),
+      flushPendingPushForFacility: jest.fn().mockResolvedValue(undefined),
+    })),
+  },
+}));
+
+const mockPushDenylistSnapshot = jest.fn().mockResolvedValue(undefined);
+
+jest.mock('@/services/denylist-sync.service', () => ({
+  DenylistSyncService: {
+    pushSnapshotToFacility: (...args: unknown[]) => mockPushDenylistSnapshot(...args),
+    buildOperationalSyncForGateway: jest.fn().mockResolvedValue([]),
+  },
+}));
+
+jest.mock('@/services/device-deletion-outbox.service', () => ({
+  DeviceDeletionOutboxService: {
+    getInstance: jest.fn(() => ({
+      flushPendingForFacility: (...args: unknown[]) => mockFlushPendingDeletions(...args),
+    })),
+  },
+}));
+
 function authPayload(facilityId: string) {
   return {
     type: 'AUTH',
@@ -348,6 +377,25 @@ describe('WebsocketGatewayTransport', () => {
   });
 
   describe('Firmware Messages', () => {
+    it('AUTH_OK for active gateway pushes access codes, denylist, and flushes deletion outbox', async () => {
+      mockPushCodesToGateway.mockClear();
+      mockPushDenylistSnapshot.mockClear();
+      mockFlushPendingDeletions.mockClear();
+
+      const ws = new WebSocket(`ws://127.0.0.1:${port}/ws/gateway`);
+      await new Promise<void>((resolve) => ws.once('open', () => resolve()));
+      ws.send(JSON.stringify(authPayload('facility-1')));
+      const authOk = await waitForMessage(ws);
+      expect(authOk.type).toBe('AUTH_OK');
+      expect(authOk.sessionRole).toBe('active');
+
+      await new Promise<void>((resolve) => setTimeout(resolve, 150));
+      expect(mockPushCodesToGateway).toHaveBeenCalledWith('facility-1');
+      expect(mockPushDenylistSnapshot).toHaveBeenCalledWith('facility-1');
+      expect(mockFlushPendingDeletions).toHaveBeenCalledWith('facility-1');
+      ws.close();
+    });
+
     it('AUTH_OK response includes ops_public_key', async () => {
       const ws = new WebSocket(`ws://127.0.0.1:${port}/ws/gateway`);
       await new Promise<void>((resolve) => ws.once('open', () => resolve()));

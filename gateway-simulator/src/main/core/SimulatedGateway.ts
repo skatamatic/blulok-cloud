@@ -19,7 +19,7 @@ import type { AccessEventPayload, SimulateAccessEventRequest } from '@protocol/a
 import { FirmwareReceiver } from '../firmware/FirmwareReceiver';
 import { InventorySnapshotReceiver } from '../inventory/InventorySnapshotReceiver';
 import type { AuthOkMessage } from '@protocol/messages';
-import { GatewayConnection, type GatewayConnectionOptions } from '../net/GatewayConnection';
+import { GatewayConnection, type GatewayAuthMode, type GatewayConnectionOptions } from '../net/GatewayConnection';
 import type { ITransport } from '../net/ITransport';
 import { ProxyClient } from '../net/ProxyClient';
 import { operationalSyncBlockedHint, parseProxyError, type SyncResult } from '../net/proxy-result';
@@ -30,8 +30,14 @@ import {
 } from '../net/expected-sync-deferral.utils';
 import type { GatewayConnection } from '../net/GatewayConnection';
 import type { OperationalDeviceDenylistSync } from '../devices/denylist-sync.utils';
-import type { FileStateStore, GatewayProfile } from '../persistence/FileStateStore';
+import type { FileStateStore, GatewayProfile, ZtpLifecyclePhase } from '../persistence/FileStateStore';
 import { AUTO_RECONNECT_DELAY_MS } from './reconnect.constants';
+import type { ProvisionWaitingResult } from '../net/GatewayProvisionClient';
+
+function isZtpCloudReleaseReason(reason: string): boolean {
+  const r = reason.toLowerCase();
+  return r.includes('ztp_released') || r.includes('ztp_revoked') || r.includes('revoked');
+}
 
 export type GatewayTransport = ITransport & {
   getAuthOk(): AuthOkMessage | null;
@@ -49,6 +55,10 @@ export type SimulatedGatewayOptions = {
   /** Persisted simulator gateway firmware — sent on WS AUTH as firmware_version. */
   gatewayFirmwareVersion?: string;
   token: string;
+  authMode?: GatewayAuthMode;
+  ztpPublicKeyB64?: string;
+  ztpPrivateKeyPem?: string;
+  ztpLifecyclePhase?: ZtpLifecyclePhase;
   devices?: DeviceInventoryItem[];
   deviceRecords?: SimulatedDeviceRecord[];
   behavior?: BehaviorConfig;
@@ -72,6 +82,10 @@ export class SimulatedGateway {
   private gatewaySerial?: string;
   private gatewayFirmwareVersion: string;
   private token: string;
+  private authMode: GatewayAuthMode;
+  private ztpPublicKeyB64?: string;
+  private ztpPrivateKeyPem?: string;
+  private ztpLifecyclePhase: ZtpLifecyclePhase;
   private behavior: BehaviorConfig;
   private connectionStatus: ConnectionStatus = 'disconnected';
   private lastError?: string;
@@ -80,6 +94,8 @@ export class SimulatedGateway {
   private events: GatewayEventEntry[] = [];
   private connection: GatewayTransport | null = null;
   private proxy: ProxyClient | null = null;
+  private provisionSession: ProvisionWaitingResult | null = null;
+  private provisionWaitAbort: AbortController | null = null;
   private registry = new DeviceRegistry();
   private firmware = new FirmwareReceiver();
   private inventory = new InventorySnapshotReceiver();
@@ -106,6 +122,12 @@ export class SimulatedGateway {
     this.gatewayName = options.gatewayName;
     this.gatewaySerial = options.gatewaySerial;
     this.token = options.token;
+    this.authMode = options.authMode || 'legacy_jwt';
+    this.ztpPublicKeyB64 = options.ztpPublicKeyB64;
+    this.ztpPrivateKeyPem = options.ztpPrivateKeyPem;
+    this.ztpLifecyclePhase =
+      options.ztpLifecyclePhase ??
+      (this.authMode === 'ztp_keypair' ? 'provisioning' : 'operational');
     this.behavior = normalizeBehavior(options.behavior);
     this.connectOnRestore = options.connectOnRestore ?? false;
     this.registry.setCreateContext({ facilityId: this.facilityId, operationsKeyPublicB64: this.cachedOpsPublicKey });
@@ -140,6 +162,9 @@ export class SimulatedGateway {
       sessionRole: authOk?.sessionRole,
       autoRegistered: authOk?.autoRegistered,
       opsPublicKey: authOk?.ops_public_key ?? this.cachedOpsPublicKey,
+      authMode: this.authMode,
+      ztpLifecyclePhase: this.ztpLifecyclePhase,
+      ztpPublicKeyB64: this.ztpPublicKeyB64,
       devices: this.registry.list(),
       deviceSimByKey: buildDeviceRecordsMap(this.registry.exportRecords()),
       behavior: normalizeBehavior(this.behavior),
@@ -170,7 +195,13 @@ export class SimulatedGateway {
   }
 
   async connect(): Promise<void> {
-    if (this.connectionStatus === 'connected' || this.connectionStatus === 'connecting') return;
+    if (
+      this.connectionStatus === 'connected' ||
+      this.connectionStatus === 'connecting' ||
+      this.connectionStatus === 'provisioning'
+    ) {
+      return;
+    }
     this.clearReconnectSchedule();
     this.connectionStatus = 'connecting';
     this.lastError = undefined;
@@ -178,12 +209,21 @@ export class SimulatedGateway {
     this.emitUpdate();
 
     try {
+      // Accurate ZTP: sit in provision WAITING until claimed (or skip if already operational)
+      if (this.authMode === 'ztp_keypair' && this.ztpLifecyclePhase === 'provisioning') {
+        await this.runProvisioningUntilAssigned();
+        this.connectionStatus = 'connecting';
+        this.emitUpdate();
+      }
+
       const connectionOptions: GatewayConnectionOptions = {
         backendUrl: this.backendUrl,
         token: this.token,
         facilityId: this.facilityId,
         gatewayId: this.gatewayId,
         firmwareVersion: this.gatewayFirmwareVersion,
+        authMode: this.authMode,
+        ztpPrivateKeyPem: this.ztpPrivateKeyPem,
         onLog: (dir, summary, payload) => this.log(dir, summary, payload),
         onSessionRoleChanged: (auth, previousRole) => {
           if (previousRole === undefined) return;
@@ -201,8 +241,10 @@ export class SimulatedGateway {
       this.proxy.attach();
 
       this.connection.onMessage((msg) => void this.handleMessage(msg));
-      this.connection.onClose(() => {
-        this.handleConnectionLost('connection closed');
+      this.connection.onClose((code, reason) => {
+        this.handleConnectionLost(`connection closed (${code}) ${reason}`, {
+          closeReason: reason,
+        });
       });
 
       await this.connection.connect();
@@ -228,32 +270,206 @@ export class SimulatedGateway {
       this.startTelemetry();
       await this.persist();
     } catch (err) {
-      this.connectionStatus = 'error';
-      this.lastError = err instanceof Error ? err.message : String(err);
+      this.closeProvisionSession();
+      const aborted = err instanceof Error && err.message === 'Provisioning aborted';
+      this.connectionStatus = aborted ? 'disconnected' : 'error';
+      this.lastError = aborted ? undefined : err instanceof Error ? err.message : String(err);
       this.connection?.disconnect();
       this.connection = null;
       this.proxy?.dispose();
       this.proxy = null;
-      this.log('system', `Connection failed: ${this.lastError}`);
+      if (!aborted) {
+        this.log('system', `Connection failed: ${this.lastError}`);
+      }
       this.emitUpdate();
-      this.maybeScheduleReconnect('connection failed');
-      throw err;
+      if (!aborted) {
+        this.maybeScheduleReconnect('connection failed');
+      }
+      if (!aborted) throw err;
     }
+  }
+
+  /**
+   * Open /ws/gateway-provision and wait for PROVISION_ASSIGNED (external claim or claimNow()).
+   */
+  private async runProvisioningUntilAssigned(): Promise<void> {
+    if (!this.ztpPrivateKeyPem || !this.ztpPublicKeyB64) {
+      throw new Error('ZTP keypair missing — switch auth mode to ZTP or recreate the gateway');
+    }
+
+    this.closeProvisionSession();
+    this.provisionWaitAbort = new AbortController();
+    const signal = this.provisionWaitAbort.signal;
+
+    this.connectionStatus = 'provisioning';
+    this.log('system', 'ZTP: entering provision waiting room…');
+    this.emitUpdate();
+
+    const { startGatewayProvision } = await import('../net/GatewayProvisionClient');
+    this.provisionSession = await startGatewayProvision({
+      backendUrl: this.backendUrl,
+      deviceId: this.gatewayId,
+      publicKeyB64: this.ztpPublicKeyB64,
+      privateKeyPem: this.ztpPrivateKeyPem,
+      onLog: (msg) => this.log('system', msg),
+    });
+
+    try {
+      const assignedPromise = this.provisionSession.waitAssigned();
+      const abortPromise = new Promise<never>((_, reject) => {
+        if (signal.aborted) {
+          reject(new Error('Provisioning aborted'));
+          return;
+        }
+        signal.addEventListener('abort', () => reject(new Error('Provisioning aborted')), { once: true });
+      });
+      const assigned = await Promise.race([assignedPromise, abortPromise]);
+      if (assigned.facilityId) {
+        this.facilityId = assigned.facilityId;
+      }
+      this.ztpLifecyclePhase = 'operational';
+      const roleHint =
+        assigned.sessionRole === 'swap_candidate'
+          ? ' (swap_candidate — use Swap/Recovery to promote)'
+          : assigned.sessionRole === 'active'
+            ? ' (active)'
+            : '';
+      this.log('system', `ZTP: PROVISION_ASSIGNED facility=${this.facilityId}${roleHint}`);
+      await this.persist();
+      this.emitUpdate();
+    } finally {
+      this.closeProvisionSession();
+    }
+  }
+
+  /** Lab helper: claim this device to the configured facility while WAITING. */
+  async claimNow(): Promise<void> {
+    if (this.authMode !== 'ztp_keypair') {
+      throw new Error('Claim is only for ZTP keypair auth mode');
+    }
+    if (this.connectionStatus !== 'provisioning' || !this.provisionSession) {
+      throw new Error('Connect first and wait until PROVISION_WAITING before claiming');
+    }
+    if (!this.ztpPublicKeyB64) throw new Error('ZTP public key missing');
+    if (!this.token) throw new Error('Operator token required to claim (sign in first)');
+
+    const { backendClient } = await import('../auth/BackendClient');
+    backendClient.restoreSession(this.backendUrl, this.token);
+    this.log('system', `ZTP: claiming to facility ${this.facilityId}…`);
+    const result = await backendClient.claimGateway({
+      facility_id: this.facilityId,
+      device_id: this.gatewayId,
+      public_key: this.ztpPublicKeyB64,
+      name: this.gatewayName,
+    });
+    const role = result.sessionRole ?? (result.bound === false ? 'swap_candidate' : 'active');
+    if (role === 'swap_candidate') {
+      this.log(
+        'system',
+        'ZTP: claim OK as swap_candidate — facility already has a bound gateway; complete Swap/Recovery in the portal to promote',
+      );
+    } else {
+      this.log('system', 'ZTP: claim OK — bound as active gateway for this facility');
+    }
+  }
+
+  /**
+   * Return to factory/provisioning state (same sticker keys).
+   * Optionally release the cloud binding so the device can be re-claimed.
+   *
+   * Always tears down any live provision/ops WebSocket: provisioning lifecycle is
+   * incompatible with an authenticated ops session. Cloud release mirrors firmware —
+   * portal Release also force-closes the ops socket with `ztp_released`.
+   */
+  async enterProvisioningMode(options?: { releaseCloud?: boolean }): Promise<void> {
+    this.reconnectEligible = false;
+    this.connectOnRestore = false;
+    this.clearReconnectSchedule();
+
+    // Prefer cloud release while credentials still exist; then drop local sockets.
+    // (Real gateways see the cloud close the ops WS after Release.)
+    if (options?.releaseCloud && this.authMode === 'ztp_keypair' && this.token) {
+      try {
+        const { backendClient } = await import('../auth/BackendClient');
+        backendClient.restoreSession(this.backendUrl, this.token);
+        await backendClient.releaseGateway(this.gatewayId);
+        this.log('system', 'ZTP: cloud release completed');
+      } catch (err) {
+        this.log(
+          'system',
+          `ZTP: cloud release skipped/failed — ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+    }
+
+    this.closeProvisionSession();
+    this.handleConnectionLost('enter provisioning mode', { scheduleReconnect: false });
+
+    this.ztpLifecyclePhase = 'provisioning';
+    this.lastError = undefined;
+    await this.persist();
+    this.emitUpdate();
+  }
+
+  async setAuthMode(mode: GatewayAuthMode): Promise<void> {
+    if (mode === this.authMode) return;
+    if (
+      this.connectionStatus === 'connected' ||
+      this.connectionStatus === 'connecting' ||
+      this.connectionStatus === 'provisioning'
+    ) {
+      throw new Error('Disconnect before changing auth mode');
+    }
+
+    this.authMode = mode;
+    if (mode === 'ztp_keypair') {
+      const { generateP256KeyPair } = await import('../auth/ztp-keypair.utils');
+      const keys = generateP256KeyPair();
+      this.ztpPublicKeyB64 = keys.publicKeyCompressedB64url;
+      this.ztpPrivateKeyPem = keys.privateKeyPem;
+      this.ztpLifecyclePhase = 'provisioning';
+      this.log('system', 'Auth mode → ZTP keypair (new P-256 sticker keys)');
+    } else {
+      this.ztpPublicKeyB64 = undefined;
+      this.ztpPrivateKeyPem = undefined;
+      this.ztpLifecyclePhase = 'operational';
+      this.log('system', 'Auth mode → legacy JWT');
+    }
+    await this.persist();
+    this.emitUpdate();
+  }
+
+  private closeProvisionSession(): void {
+    this.provisionWaitAbort?.abort();
+    this.provisionWaitAbort = null;
+    try {
+      this.provisionSession?.close();
+    } catch {
+      /* ignore */
+    }
+    this.provisionSession = null;
   }
 
   disconnect(): void {
     this.reconnectEligible = false;
     this.connectOnRestore = false;
     this.clearReconnectSchedule();
+    this.closeProvisionSession();
     this.handleConnectionLost('manual disconnect', { scheduleReconnect: false });
   }
 
   private handleConnectionLost(
     reason: string,
-    options?: { markError?: boolean; scheduleReconnect?: boolean },
+    options?: { markError?: boolean; scheduleReconnect?: boolean; closeReason?: string },
   ): void {
     const scheduleReconnect = options?.scheduleReconnect ?? true;
-    if (this.connectionStatus === 'disconnected' && !this.connection && !this.proxy) {
+    const closeReason = options?.closeReason ?? '';
+    if (
+      this.connectionStatus === 'disconnected' &&
+      !this.connection &&
+      !this.proxy &&
+      !this.provisionSession
+    ) {
       return;
     }
     this.stopTelemetry();
@@ -261,14 +477,22 @@ export class SimulatedGateway {
     this.connection?.disconnect();
     this.connection = null;
     this.proxy = null;
+    this.closeProvisionSession();
+
+    if (this.authMode === 'ztp_keypair' && isZtpCloudReleaseReason(closeReason || reason)) {
+      this.ztpLifecyclePhase = 'provisioning';
+      this.log('system', 'ZTP: cloud released/revoked — returning to provisioning mode');
+      void this.persist();
+    }
+
     this.connectionStatus = options?.markError ? 'error' : 'disconnected';
     if (options?.markError) {
       this.lastError = reason;
-    } else if (reason === 'manual disconnect') {
+    } else if (reason === 'manual disconnect' || reason === 'enter provisioning mode') {
       this.lastError = undefined;
     }
     this.connectionWarning = undefined;
-    if (reason !== 'manual disconnect') {
+    if (reason !== 'manual disconnect' && reason !== 'enter provisioning mode') {
       this.log('system', `Connection lost: ${reason}`);
     }
     void this.persist();
@@ -793,9 +1017,6 @@ export class SimulatedGateway {
 
   setBehavior(behavior: Partial<BehaviorConfig>): void {
     this.behavior = normalizeBehavior({ ...this.behavior, ...behavior });
-    if (!this.behavior.autoReconnect) {
-      this.clearReconnectSchedule();
-    }
     if (this.behavior.periodicTelemetryMs > 0) {
       this.startTelemetry();
     } else {
@@ -918,6 +1139,10 @@ export class SimulatedGateway {
       gatewaySerial: this.gatewaySerial,
       gatewayFirmwareVersion: this.gatewayFirmwareVersion,
       token: this.token,
+      authMode: this.authMode,
+      ztpLifecyclePhase: this.ztpLifecyclePhase,
+      ztpPublicKeyB64: this.ztpPublicKeyB64,
+      ztpPrivateKeyPem: this.ztpPrivateKeyPem,
       deviceRecords: this.registry.exportRecords(),
       behavior: normalizeBehavior(this.behavior),
       connectOnRestore: this.connectOnRestore,
@@ -937,6 +1162,12 @@ export class SimulatedGateway {
       legacyInventoryVersion:
         legacyGateway?.item.kind === 'gateway' ? legacyGateway.item.firmware_version : undefined,
     });
+    this.authMode = profile.authMode || 'legacy_jwt';
+    this.ztpPublicKeyB64 = profile.ztpPublicKeyB64;
+    this.ztpPrivateKeyPem = profile.ztpPrivateKeyPem;
+    this.ztpLifecyclePhase =
+      profile.ztpLifecyclePhase ??
+      (this.authMode === 'ztp_keypair' ? 'provisioning' : 'operational');
     this.behavior = normalizeBehavior(profile.behavior);
     this.connectOnRestore = profile.connectOnRestore ?? false;
     this.registry.setCreateContext({ facilityId: this.facilityId, operationsKeyPublicB64: this.cachedOpsPublicKey });

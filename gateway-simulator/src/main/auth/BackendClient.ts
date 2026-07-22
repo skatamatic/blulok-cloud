@@ -172,6 +172,45 @@ export class BackendClient {
     return gateway;
   }
 
+  /** Sticker ZTP claim — requires live provision session for device_id. */
+  async claimGateway(body: {
+    facility_id: string;
+    device_id: string;
+    public_key: string;
+    name?: string;
+  }): Promise<{
+    gateway: GatewayRecordDetail;
+    created?: boolean;
+    bound?: boolean;
+    sessionRole?: 'active' | 'swap_candidate';
+  }> {
+    const data = await this.api.post<{
+      gateway?: GatewayRecordDetail;
+      created?: boolean;
+      bound?: boolean;
+      sessionRole?: 'active' | 'swap_candidate';
+    }>(API_PATHS.gatewaysClaim, body);
+    const gateway = data.gateway;
+    if (!gateway?.id) throw new Error('Claim response missing gateway');
+    return {
+      gateway,
+      created: data.created,
+      bound: data.bound,
+      sessionRole: data.sessionRole,
+    };
+  }
+
+  /** Unbind ZTP gateway from facility (keeps public_key for same-sticker re-claim). */
+  async releaseGateway(gatewayId: string): Promise<GatewayRecordDetail> {
+    const data = await this.api.post<{ gateway?: GatewayRecordDetail }>(
+      API_PATHS.gatewayRelease(gatewayId),
+      {},
+    );
+    const gateway = data.gateway;
+    if (!gateway?.id) throw new Error('Release response missing gateway');
+    return gateway;
+  }
+
   async listFmsConfigs(options?: { webhooksOnly?: boolean }): Promise<import('./backend-api.types').FmsConfigRecord[]> {
     const params = new URLSearchParams();
     if (options?.webhooksOnly) params.set('webhooks_only', 'true');

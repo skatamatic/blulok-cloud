@@ -163,8 +163,8 @@ describe('FacilityGatewayTab', () => {
 
       await waitFor(() => {
         expect(screen.getByRole('status')).toBeInTheDocument();
-        expect(screen.getByText('WebSocket session active — no gateway assigned yet')).toBeInTheDocument();
-        expect(screen.getByText(/does not have a bound gateway yet/i)).toBeInTheDocument();
+        expect(screen.getByText('Gateway connected, but not assigned yet')).toBeInTheDocument();
+        expect(screen.getByText(/A gateway is talking to this facility/i)).toBeInTheDocument();
       });
     });
 
@@ -387,6 +387,59 @@ describe('FacilityGatewayTab', () => {
   });
 
   describe('Gateway Actions', () => {
+    it('shows ZTP release control and releases via API', async () => {
+      const reload = jest.fn().mockResolvedValue(undefined);
+      const mockGateway = {
+        id: 'gateway-1',
+        facility_id: facilityId,
+        name: 'GW',
+        status: 'online',
+        gateway_type: 'http',
+        public_key: 'ztp-pubkey',
+      } as any;
+      mockApiService.releaseGateway = jest.fn().mockResolvedValue({
+        success: true,
+        gateway: { ...mockGateway, facility_id: null },
+      });
+
+      renderComponent(true, createLiveStatus({ gateway: mockGateway, effectiveStatus: 'online', reload }));
+
+      await waitFor(() => {
+        expect(screen.getByText('Release from facility')).toBeInTheDocument();
+      });
+
+      fireEvent.click(screen.getByText('Release from facility'));
+      await waitFor(() => {
+        expect(screen.getByText(/Release GW from Test Facility\?/)).toBeInTheDocument();
+      });
+
+      fireEvent.click(screen.getByRole('button', { name: 'Release gateway' }));
+      await waitFor(() => {
+        expect(mockApiService.releaseGateway).toHaveBeenCalledWith('gateway-1');
+        expect(reload).toHaveBeenCalled();
+        expect(mockAddToast).toHaveBeenCalledWith(
+          expect.objectContaining({ type: 'success', title: 'Gateway released' }),
+        );
+      });
+    });
+
+    it('hides ZTP release control for legacy gateways without public_key', async () => {
+      const mockGateway = {
+        id: 'gateway-1',
+        facility_id: facilityId,
+        name: 'Legacy GW',
+        status: 'online',
+        gateway_type: 'http',
+      } as any;
+
+      renderComponent(true, createLiveStatus({ gateway: mockGateway, effectiveStatus: 'online' }));
+
+      await waitFor(() => {
+        expect(screen.getAllByText('Legacy GW').length).toBeGreaterThan(0);
+      });
+      expect(screen.queryByText('Release from facility')).not.toBeInTheDocument();
+    });
+
     it('should invoke time sync endpoints', async () => {
       const mockGateway = { id: 'gateway-1', facility_id: facilityId, name: 'GW', status: 'online', gateway_type: 'http', protocol_version: '1.1' } as any;
       mockApiService.getSecureTimeSyncPacket.mockResolvedValue({ success: true, timeSyncPacket: [{ ts: 1, cmd_type: 'SECURE_TIME_SYNC' }, 'sig'] } as any);
@@ -459,7 +512,7 @@ describe('FacilityGatewayTab', () => {
       await waitFor(() => expect(screen.getByText('Gateway Debug')).toBeInTheDocument());
 
       // Fallback (select textarea by traversing from label)
-      const fallbackLabel = screen.getByText('Fallback JWT (App-signed)');
+      const fallbackLabel = screen.getByText('Fallback token (app-signed)');
       const fallbackTextarea = fallbackLabel.parentElement?.querySelector('textarea') as HTMLTextAreaElement;
       fireEvent.change(fallbackTextarea, { target: { value: 'jwt' } });
       await act(async () => { fireEvent.click(screen.getByText('Submit Fallback')); });

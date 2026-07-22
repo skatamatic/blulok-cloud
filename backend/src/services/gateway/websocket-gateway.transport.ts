@@ -23,6 +23,12 @@ type JWTPayload = {
 type RemoteWebSocket = WebSocket & { __remote?: string };
 
 import type { GatewaySessionRole } from './message-types';
+import { config } from '@/config/environment';
+import {
+  ZTP_GW_AUTH_PREFIX,
+  buildZtpSignPayload,
+  verifyZtpSignature,
+} from '@/services/gateway/ztp/gateway-ztp-crypto.utils';
 
 type AuthedClient = {
   ws: RemoteWebSocket;
@@ -32,6 +38,17 @@ type AuthedClient = {
   sessionRole: GatewaySessionRole;
   /** Timestamp of last observed activity (any valid message or PONG) */
   lastActivityAt: number;
+  /** True when authenticated via ZTP ECDSA (no human JWT). */
+  authViaZtp?: boolean;
+};
+
+type EcdsaChallengePending = {
+  gatewayId: string;
+  facilityId: string;
+  publicKey: string;
+  nonce: string;
+  expiresAt: number;
+  firmware_version?: string;
 };
 
 /**
@@ -85,6 +102,7 @@ export class WebsocketGatewayTransport implements GatewayTransport {
     userId?: string;
     remoteAddress?: string;
   }) => void;
+  private readonly ecdsaChallenges = new WeakMap<RemoteWebSocket, EcdsaChallengePending>();
 
   public initialize(server: HTTPServer): void {
     if (this.wss) return;
@@ -192,10 +210,11 @@ export class WebsocketGatewayTransport implements GatewayTransport {
     const results: Array<{ gatewayId: string; connected: boolean; lastActivityAt?: number }> = [];
     for (const [key, client] of this.swapCandidates.entries()) {
       if (!key.startsWith(`${facilityId}:`)) continue;
+      if (client.ws.readyState !== WebSocket.OPEN) continue;
       const gatewayId = client.gatewayId || key.split(':').slice(1).join(':');
       results.push({
         gatewayId,
-        connected: client.ws.readyState === WebSocket.OPEN,
+        connected: true,
         lastActivityAt: client.lastActivityAt,
       });
     }
@@ -226,12 +245,13 @@ export class WebsocketGatewayTransport implements GatewayTransport {
     }
     for (const [key, client] of this.swapCandidates.entries()) {
       if (!key.startsWith(`${facilityId}:`)) continue;
+      if (client.ws.readyState !== WebSocket.OPEN) continue;
       const gatewayId = client.gatewayId || key.split(':').slice(1).join(':');
       if (results.some((entry) => this.gatewayIdsEqual(entry.gatewayId, gatewayId))) continue;
       results.push({
         gatewayId,
         sessionRole: 'swap_candidate',
-        connected: client.ws.readyState === WebSocket.OPEN,
+        connected: true,
         lastActivityAt: client.lastActivityAt,
       });
     }
@@ -259,7 +279,9 @@ export class WebsocketGatewayTransport implements GatewayTransport {
   }
 
   /**
-   * Ensures completed-swap production + previous gateways appear in session list with live connectivity.
+   * Ensures completed-swap production appears as active, and the previous gateway
+   * appears as a swap_candidate **only while it has a live non-production WS**.
+   * Offline demoted units must not pollute the candidate pool.
    */
   public enrichSessionsForCompletedRecovery(
     facilityId: string,
@@ -281,9 +303,18 @@ export class WebsocketGatewayTransport implements GatewayTransport {
     const upsert = (
       gatewayId: string | null | undefined,
       sessionRole: 'active' | 'swap_candidate',
+      options?: { requireConnected?: boolean },
     ) => {
       if (!gatewayId) return;
       const connected = this.isGatewayWsConnected(facilityId, gatewayId);
+      if (options?.requireConnected && !connected) {
+        // Drop any stale offline synthetic/previous entry for this gateway
+        const index = enriched.findIndex((entry) => this.gatewayIdsEqual(entry.gatewayId, gatewayId));
+        if (index >= 0 && enriched[index].sessionRole === 'swap_candidate' && !enriched[index].connected) {
+          enriched.splice(index, 1);
+        }
+        return;
+      }
       const index = enriched.findIndex((entry) => this.gatewayIdsEqual(entry.gatewayId, gatewayId));
       if (index >= 0) {
         enriched[index] = { ...enriched[index], sessionRole, connected };
@@ -292,7 +323,7 @@ export class WebsocketGatewayTransport implements GatewayTransport {
       }
     };
     upsert(productionGatewayId, 'active');
-    upsert(previousGatewayId, 'swap_candidate');
+    upsert(previousGatewayId, 'swap_candidate', { requireConnected: true });
     return enriched;
   }
 
@@ -586,6 +617,60 @@ export class WebsocketGatewayTransport implements GatewayTransport {
     return Array.from(this.facilityToClient.keys());
   }
 
+  public forceDisconnectFacility(facilityId: string, reason = 'force_disconnect'): void {
+    const client = this.facilityToClient.get(facilityId);
+    if (!client) return;
+    try {
+      client.ws.close(4000, reason.slice(0, 120));
+    } catch {
+      /* ignore */
+    }
+    this.facilityToClient.delete(facilityId);
+  }
+
+  /**
+   * Close any open WS session for this gateway id (active or parked swap candidate).
+   * Used by ZTP release/revoke so unbound swap-prep sessions are not left hanging.
+   */
+  public forceDisconnectGatewayById(gatewayId: string, reason = 'force_disconnect'): void {
+    const closeReason = reason.slice(0, 120);
+    for (const [facilityId, client] of this.facilityToClient.entries()) {
+      if (!client.gatewayId || !this.gatewayIdsEqual(client.gatewayId, gatewayId)) continue;
+      try {
+        client.ws.close(4000, closeReason);
+      } catch {
+        /* ignore */
+      }
+      this.facilityToClient.delete(facilityId);
+    }
+    for (const [key, client] of this.swapCandidates.entries()) {
+      const candidateId = client.gatewayId || key.split(':').slice(1).join(':');
+      if (!this.gatewayIdsEqual(candidateId, gatewayId)) continue;
+      try {
+        client.ws.close(4000, closeReason);
+      } catch {
+        /* ignore */
+      }
+      this.swapCandidates.delete(key);
+    }
+  }
+
+  /** Recent AUTH replace timestamps for flap detection (gatewayId → times). */
+  private authReplaceTimes = new Map<string, number[]>();
+
+  private noteAuthReplace(gatewayId: string): void {
+    const now = Date.now();
+    const windowMs = 60_000;
+    const times = (this.authReplaceTimes.get(gatewayId) || []).filter((t) => now - t < windowMs);
+    times.push(now);
+    this.authReplaceTimes.set(gatewayId, times);
+    if (times.length >= 4) {
+      logger.warn(
+        `Gateway session flap detected gateway=${gatewayId} replaces=${times.length} in ${windowMs}ms`,
+      );
+    }
+  }
+
   private notifyConnectionChange(
     facilityId: string,
     connected: boolean,
@@ -608,6 +693,38 @@ export class WebsocketGatewayTransport implements GatewayTransport {
     } catch (error) {
       logger.warn('Gateway WS connection change listener failed', error);
     }
+  }
+
+  /**
+   * After AUTH_OK for the active (bound) gateway: full access-code + denylist snapshots
+   * and pending device-deletion tombstones. Gateways may have empty local state after restart.
+   */
+  private scheduleActiveSessionCommandFlush(facilityId: string): void {
+    import('@/services/access-code.service')
+      .then(({ AccessCodeService }) => {
+        AccessCodeService.getInstance()
+          .pushCodesToGateway(facilityId)
+          .catch((err) => {
+            logger.warn(`Failed to push access codes after AUTH for facility=${facilityId}`, err);
+          });
+      })
+      .catch(() => {});
+    import('@/services/denylist-sync.service')
+      .then(({ DenylistSyncService }) => {
+        DenylistSyncService.pushSnapshotToFacility(facilityId).catch((err) => {
+          logger.warn(`Failed to push denylist snapshot after AUTH for facility=${facilityId}`, err);
+        });
+      })
+      .catch(() => {});
+    import('@/services/device-deletion-outbox.service')
+      .then(({ DeviceDeletionOutboxService }) => {
+        DeviceDeletionOutboxService.getInstance()
+          .flushPendingForFacility(facilityId)
+          .catch((err) => {
+            logger.warn(`Failed to flush device deletion outbox for facility=${facilityId}`, err);
+          });
+      })
+      .catch(() => {});
   }
 
   /**
@@ -775,6 +892,391 @@ export class WebsocketGatewayTransport implements GatewayTransport {
         });
       }
 
+      if (type === 'AUTH_HELLO') {
+        const remote = getRemoteAddress(ws);
+        const gatewayId = String(msg?.gatewayId || msg?.gateway_id || '');
+        if (!gatewayId || !isValidGatewayUuid(gatewayId)) {
+          safeSend(ws, { type: 'ERROR', code: 'AUTH_BAD_REQUEST', message: 'gatewayId required (UUID)' });
+          return closeAndCleanup();
+        }
+        const helloFacilityId =
+          typeof msg?.facilityId === 'string' && msg.facilityId.trim()
+            ? String(msg.facilityId).trim()
+            : typeof msg?.facility_id === 'string' && msg.facility_id.trim()
+              ? String(msg.facility_id).trim()
+              : undefined;
+
+        const { GatewayModel } = await import('@/models/gateway.model');
+        const { getZtpIntendedFacilityId } = await import('@/utils/gateway-ztp-claim.utils');
+        const gatewayModel = new GatewayModel();
+        const gateway = await gatewayModel.findById(gatewayId);
+        if (!gateway?.public_key) {
+          safeSend(ws, { type: 'ERROR', code: 'AUTH_FAILED', message: 'Gateway not claimed for ZTP auth' });
+          return closeAndCleanup();
+        }
+        if (gateway.revoked_at) {
+          safeSend(ws, { type: 'ERROR', code: 'AUTH_FORBIDDEN', message: 'Gateway revoked' });
+          return closeAndCleanup();
+        }
+        if (gateway.released_at) {
+          safeSend(ws, {
+            type: 'ERROR',
+            code: 'AUTH_FAILED',
+            message: 'Gateway unbound — use provision flow',
+          });
+          return closeAndCleanup();
+        }
+
+        let facilityId: string;
+        if (gateway.facility_id) {
+          if (helloFacilityId && helloFacilityId !== gateway.facility_id) {
+            safeSend(ws, {
+              type: 'ERROR',
+              code: 'AUTH_FORBIDDEN',
+              message: 'facilityId does not match bound gateway',
+            });
+            return closeAndCleanup();
+          }
+          facilityId = gateway.facility_id;
+        } else {
+          const intended = getZtpIntendedFacilityId(gateway.metadata);
+          if (!intended) {
+            safeSend(ws, {
+              type: 'ERROR',
+              code: 'AUTH_FAILED',
+              message: 'Gateway unbound — use provision flow',
+            });
+            return closeAndCleanup();
+          }
+          if (helloFacilityId && helloFacilityId !== intended) {
+            safeSend(ws, {
+              type: 'ERROR',
+              code: 'AUTH_FORBIDDEN',
+              message: 'facilityId does not match ZTP claim',
+            });
+            return closeAndCleanup();
+          }
+          facilityId = intended;
+        }
+
+        const { randomBytes } = await import('crypto');
+        const nonce = randomBytes(32).toString('base64url');
+        this.ecdsaChallenges.set(ws, {
+          gatewayId,
+          facilityId,
+          publicKey: gateway.public_key,
+          nonce,
+          expiresAt: Date.now() + 60_000,
+          firmware_version:
+            typeof msg?.firmware_version === 'string' ? msg.firmware_version : undefined,
+        });
+        safeSend(ws, { type: 'AUTH_CHALLENGE', nonce, expires_in_seconds: 60 });
+        logger.info(
+          `Gateway WS AUTH_HELLO challenge issued gateway=${gatewayId} facility=${facilityId} remote=${remote}`,
+        );
+        return;
+      }
+
+      if (type === 'AUTH_PROOF') {
+        const remote = getRemoteAddress(ws);
+        const pending = this.ecdsaChallenges.get(ws);
+        if (!pending || Date.now() > pending.expiresAt) {
+          safeSend(ws, { type: 'ERROR', code: 'AUTH_FAILED', message: 'Challenge expired or missing' });
+          return closeAndCleanup();
+        }
+        const signature = String(msg?.signature || msg?.proof || '');
+        const payload = buildZtpSignPayload(ZTP_GW_AUTH_PREFIX, pending.nonce, pending.gatewayId);
+        if (!verifyZtpSignature(pending.publicKey, payload, signature)) {
+          safeSend(ws, { type: 'ERROR', code: 'AUTH_FAILED', message: 'Invalid signature' });
+          return closeAndCleanup();
+        }
+        this.ecdsaChallenges.delete(ws);
+
+        // Re-validate live DB state (revoke/release/key change during challenge window)
+        const { GatewayModel } = await import('@/models/gateway.model');
+        const { getZtpIntendedFacilityId } = await import('@/utils/gateway-ztp-claim.utils');
+        const gatewayModel = new GatewayModel();
+        const liveGateway = await gatewayModel.findById(pending.gatewayId);
+        if (!liveGateway?.public_key || liveGateway.revoked_at || liveGateway.public_key !== pending.publicKey) {
+          safeSend(ws, {
+            type: 'ERROR',
+            code: 'AUTH_FORBIDDEN',
+            message: 'Gateway claim state changed — reconnect',
+          });
+          return closeAndCleanup();
+        }
+        if (liveGateway.released_at) {
+          safeSend(ws, {
+            type: 'ERROR',
+            code: 'AUTH_FAILED',
+            message: 'Gateway unbound — use provision flow',
+          });
+          return closeAndCleanup();
+        }
+
+        const intended = getZtpIntendedFacilityId(liveGateway.metadata);
+        const facilityId = liveGateway.facility_id || intended;
+        if (!facilityId || facilityId !== pending.facilityId) {
+          safeSend(ws, {
+            type: 'ERROR',
+            code: 'AUTH_FORBIDDEN',
+            message: 'Gateway claim state changed — reconnect',
+          });
+          return closeAndCleanup();
+        }
+
+        const gatewayId = pending.gatewayId;
+        const syntheticUser: JWTPayload = {
+          userId: `ztp:${gatewayId}`,
+          role: UserRole.FACILITY_ADMIN,
+          facilityIds: [facilityId],
+        };
+
+        const boundGateway = await gatewayModel.findByFacilityId(facilityId);
+        let sessionRole: GatewaySessionRole = 'active';
+        const now = Date.now();
+
+        const finishZtpAuthOk = async (role: GatewaySessionRole) => {
+          const { parseAuthFirmwareVersion, persistAuthFirmwareSeed } = await import(
+            '@/utils/gateway-auth-firmware.utils'
+          );
+          const authFirmwareVersion = parseAuthFirmwareVersion(pending.firmware_version);
+          if (authFirmwareVersion) {
+            try {
+              await persistAuthFirmwareSeed({
+                facilityId,
+                gatewayId,
+                firmwareVersion: authFirmwareVersion,
+              });
+            } catch (err) {
+              logger.warn(
+                `Gateway WS ZTP AUTH firmware seed persist failed facility=${facilityId} gateway=${gatewayId}`,
+                err,
+              );
+            }
+          }
+
+          if (role === 'active') {
+            this.notifyConnectionChange(facilityId, true, 'ztp_auth', now, syntheticUser.userId, remote);
+          }
+          let ops_public_key_pem: string | undefined;
+          try {
+            ops_public_key_pem = await Ed25519Service.getOpsPublicKeyPem();
+          } catch {
+            /* optional */
+          }
+          safeSend(ws, {
+            type: 'AUTH_OK',
+            facilityId,
+            gatewayId,
+            sessionRole: role,
+            ops_public_key: Ed25519Service.getOpsPublicKeyB64(),
+            ops_public_key_jwk: Ed25519Service.getOpsPublicKeyJwk(),
+            ops_public_key_pem,
+          });
+          logger.info(
+            `Gateway WS ZTP authenticated: facility=${facilityId} gateway=${gatewayId} role=${role} remote=${remote}`,
+          );
+          GatewayDebugService.getInstance().publish({
+            kind: 'connection_opened',
+            facilityId,
+            userId: syntheticUser.userId,
+            ts: now,
+            lastActivityAt: now,
+            remote,
+          });
+
+          if (role === 'active') {
+            import('@/services/firmware/firmware.service')
+              .then(({ FirmwareService }) => {
+                FirmwareService.resumePendingForFacility(facilityId).catch((err) => {
+                  logger.warn(`Failed to resume firmware pushes for facility=${facilityId}`, err);
+                });
+              })
+              .catch(() => {});
+            import('@/services/gateway/gateway-recovery.service')
+              .then(({ GatewayRecoveryService }) => {
+                GatewayRecoveryService.resumePendingForFacility(facilityId).catch((err) => {
+                  logger.warn(`Failed to resume gateway recovery for facility=${facilityId}`, err);
+                });
+              })
+              .catch(() => {});
+            this.scheduleActiveSessionCommandFlush(facilityId);
+          }
+        };
+
+        // This device is the bound production gateway → active
+        if (boundGateway && boundGateway.id === gatewayId) {
+          const existing = this.facilityToClient.get(facilityId);
+          if (existing && existing.ws !== ws) {
+            this.noteAuthReplace(gatewayId);
+            try {
+              existing.ws.close(4000, 'replaced');
+            } catch {
+              /* ignore */
+            }
+          }
+          authed = {
+            ws,
+            user: syntheticUser,
+            facilityId,
+            gatewayId,
+            sessionRole: 'active',
+            lastActivityAt: now,
+            authViaZtp: true,
+          };
+          this.facilityToClient.set(facilityId, authed);
+          await finishZtpAuthOk('active');
+          return;
+        }
+
+        // Facility already has a different bound gateway → park as swap candidate
+        if (boundGateway && boundGateway.id !== gatewayId) {
+          const limitReject = this.checkAutoRegisterLimits(facilityId, gatewayId, {
+            enforceRateLimit: false,
+          });
+          if (limitReject) {
+            logger.warn(
+              `Gateway WS ZTP AUTH rejected (swap candidate) facility=${facilityId} gateway=${gatewayId} code=${limitReject.code}`,
+            );
+            safeSend(ws, { type: 'ERROR', code: limitReject.code, message: limitReject.message });
+            return closeAndCleanup();
+          }
+
+          sessionRole = 'swap_candidate';
+          const swapKey = `${facilityId}:${gatewayId}`;
+          const existingCandidate = this.swapCandidates.get(swapKey);
+          if (existingCandidate && existingCandidate.ws !== ws) {
+            try {
+              existingCandidate.ws.close(4000, 'replaced');
+            } catch {
+              /* ignore */
+            }
+          }
+          authed = {
+            ws,
+            user: syntheticUser,
+            facilityId,
+            gatewayId,
+            sessionRole,
+            lastActivityAt: now,
+            authViaZtp: true,
+          };
+          this.swapCandidates.set(swapKey, authed);
+          try {
+            const { GatewayRecoveryService } = await import('@/services/gateway/gateway-recovery.service');
+            await GatewayRecoveryService.detect(facilityId, gatewayId, boundGateway.id);
+          } catch (err) {
+            logger.warn(`Failed to detect gateway swap facility=${facilityId}`, err);
+          }
+          logger.info(
+            `Gateway WS ZTP swap candidate parked: facility=${facilityId} newGateway=${gatewayId} boundGateway=${boundGateway.id}`,
+          );
+          await finishZtpAuthOk('swap_candidate');
+          return;
+        }
+
+        // No bound gateway — race after swap-prep claim, or greenfield unbound row: bind as first
+        if (!liveGateway.facility_id) {
+          let result: { bound: boolean; created: boolean };
+          try {
+            result = await gatewayModel.createOrBindAsFirstGateway({
+              id: gatewayId,
+              facilityId,
+              metadata:
+                typeof liveGateway.metadata === 'object' && liveGateway.metadata
+                  ? liveGateway.metadata
+                  : undefined,
+            });
+          } catch (err) {
+            logger.error(
+              `Gateway WS ZTP AUTH first-bind failed facility=${facilityId} gateway=${gatewayId}`,
+              err,
+            );
+            safeSend(ws, { type: 'ERROR', code: 'AUTH_FAILED', message: 'Gateway registration failed' });
+            return closeAndCleanup();
+          }
+          if (result.bound) {
+            const existing = this.facilityToClient.get(facilityId);
+            if (existing && existing.ws !== ws) {
+              this.noteAuthReplace(gatewayId);
+              try {
+                existing.ws.close(4000, 'replaced');
+              } catch {
+                /* ignore */
+              }
+            }
+            authed = {
+              ws,
+              user: syntheticUser,
+              facilityId,
+              gatewayId,
+              sessionRole: 'active',
+              lastActivityAt: now,
+              authViaZtp: true,
+            };
+            this.facilityToClient.set(facilityId, authed);
+            await finishZtpAuthOk('active');
+            return;
+          }
+          const winner = await gatewayModel.findByFacilityId(facilityId);
+          if (!winner) {
+            safeSend(ws, { type: 'ERROR', code: 'AUTH_FAILED', message: 'Facility gateway binding conflict' });
+            return closeAndCleanup();
+          }
+          const limitReject = this.checkAutoRegisterLimits(facilityId, gatewayId, {
+            enforceRateLimit: false,
+          });
+          if (limitReject) {
+            safeSend(ws, { type: 'ERROR', code: limitReject.code, message: limitReject.message });
+            return closeAndCleanup();
+          }
+          sessionRole = 'swap_candidate';
+          const swapKey = `${facilityId}:${gatewayId}`;
+          authed = {
+            ws,
+            user: syntheticUser,
+            facilityId,
+            gatewayId,
+            sessionRole,
+            lastActivityAt: now,
+            authViaZtp: true,
+          };
+          this.swapCandidates.set(swapKey, authed);
+          try {
+            const { GatewayRecoveryService } = await import('@/services/gateway/gateway-recovery.service');
+            await GatewayRecoveryService.detect(facilityId, gatewayId, winner.id);
+          } catch (err) {
+            logger.warn(`Failed to detect gateway swap facility=${facilityId}`, err);
+          }
+          await finishZtpAuthOk('swap_candidate');
+          return;
+        }
+
+        // Bound row but findByFacilityId missed (shouldn't happen) — treat as active
+        const existing = this.facilityToClient.get(facilityId);
+        if (existing && existing.ws !== ws) {
+          this.noteAuthReplace(gatewayId);
+          try {
+            existing.ws.close(4000, 'replaced');
+          } catch {
+            /* ignore */
+          }
+        }
+        authed = {
+          ws,
+          user: syntheticUser,
+          facilityId,
+          gatewayId,
+          sessionRole: 'active',
+          lastActivityAt: now,
+          authViaZtp: true,
+        };
+        this.facilityToClient.set(facilityId, authed);
+        await finishZtpAuthOk('active');
+        return;
+      }
+
       if (type === 'AUTH') {
         const remote = getRemoteAddress(ws);
         const token = String(msg?.token || '');
@@ -826,6 +1328,26 @@ export class WebsocketGatewayTransport implements GatewayTransport {
 
         const { GatewayModel } = await import('@/models/gateway.model');
         const gatewayModel = new GatewayModel();
+        // ZTP-claimed devices must use ECDSA AUTH — do not accept human JWT as fallback
+        {
+          const ztpRow = await gatewayModel.findById(gatewayId);
+          if (ztpRow?.public_key && !ztpRow.revoked_at) {
+            logger.warn(
+              `Gateway WS AUTH rejected (ZTP device requires ECDSA) gateway=${gatewayId} facility=${facilityId}`,
+            );
+            safeSend(ws, {
+              type: 'ERROR',
+              code: 'AUTH_FORBIDDEN',
+              message: 'ZTP gateway must authenticate with AUTH_HELLO / AUTH_PROOF',
+            });
+            return closeAndCleanup();
+          }
+          if (ztpRow?.revoked_at) {
+            safeSend(ws, { type: 'ERROR', code: 'AUTH_FORBIDDEN', message: 'Gateway revoked' });
+            return closeAndCleanup();
+          }
+        }
+
         const boundGateway = await gatewayModel.findByFacilityId(facilityId);
 
         let sessionRole: GatewaySessionRole = 'active';
@@ -835,6 +1357,7 @@ export class WebsocketGatewayTransport implements GatewayTransport {
         const setActiveSession = (gid: string, role: GatewaySessionRole) => {
           const existing = this.facilityToClient.get(facilityId);
           if (existing && existing.ws !== ws && (existing.gatewayId === gid || existing.sessionRole === 'active')) {
+            this.noteAuthReplace(gid);
             try { existing.ws.close(4000, 'replaced'); } catch {}
           }
           const now = Date.now();
@@ -892,6 +1415,17 @@ export class WebsocketGatewayTransport implements GatewayTransport {
               }
             } else {
               // No bound gateway for this facility → first-install auto-bind.
+              if (config.gatewayZtpRequired) {
+                logger.warn(
+                  `Gateway WS AUTH rejected (GATEWAY_ZTP_REQUIRED) first-install JWT bind facility=${facilityId} gateway=${gatewayId}`,
+                );
+                safeSend(ws, {
+                  type: 'ERROR',
+                  code: 'AUTH_FORBIDDEN',
+                  message: 'ZTP claim required for new gateway bind',
+                });
+                return closeAndCleanup();
+              }
               const existingGateway = await gatewayModel.findById(gatewayId);
               if (existingGateway?.facility_id && existingGateway.facility_id !== facilityId) {
                 logger.warn(
@@ -1021,16 +1555,7 @@ export class WebsocketGatewayTransport implements GatewayTransport {
           });
         }).catch(() => {});
         if (sessionRole === 'active') {
-          import('@/services/access-code.service').then(({ AccessCodeService }) => {
-            AccessCodeService.getInstance().flushPendingPushForFacility(facilityId).catch((err) => {
-              logger.warn(`Failed to flush access code outbox for facility=${facilityId}`, err);
-            });
-          }).catch(() => {});
-          import('@/services/device-deletion-outbox.service').then(({ DeviceDeletionOutboxService }) => {
-            DeviceDeletionOutboxService.getInstance().flushPendingForFacility(facilityId).catch((err) => {
-              logger.warn(`Failed to flush device deletion outbox for facility=${facilityId}`, err);
-            });
-          }).catch(() => {});
+          this.scheduleActiveSessionCommandFlush(facilityId);
         }
         return;
       }
@@ -1038,7 +1563,7 @@ export class WebsocketGatewayTransport implements GatewayTransport {
       if (!authed) {
         const remote = getRemoteAddress(ws);
         logger.warn(`Gateway WS message before AUTH (type=${typeField}) remote=${remote} - closing`);
-        safeSend(ws, { type: 'ERROR', code: 'NOT_AUTHENTICATED', message: 'Send AUTH first' });
+        safeSend(ws, { type: 'ERROR', code: 'NOT_AUTHENTICATED', message: 'Send AUTH or AUTH_HELLO first' });
         return;
       }
 

@@ -4,10 +4,10 @@ import { ConnectionStatus } from './ConnectionStatus';
 import { DeviceInventoryTable } from './DeviceInventoryTable';
 import { BehaviorConfigPanel } from './BehaviorConfigPanel';
 import { EventLogConsole } from './EventLogConsole';
-import { StateControls } from './StateControls';
 import { DisconnectedBanner } from './DisconnectedBanner';
 import { GatewayPanelTabs } from './GatewayPanelTabs';
 import { GatewaySettingsPanel } from './GatewaySettingsPanel';
+import { ZtpLifecyclePanel } from './ZtpLifecyclePanel';
 import {
   PanelTabTransition,
   resolveTabSlideDirection,
@@ -27,7 +27,8 @@ type Props = {
 
 export function GatewayPanel({ gateway, users = [], onRefresh }: Props) {
   const connected = gateway.connectionStatus === 'connected';
-  const connecting = gateway.connectionStatus === 'connecting';
+  const connecting =
+    gateway.connectionStatus === 'connecting' || gateway.connectionStatus === 'provisioning';
   const [tab, setTab] = useState<GatewayPanelTabId>(readGatewayPanelTab);
   const [tabDirection, setTabDirection] = useState<TabSlideDirection>('right');
   const previousTabRef = useRef(tab);
@@ -56,9 +57,18 @@ export function GatewayPanel({ gateway, users = [], onRefresh }: Props) {
         onChange={selectTab}
       />
 
-      {!connected && (
+      {!connected && gateway.connectionStatus !== 'provisioning' && (
         <div className="px-4 pt-3">
           <DisconnectedBanner status={gateway.connectionStatus} reconnectAt={gateway.reconnectAt} />
+        </div>
+      )}
+
+      {gateway.connectionStatus === 'provisioning' && (
+        <div className="px-4 pt-3">
+          <div className="rounded-lg border border-primary-200 bg-primary-50 px-3 py-2 text-sm text-primary-900 dark:border-primary-800 dark:bg-primary-950/40 dark:text-primary-100">
+            Provisioning — waiting for claim (PROVISION_WAITING). Use Connection → Claim, or claim via
+            mobile/API with this sticker public key.
+          </div>
         </div>
       )}
 
@@ -69,9 +79,9 @@ export function GatewayPanel({ gateway, users = [], onRefresh }: Props) {
           )}
 
           {tab === 'connection' && (
-            <div className="mx-auto grid max-w-5xl gap-4 lg:grid-cols-2">
+            <div className="mx-auto grid max-w-5xl gap-4">
               <ConnectionStatus gateway={gateway} embedded />
-              <StateControls gateway={gateway} connected={connected} embedded onChange={onRefresh} />
+              <ZtpLifecyclePanel gateway={gateway} embedded onChange={onRefresh} />
             </div>
           )}
 

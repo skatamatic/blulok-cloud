@@ -12,10 +12,10 @@ This document summarizes the new centralized trust model implemented in the back
 - Flow A (Online Pass): App requests Route Pass; Cloud signs Ed25519 JWT with Ops key including `device_pubkey`.
 - Flow B (Offline Unlock): App presents Route Pass to lock; lock verifies signature/time/denylist, then challenges app; app signs nonce with device private key.
 - Flow C (Fallback): App signs short-lived JWT with device private key; Gateway forwards to Cloud; Cloud verifies with stored device public key and issues Route Pass.
-- Flow D (Revocation): Cloud pushes signed Denylist Update Command to Gateway to target locks.
+- Flow D (Revocation): Cloud pushes signed Denylist Update Command to Gateway to target locks. On active-gateway reconnect (`AUTH_OK`), cloud also pushes a full **`DENYLIST_SYNC`** replace snapshot (all operational devices) so restarted gateways reconcile local denylist state without waiting for inventory sync.
 - Flow E (Time Sync): Cloud issues signed Secure Time Sync Command; Gateway broadcasts periodically; locks reject older timestamps.
 - Flow F (Firmware OTA): Cloud signs firmware manifest and chunked binary data as EdDSA JWTs; Gateway verifies each JWT using the Ops public key received in AUTH_OK; Gateway reassembles binary, verifies SHA-256 integrity, verifies manufacturer signature, then distributes to lock hardware.
-- Flow G (Keypad Access Codes): Cloud resolves active keypad access codes per relay target, signs `ACCESS_CODE_UPDATE` command JWT, and unicasts to the facility gateway; gateway can also poll the same resolved code mappings via internal route. Code mutations persist in the database immediately; delivery is tracked in a durable **`access_code_push_outbox`** per facility until the gateway ACKs or the row reaches **`dead_letter`** after max retries. On gateway reconnect (`AUTH_OK`), the outbox is flushed (same pattern as firmware OTA resume).
+- Flow G (Keypad Access Codes): Cloud resolves active keypad access codes per relay target, signs `ACCESS_CODE_UPDATE` command JWT, and unicasts to the facility gateway; gateway can also poll the same resolved code mappings via internal route. Code mutations persist in the database immediately; delivery is tracked in a durable **`access_code_push_outbox`** per facility until the gateway ACKs or the row reaches **`dead_letter`** after max retries. On active-gateway reconnect (`AUTH_OK`), cloud enqueues a **full** access-code push (not flush-only) so restarted gateways receive current keypad state; pending device-deletion tombstones are flushed on the same path.
 
 ### Data Artifacts
 - Route Pass (JWT, Ed25519): `iss`, `sub`, `aud[]`, `iat`, `exp`, `jti`, `device_pubkey`, `user_role` (lowercase underscore-separated role, e.g. `facility_admin`, aligned with `UserRole`).
@@ -23,6 +23,7 @@ This document summarizes the new centralized trust model implemented in the back
   - Common claims: `iss: 'BluCloud:Root'`, `iat`, `cmd_type` (CAPS_CASE)
   - DENYLIST_ADD: `{ cmd_type:'DENYLIST_ADD', denylist_add:[{ sub, exp }], target: ['deviceId1', ...] }`
   - DENYLIST_REMOVE: `{ cmd_type:'DENYLIST_REMOVE', denylist_remove:[{ sub, exp }], target: ['deviceId1', ...] }`
+  - DENYLIST_SYNC: `{ cmd_type:'DENYLIST_SYNC', facility_id, devices:[{ cloud_device_id, kind, serial, relay_channel?, denylist:[{ sub, exp }] }] }` — full replace snapshot (same rows as inventory `operational_devices`); pushed on active `AUTH_OK`
   - LOCK: `{ cmd_type:'LOCK', device_id: 'deviceId', expires_at: <unix_sec> }` — `expires_at` is `now + facility.lock_command_timeout_sec`; `0` means no command expiry
   - UNLOCK: `{ cmd_type:'UNLOCK', device_id: 'deviceId', expires_at: <unix_sec> }` — same as LOCK; prevents stale commands from executing after the configured window (default 5 minutes)
   - SECURE_TIME_SYNC: `{ cmd_type:'SECURE_TIME_SYNC', ts }`

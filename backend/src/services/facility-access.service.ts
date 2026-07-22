@@ -14,8 +14,35 @@ import type { Knex } from 'knex';
  * - DEV_ADMIN, ADMIN: Global access to all facilities
  * - FACILITY_ADMIN: Explicit user_facility_associations rows
  * - TENANT, MAINTENANCE: Active unit_assignments and key_sharing (not association rows alone)
+ * - ZTP gateway principals (`ztp:{gatewayId}`): scoped to the live bound facility on that gateway row
  */
 export class FacilityAccessService {
+  /** Synthetic principal minted for ECDSA gateway AUTH (`ztp:{gatewayId}`). */
+  static isZtpGatewayPrincipal(userId: string): boolean {
+    return typeof userId === 'string' && userId.startsWith('ztp:');
+  }
+
+  /**
+   * Resolve the live facility for a ZTP gateway principal from the gateways table.
+   * Returns null when unbound, revoked, or not a ZTP principal.
+   */
+  static async getZtpPrincipalFacilityId(userId: string): Promise<string | null> {
+    if (!this.isZtpGatewayPrincipal(userId)) return null;
+    const gatewayId = userId.slice('ztp:'.length);
+    if (!gatewayId) return null;
+    try {
+      const db = DatabaseService.getInstance().connection;
+      const row = await db('gateways')
+        .where({ id: gatewayId })
+        .whereNull('revoked_at')
+        .first('facility_id');
+      return row?.facility_id ? String(row.facility_id) : null;
+    } catch (error) {
+      logger.error(`Error resolving ZTP principal facility for ${userId}:`, error);
+      return null;
+    }
+  }
+
   /**
    * Get facility IDs that a user has access to based on their role.
    * @returns Empty array for global admins (means all facilities). Otherwise scoped IDs.
@@ -28,6 +55,15 @@ export class FacilityAccessService {
 
       if (userRole === UserRole.TENANT || userRole === UserRole.MAINTENANCE) {
         return this.getTenantMaintenanceFacilityIds(userId);
+      }
+
+      const ztpFacilityId = await this.getZtpPrincipalFacilityId(userId);
+      if (ztpFacilityId) {
+        return [ztpFacilityId];
+      }
+      if (this.isZtpGatewayPrincipal(userId)) {
+        logger.warn(`ZTP principal ${userId} has no bound facility`);
+        return [];
       }
 
       const facilityIds = await UserFacilityAssociationModel.getUserFacilityIds(userId);
@@ -49,6 +85,14 @@ export class FacilityAccessService {
 
       if (userRole === UserRole.TENANT || userRole === UserRole.MAINTENANCE) {
         return this.tenantHasFacilityAccess(userId, facilityId);
+      }
+
+      const ztpFacilityId = await this.getZtpPrincipalFacilityId(userId);
+      if (ztpFacilityId) {
+        return ztpFacilityId === facilityId;
+      }
+      if (this.isZtpGatewayPrincipal(userId)) {
+        return false;
       }
 
       return await UserFacilityAssociationModel.hasAccessToFacility(userId, facilityId);
