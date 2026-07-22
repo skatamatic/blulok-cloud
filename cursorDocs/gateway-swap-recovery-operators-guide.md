@@ -374,9 +374,10 @@ Operators subscribed to the facility dashboard receive WebSocket events:
 
 | Subscription | Event | Content |
 |--------------|-------|---------|
-| `gateway_recovery_progress` | `gateway_recovery_progress_update` | `percent`, `status`, `message`, chunk progress |
+| `gateway_recovery_status` | `gateway_recovery_status_update` | Candidates, sessions, recovery snapshot (`facility_id` required) |
+| `gateway_recovery_progress` | `gateway_recovery_progress_update` | `percent`, `status`, `message`, chunk progress (`facility_id` recommended) |
 
-The Swap / Recovery tab also polls every 4–8s while in progress (faster when dashboard WS disconnected).
+Facility Gateway setup subscribes while the tab is open. Inventory preview / options / events load on demand when the status gateway changes — no interval polling.
 
 ---
 

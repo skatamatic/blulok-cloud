@@ -4,7 +4,7 @@ When a facility gateway is replaced, the cloud must not trust inventory from the
 
 **Operational guide (sys admins + gateway developers):** [Gateway Swap / Recovery — Operator & Developer Guide](./gateway-swap-recovery-operators-guide.md)
 
-See also: [Firmware OTA Architecture](./firmware-ota-architecture.md).
+See also: [Firmware OTA Architecture](./firmware-ota-architecture.md), [Gateway Firmware OTA v2 developer guide](./gateway-firmware-ota-v2-developer-guide.md).
 
 ## Problem
 
@@ -34,6 +34,8 @@ Transport behavior:
 Statuses: `detected` → `awaiting_config` → (`firmware` optional) → `inventory_push` → `complete` (or `failed`, `cancelled`, `bypassed`).
 
 When **firmware matching** is enabled (default), the cloud resolves the **production gateway’s** firmware version to a catalog image and runs the firmware phase only if the swap candidate is behind that version. When disabled, `firmware_id` is null and recovery goes straight from `awaiting_config` to `inventory_push`.
+
+The Swap / Recovery UI (and `POST .../recovery/initiate` body) accepts optional **`firmwareDeliveryMode`**: `v1` (WebSocket chunk OTA, default) or `v2` (GCS signed download URL). Persisted on `gateway_recoveries.firmware_delivery_mode` and passed through to `FirmwareService.initiatePush`. See [Firmware OTA Architecture](./firmware-ota-architecture.md#delivery-modes-v1--v2) and the [v2 gateway contract](./gateway-firmware-ota-v2-developer-guide.md).
 
 Phases delegate to existing services:
 
@@ -75,7 +77,7 @@ Operational JWT/object commands are dropped when a blocking recovery is active. 
 
 **Blocking check:** `isBlockingActiveForFacility` fails closed (treats DB errors as blocking). A TTL-backed in-memory cache (5s) backs fast outbound gating via `isBlockingActiveForFacilitySync`.
 
-**On complete/bypass:** `finalizeRecovery` rebinds device rows to the new gateway inside a DB transaction, clears `facility_id` on the old gateway, sets `facility_id` on the new gateway, evicts the previous bound WebSocket session, and promotes the swap candidate when connected.
+**On complete/bypass:** `finalizeRecovery` rebinds device rows to the new gateway inside a DB transaction, clears `facility_id` on the old gateway, sets `facility_id` on the new gateway, evicts the previous bound WebSocket session, and promotes the swap candidate when connected. The demoted previous unit does **not** appear as a swap candidate unless it reconnects with a live parked WebSocket (offline previous gateways are omitted from the candidate/session pool).
 
 **Failed recovery:** `failed` is terminal — inventory sync is unblocked so operators can retry or intervene. Outbound gating re-engages when a retry enters an active phase.
 
@@ -105,7 +107,7 @@ Gateway firmware must rebuild its device DB from the snapshot and reply `INVENTO
 | Method | Path | Purpose |
 |--------|------|---------|
 | GET | `/gateways/:gatewayId/recovery/status` | Active/latest recovery |
-| GET | `/gateways/facility/:facilityId/recovery/candidates` | Parked swap candidates |
+| GET | `/gateways/facility/:facilityId/recovery/candidates` | **Connected** parked swap-candidate WebSockets only (offline demoted units are omitted) |
 | GET | `/gateways/:gatewayId/recovery/inventory-preview` | Devices in snapshot |
 | POST | `/gateways/:gatewayId/recovery/initiate` | Start phased recovery |
 | POST | `/gateways/:gatewayId/recovery/advance` | Manual phase advance |
@@ -115,7 +117,14 @@ Gateway firmware must rebuild its device DB from the snapshot and reply `INVENTO
 | POST | `/gateways/:gatewayId/recovery/retry` | Retry failed recovery from last configured phase |
 | POST | `/gateways/:gatewayId/recovery/:recoveryId/cancel` | Cancel |
 
-Dashboard WebSocket subscription: `gateway_recovery_progress` → `gateway_recovery_progress_update`.
+Dashboard WebSocket subscriptions (ADMIN / DEV_ADMIN / FACILITY_ADMIN, `facility_id` required):
+
+| Type | Update message | Payload |
+|------|----------------|---------|
+| `gateway_recovery_status` | `gateway_recovery_status_update` | Same shape as `GET …/recovery/candidates` (candidates, sessions, recovery) |
+| `gateway_recovery_progress` | `gateway_recovery_progress_update` | Live percent / phase deltas during an active swap |
+
+Facility Gateway setup UI subscribes while the Gateway tab is open; no HTTP polling for status/candidates.
 
 ## Testing
 

@@ -55,7 +55,7 @@ export function deriveRecoveryProgress(recovery: GatewayRecovery): GatewayRecove
   switch (status) {
     case 'detected':
       percent = 0;
-      message = 'Swap candidate detected — configure recovery to begin';
+      message = 'Swap candidate detected. Configure recovery to continue.';
       break;
     case 'awaiting_config':
       percent = 5;
@@ -70,7 +70,7 @@ export function deriveRecoveryProgress(recovery: GatewayRecovery): GatewayRecove
       const total = recovery.inventory_chunks_total ?? 0;
       if (total > 0) {
         percent = 50 + Math.round((sent / total) * 45);
-        message = `Inventory snapshot push — chunk ${sent} of ${total}`;
+        message = `Inventory snapshot: chunk ${sent} of ${total}`;
       } else {
         percent = 50;
         message = 'Preparing inventory snapshot push';
@@ -79,11 +79,11 @@ export function deriveRecoveryProgress(recovery: GatewayRecovery): GatewayRecove
     }
     case 'complete':
       percent = 100;
-      message = 'Recovery complete — the new gateway is bound and inventory sync is unblocked';
+      message = 'Recovery complete. New gateway is bound; inventory sync is unblocked.';
       break;
     case 'bypassed':
       percent = 100;
-      message = 'Recovery bypassed — inventory sync unblocked';
+      message = 'Recovery bypassed. Inventory sync is unblocked.';
       break;
     case 'failed':
       percent = 0;
@@ -197,9 +197,9 @@ export interface AvailableCandidate {
 
 /**
  * Find the gateway available to swap to. While a recovery targets a specific gateway,
- * that gateway is the candidate; otherwise we pick any swap candidate (from sessions or
- * the candidate list), preferring connected ones and excluding the production gateway.
- * The previous production unit reconnecting as a swap candidate is treated like any other.
+ * that gateway is the candidate; otherwise we pick a **connected** swap-candidate
+ * WebSocket session (or candidate list entry), excluding the production gateway.
+ * Offline / disconnected units never appear as swap candidates.
  */
 export function resolveAvailableCandidate(
   recovery: GatewayRecovery | null | undefined,
@@ -216,20 +216,22 @@ export function resolveAvailableCandidate(
 
   const pool: Array<{ gatewayId: string; connected: boolean }> = [];
   for (const session of sessions) {
-    if (session.sessionRole === 'swap_candidate') {
-      pool.push({ gatewayId: session.gatewayId, connected: session.connected });
+    if (session.sessionRole === 'swap_candidate' && session.connected) {
+      pool.push({ gatewayId: session.gatewayId, connected: true });
     }
   }
   for (const candidate of candidates) {
-    if (!pool.some((p) => gatewayIdsEqual(p.gatewayId, candidate.gatewayId))) {
-      pool.push({ gatewayId: candidate.gatewayId, connected: candidate.connected });
+    if (
+      candidate.connected
+      && !pool.some((p) => gatewayIdsEqual(p.gatewayId, candidate.gatewayId))
+    ) {
+      pool.push({ gatewayId: candidate.gatewayId, connected: true });
     }
   }
 
   const eligible = pool.filter((p) => !gatewayIdsEqual(p.gatewayId, productionGatewayId));
-  const connected = eligible.find((p) => p.connected);
-  const chosen = connected ?? eligible[0];
-  return { gatewayId: chosen?.gatewayId, connected: chosen ? chosen.connected : null };
+  const chosen = eligible[0];
+  return { gatewayId: chosen?.gatewayId, connected: chosen ? true : null };
 }
 
 export type SwapMode = 'idle' | 'ready' | 'in_progress' | 'failed';
