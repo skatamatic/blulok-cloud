@@ -1,12 +1,15 @@
 import type { Knex } from 'knex';
 
 /**
- * True when the unit has any primary/shared assignment or an active key share.
+ * True when the unit has any non-expired primary/shared assignment or an active key share.
  * Matches the product notion of “unit has a tenant” used by unlock override UX.
  */
 export async function unitHasTenant(knex: Knex, unitId: string): Promise<boolean> {
   const assignment = await knex('unit_assignments')
     .where({ unit_id: unitId })
+    .where(function activeAssignment() {
+      this.whereNull('access_expires_at').orWhere('access_expires_at', '>', knex.fn.now());
+    })
     .first('id');
   if (assignment) return true;
 

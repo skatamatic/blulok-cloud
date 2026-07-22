@@ -5,6 +5,10 @@ import { useHighlightWithPagination } from '@/hooks/useHighlightWithPagination';
 import { ExpandableFilters } from '@/components/Common/ExpandableFilters';
 import { ListPageHeader } from '@/components/Common/DetailsPageLayout';
 import { useLockDeviceRealtime } from '@/hooks/useLockDeviceRealtime';
+import {
+  mergeUnitRowsFromDeviceSnapshots,
+  type LockDeviceSnapshot,
+} from '@/utils/deviceStatusWs.utils';
 import { useGlobalFacility, ALL_FACILITIES_ID } from '@/contexts/GlobalFacilityContext';
 import { 
   HomeIcon,
@@ -32,7 +36,7 @@ import { canRequestRemoteUnlock, isLockTransitionPending } from '@/utils/unitLoc
 import { lockHardwareFeedbackToasts } from '@/utils/lockHardwareFeedback.constants';
 import { useRemoteUnlockAction } from '@/hooks/useRemoteUnlockAction';
 import { resolveLockTimeoutMsForUnit } from '@/utils/facilityLockTimeout.utils';
-import { unitHasTenant } from '@/constants/tenantUnlockOverride.constants';
+import { requiresOccupiedUnitOverride } from '@/constants/tenantUnlockOverride.constants';
 import { ViewModeToggle, type ListViewMode } from '@/components/Common/ViewModeToggle';
 import { SortableTableTh } from '@/components/Common/SortableTableTh';
 
@@ -83,6 +87,8 @@ export default function UnitsPage() {
 
   const unitsDataRef = useRef<Unit[]>([]);
   unitsDataRef.current = units;
+  const allUnitsRef = useRef<Unit[]>([]);
+  allUnitsRef.current = allUnits;
   const { requestUnlock, isSubmitting, syncLockStatus, tenantOverrideDialog } = useRemoteUnlockAction({
     timeoutToast: lockHardwareFeedbackToasts.unitUnlockTimeout,
     errorToast: () => ({
@@ -105,7 +111,24 @@ export default function UnitsPage() {
     void loadUnitsRef.current({ background: true });
   }, []);
 
+  const applyUnitDeviceSnapshots = useCallback((rows: LockDeviceSnapshot[]): boolean => {
+    if (!rows.length) return false;
+    const nextUnits = mergeUnitRowsFromDeviceSnapshots(unitsDataRef.current, rows);
+    const nextAll = mergeUnitRowsFromDeviceSnapshots(allUnitsRef.current, rows);
+    const applied = nextUnits !== unitsDataRef.current || nextAll !== allUnitsRef.current;
+    if (nextUnits !== unitsDataRef.current) setUnits(nextUnits);
+    if (nextAll !== allUnitsRef.current) setAllUnits(nextAll);
+    return applied;
+  }, []);
+
   useLockDeviceRealtime({
+    facilityId:
+      selectedFacilityId && selectedFacilityId !== ALL_FACILITIES_ID
+        ? selectedFacilityId
+        : undefined,
+    onDeviceRows: applyUnitDeviceSnapshots,
+    subscribeUnitsForRefresh: false,
+    skipDebouncedRefreshWhenDeviceRowsApplied: true,
     debouncedRefresh: debouncedWsUnitsRefresh,
     debounceMs: 500,
   });
@@ -313,7 +336,7 @@ export default function UnitsPage() {
         patchUnitLockOptimistic(unit.id, status);
       },
       refresh: refreshAfterUnlockAttempt,
-      requiresTenantOverride: unitHasTenant(unit),
+      requiresTenantOverride: requiresOccupiedUnitOverride(unit, authState.user?.id),
       unitLabel: unit.unit_number,
     });
   };

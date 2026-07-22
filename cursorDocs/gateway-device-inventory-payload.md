@@ -264,7 +264,7 @@ Unknown composite key → `not_found[]` entry like `KP-001::2`.
 
 ### Access control telemetry side effects
 
-When `online`, `locked`, or `last_seen` change on an existing row, the cloud persists the update and emits WebSocket **`device_status_update`** (via `device_status` subscription) so admin UI lists refresh. Invalid `last_seen` values are ignored. Heartbeat-only `last_seen` updates (status unchanged) still broadcast telemetry.
+When `online`, `locked`, or `last_seen` **values change** on an existing row, the cloud persists the update and emits WebSocket **`device_status_update`** (via `device_status` subscription) so admin UI lists refresh. Invalid `last_seen` values are ignored. Re-sending an unchanged `last_activity` / telemetry snapshot does **not** broadcast.
 
 ---
 
@@ -375,7 +375,7 @@ Unknown `{kind}:{serial}` → `network_infra.not_found[]` entry like `bridge:BR-
 }
 ```
 
-`operational_devices` carries the cloud’s active denylist per lock/access_control row so gateways (and the desktop simulator) can reconcile local denylist state after inventory sync or swap recovery. Recovery snapshots embed the same `denylist` array on each operational device row in the pushed JSON payload. Active-gateway **`AUTH_OK`** also pushes a WebSocket **`DENYLIST_SYNC`** JWT with the same per-device replace snapshot so reconnect does not depend on a subsequent inventory POST.
+`operational_devices` carries the cloud’s active denylist per lock/access_control row so gateways (and the desktop simulator) can reconcile local denylist state after inventory sync or swap recovery. Recovery snapshots embed the same `denylist` array on each operational device row in the pushed JSON payload. When **`GATEWAY_DENYLIST_SYNC_ENABLED`** is on (default **off**), active-gateway **`AUTH_OK`** also pushes a WebSocket **`DENYLIST_SYNC`** JWT with the same per-device replace snapshot so reconnect does not depend on a subsequent inventory POST.
 
 **Recovery snapshot identity (schema v2):** operational rows use gateway-native identifiers only — locks carry **`lock_id`** (hardware serial), access control carries **`access_id`** (+ optional `relay_channel`), bridge/friend_node carry **`serial`**. Cloud row UUIDs and duplicate `serial` fields are **not** included on lock/access rows. **`lock_number`** comes from `device_settings.lockNumber`. **`properties.online`** carries the last-known connectivity from cloud (`device_status` / access `status` / infra `state`) so the replacement gateway can seed mesh devices as online without waiting for BLE heartbeats. Denylist entries are embedded per operational row.
 

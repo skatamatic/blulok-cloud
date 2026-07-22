@@ -15,7 +15,7 @@ import { canRequestRemoteUnlock, isLockTransitionPending } from '@/utils/unitLoc
 import { getWidgetLayoutProfile, WIDGET_LIST_SCROLL_CLASS } from '@/utils/widget-layout.utils';
 import { lockHardwareFeedbackToasts } from '@/utils/lockHardwareFeedback.constants';
 import { useRemoteUnlockAction } from '@/hooks/useRemoteUnlockAction';
-import { unitHasTenant } from '@/constants/tenantUnlockOverride.constants';
+import { requiresOccupiedUnitOverride } from '@/constants/tenantUnlockOverride.constants';
 import { resolveLockTimeoutMsForUnit } from '@/utils/facilityLockTimeout.utils';
 import { formatRelativeTime, RELATIVE_LAST_SEEN_OPTS } from '@/utils/datetime.utils';
 
@@ -266,7 +266,7 @@ export const LockStatusWidget: React.FC<LockStatusWidgetProps> = ({
         patchUnitLockStatus(status);
       },
       refresh: refreshAfterUnlockAttempt,
-      requiresTenantOverride: unitHasTenant(unit),
+      requiresTenantOverride: requiresOccupiedUnitOverride(unit, authState.user?.id),
       unitLabel: unit.unit_number,
     });
   };

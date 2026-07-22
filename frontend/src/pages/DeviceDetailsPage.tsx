@@ -10,7 +10,7 @@ import { useDetailsBackNavigation, replaceSearchParams } from '@/hooks/useBackNa
 import { canRequestRemoteLock, canRequestRemoteUnlock, isLockTransitionPending, isSupportsRemoteLockEnabled } from '@/utils/unitLock.utils';
 import { lockHardwareFeedbackToasts } from '@/utils/lockHardwareFeedback.constants';
 import { useRemoteUnlockAction } from '@/hooks/useRemoteUnlockAction';
-import { unitHasTenant } from '@/constants/tenantUnlockOverride.constants';
+import { requiresOccupiedUnitOverride } from '@/constants/tenantUnlockOverride.constants';
 import { resolveLockTimeoutMsForFacility } from '@/utils/facilityLockTimeout.utils';
 import { startLockHardwareFeedbackWatch } from '@/utils/lockHardwareFeedback.utils';
 import { getApiErrorMessage } from '@/utils/apiError.utils';
@@ -334,8 +334,9 @@ export default function DeviceDetailsPage() {
                 return Number.isNaN(temp) ? prev.temperature : temp;
               })()
             : prev.temperature,
-        error_code: deviceUpdate.error_code ?? prev.error_code,
-        error_message: deviceUpdate.error_message ?? prev.error_message,
+        error_code: deviceUpdate.error_code !== undefined ? deviceUpdate.error_code : prev.error_code,
+        error_message:
+          deviceUpdate.error_message !== undefined ? deviceUpdate.error_message : prev.error_message,
         firmware_version: deviceUpdate.firmware_version ?? prev.firmware_version,
         last_activity: deviceUpdate.last_activity ?? prev.last_activity,
         last_seen: deviceUpdate.last_seen ?? prev.last_seen,
@@ -347,17 +348,19 @@ export default function DeviceDetailsPage() {
     deviceId: deviceId ?? undefined,
     facilityId: device?.facility_id,
     onDeviceRows: mergeDeviceFromSnapshots,
-    debouncedRefresh: () => {
-      void loadDeviceDetails();
-    },
+    // Merge-only: full HTTP reload on every device_status caused page flicker.
+    // Reachability arrives on the same device_status channel.
     subscribeUnitsForRefresh: false,
+    refreshOnGatewayStatusChange: false,
   });
 
-  const loadDeviceDetails = async () => {
+  const loadDeviceDetails = async (options?: { silent?: boolean }) => {
     if (!deviceId) return;
 
     try {
-      setLoading(true);
+      if (!options?.silent) {
+        setLoading(true);
+      }
       setError(null);
       
       // First try BluLok details, then fallback to access-control details.
@@ -445,7 +448,9 @@ export default function DeviceDetailsPage() {
         message: error?.response?.data?.message || 'An unexpected error occurred',
       });
     } finally {
-      setLoading(false);
+      if (!options?.silent) {
+        setLoading(false);
+      }
     }
   };
 
@@ -497,11 +502,14 @@ export default function DeviceDetailsPage() {
       refresh: refreshAfterUnlockAttempt,
       requiresTenantOverride:
         deviceCategory === 'blulok'
-        && unitHasTenant({
-          primary_tenant: device.primary_tenant ?? linkedUnitTenantHints?.primary_tenant,
-          shared_tenants: linkedUnitTenantHints?.shared_tenants,
-          tenant_name: linkedUnitTenantHints?.tenant_name,
-        }),
+        && requiresOccupiedUnitOverride(
+          {
+            primary_tenant: device.primary_tenant ?? linkedUnitTenantHints?.primary_tenant,
+            shared_tenants: linkedUnitTenantHints?.shared_tenants,
+            tenant_name: linkedUnitTenantHints?.tenant_name,
+          },
+          authState.user?.id,
+        ),
       unitLabel: device.unit_number,
     });
   }, [
@@ -512,6 +520,7 @@ export default function DeviceDetailsPage() {
     selectedFacility,
     requestUnlock,
     linkedUnitTenantHints,
+    authState.user?.id,
   ]);
 
   const lockWatchCancelRef = useRef<(() => void) | null>(null);
@@ -693,7 +702,7 @@ export default function DeviceDetailsPage() {
   const canManage = ['admin', 'dev_admin', 'facility_admin'].includes(authState.user?.role || '');
   const isDevAdmin = authState.user?.role === UserRole.DEV_ADMIN;
 
-  if (loading) {
+  if (loading && !device) {
     return <DetailsPageLoading />;
   }
 

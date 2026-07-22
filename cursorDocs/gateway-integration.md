@@ -310,7 +310,7 @@ Gateway firmware should maintain a local exclusion set and **omit tombstoned dev
 
 Operational **`DEVICE_DELETED`** traffic is blocked during gateway recovery (same gating as `LOCK`, `ACCESS_CODE_UPDATE`, denylist commands).
 
-On active-gateway **`AUTH_OK`**, the cloud also pushes a full **`DENYLIST_SYNC`** replace snapshot (same per-device shape as inventory `operational_devices`) so restarted gateways reconcile revocation state without waiting for a subsequent inventory POST.
+On active-gateway **`AUTH_OK`**, the cloud **may** push a full **`DENYLIST_SYNC`** replace snapshot (same per-device shape as inventory `operational_devices`) so restarted gateways reconcile revocation state without waiting for a subsequent inventory POST. This is **off by default** (`GATEWAY_DENYLIST_SYNC_ENABLED=true` or `1` to enable) until production gateway firmware has parity; incremental **`DENYLIST_ADD` / `DENYLIST_REMOVE`** and inventory `operational_devices` still apply.
 
 ## Gateway telemetry logs
 

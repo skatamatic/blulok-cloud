@@ -1,6 +1,7 @@
 import { v4 as uuidv4 } from 'uuid';
 import { DatabaseService } from '../services/database.service';
 import { DeviceEventService } from '../services/device-event.service';
+import { diffBluLokStateUpdate } from '../utils/blulok-state-update.utils';
 import { logger } from '../utils/logger';
 
 /**
@@ -838,7 +839,12 @@ export class DeviceModel {
           });
       }
 
-      if (!statusChanged && data.last_activity !== undefined) {
+      if (
+        !statusChanged &&
+        data.last_activity !== undefined &&
+        (before.last_activity == null ||
+          new Date(data.last_activity).getTime() !== new Date(before.last_activity).getTime())
+      ) {
         this.eventService.emitDeviceTelemetryUpdated({
           deviceId,
           gatewayId,
@@ -1148,11 +1154,13 @@ export class DeviceModel {
 
   /**
    * Update BluLok device state with partial data.
-   * Only updates fields that are provided, leaving others unchanged.
-   * 
+   * Writes only fields that differ from the current row. last_activity bumps only when
+   * lock_status changes. WebSocket events fire for real lock/status/telemetry/last_seen
+   * changes (including heartbeat last_seen updates).
+   *
    * @param deviceId - The device ID (can be UUID or serial number)
    * @param updates - Partial state updates to apply
-   * @returns Promise resolving to true if device was found and updated
+   * @returns true if the device was found (even when the patch was a no-op)
    */
   async updateBluLokDeviceState(
     deviceId: string,
@@ -1171,60 +1179,29 @@ export class DeviceModel {
   ): Promise<boolean> {
     const knex = this.db.connection;
 
-    // Build update object with only non-undefined fields
-    const updateData: Record<string, any> = {};
-    
-    if (updates.lock_status !== undefined) {
-      updateData.lock_status = updates.lock_status;
-      updateData.last_activity = new Date();
-    }
-    if (updates.device_status !== undefined) {
-      updateData.device_status = updates.device_status;
-    }
-    if (updates.battery_level !== undefined) {
-      updateData.battery_level = updates.battery_level;
-    }
-    if (updates.signal_strength !== undefined) {
-      updateData.signal_strength = updates.signal_strength;
-    }
-    if (updates.temperature !== undefined) {
-      updateData.temperature = updates.temperature;
-    }
-    if (updates.error_code !== undefined) {
-      updateData.error_code = updates.error_code;
-    }
-    if (updates.error_message !== undefined) {
-      updateData.error_message = updates.error_message;
-    }
-    if (updates.firmware_version !== undefined) {
-      updateData.firmware_version = updates.firmware_version;
-    }
-    if (updates.last_seen !== undefined) {
-      updateData.last_seen = updates.last_seen;
-    }
-    if (updates.serial !== undefined) {
-      updateData.serial = updates.serial;
-    }
+    const selectCols = [
+      'id',
+      'lock_status',
+      'device_status',
+      'gateway_id',
+      'unit_id',
+      'battery_level',
+      'signal_strength',
+      'temperature',
+      'error_code',
+      'error_message',
+      'firmware_version',
+      'last_seen',
+      'serial',
+      'device_serial',
+    ] as const;
 
-    // Always update updated_at
-    updateData.updated_at = new Date();
-
-    // If no meaningful updates, skip
-    if (Object.keys(updateData).length <= 1) {
-      return false;
-    }
-
-    // Get current device state before update for event emission
-    let device = await knex('blulok_devices')
-      .where('id', deviceId)
-      .select('id', 'lock_status', 'device_status', 'gateway_id', 'unit_id', 'battery_level', 'device_serial')
-      .first();
+    let device = await knex('blulok_devices').where('id', deviceId).select(...selectCols).first();
 
     if (!device) {
-      // Try by device_serial
       device = await knex('blulok_devices')
         .where('device_serial', deviceId)
-        .select('id', 'lock_status', 'device_status', 'gateway_id', 'unit_id', 'battery_level', 'device_serial')
+        .select(...selectCols)
         .first();
     }
 
@@ -1232,61 +1209,71 @@ export class DeviceModel {
       return false;
     }
 
-    const oldLockStatus = device.lock_status;
-    const oldDeviceStatus = device.device_status;
+    const diff = diffBluLokStateUpdate(device, updates);
+
+    const oldLockStatus = device.lock_status as BluLokDevice['lock_status'] | null | undefined;
+    const oldDeviceStatus = device.device_status as BluLokDevice['device_status'] | null | undefined;
     const oldBatteryLevel = device.battery_level as number | null | undefined;
 
-    // Apply update
-    await knex('blulok_devices')
-      .where('id', device.id)
-      .update(updateData);
+    const hasDbWrite = Object.keys(diff.changedFields).length > 0;
+    if (hasDbWrite) {
+      const updateData: Record<string, unknown> = {
+        ...diff.changedFields,
+        updated_at: new Date(),
+      };
+      if (diff.lockStatusChanged) {
+        updateData.last_activity = new Date();
+      }
 
-    // Track if any meaningful change was made
+      await knex('blulok_devices').where('id', device.id).update(updateData);
+    }
+
     let statusChanged = false;
 
-    // Emit events for status changes to trigger WebSocket broadcasts
-    if (updates.lock_status && updates.lock_status !== oldLockStatus) {
+    if (diff.lockStatusChanged && updates.lock_status) {
       this.eventService.emitLockStatusChanged({
         deviceId: device.id,
         oldStatus: oldLockStatus || 'unknown',
         newStatus: updates.lock_status,
         gatewayId: device.gateway_id,
-        unitId: device.unit_id
+        unitId: device.unit_id,
       });
       statusChanged = true;
     } else if (
-      (updates.lock_status === 'locked' || updates.lock_status === 'unlocked')
-      && updates.lock_status === oldLockStatus
+      (updates.lock_status === 'locked' || updates.lock_status === 'unlocked') &&
+      updates.lock_status === oldLockStatus
     ) {
       // Mirror access-control: settle pending remote commands even when hardware
       // re-reports the same terminal state (e.g. unlock failed — stayed locked).
-      void import('@/services/lock-command.service').then(({ LockCommandService }) => {
-        const lockCommandService = LockCommandService.getInstance();
-        if (!lockCommandService.hasPendingLockCommand(device.id)) return;
-        this.eventService.emitLockStatusChanged({
-          deviceId: device.id,
-          oldStatus: oldLockStatus || 'unknown',
-          newStatus: updates.lock_status!,
-          gatewayId: device.gateway_id,
-          unitId: device.unit_id,
+      void import('@/services/lock-command.service')
+        .then(({ LockCommandService }) => {
+          const lockCommandService = LockCommandService.getInstance();
+          if (!lockCommandService.hasPendingLockCommand(device.id)) return;
+          this.eventService.emitLockStatusChanged({
+            deviceId: device.id,
+            oldStatus: oldLockStatus || 'unknown',
+            newStatus: updates.lock_status!,
+            gatewayId: device.gateway_id,
+            unitId: device.unit_id,
+          });
+        })
+        .catch((err) => {
+          logger.warn('Failed to settle pending BluLok lock command on unchanged state', err);
         });
-      }).catch((err) => {
-        logger.warn('Failed to settle pending BluLok lock command on unchanged state', err);
-      });
     }
 
-    if (updates.device_status && updates.device_status !== oldDeviceStatus) {
+    if (diff.deviceStatusChanged && updates.device_status) {
       this.eventService.emitDeviceStatusChanged({
         deviceId: device.id,
         deviceType: 'blulok',
         oldStatus: oldDeviceStatus || 'unknown',
         newStatus: updates.device_status,
-        gatewayId: device.gateway_id
+        gatewayId: device.gateway_id,
       });
       statusChanged = true;
     }
 
-    if (updates.battery_level !== undefined) {
+    if (diff.batteryChanged && updates.battery_level !== undefined) {
       void this.maybeNotifyLowBattery(
         device.id,
         device.unit_id,
@@ -1296,22 +1283,15 @@ export class DeviceModel {
       );
     }
 
-    // If no status change but telemetry fields were updated, emit telemetry event
-    // This ensures WebSocket broadcasts happen for battery, signal, temperature updates
-    if (!statusChanged && (
-      updates.battery_level !== undefined ||
-      updates.signal_strength !== undefined ||
-      updates.temperature !== undefined ||
-      updates.error_code !== undefined ||
-      updates.firmware_version !== undefined
-    )) {
+    // Telemetry / last_seen WS when values actually changed (heartbeats included)
+    if (!statusChanged && (diff.telemetryChanged || diff.lastSeenChanged)) {
       this.eventService.emitDeviceTelemetryUpdated({
         deviceId: device.id,
         gatewayId: device.gateway_id,
       });
     }
 
-    return true;
+    return hasDbWrite || statusChanged || diff.telemetryChanged || diff.lastSeenChanged;
   }
 
   /**

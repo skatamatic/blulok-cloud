@@ -91,8 +91,7 @@ export class SimulatedProvider extends BaseFMSProvider {
   }
 
   async fetchTenants(): Promise<FMSTenant[]> {
-    // Throttle for better UI visualization (2 seconds)
-    await new Promise(resolve => setTimeout(resolve, 2000));
+    await this.throttleForUi();
     
     const data = this.readSimulatedData();
     
@@ -107,8 +106,7 @@ export class SimulatedProvider extends BaseFMSProvider {
   }
 
   async fetchUnits(): Promise<FMSUnit[]> {
-    // Throttle for better UI visualization (2 seconds)
-    await new Promise(resolve => setTimeout(resolve, 2000));
+    await this.throttleForUi();
     
     const data = this.readSimulatedData();
     
@@ -120,6 +118,14 @@ export class SimulatedProvider extends BaseFMSProvider {
 
     // Map to our standard format
     return units.map(u => this.mapSimulatedUnit(u));
+  }
+
+  /** Artificial delay for demo UI; skipped under Jest so tests stay fast and race-free. */
+  private async throttleForUi(): Promise<void> {
+    if (process.env.JEST_WORKER_ID != null || process.env.NODE_ENV === 'test') {
+      return;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 2000));
   }
 
   async fetchTenant(externalId: string): Promise<FMSTenant | null> {

@@ -26,7 +26,7 @@ import { SortableTableTh } from '@/components/Common/SortableTableTh';
 import { canRequestRemoteUnlock, isLockTransitionPending } from '@/utils/unitLock.utils';
 import { lockHardwareFeedbackToasts } from '@/utils/lockHardwareFeedback.constants';
 import { useRemoteUnlockAction } from '@/hooks/useRemoteUnlockAction';
-import { unitHasTenant } from '@/constants/tenantUnlockOverride.constants';
+import { requiresOccupiedUnitOverride } from '@/constants/tenantUnlockOverride.constants';
 import { resolveLockTimeoutMsForUnit } from '@/utils/facilityLockTimeout.utils';
 
 const statusColors = {
@@ -284,7 +284,7 @@ export default function UnitsManagementPage() {
         patchUnitLockOptimistic(unit.id, status);
       },
       refresh: refreshAfterUnlockAttempt,
-      requiresTenantOverride: unitHasTenant(unit),
+      requiresTenantOverride: requiresOccupiedUnitOverride(unit, authState.user?.id),
       unitLabel: unit.unit_number,
     });
   };

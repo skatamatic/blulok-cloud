@@ -40,6 +40,17 @@ function waitForMessage(ws: WebSocket, timeoutMs = 3000): Promise<Record<string,
   });
 }
 
+function waitForClose(ws: WebSocket, timeoutMs = 3000): Promise<void> {
+  if (ws.readyState === WebSocket.CLOSED) return Promise.resolve();
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error('timeout waiting for ws close')), timeoutMs);
+    ws.once('close', () => {
+      clearTimeout(timer);
+      resolve();
+    });
+  });
+}
+
 async function authGatewayWs(
   port: number,
   facilityId: string,
@@ -84,8 +95,16 @@ describe('WebsocketGatewayTransport recovery routing', () => {
   });
 
   afterAll((done) => {
-    GatewayEventsService.getInstance().shutdown();
-    server.close(() => done());
+    for (const facilityId of transport.getConnectedFacilityIds()) {
+      transport.forceDisconnectFacility(facilityId, 'test_cleanup');
+    }
+    transport.forceDisconnectGatewayById(BOUND_GATEWAY_ID, 'test_cleanup');
+    transport.forceDisconnectGatewayById(SWAP_GATEWAY_ID, 'test_cleanup');
+    // Let in-flight close handlers settle before tearing down the Jest environment.
+    setTimeout(() => {
+      GatewayEventsService.getInstance().shutdown();
+      server.close(() => done());
+    }, 50);
   });
 
   beforeEach(() => {
@@ -150,18 +169,24 @@ describe('WebsocketGatewayTransport recovery routing', () => {
       try { swapMessages.push(JSON.parse(data.toString())); } catch { /* ignore */ }
     });
 
+    const primaryClosed = waitForClose(primaryWs);
     transport.finalizeRecoverySession('facility-1', SWAP_GATEWAY_ID, BOUND_GATEWAY_ID);
-
-    await new Promise((resolve) => setTimeout(resolve, 100));
+    await primaryClosed;
 
     expect(swapWs.readyState).toBe(WebSocket.OPEN);
     expect(primaryWs.readyState).not.toBe(WebSocket.OPEN);
     expect(transport.getSwapCandidatesForFacility('facility-1')).toEqual([]);
 
-    const roleUpdate = swapMessages.find(
-      (msg) => (msg as { type?: string; sessionRole?: string }).type === 'AUTH_OK'
-        && (msg as { sessionRole?: string }).sessionRole === 'active',
-    );
+    const roleUpdateDeadline = Date.now() + 2000;
+    let roleUpdate: unknown;
+    while (Date.now() < roleUpdateDeadline) {
+      roleUpdate = swapMessages.find(
+        (msg) => (msg as { type?: string; sessionRole?: string }).type === 'AUTH_OK'
+          && (msg as { sessionRole?: string }).sessionRole === 'active',
+      );
+      if (roleUpdate) break;
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
     expect(roleUpdate).toBeTruthy();
 
     const routed: unknown[] = [];
@@ -173,6 +198,7 @@ describe('WebsocketGatewayTransport recovery routing', () => {
     expect(routed.some((msg) => (msg as { cmd_type?: string }).cmd_type === 'LOCK')).toBe(true);
 
     swapWs.close();
+    await waitForClose(swapWs);
   });
 
   it('drops recovery push messages when swap candidate is offline', async () => {

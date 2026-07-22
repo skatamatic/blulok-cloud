@@ -348,6 +348,7 @@ For each element in `updates[]`:
 2. Skip the row if the mapped object is empty (no-op).
 3. Look up device by `lock_id` or `{access_id}::{relay_channel}` on **this gateway**.
 4. If not found → append to `not_found[]` (HTTP still **200**).
+5. **BluLok locks:** compare against the current row and skip the DB write when every provided field is unchanged. When any field **does** change — including heartbeat `last_seen` — persist and emit WebSocket `device_status_update`. `last_activity` is bumped only when `lock_status` actually changes.
 
 **Locks — `online`:**
 
@@ -551,7 +552,7 @@ Use **`online: false`** in state (or inventory) for connectivity loss. Use **inv
 
 ### 6.5 Access codes after inventory
 
-Expect cloud-initiated access-code pushes on active-gateway `AUTH_OK` and after every access inventory sync (including unchanged reconnect payloads). Expect a **`DENYLIST_SYNC`** replace snapshot on the same `AUTH_OK` path (inventory `operational_devices` remains a second reconcile channel). Your gateway should accept code and denylist delivery independently of inventory timing.
+Expect cloud-initiated access-code pushes on active-gateway `AUTH_OK` and after every access inventory sync (including unchanged reconnect payloads). When **`GATEWAY_DENYLIST_SYNC_ENABLED`** is on (default **off**), expect a **`DENYLIST_SYNC`** replace snapshot on the same `AUTH_OK` path (inventory `operational_devices` remains a second reconcile channel). Your gateway should accept code and denylist delivery independently of inventory timing.
 
 ---
 

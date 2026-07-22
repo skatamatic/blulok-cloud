@@ -7,27 +7,43 @@ import { DevicesService } from '@/services/devices.service';
 /**
  * Matches knex chains used by devices.routes (join + select + where + first).
  * Tenant-check tables default to vacant so unlock tests don't trip override enforcement.
+ * Occupant checks include `tenant_id` / `shared_with_user_id` in where — controlled by `isOccupant`.
  */
 function mockKnexChainForFirstRow(
   row: Record<string, unknown>,
-  options?: { hasTenant?: boolean },
+  options?: { hasTenant?: boolean; isOccupant?: boolean },
 ) {
   return jest.fn((table: string) => {
-    const isTenantCheck = table === 'unit_assignments' || table === 'key_sharing';
-    return {
+    const whereArgs: unknown[] = [];
+    const chain: Record<string, unknown> = {
       select: jest.fn().mockReturnThis(),
       join: jest.fn().mockReturnThis(),
-      where: jest.fn().mockReturnThis(),
-      first: jest.fn().mockResolvedValue(
-        isTenantCheck
-          ? (options?.hasTenant ? { id: 'assignment-1' } : null)
-          : row,
-      ),
+      where: jest.fn((...args: unknown[]) => {
+        whereArgs.push(...args);
+        return chain;
+      }),
+      first: jest.fn().mockImplementation(() => {
+        if (table === 'unit_assignments' || table === 'key_sharing') {
+          const hasUserFilter = whereArgs.some(
+            (arg) =>
+              arg
+              && typeof arg === 'object'
+              && !Array.isArray(arg)
+              && ('tenant_id' in (arg as object) || 'shared_with_user_id' in (arg as object)),
+          );
+          if (hasUserFilter) {
+            return Promise.resolve(options?.isOccupant ? { id: 'occupant-1' } : null);
+          }
+          return Promise.resolve(options?.hasTenant ? { id: 'assignment-1' } : null);
+        }
+        return Promise.resolve(row);
+      }),
       whereIn: jest.fn().mockReturnThis(),
       orderBy: jest.fn().mockReturnThis(),
       limit: jest.fn().mockReturnThis(),
       offset: jest.fn().mockReturnThis(),
     };
+    return chain;
   });
 }
 
@@ -994,7 +1010,7 @@ describe('Devices Routes', () => {
         expectBadRequest(response);
       });
 
-      it('should require tenant override reason when unit has a tenant', async () => {
+      it('allows unlock without override when override is optional', async () => {
         mockDeviceModel.db.connection = mockKnexChainForFirstRow(
           { unit_id: testData.units.unit1.id },
           { hasTenant: true },
@@ -1007,13 +1023,62 @@ describe('Devices Routes', () => {
           .put('/api/v1/devices/blulok/device-1/lock')
           .set('Authorization', `Bearer ${testData.users.admin.token}`)
           .send(validLockData)
+          .expect(200);
+
+        expectSuccess(response);
+        expect(__mocks.issueLockCommandMock).toHaveBeenCalledWith(
+          'device-1',
+          'unlocked',
+          expect.objectContaining({ userId: expect.any(String) }),
+          { tenantUnlockOverride: undefined },
+        );
+      });
+
+      it('rejects invalid tenant_override_reason when provided', async () => {
+        mockDeviceModel.db.connection = mockKnexChainForFirstRow(
+          { unit_id: testData.units.unit1.id },
+          { hasTenant: true },
+        );
+        mockUnitsService.hasUserAccessToUnit.mockResolvedValueOnce(true);
+        const { __mocks } = require('@/services/lock-command.service');
+        __mocks.issueLockCommandMock.mockClear();
+
+        const response = await request(app)
+          .put('/api/v1/devices/blulok/device-1/lock')
+          .set('Authorization', `Bearer ${testData.users.admin.token}`)
+          .send({
+            lock_status: 'unlocked',
+            tenant_override_reason: 'not-a-real-reason',
+          })
           .expect(400);
 
-        expect(response.body).toMatchObject({
-          success: false,
-          code: 'TENANT_UNLOCK_OVERRIDE_REQUIRED',
-        });
+        // Joi may reject before route logic; either way unlock must not proceed.
+        expect(response.body.success).toBe(false);
         expect(__mocks.issueLockCommandMock).not.toHaveBeenCalled();
+      });
+
+      it('should unlock without override when caller is unit occupant', async () => {
+        mockDeviceModel.db.connection = mockKnexChainForFirstRow(
+          { unit_id: testData.units.unit1.id },
+          { hasTenant: true, isOccupant: true },
+        );
+        mockUnitsService.hasUserAccessToUnit.mockResolvedValueOnce(true);
+        const { __mocks } = require('@/services/lock-command.service');
+        __mocks.issueLockCommandMock.mockClear();
+
+        const response = await request(app)
+          .put('/api/v1/devices/blulok/device-1/lock')
+          .set('Authorization', `Bearer ${testData.users.tenant.token}`)
+          .send(validLockData)
+          .expect(200);
+
+        expectSuccess(response);
+        expect(__mocks.issueLockCommandMock).toHaveBeenCalledWith(
+          'device-1',
+          'unlocked',
+          expect.objectContaining({ userId: expect.any(String) }),
+          { tenantUnlockOverride: undefined },
+        );
       });
 
       it('should unlock with valid tenant override and pass it to LockCommandService', async () => {

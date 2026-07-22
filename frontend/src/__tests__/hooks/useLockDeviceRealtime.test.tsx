@@ -81,6 +81,32 @@ describe('useLockDeviceRealtime', () => {
     ]);
   });
 
+  it('unwraps full WS envelopes before merging device rows', () => {
+    const onDeviceRows = jest.fn();
+    render(
+      <TestHarness deviceId="dev-1" onDeviceRows={onDeviceRows} subscribeUnitsForRefresh={false} />
+    );
+
+    const handler = mockSubscribe.mock.calls.find((c) => c[0] === 'device_status')?.[1] as (
+      msg: unknown
+    ) => void;
+
+    act(() => {
+      handler({
+        type: 'device_status_update',
+        data: { devices: [{ id: 'dev-1', lock_status: 'locked', last_seen: '2026-07-22T16:00:00Z' }] },
+      });
+    });
+
+    expect(onDeviceRows).toHaveBeenCalledWith([
+      expect.objectContaining({
+        device_id: 'dev-1',
+        lock_status: 'locked',
+        last_seen: '2026-07-22T16:00:00Z',
+      }),
+    ]);
+  });
+
   it('subscribes to gateway_status when facilityId and debouncedRefresh are set', () => {
     render(
       <TestHarness
@@ -164,6 +190,65 @@ describe('useLockDeviceRealtime', () => {
     debounceRefreshFilter.mockReturnValue(true);
     act(() => {
       handler({ devices: [{ id: 'x' }] });
+    });
+    act(() => {
+      jest.advanceTimersByTime(400);
+    });
+
+    expect(debouncedRefresh).toHaveBeenCalled();
+  });
+
+  it('skips debouncedRefresh only when onDeviceRows returns true', () => {
+    const onDeviceRows = jest.fn().mockReturnValue(true);
+    const debouncedRefresh = jest.fn();
+
+    render(
+      <TestHarness
+        deviceId="dev-1"
+        onDeviceRows={onDeviceRows}
+        debouncedRefresh={debouncedRefresh}
+        skipDebouncedRefreshWhenDeviceRowsApplied
+        subscribeUnitsForRefresh={false}
+        debounceMs={400}
+      />
+    );
+
+    const handler = mockSubscribe.mock.calls.find((c) => c[0] === 'device_status')?.[1] as (
+      msg: unknown
+    ) => void;
+
+    act(() => {
+      handler({ devices: [{ id: 'dev-1', lock_status: 'locked' }] });
+    });
+    act(() => {
+      jest.advanceTimersByTime(400);
+    });
+
+    expect(onDeviceRows).toHaveBeenCalled();
+    expect(debouncedRefresh).not.toHaveBeenCalled();
+  });
+
+  it('still refreshes when onDeviceRows returns false with skip flag set', () => {
+    const onDeviceRows = jest.fn().mockReturnValue(false);
+    const debouncedRefresh = jest.fn();
+
+    render(
+      <TestHarness
+        deviceId="dev-1"
+        onDeviceRows={onDeviceRows}
+        debouncedRefresh={debouncedRefresh}
+        skipDebouncedRefreshWhenDeviceRowsApplied
+        subscribeUnitsForRefresh={false}
+        debounceMs={400}
+      />
+    );
+
+    const handler = mockSubscribe.mock.calls.find((c) => c[0] === 'device_status')?.[1] as (
+      msg: unknown
+    ) => void;
+
+    act(() => {
+      handler({ devices: [{ id: 'dev-1', lock_status: 'locked' }] });
     });
     act(() => {
       jest.advanceTimersByTime(400);

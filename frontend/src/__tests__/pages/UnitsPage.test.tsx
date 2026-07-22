@@ -134,8 +134,13 @@ describe('UnitsPage', () => {
     });
 
     expect(mockGetUnits).toHaveBeenCalled();
-    expect(mockSubscribe).toHaveBeenCalledWith('device_status', expect.any(Function), undefined, undefined);
-    expect(mockSubscribe).toHaveBeenCalledWith('units', expect.any(Function), undefined);
+    expect(mockSubscribe).toHaveBeenCalledWith(
+      'device_status',
+      expect.any(Function),
+      undefined,
+      { facility_id: 'fac-1' },
+    );
+    expect(mockSubscribe).toHaveBeenCalledWith('gateway_status', expect.any(Function), undefined);
   });
 
   it('uses getMyUnits for tenants', async () => {

@@ -1,6 +1,11 @@
 /**
- * Normalized row from a `device_status_update` payload (after context unwraps `message.data`).
+ * Normalized row from a `device_status_update` payload.
  * Gateways push lock/telemetry through the cloud → same shape for all clients.
+ *
+ * Handlers may receive either:
+ * - `{ devices: [...] }` (already unwrapped `message.data`), or
+ * - the full WS envelope `{ type: 'device_status_update', data: { devices: [...] } }`
+ *   (see `websocket.service` `handleDeviceStatusUpdate`).
  */
 export interface LockDeviceSnapshot {
   device_id?: string;
@@ -23,14 +28,32 @@ export interface LockDeviceSnapshot {
   last_seen?: string;
 }
 
+/** Unwrap full WS envelopes so callers can pass either shape. */
+export function unwrapDeviceStatusPayload(raw: unknown): Record<string, unknown> | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const outer = raw as Record<string, unknown>;
+
+  if (
+    Array.isArray(outer.devices) ||
+    typeof outer.updatedDeviceId === 'string' ||
+    outer.source === 'units_update'
+  ) {
+    return outer;
+  }
+
+  if (outer.data && typeof outer.data === 'object') {
+    return outer.data as Record<string, unknown>;
+  }
+
+  return outer;
+}
+
 /**
  * Parse server `device_status_update` data: `{ devices: [...] }`.
  */
 export function normalizeDeviceStatusWsPayload(data: unknown): LockDeviceSnapshot[] {
-  if (!data || typeof data !== 'object') return [];
-  const d = data as Record<string, unknown>;
-
-  if (!Array.isArray(d.devices)) return [];
+  const d = unwrapDeviceStatusPayload(data);
+  if (!d || !Array.isArray(d.devices)) return [];
 
   return (d.devices as Record<string, unknown>[]).map((device) => ({
       device_id: typeof device.id === 'string' ? device.id : undefined,
@@ -84,9 +107,9 @@ export function shouldRefreshDeviceListForPayload(
   relevantIds: ReadonlySet<string>
 ): boolean {
   if (relevantIds.size === 0) return true;
-  if (!payload || typeof payload !== 'object') return true;
 
-  const p = payload as Record<string, unknown>;
+  const p = unwrapDeviceStatusPayload(payload);
+  if (!p) return true;
 
   if (p.source === 'units_update') return true;
 
@@ -105,4 +128,96 @@ export function shouldRefreshDeviceListForPayload(
   }
 
   return relevantIds.size === 0;
+}
+
+/** Minimal unit row fields updated from live lock telemetry. */
+export type UnitLockRealtimeFields = {
+  id: string;
+  lock_status?: string | null;
+  battery_level?: number | null;
+  signal_strength?: number | null;
+  last_activity?: string | null;
+  last_seen?: string | null;
+  device_status?: string | null;
+  blulok_device?: {
+    id?: string;
+    lock_status?: string;
+    device_status?: string | null;
+    battery_level?: number | null;
+    signal_strength?: number | null;
+    last_activity?: string | null;
+    last_seen?: string | null;
+    firmware_version?: string | null;
+  } | null;
+};
+
+/**
+ * Merge device_status snapshots into unit rows (Units Manager / units lists).
+ * Returns the same array reference when nothing changed.
+ */
+export function mergeUnitRowsFromDeviceSnapshots<T extends UnitLockRealtimeFields>(
+  units: T[],
+  rows: LockDeviceSnapshot[],
+): T[] {
+  if (!rows.length || !units.length) return units;
+
+  let changed = false;
+  const next = units.map((unit) => {
+    const deviceId = unit.blulok_device?.id;
+    const snap =
+      (deviceId ? rows.find((r) => r.device_id === deviceId) : undefined)
+      ?? rows.find((r) => r.unit_id === unit.id);
+    if (!snap) return unit;
+
+    const nextLock = snap.lock_status ?? unit.lock_status ?? unit.blulok_device?.lock_status;
+    const nextDeviceStatus =
+      snap.device_status ?? unit.device_status ?? unit.blulok_device?.device_status;
+    const nextBattery =
+      snap.battery_level !== undefined
+        ? snap.battery_level
+        : (unit.blulok_device?.battery_level ?? unit.battery_level);
+    const nextSignal =
+      snap.signal_strength !== undefined
+        ? snap.signal_strength
+        : (unit.blulok_device?.signal_strength ?? unit.signal_strength);
+    const nextActivity = snap.last_activity ?? unit.last_activity ?? unit.blulok_device?.last_activity;
+    const nextSeen = snap.last_seen ?? unit.blulok_device?.last_seen;
+    const nextFirmware =
+      snap.firmware_version ?? unit.blulok_device?.firmware_version ?? undefined;
+
+    const same =
+      nextLock === (unit.lock_status ?? unit.blulok_device?.lock_status)
+      && nextDeviceStatus === (unit.device_status ?? unit.blulok_device?.device_status)
+      && nextBattery === (unit.blulok_device?.battery_level ?? unit.battery_level)
+      && nextSignal === (unit.blulok_device?.signal_strength ?? unit.signal_strength)
+      && nextActivity === (unit.last_activity ?? unit.blulok_device?.last_activity)
+      && nextSeen === unit.blulok_device?.last_seen
+      && nextFirmware === unit.blulok_device?.firmware_version;
+
+    if (same) return unit;
+    changed = true;
+
+    return {
+      ...unit,
+      ...(nextLock !== undefined ? { lock_status: nextLock } : {}),
+      ...(nextDeviceStatus !== undefined ? { device_status: nextDeviceStatus } : {}),
+      ...(nextBattery !== undefined ? { battery_level: nextBattery } : {}),
+      ...(nextSignal !== undefined ? { signal_strength: nextSignal } : {}),
+      ...(nextActivity !== undefined ? { last_activity: nextActivity } : {}),
+      blulok_device: unit.blulok_device
+        ? {
+            ...unit.blulok_device,
+            ...(nextLock !== undefined ? { lock_status: nextLock } : {}),
+            ...(nextDeviceStatus !== undefined ? { device_status: nextDeviceStatus } : {}),
+            ...(nextBattery !== undefined ? { battery_level: nextBattery } : {}),
+            ...(nextSignal !== undefined ? { signal_strength: nextSignal } : {}),
+            ...(nextActivity !== undefined ? { last_activity: nextActivity } : {}),
+            ...(nextSeen !== undefined ? { last_seen: nextSeen } : {}),
+            ...(nextFirmware !== undefined ? { firmware_version: nextFirmware } : {}),
+          }
+        : unit.blulok_device,
+    };
+  });
+
+  return changed ? next : units;
 }

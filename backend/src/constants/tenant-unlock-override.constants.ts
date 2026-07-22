@@ -17,6 +17,14 @@ export const TENANT_UNLOCK_OVERRIDE_REASONS = [
   },
 ] as const;
 
+/**
+ * When true, staff remote unlock of an occupied unit must include
+ * `tenant_override_reason` (400 TENANT_UNLOCK_OVERRIDE_REQUIRED otherwise).
+ * Keep false until mobile apps ship the override UX; when false, unlocks
+ * succeed without override metadata and on-ground intent remains optional.
+ */
+export const OCCUPIED_UNIT_OVERRIDE_REQUIRED = false;
+
 export type TenantUnlockOverrideReasonCode =
   (typeof TENANT_UNLOCK_OVERRIDE_REASONS)[number]['code'];
 

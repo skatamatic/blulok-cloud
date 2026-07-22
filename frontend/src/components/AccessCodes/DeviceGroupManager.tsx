@@ -106,6 +106,7 @@ export function DeviceGroupManager({
   const [pushState, setPushState] = useState<{
     status: string;
     last_error: string | null;
+    updated_at?: string;
   } | null>(null);
   const [effectiveCodes, setEffectiveCodes] = useState<EffectiveAccessCode[]>([]);
   const [selectedDeviceId, setSelectedDeviceId] = useState('');
@@ -427,7 +428,18 @@ export function DeviceGroupManager({
       ]);
       if (facilityIdRef.current !== facilityId) return;
       setEffectiveCodes(effectiveList.data || []);
-      setPushState(pushStateResp.data || null);
+      setPushState(
+        pushStateResp.data
+          ? {
+              status: pushStateResp.data.status,
+              last_error: pushStateResp.data.last_error ?? null,
+              updated_at:
+                pushStateResp.data.updated_at instanceof Date
+                  ? pushStateResp.data.updated_at.toISOString()
+                  : pushStateResp.data.updated_at,
+            }
+          : null,
+      );
     } catch (error) {
       console.error(error);
     }
@@ -465,14 +477,26 @@ export function DeviceGroupManager({
     facility_id: string;
     status: string;
     last_error: string | null;
+    updated_at?: string;
     refresh_effective_codes?: boolean;
   }>(
     'access_code_push_state',
     (payload) => {
       if (payload.facility_id && payload.facility_id !== facilityId) return;
-      setPushState({
-        status: payload.status,
-        last_error: payload.last_error,
+      setPushState((prev) => {
+        // Ignore out-of-order WS frames (timeout error arriving after a newer pending/active).
+        if (prev?.updated_at && payload.updated_at) {
+          const prevTs = Date.parse(prev.updated_at);
+          const nextTs = Date.parse(payload.updated_at);
+          if (Number.isFinite(prevTs) && Number.isFinite(nextTs) && nextTs < prevTs) {
+            return prev;
+          }
+        }
+        return {
+          status: payload.status,
+          last_error: payload.last_error,
+          updated_at: payload.updated_at,
+        };
       });
       if (payload.refresh_effective_codes) {
         scheduleEffectiveCodesRefresh();

@@ -65,6 +65,8 @@ export class WebsocketGatewayTransport implements GatewayTransport {
   private facilityToClient = new Map<string, AuthedClient>();
   /** Parked swap-candidate sessions keyed by `${facilityId}:${gatewayId}` */
   private swapCandidates = new Map<string, AuthedClient>();
+  /** When true, skip async disconnect side-effects (imports) during teardown. */
+  private shuttingDown = false;
   /** When set, recovery-related unicast routes to the swap candidate WS */
   private recoveryPushGatewayByFacility = new Map<string, string>();
   private readonly path = '/ws/gateway';
@@ -695,9 +697,9 @@ export class WebsocketGatewayTransport implements GatewayTransport {
     }
   }
 
-  /**
-   * After AUTH_OK for the active (bound) gateway: full access-code + denylist snapshots
-   * and pending device-deletion tombstones. Gateways may have empty local state after restart.
+  /** After AUTH_OK for the active (bound) gateway: full access-code snapshot,
+   * optional denylist snapshot (GATEWAY_DENYLIST_SYNC_ENABLED), and pending
+   * device-deletion tombstones. Gateways may have empty local state after restart.
    */
   private scheduleActiveSessionCommandFlush(facilityId: string): void {
     import('@/services/access-code.service')
@@ -783,6 +785,10 @@ export class WebsocketGatewayTransport implements GatewayTransport {
 
     const closeAndCleanup = (reason = 'socket_closed') => {
       clearFramePingTimer();
+      if (this.shuttingDown) {
+        try { ws.terminate(); } catch { /* ignore */ }
+        return;
+      }
       if (authed) {
         const remote = getRemoteAddress(ws);
         if (authed.sessionRole === 'swap_candidate' && authed.gatewayId) {
@@ -1789,19 +1795,27 @@ export class WebsocketGatewayTransport implements GatewayTransport {
    * Stops heartbeat timer and closes all connections.
    */
   public shutdown(): void {
+    this.shuttingDown = true;
     if (this.heartbeatTimer) {
       clearInterval(this.heartbeatTimer);
       this.heartbeatTimer = undefined;
     }
-    // Close all WebSocket connections
-    for (const client of this.facilityToClient.values()) {
+    const terminateClient = (client: AuthedClient) => {
       try {
         if (client.ws.readyState === WebSocket.OPEN || client.ws.readyState === WebSocket.CONNECTING) {
           client.ws.terminate();
         }
-      } catch {}
+      } catch { /* ignore */ }
+    };
+    for (const client of this.facilityToClient.values()) {
+      terminateClient(client);
     }
     this.facilityToClient.clear();
+    for (const client of this.swapCandidates.values()) {
+      terminateClient(client);
+    }
+    this.swapCandidates.clear();
+    this.recoveryPushGatewayByFacility.clear();
     if (this.wss) {
       this.wss.close();
       this.wss = undefined;

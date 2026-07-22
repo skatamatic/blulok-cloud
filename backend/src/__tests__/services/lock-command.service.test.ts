@@ -328,7 +328,7 @@ describe('LockCommandService', () => {
 
     expect(svc.peekCommandAttribution('dev-1')).not.toBeNull();
 
-    await jest.advanceTimersByTimeAsync(300_000);
+    await jest.advanceTimersByTimeAsync(60_000);
 
     expect(svc.peekCommandAttribution('dev-1')).toBeNull();
   });

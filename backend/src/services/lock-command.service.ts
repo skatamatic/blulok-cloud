@@ -4,6 +4,7 @@ import { logger } from '@/utils/logger';
 import { lockCommandTimeoutMs } from '@/utils/facility-lock-timeout.utils';
 import { resolveRemoteAccessMethod } from '@/utils/access-history-remote.utils';
 import { ONE_SHOT_ATTRIBUTION_TTL_SEC } from '@/constants/lock-command.constants';
+import { randomUUID } from 'crypto';
 
 type LockStatus =
   | 'locked'
@@ -21,6 +22,7 @@ export interface LockCommandInitiator {
 }
 
 export interface LockCommandAttribution {
+  commandId: string;
   initiator: LockCommandInitiator;
   gatewayId: string;
   facilityId: string;
@@ -34,6 +36,7 @@ export interface LockCommandAttribution {
 }
 
 interface PendingLockCommand {
+  commandId: string;
   deviceId: string;
   previousStatus: LockStatus;
   requestedStatus: 'locked' | 'unlocked';
@@ -178,7 +181,7 @@ export class LockCommandService {
       await this.deviceModel.updateLockStatus(deviceId, transitionalStatus);
     }
 
-    this.clearPending(deviceId);
+    this.clearPendingWithSupersede(deviceId);
 
     try {
       const command: 'OPEN' | 'CLOSE' =
@@ -419,7 +422,7 @@ export class LockCommandService {
       return { success: false, message: 'Failed to send lock command to gateway' };
     }
 
-    this.clearPending(deviceId);
+    this.clearPendingWithSupersede(deviceId);
 
     if (!hasLockFeedback) {
       try {
@@ -560,6 +563,7 @@ export class LockCommandService {
       return null;
     }
     return {
+      commandId: pending.commandId,
       initiator: pending.initiator,
       gatewayId: pending.gatewayId,
       facilityId: pending.facilityId,
@@ -569,6 +573,30 @@ export class LockCommandService {
     };
   }
 
+  /**
+   * Atomically consume pending attribution when settlement matches.
+   * Returns null if commandId/status do not match (prevents TOCTOU mis-binding).
+   */
+  public tryConsumeAttribution(
+    deviceId: string,
+    expected: { commandId: string; requestedStatus: 'locked' | 'unlocked' },
+  ): LockCommandAttribution | null {
+    const pending = this.pendingCommands.get(deviceId);
+    if (!pending?.initiator) {
+      return null;
+    }
+    if (pending.commandId !== expected.commandId) {
+      return null;
+    }
+    if (pending.requestedStatus !== expected.requestedStatus) {
+      return null;
+    }
+    const attribution = this.peekCommandAttribution(deviceId);
+    this.clearPending(deviceId);
+    return attribution;
+  }
+
+  /** @deprecated Prefer tryConsumeAttribution for TOCTOU-safe settlement. */
   public acknowledgeCommandAttribution(deviceId: string): void {
     this.clearPending(deviceId);
   }
@@ -594,8 +622,31 @@ export class LockCommandService {
     }
   }
 
-  private storePendingAttribution(params: PendingLockCommand): void {
-    this.pendingCommands.set(params.deviceId, params);
+  private storePendingAttribution(params: Omit<PendingLockCommand, 'commandId'> & { commandId?: string }): void {
+    const commandId = params.commandId ?? randomUUID();
+    this.pendingCommands.set(params.deviceId, { ...params, commandId });
+  }
+
+  /**
+   * Clear any prior pending command. If an initiator was waiting, log a superseded failure
+   * so attribution cannot silently transfer to a later unlock.
+   */
+  private clearPendingWithSupersede(deviceId: string): void {
+    const pending = this.pendingCommands.get(deviceId);
+    if (pending?.initiator) {
+      this.recordCommandFailure({
+        facilityId: pending.facilityId,
+        deviceId,
+        unitId: pending.unitId,
+        gatewayId: pending.gatewayId,
+        requestedStatus: pending.requestedStatus,
+        errorMessage: 'Remote command superseded by a newer remote command',
+        initiator: pending.initiator,
+        deviceType: pending.deviceType,
+        tenantUnlockOverride: pending.tenantUnlockOverride,
+      });
+    }
+    this.clearPending(deviceId);
   }
 
   private recordCommandFailure(params: {

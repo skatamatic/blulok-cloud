@@ -29,6 +29,25 @@ jest.mock('@/hooks/useLockDeviceRealtime', () => ({
   useLockDeviceRealtime: jest.fn(),
 }));
 
+jest.mock('@/contexts/AuthContext', () => ({
+  ...jest.requireActual('@/contexts/AuthContext'),
+  useAuth: () => ({
+    authState: {
+      user: {
+        id: 'user-1',
+        email: 'test@example.com',
+        firstName: 'Test',
+        lastName: 'User',
+        role: 'admin' as const,
+        facilities: [],
+      },
+      isAuthenticated: true,
+    },
+    login: jest.fn(),
+    logout: jest.fn(),
+  }),
+}));
+
 jest.mock('@/contexts/GlobalFacilityContext', () => ({
   ...jest.requireActual('@/contexts/GlobalFacilityContext'),
   useGlobalFacility: jest.fn(),
@@ -128,6 +147,25 @@ describe('UnitsManagerWidget', () => {
     mockGetUnits.mockResolvedValue(sampleUnits);
     mockGetUnitAccessHistory.mockResolvedValue({ logs: [] });
     mockUpdateLockStatus.mockResolvedValue({ success: true });
+  });
+
+  it('registers live device merge and skips units_update HTTP spam', async () => {
+    const { useLockDeviceRealtime } = jest.requireMock('@/hooks/useLockDeviceRealtime') as {
+      useLockDeviceRealtime: jest.Mock;
+    };
+    renderWidget();
+    await waitFor(() => {
+      expect(screen.getByText(/Unit A-101/)).toBeInTheDocument();
+    });
+
+    expect(useLockDeviceRealtime).toHaveBeenCalledWith(
+      expect.objectContaining({
+        onDeviceRows: expect.any(Function),
+        subscribeUnitsForRefresh: false,
+        skipDebouncedRefreshWhenDeviceRowsApplied: true,
+        debouncedRefresh: expect.any(Function),
+      }),
+    );
   });
 
   it('renders rows with unit, tenant, and lock badge', async () => {

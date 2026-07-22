@@ -21,16 +21,24 @@ BluLok Cloud uses **two separate mechanisms**. Choosing the wrong one produces m
 | **Cloud-initiated remote LOCK/UNLOCK** (JWT from cloud) | Confirm final state via `POST /devices/state` only | `lock` / `unlock` (attributed to initiating user) | `lock` / `unlock` with `remote_gateway` / `admin_remote` |
 | **Admin remote open** (operator override at gateway) | `POST /access-events` with `admin_remote_open` | `access_attempt` | Shown as admin remote open |
 
-### Tenant-unit remote unlock override
+### Tenant-unit unlock override (Occupied Unit Override)
 
-When a BluLok lock is assigned to a unit that has a tenant (primary/shared assignment or active key share), cloud **requires** a structured override before accepting remote **unlock**:
+When a BluLok lock is assigned to a unit that has a tenant (primary/shared assignment or active key share):
 
-| Body field | Required when unit has tenant | Values |
-|------------|-------------------------------|--------|
-| `tenant_override_reason` | Yes (unlock only) | `tenant_locked_phone`, `emergency`, `testing_maintenance` |
+| Caller | Path | Override |
+|--------|------|----------|
+| Occupant or key-share recipient | Cloud remote `PUT …/lock` **or** BLE unlock | **Not applicable** |
+| Staff / other non-occupant | Cloud remote | Optional body: `tenant_override_reason` (+ optional `tenant_override_notes`) |
+| Staff / other non-occupant | On-ground BLE | Optional `POST …/blulok/:id/occupied-unit-override` then unlock within TTL |
+
+**Current policy:** override is optional (`OCCUPIED_UNIT_OVERRIDE_REQUIRED = false`). Omitting reason fields does not block unlock. When the flag is re-enabled, missing staff reason on remote unlock → `400` with `code: TENANT_UNLOCK_OVERRIDE_REQUIRED`. See [`app-occupied-unit-override.md`](./app-occupied-unit-override.md).
+
+| Body field (remote) | Required when staff unlocks occupied unit | Values |
+|---------------------|-------------------------------------------|--------|
+| `tenant_override_reason` | Only when `OCCUPIED_UNIT_OVERRIDE_REQUIRED` | `tenant_locked_phone`, `emergency`, `testing_maintenance` |
 | `tenant_override_notes` | No | Free text (max 500) |
 
-Missing reason → `400` with `code: TENANT_UNLOCK_OVERRIDE_REQUIRED`. On success (and on failed/timed-out unlock attempts), Access History shows the initiating user plus **Unlock reason** / optional **Notes** from activity metadata `tenant_unlock_override`. The UI keeps the reason dialog open until unlock succeeds, and re-opens it if the API returns `TENANT_UNLOCK_OVERRIDE_REQUIRED`.
+On success (and on failed/timed-out remote unlock attempts), Access History shows the initiating user plus **Unlock reason** / optional **Notes** from activity metadata `tenant_unlock_override` **when provided**. On-ground intents are single-use and expire (~60s); gateway may echo `metadata.occupied_unlock_intent_id` on access-events for stricter binding. Intent registration is not required for BLE unlock to succeed. Only on-ground access methods (`app`, `mobile_key`, `route_pass`) consume an occupied unlock intent — not `admin_remote_open`.
 
 ```mermaid
 flowchart LR
@@ -134,10 +142,10 @@ Use this when the **physical lock state** changes. Do **not** send `access-event
 
 ### How remote-command attribution works
 
-1. `PUT /devices/blulok/:id/lock` and `PUT /devices/access-control/:id/lock` always pass the authenticated user into `LockCommandService` as the **initiator** (tenant unlock override is optional metadata on BluLok unlock only).
-2. After the gateway accepts the JWT, cloud keeps a **pending attribution** entry keyed by device id (initiator, requested status, optional override).
-3. When `devices/state` reports a terminal `locked` / `unlocked` (including a re-report of the same state), cloud stamps Access History with that user (`remote_gateway` / `admin_remote`). Opposite state → `access_attempt` failure.
-4. Pending entries always have a TTL: facility `lock_command_timeout_sec`, or for one-shot (`0`) a fixed attribution TTL (`ONE_SHOT_ATTRIBUTION_TTL_SEC`) so stale pending cannot mis-attribute later local events.
+1. `PUT /devices/blulok/:id/lock` and `PUT /devices/access-control/:id/lock` always pass the authenticated user into `LockCommandService` as the **initiator** (Occupied Unit Override metadata only when a non-occupant unlocks an occupied BluLok unit — see [`app-occupied-unit-override.md`](./app-occupied-unit-override.md)).
+2. After the gateway accepts the JWT, cloud keeps a **pending attribution** entry keyed by device id (`commandId`, initiator, requested status, optional override).
+3. When `devices/state` reports a **real transition** to terminal `locked` / `unlocked` matching the request, cloud stamps Access History with that user (`remote_gateway` / `admin_remote`). Opposite state → `access_attempt` failure. Same-state re-reports do not success-consume pending attribution.
+4. Pending entries always have a TTL: facility `lock_command_timeout_sec`, or for one-shot (`0`) a fixed **60s** attribution TTL so stale pending cannot mis-attribute later local events.
 
 **Deployment note:** pending attribution is **process-local memory** (same class as inbound gateway WebSocket affinity). On multi-instance Cloud Run without sticky routing, command and state sync can land on different instances and attribution is lost → event may show as `local_device`. Prefer max-instances=1 or session affinity until a shared store exists.
 

@@ -167,7 +167,7 @@ export class AccessCodeService {
 
   public handleGatewayAccessCodeUpdateAck(
     facilityId: string,
-    ack: { nonce?: string; accepted?: boolean; message?: string },
+    ack: { nonce?: string; accepted?: boolean; success?: boolean; message?: string },
   ): void {
     const nonce = String(ack?.nonce || '');
     if (!nonce) return;
@@ -176,30 +176,13 @@ export class AccessCodeService {
     clearTimeout(pending.timer);
     this.pendingPushAcksByNonce.delete(nonce);
 
-    const scheduleOutboxRetry = (error?: string) => {
-      if (!pending.outboxId) return;
-      void this.pushOutbox
-        .findById(pending.outboxId)
-        .then(async (row) => {
-          if (!row) return;
-          await this.pushOutbox.scheduleRetry(
-            pending.outboxId!,
-            error || 'gateway rejected ACCESS_CODE_UPDATE',
-            row.attempt_count,
-          );
-        })
-        .catch((err) => {
-          logger.warn('[AccessCodePush] Failed to schedule outbox retry after NACK', err);
-        });
-    };
-
-    if (ack?.accepted === true) {
+    const accepted = ack?.accepted === true || ack?.success === true;
+    if (accepted) {
       pending.resolve();
       return;
     }
+
     const reason = ack?.message || 'gateway rejected ACCESS_CODE_UPDATE';
-    this.setPushState(facilityId, 'error', reason, nonce);
-    scheduleOutboxRetry(reason);
     pending.reject(new AccessCodePushDeliveryError(reason));
   }
 
@@ -213,18 +196,6 @@ export class AccessCodeService {
       const timer = setTimeout(() => {
         this.pendingPushAcksByNonce.delete(nonce);
         const message = `timed out waiting for gateway acceptance (nonce=${nonce})`;
-        this.setPushState(facilityId, 'error', message, nonce);
-        if (outboxId) {
-          void this.pushOutbox
-            .findById(outboxId)
-            .then(async (row) => {
-              if (!row) return;
-              await this.pushOutbox.scheduleRetry(outboxId, message, row.attempt_count);
-            })
-            .catch((err) => {
-              logger.warn('[AccessCodePush] Failed to schedule outbox retry after timeout', err);
-            });
-        }
         reject(new AccessCodePushDeliveryError(message));
       }, timeoutMs);
       this.pendingPushAcksByNonce.set(nonce, {
@@ -235,6 +206,40 @@ export class AccessCodeService {
         timer,
       });
     });
+  }
+
+  /**
+   * Record a failed delivery: keep UI on `pending` while retries remain so transient
+   * ACK timeouts don't flash a hard error badge. Only `dead_letter` becomes `error`.
+   */
+  private async recordPushDeliveryFailure(
+    facilityId: string,
+    nonce: string,
+    message: string,
+    outboxId?: string,
+  ): Promise<void> {
+    if (!outboxId) {
+      this.setPushState(facilityId, 'error', message, nonce);
+      return;
+    }
+
+    try {
+      const row = await this.pushOutbox.findById(outboxId);
+      if (!row) {
+        this.setPushState(facilityId, 'error', message, nonce);
+        return;
+      }
+      const nextStatus = await this.pushOutbox.scheduleRetry(outboxId, message, row.attempt_count);
+      if (nextStatus === 'dead_letter') {
+        this.setPushState(facilityId, 'error', message, nonce);
+      } else {
+        // Retries remaining — stay pending (last_error kept for support diagnostics).
+        this.setPushState(facilityId, 'pending', message, nonce);
+      }
+    } catch (err) {
+      logger.warn('[AccessCodePush] Failed to schedule outbox retry after delivery failure', err);
+      this.setPushState(facilityId, 'error', message, nonce);
+    }
   }
 
   private async restoreActiveCodesSnapshot(
@@ -1303,6 +1308,17 @@ export class AccessCodeService {
 
   private async deliverOutboxRow(row: { id: string; facility_id: string; attempt_count: number }): Promise<void> {
     const facilityId = row.facility_id;
+
+    // Defer without burning attempts: recovery is temporary, not a delivery failure.
+    const { GatewayRecoveryService } = await import('@/services/gateway/gateway-recovery.service');
+    if (GatewayRecoveryService.isBlockingActiveForFacilitySync(facilityId)) {
+      this.setPushState(facilityId, 'pending', 'deferred: gateway recovery in progress', null);
+      logger.info(
+        `[AccessCodePush] Deferring push for facility=${facilityId} outbox=${row.id}: recovery in progress`,
+      );
+      return;
+    }
+
     const nonce = crypto.randomUUID();
     await this.pushOutbox.markInProgress(row.id, nonce);
     this.setPushState(facilityId, 'pending', null, nonce);
@@ -1316,10 +1332,17 @@ export class AccessCodeService {
     try {
       await this.awaitPushAcceptance(facilityId, nonce, row.id);
       await this.pushOutbox.markDelivered(row.id);
-      this.setPushState(facilityId, 'active', null, nonce);
+      // Coalesce / remaining work: stay pending so the UI doesn't flash green then pending.
+      const remaining = await this.pushOutbox.findActiveForFacility(facilityId);
+      if (remaining) {
+        this.setPushState(facilityId, 'pending', null, nonce);
+      } else {
+        this.setPushState(facilityId, 'active', null, nonce);
+      }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       logger.warn(`Access code push delivery failed for facility=${facilityId}: ${message}`);
+      await this.recordPushDeliveryFailure(facilityId, nonce, message, row.id);
       throw error;
     }
   }

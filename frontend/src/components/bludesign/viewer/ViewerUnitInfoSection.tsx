@@ -23,7 +23,7 @@ import type { BluLokUnit } from '@/api/bludesign';
 import { apiService } from '@/services/api.service';
 import { RemoteUnlockButton } from '@/components/Lock/RemoteUnlockButton';
 import { useRemoteUnlockAction } from '@/hooks/useRemoteUnlockAction';
-import { unitHasTenant } from '@/constants/tenantUnlockOverride.constants';
+import { requiresOccupiedUnitOverride } from '@/constants/tenantUnlockOverride.constants';
 import { useGlobalFacility } from '@/contexts/GlobalFacilityContext';
 import { useAuth } from '@/contexts/AuthContext';
 import { resolveLockTimeoutMsForUnit } from '@/utils/facilityLockTimeout.utils';
@@ -463,7 +463,7 @@ export const ViewerUnitInfoSection: React.FC<ViewerUnitInfoSectionProps> = ({
           setOptimisticLockStatus(previousStatus);
         }
       },
-      requiresTenantOverride: unitHasTenant(unit),
+      requiresTenantOverride: requiresOccupiedUnitOverride(unit, authState.user?.id),
       unitLabel: unit.unit_number,
     });
   }, [deviceId, unit, facilities, requestUnlock, supportsRemoteUnlock, deviceStatus, isSubmitting]);

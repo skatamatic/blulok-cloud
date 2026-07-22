@@ -47,9 +47,8 @@ const unlocked = [
 describe('useUnitsData', () => {
   beforeEach(() => {
     jest.clearAllMocks();
-    mockGet.mockImplementation(async (url: string, config?: { params?: { facility_id?: string } }) => {
+    mockGet.mockImplementation(async (url: string) => {
       if (url === '/units') {
-        expect(config?.params?.facility_id).toBe('fac-1');
         return { success: true, units: sampleUnits };
       }
       if (url === '/units/unlocked') {
@@ -60,6 +59,9 @@ describe('useUnitsData', () => {
   });
 
   it('loads aggregated stats and passes facility_id when set', async () => {
+    const { useLockDeviceRealtime } = jest.requireMock('@/hooks/useLockDeviceRealtime') as {
+      useLockDeviceRealtime: jest.Mock;
+    };
     const { result } = renderHook(() => useUnitsData('fac-1'));
 
     await waitFor(() => {
@@ -78,6 +80,50 @@ describe('useUnitsData', () => {
       lockedCount: 3,
     });
     expect(result.current.error).toBeNull();
+    expect(useLockDeviceRealtime).toHaveBeenCalledWith(
+      expect.objectContaining({
+        onDeviceRows: expect.any(Function),
+        subscribeDeviceStatusForRefresh: false,
+        subscribeUnitsForRefresh: true,
+        debounceRefreshFilter: expect.any(Function),
+      }),
+    );
+  });
+
+  it('removes unlocked rows when device_status reports locked', async () => {
+    const { useLockDeviceRealtime } = jest.requireMock('@/hooks/useLockDeviceRealtime') as {
+      useLockDeviceRealtime: jest.Mock;
+    };
+    const { result } = renderHook(() => useUnitsData());
+
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    expect(result.current.data?.unlockedCount).toBe(1);
+
+    const onDeviceRows = useLockDeviceRealtime.mock.calls.at(-1)?.[0]?.onDeviceRows as (
+      rows: Array<{ unit_id: string; lock_status: string }>,
+    ) => boolean;
+
+    act(() => {
+      const applied = onDeviceRows([{ unit_id: '1', lock_status: 'locked' }]);
+      expect(applied).toBe(true);
+    });
+
+    expect(result.current.data?.unlockedUnits).toEqual([]);
+    expect(result.current.data?.unlockedCount).toBe(0);
+  });
+
+  it('units_update filter allows refresh while device_status filter rejects', async () => {
+    const { useLockDeviceRealtime } = jest.requireMock('@/hooks/useLockDeviceRealtime') as {
+      useLockDeviceRealtime: jest.Mock;
+    };
+    renderHook(() => useUnitsData());
+    await waitFor(() => expect(useLockDeviceRealtime).toHaveBeenCalled());
+
+    const filter = useLockDeviceRealtime.mock.calls.at(-1)?.[0]?.debounceRefreshFilter as (
+      payload: unknown,
+    ) => boolean;
+    expect(filter({ source: 'units_update' })).toBe(true);
+    expect(filter({ devices: [] })).toBe(false);
   });
 
   it('sets error when fetch not successful', async () => {

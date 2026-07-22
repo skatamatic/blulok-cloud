@@ -35,7 +35,7 @@ import { loadAccessGroupRefsForBlulokLock } from '@/utils/access-groups-load.uti
 import { canRequestRemoteUnlock, isLockTransitionPending } from '@/utils/unitLock.utils';
 import { lockHardwareFeedbackToasts } from '@/utils/lockHardwareFeedback.constants';
 import { useRemoteUnlockAction } from '@/hooks/useRemoteUnlockAction';
-import { unitHasTenant } from '@/constants/tenantUnlockOverride.constants';
+import { requiresOccupiedUnitOverride } from '@/constants/tenantUnlockOverride.constants';
 import { resolveLockTimeoutMsForUnit } from '@/utils/facilityLockTimeout.utils';
 import { useLockDeviceRealtime } from '@/hooks/useLockDeviceRealtime';
 import { useToast } from '@/contexts/ToastContext';
@@ -266,17 +266,18 @@ export default function UnitDetailsPage() {
     deviceId: unit?.blulok_device?.id,
     facilityId: unit?.facility_id,
     onDeviceRows: mergeBlulokFromSnapshots,
-    debouncedRefresh: () => {
-      void loadUnitDetails();
-    },
+    // Merge-only: full HTTP reload on every device_status caused page flicker.
     subscribeUnitsForRefresh: false,
+    refreshOnGatewayStatusChange: false,
   });
 
-  const loadUnitDetails = async () => {
+  const loadUnitDetails = async (options?: { silent?: boolean }) => {
     if (!unitId) return;
     
     try {
-      setLoading(true);
+      if (!options?.silent) {
+        setLoading(true);
+      }
       setError(null);
       const response = await apiService.getUnitDetails(unitId);
       setUnit(response.unit);
@@ -284,7 +285,9 @@ export default function UnitDetailsPage() {
       console.error('Failed to load unit details:', error);
       setError('Failed to load unit details. Please try again.');
     } finally {
-      setLoading(false);
+      if (!options?.silent) {
+        setLoading(false);
+      }
     }
   };
 
@@ -441,12 +444,12 @@ export default function UnitDetailsPage() {
         patchLockStatus(status);
       },
       refresh: refreshAfterUnlockAttempt,
-      requiresTenantOverride: unitHasTenant(unit),
+      requiresTenantOverride: requiresOccupiedUnitOverride(unit, authState.user?.id),
       unitLabel: unit.unit_number,
     });
   };
 
-  if (loading) {
+  if (loading && !unit) {
     return <DetailsPageLoading />;
   }
 

@@ -51,8 +51,11 @@ export function EditUnitModal({ isOpen, onClose, onSuccess, unit }: EditUnitModa
         status: vacantStatusFromUnit(unit),
         description: unit.description || '',
       });
+      setErrors({});
     }
-  }, [isOpen, unit]);
+    // Seed only on open / unit identity — live telemetry must not wipe in-progress edits.
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- intentionally ignore live telemetry props
+  }, [isOpen, unit?.id]);
 
   const validateForm = (): boolean => {
     const newErrors: Record<string, string> = {};

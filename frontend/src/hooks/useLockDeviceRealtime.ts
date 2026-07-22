@@ -19,8 +19,8 @@ export interface UseLockDeviceRealtimeParams {
   deviceId?: string | null;
   /** Scope `device_status` pushes to one facility (e.g. facility devices tab). */
   facilityId?: string | null;
-  /** Merge snapshots into local state (detail pages, lock widget). */
-  onDeviceRows?: (rows: LockDeviceSnapshot[]) => void;
+  /** Merge snapshots into local state (detail pages, lock widget). Return true if state changed. */
+  onDeviceRows?: (rows: LockDeviceSnapshot[]) => boolean | void;
   /** Debounced full reload (list pages). */
   debouncedRefresh?: () => void;
   /** If provided, return false to skip scheduling refresh for this payload. */
@@ -42,6 +42,12 @@ export interface UseLockDeviceRealtimeParams {
    * (e.g. network_infra-only facilities with no operational device rows).
    */
   refreshOnGatewayStatusChange?: boolean;
+  /**
+   * When true, skip debouncedRefresh for a `device_status` message only when
+   * onDeviceRows returns true (meaningful merge). Prefer returning boolean from
+   * onDeviceRows; a void return does not skip refresh.
+   */
+  skipDebouncedRefreshWhenDeviceRowsApplied?: boolean;
 }
 
 export function useLockDeviceRealtime(params: UseLockDeviceRealtimeParams): void {
@@ -80,8 +86,12 @@ export function useLockDeviceRealtime(params: UseLockDeviceRealtimeParams): void
         targetId != null && targetId !== ''
           ? rows.filter((r) => r.device_id === targetId)
           : rows;
+      let appliedRows = false;
       if (toEmit.length > 0 && p.onDeviceRows) {
-        p.onDeviceRows(toEmit);
+        appliedRows = p.onDeviceRows(toEmit) === true;
+      }
+      if (appliedRows && p.skipDebouncedRefreshWhenDeviceRowsApplied) {
+        return;
       }
       scheduleDebouncedRefresh(wrapped);
     },

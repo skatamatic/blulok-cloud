@@ -398,17 +398,16 @@ export class DeviceEventService extends EventEmitter {
     const remoteMethod = attribution
       ? resolveRemoteAccessMethod(attribution.initiator.role)
       : undefined;
-
-    const shouldConsumeAttribution = Boolean(
+    const isRealTransition = event.oldStatus !== event.newStatus;
+    const statusMatchesRequested = Boolean(
       attribution
-      && remoteMethod
       && terminalActivityMatchesRequestedStatus(activityType, attribution.requestedStatus),
     );
 
     if (
       attribution
       && remoteMethod
-      && !terminalActivityMatchesRequestedStatus(activityType, attribution.requestedStatus)
+      && !statusMatchesRequested
     ) {
       lockCommandService.recordRemoteCommandSettlementMismatch({
         deviceId: event.deviceId,
@@ -425,22 +424,71 @@ export class DeviceEventService extends EventEmitter {
       return;
     }
 
-    if (shouldConsumeAttribution) {
-      lockCommandService.acknowledgeCommandAttribution(event.deviceId);
+    // Same-state re-report: clear matching pending command so one-shot TTL does not
+    // false-fail, but never write a success activity (no physical transition).
+    if (!isRealTransition) {
+      if (attribution && remoteMethod && statusMatchesRequested) {
+        lockCommandService.tryConsumeAttribution(event.deviceId, {
+          commandId: attribution.commandId,
+          requestedStatus: attribution.requestedStatus,
+        });
+      }
+      return;
     }
 
-    const appliedAttribution = shouldConsumeAttribution ? attribution : null;
-    const actorType = appliedAttribution ? 'user' : 'gateway';
-    const actorId = appliedAttribution?.initiator.userId;
-    const actorName = appliedAttribution?.initiator.userName ?? 'Gateway';
-    const override = appliedAttribution?.tenantUnlockOverride;
+    // Success attribution only on a real status transition.
+    let appliedRemoteAttribution = null as ReturnType<typeof lockCommandService.peekCommandAttribution>;
+    if (attribution && remoteMethod && statusMatchesRequested) {
+      appliedRemoteAttribution = lockCommandService.tryConsumeAttribution(event.deviceId, {
+        commandId: attribution.commandId,
+        requestedStatus: attribution.requestedStatus,
+      });
+    }
+
+    // On-ground occupied override: brief window after access-event consumed the intent.
+    let occupiedStateAttr: {
+      userId: string;
+      userName: string;
+      role: string;
+      override: { reason: string; reasonLabel: string; notes?: string };
+    } | null = null;
+    if (!appliedRemoteAttribution && activityType === 'unlock' && isRealTransition) {
+      const { OccupiedUnlockIntentService } = await import(
+        '@/services/occupied-unlock-intent.service'
+      );
+      const recent = OccupiedUnlockIntentService.getInstance().tryConsumeForUnlockState(event.deviceId);
+      if (recent) {
+        occupiedStateAttr = {
+          userId: recent.userId,
+          userName: recent.userName,
+          role: recent.role,
+          override: recent.override,
+        };
+      }
+    }
+
+    const appliedAttribution = appliedRemoteAttribution;
+    const actorType = appliedAttribution || occupiedStateAttr ? 'user' : 'gateway';
+    const actorId = appliedAttribution?.initiator.userId ?? occupiedStateAttr?.userId;
+    const actorName =
+      appliedAttribution?.initiator.userName
+      ?? occupiedStateAttr?.userName
+      ?? 'Gateway';
+    const override =
+      appliedAttribution?.tenantUnlockOverride ?? occupiedStateAttr?.override;
     const description = appliedAttribution
       ? [
           `Device was ${lockActivityVerb(activityType)} remotely via gateway by ${appliedAttribution.initiator.userName}`,
           override?.reasonLabel ? `Reason: ${override.reasonLabel}` : null,
           override?.notes ? `Notes: ${override.notes}` : null,
         ].filter(Boolean).join('. ')
-      : `Device was ${lockActivityVerb(activityType)} locally at the device`;
+      : occupiedStateAttr
+        ? [
+            `Device was ${lockActivityVerb(activityType)} via app by ${occupiedStateAttr.userName}`,
+            override?.reasonLabel ? `Reason: ${override.reasonLabel}` : null,
+            override?.notes ? `Notes: ${override.notes}` : null,
+          ].filter(Boolean).join('. ')
+        : `Device was ${lockActivityVerb(activityType)} locally at the device`;
 
     await ActivityService.getInstance().logActivity({
       entityType: 'device',
@@ -480,9 +528,26 @@ export class DeviceEventService extends EventEmitter {
               }
               : {}),
           }
-          : {
-            method: 'local_device',
-          }),
+          : occupiedStateAttr
+            ? {
+              method: 'app',
+              initiated_remotely: false,
+              occupied_unit_override: true,
+              gateway_id: event.gatewayId,
+              initiated_by: {
+                id: occupiedStateAttr.userId,
+                name: occupiedStateAttr.userName,
+                role: occupiedStateAttr.role,
+              },
+              tenant_unlock_override: {
+                reason: occupiedStateAttr.override.reason,
+                reason_label: occupiedStateAttr.override.reasonLabel,
+                notes: occupiedStateAttr.override.notes ?? null,
+              },
+            }
+            : {
+              method: 'local_device',
+            }),
       },
     });
   }

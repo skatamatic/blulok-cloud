@@ -46,3 +46,26 @@ export function unitHasTenant(unit: UnitTenantHints): boolean {
   }
   return false;
 }
+
+/** True when userId matches primary/shared tenant hints on the unit payload. */
+export function userIsUnitOccupantHint(unit: UnitTenantHints, userId: string): boolean {
+  if (!userId) return false;
+  if (unit.primary_tenant?.id === userId) return true;
+  if (unit.tenant?.id === userId) return true;
+  if (unit.shared_tenants?.some((t) => t?.id === userId)) return true;
+  return false;
+}
+
+/**
+ * Cloud remote unlock UX: prompt for Occupied Unit Override only when the unit
+ * has a tenant and the current user is not that occupant (backend also enforces).
+ * When userId is unknown, treat as staff (require override if occupied).
+ */
+export function requiresOccupiedUnitOverride(
+  unit: UnitTenantHints,
+  userId?: string | null,
+): boolean {
+  if (!unitHasTenant(unit)) return false;
+  if (userId && userIsUnitOccupantHint(unit, userId)) return false;
+  return true;
+}

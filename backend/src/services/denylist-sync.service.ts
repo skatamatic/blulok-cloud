@@ -1,9 +1,11 @@
 import { DeviceModel } from '@/models/device.model';
 import { DenylistEntryModel, DeviceDenylistEntry } from '@/models/denylist-entry.model';
 import { GatewayModel } from '@/models/gateway.model';
+import { isGatewayDenylistSyncEnabled } from '@/constants/gateway-denylist-sync.constants';
 import { DenylistService } from '@/services/denylist.service';
 import { GatewayEventsService } from '@/services/gateway/gateway-events.service';
 import { logger } from '@/utils/logger';
+
 
 /** Denylist row pushed to gateways (matches JWT denylist_add entry shape). */
 export type DenylistSyncEntry = {
@@ -111,9 +113,15 @@ export class DenylistSyncService {
 
   /**
    * Push a full replace snapshot (`DENYLIST_SYNC`) to the bound active gateway.
-   * No-ops when unbound or offline. Empty device denylists clear local state.
+   * No-ops when unbound, offline, or when `GATEWAY_DENYLIST_SYNC_ENABLED` is off.
+   * Empty device denylists clear local state.
    */
   static async pushSnapshotToFacility(facilityId: string): Promise<void> {
+    if (!isGatewayDenylistSyncEnabled()) {
+      logger.debug(`Denylist snapshot skipped — GATEWAY_DENYLIST_SYNC_ENABLED off facility=${facilityId}`);
+      return;
+    }
+
     const gateway = await this.getGatewayModel().findByFacilityId(facilityId);
     if (!gateway?.id) {
       logger.debug(`Denylist snapshot skipped — no bound gateway facility=${facilityId}`);

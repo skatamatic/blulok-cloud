@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useNavigate } from 'react-router-dom';
 import {
@@ -23,7 +23,7 @@ import { WidgetSize } from '@/types/widget.types';
 import { apiService } from '@/services/api.service';
 import { RemoteUnlockButton } from '@/components/Lock/RemoteUnlockButton';
 import { useRemoteUnlockAction } from '@/hooks/useRemoteUnlockAction';
-import { unitHasTenant } from '@/constants/tenantUnlockOverride.constants';
+import { requiresOccupiedUnitOverride } from '@/constants/tenantUnlockOverride.constants';
 import { lockHardwareFeedbackToasts } from '@/utils/lockHardwareFeedback.constants';
 import {
   getWidgetLayoutProfile,
@@ -32,6 +32,7 @@ import {
 } from '@/utils/widget-layout.utils';
 import { compareNaturalStrings } from '@/utils/naturalStringCompare';
 import { useGlobalFacility } from '@/contexts/GlobalFacilityContext';
+import { useAuth } from '@/contexts/AuthContext';
 import { resolveLockTimeoutMsForUnit } from '@/utils/facilityLockTimeout.utils';
 import { useLockDeviceRealtime } from '@/hooks/useLockDeviceRealtime';
 import {
@@ -41,6 +42,10 @@ import {
 } from '@/utils/access-history-display.utils';
 import type { AccessLog } from '@/types/access-history.types';
 import { formatRelativeWithExact, RELATIVE_UNITS_ACTIVITY_OPTS } from '@/utils/datetime.utils';
+import {
+  mergeUnitRowsFromDeviceSnapshots,
+  type LockDeviceSnapshot,
+} from '@/utils/deviceStatusWs.utils';
 
 type LockState = 'locked' | 'unlocked' | 'unknown' | 'unlocking' | 'locking';
 
@@ -974,6 +979,7 @@ export const UnitsManagerWidget: React.FC<UnitsManagerWidgetProps> = ({
     timeoutToast: lockHardwareFeedbackToasts.unitUnlockTimeout,
   });
   const { isAllFacilitiesSelected, facilities: globalFacilities } = useGlobalFacility();
+  const { authState } = useAuth();
   const isAllFacilitiesMode = isAllFacilitiesSelected && !facilityFilter;
 
   useEffect(() => {
@@ -1023,8 +1029,21 @@ export const UnitsManagerWidget: React.FC<UnitsManagerWidgetProps> = ({
     void fetchUnits();
   }, [fetchUnits]);
 
+  const applyUnitDeviceSnapshots = useCallback((rows: LockDeviceSnapshot[]): boolean => {
+    if (!rows.length) return false;
+    const next = mergeUnitRowsFromDeviceSnapshots(unitsRef.current, rows);
+    if (next === unitsRef.current) return false;
+    setUnits(next);
+    return true;
+  }, []);
+
   useLockDeviceRealtime({
     facilityId: facilityFilter,
+    onDeviceRows: applyUnitDeviceSnapshots,
+    // Telemetry also fans out units_update; merging device_status is enough for lock UI.
+    // Keep gateway_status → background HTTP for reachability coercion.
+    subscribeUnitsForRefresh: false,
+    skipDebouncedRefreshWhenDeviceRowsApplied: true,
     debouncedRefresh: () => {
       void fetchUnitsRef.current({ background: true });
     },
@@ -1180,7 +1199,7 @@ export const UnitsManagerWidget: React.FC<UnitsManagerWidgetProps> = ({
         patchUnitLockStatus(status);
       },
       refresh: refreshAfterUnlockAttempt,
-      requiresTenantOverride: unitHasTenant(unit),
+      requiresTenantOverride: requiresOccupiedUnitOverride(unit, authState.user?.id),
       unitLabel: unit.unit_number,
     });
   };

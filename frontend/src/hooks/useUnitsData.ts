@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { apiService } from '@/services/api.service';
 import { useLockDeviceRealtime } from '@/hooks/useLockDeviceRealtime';
+import type { LockDeviceSnapshot } from '@/utils/deviceStatusWs.utils';
 
 export interface UnlockedUnit {
   id: string;
@@ -44,6 +45,8 @@ export const useUnitsData = (facilityId?: string | null): UseUnitsDataReturn => 
   const [data, setData] = useState<UnitsData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const dataRef = useRef(data);
+  dataRef.current = data;
 
   const fetchUnitsData = useCallback(async (options?: { background?: boolean }) => {
     try {
@@ -130,8 +133,76 @@ export const useUnitsData = (facilityId?: string | null): UseUnitsDataReturn => 
     void fetchUnitsData();
   }, [fetchUnitsData]);
 
+  /** Patch/remove rows already on the unlocked list; membership adds come via units_update HTTP. */
+  const applyUnlockedUnitSnapshots = useCallback((rows: LockDeviceSnapshot[]): boolean => {
+    if (!rows.length) return false;
+    const prev = dataRef.current;
+    if (!prev?.unlockedUnits?.length) return false;
+
+    let changed = false;
+    const nextUnlocked: UnlockedUnit[] = [];
+
+    for (const unit of prev.unlockedUnits) {
+      const snap = rows.find((r) => r.unit_id === unit.id);
+      if (!snap) {
+        nextUnlocked.push(unit);
+        continue;
+      }
+
+      const lock = (snap.lock_status ?? '').toLowerCase();
+      if (lock === 'locked' || lock === 'locking') {
+        changed = true;
+        continue;
+      }
+
+      const nextDeviceStatus = (snap.device_status ?? unit.device_status) as UnlockedUnit['device_status'];
+      const nextBattery =
+        snap.battery_level !== undefined ? snap.battery_level : unit.battery_level;
+      const nextActivity = snap.last_activity ?? unit.last_activity;
+
+      if (
+        nextDeviceStatus === unit.device_status
+        && nextBattery === unit.battery_level
+        && nextActivity === unit.last_activity
+      ) {
+        nextUnlocked.push(unit);
+        continue;
+      }
+
+      changed = true;
+      nextUnlocked.push({
+        ...unit,
+        device_status: nextDeviceStatus,
+        battery_level: nextBattery,
+        last_activity: nextActivity,
+      });
+    }
+
+    if (!changed && nextUnlocked.length === prev.unlockedUnits.length) {
+      return false;
+    }
+
+    const unlockedCount = nextUnlocked.length;
+    setData({
+      ...prev,
+      unlockedUnits: nextUnlocked,
+      unlockedCount,
+      lockedCount: Math.max(0, prev.totalUnits - unlockedCount),
+      lastUpdated: new Date().toISOString(),
+    });
+    return true;
+  }, []);
+
   useLockDeviceRealtime({
     facilityId: facilityId ?? undefined,
+    onDeviceRows: applyUnlockedUnitSnapshots,
+    // Merge device_status for in-list patches; HTTP only on units_update for membership.
+    subscribeDeviceStatusForRefresh: false,
+    subscribeUnitsForRefresh: true,
+    debounceRefreshFilter: (payload) =>
+      typeof payload === 'object'
+      && payload !== null
+      && (payload as { source?: string }).source === 'units_update',
     debouncedRefresh: () => {
       void fetchUnitsDataRef.current({ background: true });
     },

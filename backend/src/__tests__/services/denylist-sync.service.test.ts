@@ -43,8 +43,11 @@ jest.mock('@/services/denylist.service', () => ({
 import { DenylistSyncService } from '@/services/denylist-sync.service';
 
 describe('DenylistSyncService', () => {
+  const originalEnv = process.env.GATEWAY_DENYLIST_SYNC_ENABLED;
+
   beforeEach(() => {
     jest.clearAllMocks();
+    process.env.GATEWAY_DENYLIST_SYNC_ENABLED = 'true';
     mockFindBluLokDevices.mockResolvedValue([
       { id: 'lock-uuid-1', device_serial: 'L-001' },
     ]);
@@ -60,6 +63,14 @@ describe('DenylistSyncService', () => {
     ]);
     mockFindByFacilityId.mockResolvedValue({ id: 'gw-1', facility_id: 'fac-1' });
     mockGetFacilityConnectionStatus.mockReturnValue({ connected: true });
+  });
+
+  afterAll(() => {
+    if (originalEnv === undefined) {
+      delete process.env.GATEWAY_DENYLIST_SYNC_ENABLED;
+    } else {
+      process.env.GATEWAY_DENYLIST_SYNC_ENABLED = originalEnv;
+    }
   });
 
   it('buildOperationalSyncForGateway returns denylist rows keyed by cloud device id', async () => {
@@ -105,6 +116,13 @@ describe('DenylistSyncService', () => {
       ]),
     );
     expect(mockUnicastToFacility).toHaveBeenCalledWith('fac-1', 'signed.jwt.token');
+  });
+
+  it('pushSnapshotToFacility no-ops when GATEWAY_DENYLIST_SYNC_ENABLED is off (default)', async () => {
+    delete process.env.GATEWAY_DENYLIST_SYNC_ENABLED;
+    await DenylistSyncService.pushSnapshotToFacility('fac-1');
+    expect(mockFindByFacilityId).not.toHaveBeenCalled();
+    expect(mockUnicastToFacility).not.toHaveBeenCalled();
   });
 
   it('pushSnapshotToFacility no-ops when unbound or offline', async () => {

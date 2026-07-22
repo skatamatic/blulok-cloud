@@ -137,6 +137,14 @@ export const lockStatusSchema = Joi.object({
   tenant_override_notes: Joi.string().allow('').max(TENANT_UNLOCK_OVERRIDE_NOTES_MAX_LENGTH).optional(),
 });
 
+/** Staff on-ground Occupied Unit Override intent (before BLE unlock). */
+export const occupiedUnitOverrideBodySchema = Joi.object({
+  reason: Joi.string()
+    .valid(...TENANT_UNLOCK_OVERRIDE_REASON_CODES)
+    .required(),
+  notes: Joi.string().allow('').max(TENANT_UNLOCK_OVERRIDE_NOTES_MAX_LENGTH).optional(),
+});
+
 export const deviceStatusSchema = Joi.object({
   status: Joi.string().valid('online', 'offline', 'error', 'maintenance').required(),
 });

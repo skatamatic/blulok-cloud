@@ -7515,8 +7515,15 @@ async function run() {
     // -------------------------------------------------------------------
     heading('New Invitee First-time Login (Unknown User)');
 
-    // Invite a brand-new sharee by phone via key-sharing invite
+    // Invite a brand-new sharee by phone via key-sharing invite.
+    // Key-sharing already dispatches FirstTimeUserService.sendInvite — capture that SMS
+    // instead of a later resend-invite (which raced a stale/dropped DEV_NOTIFICATION WS).
     const newInvitePhone = `+1555${String(Date.now()).slice(-7)}`;
+    step('Ensuring DEV_NOTIFICATION WebSocket before new invitee flow');
+    await ensureNotificationsWs(token);
+    notificationEvents.length = 0;
+    ok('DEV_NOTIFICATION WebSocket ready for new invitee');
+
     step('Inviting new sharee by phone (user not previously in system)');
     let inviteShareRes;
     try {
@@ -7552,16 +7559,15 @@ async function run() {
     created.users.push(newInviteeId);
     ok(`Invited user resolved as ${newInviteeId}`);
 
-    // Dev-admin helper: send invite for this new user and capture token via notifications WS
-    // NOTE: Now the invite contains both the deeplink and OTP code in a single message
-    step(`Sending invite for new sharee ${newInviteeId}`);
-    // Clear any prior notification events so we only capture fresh invite for this user
-    notificationEvents.length = 0;
-    await axios.post(`${API_BASE}/users/${newInviteeId}/resend-invite`, {}, {
-      headers: { Authorization: `Bearer ${token}` }
-    });
+    // Capture invite SMS from key-sharing invite (already sent above)
+    step(`Waiting for invite SMS for new sharee ${newInviteeId}`);
+    await ensureNotificationsWs(token);
     const newInviteEvent = await waitForNotification((e) =>
-      e.kind === 'invite' && e.delivery === 'sms' && e.body && String(e.body).includes('invite')
+      e.kind === 'invite'
+      && e.delivery === 'sms'
+      && e.body
+      && String(e.body).includes('invite')
+      && (!e.toPhone || e.toPhone === newInvitePhone)
     );
     ok(`Invite SMS received for new sharee ${newInviteEvent.toPhone || newInviteEvent.toEmail || 'unknown-recipient'}`);
     console.log(C.cyan('\n  📧 Full New Invitee Invite Notification Details:'));
@@ -12087,10 +12093,14 @@ async function run() {
       { headers: { Authorization: `Bearer ${created.facilityAdminToken}` } },
     );
     const rejectedState = rejectedStateResp.data?.data;
-    if (rejectedState?.status !== 'error') {
-      throw new Error(`Expected push state=error after rejected ACK, got ${rejectedState?.status}`);
+    // Outbox still has retries remaining — UI stays pending (not hard error) with last_error set.
+    if (rejectedState?.status !== 'pending') {
+      throw new Error(`Expected push state=pending after rejected ACK (retries remain), got ${rejectedState?.status}`);
     }
-    ok('Rejected ACK path returns 5xx and updates push state to error');
+    if (!String(rejectedState?.last_error || '').includes('e2e-forced-reject')) {
+      throw new Error(`Expected last_error to include e2e-forced-reject, got ${rejectedState?.last_error}`);
+    }
+    ok('Rejected ACK path returns 5xx and keeps push state pending with last_error');
 
     step('Validating access-code push failure handling when ACK times out');
     accessCodeAckMode = 'ignore';
@@ -12110,10 +12120,13 @@ async function run() {
       { headers: { Authorization: `Bearer ${created.facilityAdminToken}` } },
     );
     const timeoutState = timeoutStateResp.data?.data;
-    if (timeoutState?.status !== 'error') {
-      throw new Error(`Expected push state=error after timeout ACK, got ${timeoutState?.status}`);
+    if (timeoutState?.status !== 'pending') {
+      throw new Error(`Expected push state=pending after ACK timeout (retries remain), got ${timeoutState?.status}`);
     }
-    ok('ACK timeout path returns 5xx and updates push state to error');
+    if (!String(timeoutState?.last_error || '').toLowerCase().includes('timed out')) {
+      throw new Error(`Expected last_error to mention timeout, got ${timeoutState?.last_error}`);
+    }
+    ok('ACK timeout path returns 5xx and keeps push state pending with last_error');
 
     accessCodeAckMode = 'accept';
 

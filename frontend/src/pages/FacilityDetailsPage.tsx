@@ -59,7 +59,7 @@ import { useDetailsBackNavigation, replaceSearchParams, withReturnPath } from '@
 import { formatDateTime } from '@/utils/datetime.utils';
 import { lockHardwareFeedbackToasts } from '@/utils/lockHardwareFeedback.constants';
 import { useRemoteUnlockAction } from '@/hooks/useRemoteUnlockAction';
-import { unitHasTenant } from '@/constants/tenantUnlockOverride.constants';
+import { requiresOccupiedUnitOverride } from '@/constants/tenantUnlockOverride.constants';
 import { resolveLockTimeoutMsForFacility } from '@/utils/facilityLockTimeout.utils';
 import { formatAccessDeviceListSubtitle } from '@/utils/accessDeviceDisplay.utils';
 import { formatNetworkInfraKindLabel } from '@/utils/device-icon.utils';
@@ -594,7 +594,7 @@ const normalizeFacilityTab = (value: string | null): FacilityTab | null => {
         await refreshAfterUnlockAttempt();
         await loadFacilityData();
       },
-      requiresTenantOverride: unitHasTenant(unit),
+      requiresTenantOverride: requiresOccupiedUnitOverride(unit, authState.user?.id),
       unitLabel: unit.unit_number,
     });
   };

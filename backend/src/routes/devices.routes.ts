@@ -99,6 +99,7 @@ import {
   updateAccessControlMetadataSchema,
   bluLokDeviceSchema,
   lockStatusSchema,
+  occupiedUnitOverrideBodySchema,
   accessControlLockCommandSchema,
   deviceStatusSchema,
   assignBlulokDeviceBodySchema,
@@ -1195,31 +1196,54 @@ registerPut(
 
       if (value.lock_status === 'unlocked' && deviceRow.unit_id) {
         const { unitHasTenant } = await import('@/utils/unit-has-tenant.utils');
+        const { userIsUnitOccupantOrShareRecipient } = await import(
+          '@/utils/unit-occupant-access.utils'
+        );
         const hasTenant = await unitHasTenant(knex, String(deviceRow.unit_id));
         if (hasTenant) {
-          const {
-            isTenantUnlockOverrideReasonCode,
-            labelForTenantUnlockOverrideReason,
-          } = await import('@/constants/tenant-unlock-override.constants');
-          const reasonRaw = value.tenant_override_reason;
-          if (!isTenantUnlockOverrideReasonCode(reasonRaw)) {
-            res.status(400).json({
-              success: false,
-              message:
-                'This unit has a tenant. Select a reason before unlocking remotely.',
-              code: 'TENANT_UNLOCK_OVERRIDE_REQUIRED',
-            });
-            return;
+          const isOccupant = await userIsUnitOccupantOrShareRecipient(
+            knex,
+            String(deviceRow.unit_id),
+            user.userId,
+          );
+          if (!isOccupant) {
+            const {
+              OCCUPIED_UNIT_OVERRIDE_REQUIRED,
+              isTenantUnlockOverrideReasonCode,
+              labelForTenantUnlockOverrideReason,
+            } = await import('@/constants/tenant-unlock-override.constants');
+            const reasonRaw = value.tenant_override_reason;
+            const hasReasonField =
+              reasonRaw !== undefined && reasonRaw !== null && String(reasonRaw).trim() !== '';
+
+            if (hasReasonField) {
+              if (!isTenantUnlockOverrideReasonCode(reasonRaw)) {
+                res.status(400).json({
+                  success: false,
+                  message: 'Invalid tenant_override_reason',
+                  code: 'TENANT_UNLOCK_OVERRIDE_INVALID',
+                });
+                return;
+              }
+              const notesRaw =
+                typeof value.tenant_override_notes === 'string'
+                  ? value.tenant_override_notes.trim()
+                  : '';
+              tenantUnlockOverride = {
+                reason: reasonRaw,
+                reasonLabel: labelForTenantUnlockOverrideReason(reasonRaw),
+                ...(notesRaw ? { notes: notesRaw } : {}),
+              };
+            } else if (OCCUPIED_UNIT_OVERRIDE_REQUIRED) {
+              res.status(400).json({
+                success: false,
+                message:
+                  'This unit has a tenant. Select a reason before unlocking remotely.',
+                code: 'TENANT_UNLOCK_OVERRIDE_REQUIRED',
+              });
+              return;
+            }
           }
-          const notesRaw =
-            typeof value.tenant_override_notes === 'string'
-              ? value.tenant_override_notes.trim()
-              : '';
-          tenantUnlockOverride = {
-            reason: reasonRaw,
-            reasonLabel: labelForTenantUnlockOverrideReason(reasonRaw),
-            ...(notesRaw ? { notes: notesRaw } : {}),
-          };
         }
       }
 
@@ -1252,6 +1276,159 @@ registerPut(
     } catch (error) {
       console.error('Error updating lock status:', error);
       res.status(500).json({ success: false, message: 'Failed to update lock status' });
+    }
+  },
+);
+
+// POST /api/devices/blulok/:id/occupied-unit-override — staff on-ground override intent
+registerPost(
+  router,
+  '/blulok/:id/occupied-unit-override',
+  {
+    openApiPath: `${MOUNT}/blulok/{id}/occupied-unit-override`,
+    tags: ['Devices', 'App'],
+    summary: 'Register Occupied Unit Override intent for on-ground (BLE) unlock',
+    security: 'bearer',
+    params: deviceIdParamSchema,
+    body: occupiedUnitOverrideBodySchema,
+    responses: {
+      200: lockCommandResponseSchema,
+      400: errorEnvelopeSchema,
+      403: errorEnvelopeSchema,
+      404: errorEnvelopeSchema,
+      409: errorEnvelopeSchema,
+      500: errorEnvelopeSchema,
+    },
+  },
+  async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+    try {
+      const user = req.user!;
+      const id = String(req.params.id);
+      const value = req.body as { reason: string; notes?: string };
+
+      const knex = deviceModel['db'].connection;
+      const deviceRow = await knex('blulok_devices')
+        .join('gateways', 'blulok_devices.gateway_id', 'gateways.id')
+        .select(
+          'blulok_devices.unit_id',
+          'gateways.facility_id',
+          'gateways.id as gateway_id',
+        )
+        .where('blulok_devices.id', id)
+        .first();
+
+      if (!deviceRow) {
+        res.status(404).json({ success: false, message: 'Device not found' });
+        return;
+      }
+      if (!deviceRow.unit_id) {
+        res.status(400).json({
+          success: false,
+          message: 'Device is not assigned to a unit',
+          code: 'TENANT_UNLOCK_OVERRIDE_NOT_REQUIRED',
+        });
+        return;
+      }
+
+      const { UnitsService } = await import('@/services/units.service');
+      const hasAccess = await UnitsService.getInstance().hasUserAccessToUnit(
+        String(deviceRow.unit_id),
+        user.userId,
+        user.role,
+      );
+      if (!hasAccess) {
+        res.status(403).json({ success: false, message: 'Insufficient permissions - unit access required' });
+        return;
+      }
+
+      const { unitHasTenant } = await import('@/utils/unit-has-tenant.utils');
+      const { userIsUnitOccupantOrShareRecipient } = await import(
+        '@/utils/unit-occupant-access.utils'
+      );
+      const occupied = await unitHasTenant(knex, String(deviceRow.unit_id));
+      if (!occupied) {
+        res.status(400).json({
+          success: false,
+          message: 'Occupied Unit Override is not required for vacant units',
+          code: 'TENANT_UNLOCK_OVERRIDE_NOT_REQUIRED',
+        });
+        return;
+      }
+
+      const isOccupant = await userIsUnitOccupantOrShareRecipient(
+        knex,
+        String(deviceRow.unit_id),
+        user.userId,
+      );
+      if (isOccupant) {
+        res.status(400).json({
+          success: false,
+          message: 'Occupied Unit Override does not apply when unlocking your own unit',
+          code: 'TENANT_UNLOCK_OVERRIDE_NOT_APPLICABLE',
+        });
+        return;
+      }
+
+      const {
+        isTenantUnlockOverrideReasonCode,
+        labelForTenantUnlockOverrideReason,
+      } = await import('@/constants/tenant-unlock-override.constants');
+      if (!isTenantUnlockOverrideReasonCode(value.reason)) {
+        res.status(400).json({
+          success: false,
+          message: 'Invalid override reason',
+          code: 'TENANT_UNLOCK_OVERRIDE_REQUIRED',
+        });
+        return;
+      }
+
+      const notesRaw = typeof value.notes === 'string' ? value.notes.trim() : '';
+      const { OccupiedUnlockIntentService } = await import(
+        '@/services/occupied-unlock-intent.service'
+      );
+
+      try {
+        const intent = OccupiedUnlockIntentService.getInstance().createIntent({
+          userId: user.userId,
+          userName:
+            [user.firstName, user.lastName].filter(Boolean).join(' ').trim()
+            || user.email
+            || 'User',
+          role: user.role,
+          deviceId: id,
+          unitId: String(deviceRow.unit_id),
+          facilityId: String(deviceRow.facility_id),
+          gatewayId: String(deviceRow.gateway_id),
+          override: {
+            reason: value.reason,
+            reasonLabel: labelForTenantUnlockOverrideReason(value.reason),
+            ...(notesRaw ? { notes: notesRaw } : {}),
+          },
+        });
+
+        res.json({
+          success: true,
+          data: {
+            intent_id: intent.intentId,
+            expires_at: new Date(intent.expiresAtMs).toISOString(),
+            device_id: intent.deviceId,
+            unit_id: intent.unitId,
+          },
+        });
+      } catch (err: unknown) {
+        if (err instanceof Error && err.message === 'OCCUPIED_UNLOCK_INTENT_IN_USE') {
+          res.status(409).json({
+            success: false,
+            message: 'Another override intent is already pending for this device',
+            code: 'OCCUPIED_UNLOCK_INTENT_IN_USE',
+          });
+          return;
+        }
+        throw err;
+      }
+    } catch (error) {
+      console.error('Error creating occupied unit override intent:', error);
+      res.status(500).json({ success: false, message: 'Failed to create override intent' });
     }
   },
 );

@@ -6,6 +6,7 @@ const mockFindBluLokDeviceById = jest.fn();
 const mockFindAccessControlDeviceWithGateway = jest.fn();
 const mockPeekCommandAttribution = jest.fn();
 const mockAcknowledgeCommandAttribution = jest.fn();
+const mockTryConsumeAttribution = jest.fn();
 const mockConsumeSuppressRevertActivityLog = jest.fn().mockReturnValue(false);
 const mockRecordRemoteCommandSettlementMismatch = jest.fn();
 
@@ -28,8 +29,17 @@ jest.mock('@/services/lock-command.service', () => ({
     getInstance: jest.fn(() => ({
       peekCommandAttribution: mockPeekCommandAttribution,
       acknowledgeCommandAttribution: mockAcknowledgeCommandAttribution,
+      tryConsumeAttribution: mockTryConsumeAttribution,
       consumeSuppressRevertActivityLog: mockConsumeSuppressRevertActivityLog,
       recordRemoteCommandSettlementMismatch: mockRecordRemoteCommandSettlementMismatch,
+    })),
+  },
+}));
+
+jest.mock('@/services/occupied-unlock-intent.service', () => ({
+  OccupiedUnlockIntentService: {
+    getInstance: jest.fn(() => ({
+      tryConsumeForUnlockState: jest.fn().mockReturnValue(null),
     })),
   },
 }));
@@ -82,6 +92,14 @@ describe('DeviceEventService logLockActivity', () => {
 
   it('consumes attribution only when terminal status matches requested command', async () => {
     mockPeekCommandAttribution.mockReturnValue({
+      commandId: 'cmd-1',
+      initiator: { userId: 'user-1', userName: 'Admin', role: 'facility_admin' },
+      gatewayId: 'gw-1',
+      facilityId: 'fac-1',
+      requestedStatus: 'locked',
+    });
+    mockTryConsumeAttribution.mockReturnValue({
+      commandId: 'cmd-1',
       initiator: { userId: 'user-1', userName: 'Admin', role: 'facility_admin' },
       gatewayId: 'gw-1',
       facilityId: 'fac-1',
@@ -90,7 +108,10 @@ describe('DeviceEventService logLockActivity', () => {
 
     await emitLockChanged('locked');
 
-    expect(mockAcknowledgeCommandAttribution).toHaveBeenCalledWith('dev-1');
+    expect(mockTryConsumeAttribution).toHaveBeenCalledWith('dev-1', {
+      commandId: 'cmd-1',
+      requestedStatus: 'locked',
+    });
     expect(mockLogActivity).toHaveBeenCalledWith(
       expect.objectContaining({
         actorType: 'user',
@@ -105,6 +126,7 @@ describe('DeviceEventService logLockActivity', () => {
 
   it('records remote unlock failure when lock confirms but unlock was requested', async () => {
     mockPeekCommandAttribution.mockReturnValue({
+      commandId: 'cmd-2',
       initiator: { userId: 'user-1', userName: 'Admin', role: 'facility_admin' },
       gatewayId: 'gw-1',
       facilityId: 'fac-1',
@@ -113,7 +135,7 @@ describe('DeviceEventService logLockActivity', () => {
 
     await emitLockChanged('locked');
 
-    expect(mockAcknowledgeCommandAttribution).not.toHaveBeenCalled();
+    expect(mockTryConsumeAttribution).not.toHaveBeenCalled();
     expect(mockRecordRemoteCommandSettlementMismatch).toHaveBeenCalledWith(
       expect.objectContaining({
         deviceId: 'dev-1',
@@ -121,6 +143,38 @@ describe('DeviceEventService logLockActivity', () => {
         deviceType: 'blulok',
       }),
     );
+    expect(mockLogActivity).not.toHaveBeenCalled();
+  });
+
+  it('settles matching same-state re-reports without success activity', async () => {
+    mockPeekCommandAttribution.mockReturnValue({
+      commandId: 'cmd-3',
+      initiator: { userId: 'user-1', userName: 'Admin', role: 'facility_admin' },
+      gatewayId: 'gw-1',
+      facilityId: 'fac-1',
+      requestedStatus: 'unlocked',
+    });
+    mockTryConsumeAttribution.mockReturnValue({
+      commandId: 'cmd-3',
+      initiator: { userId: 'user-1', userName: 'Admin', role: 'facility_admin' },
+      gatewayId: 'gw-1',
+      facilityId: 'fac-1',
+      requestedStatus: 'unlocked',
+    });
+
+    await emitLockChanged('unlocked', 'unlocked');
+
+    expect(mockTryConsumeAttribution).toHaveBeenCalledWith('dev-1', {
+      commandId: 'cmd-3',
+      requestedStatus: 'unlocked',
+    });
+    expect(mockLogActivity).not.toHaveBeenCalled();
+  });
+
+  it('ignores same-state re-reports with no pending attribution', async () => {
+    mockPeekCommandAttribution.mockReturnValue(null);
+    await emitLockChanged('unlocked', 'unlocked');
+    expect(mockTryConsumeAttribution).not.toHaveBeenCalled();
     expect(mockLogActivity).not.toHaveBeenCalled();
   });
 

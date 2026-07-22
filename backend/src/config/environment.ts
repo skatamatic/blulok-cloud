@@ -45,6 +45,12 @@ const envSchema = Joi.object({
    * Sticker claim + ECDSA AUTH is required for new binds. Default false (lab/legacy).
    */
   GATEWAY_ZTP_REQUIRED: Joi.string().valid('true', 'false', '1', '0').default('false'),
+
+  /**
+   * When true, push DENYLIST_SYNC replace snapshot on active-gateway AUTH_OK.
+   * Default false until production gateway firmware has parity.
+   */
+  GATEWAY_DENYLIST_SYNC_ENABLED: Joi.string().valid('true', 'false', '1', '0').default('false'),
 }).unknown();
 
 const { error, value: envVars } = envSchema.validate(process.env);

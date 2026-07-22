@@ -257,6 +257,7 @@ CREATE TABLE access_code_push_outbox (
 - **`enqueue`**: upserts a pending row when codes change; coalesces multiple edits while a push is **`in_progress`** via **`coalesce_pending`**.
 - **`flushPendingPushForFacility`**: sends signed JWT when gateway is online; sets in-memory push state **`pending`** when offline.
 - Scheduler scans due rows every 5s; gateway **`AUTH_OK`** triggers immediate flush.
+- **UI push state:** rejected ACK / ACK timeout with retries remaining keep in-memory status **`pending`** (with `last_error` for diagnostics). Only outbox **`dead_letter`** (max attempts exhausted) surfaces as **`error`**.
 
 **Behavioral rules**:
 - Devices in active `access_code` groups must remain synchronized to that group's current code.

@@ -8,6 +8,7 @@ import {
   AccessEventDenialReason,
 } from '@/services/access/access-event.types';
 import { DENIAL_REASON_MESSAGES } from '@/constants/access-history.constants';
+import { isOccupiedUnlockIntentAccessMethod } from '@/constants/occupied-unlock-intent.constants';
 
 type IngestContext = {
   facilityId: string;
@@ -58,8 +59,52 @@ export class AccessEventIngestionService {
       device_type: deviceType,
     };
 
+    let occupiedOverride: {
+      reason: string;
+      reasonLabel: string;
+      notes?: string;
+    } | null = null;
+
+    if (
+      event.success
+      && event.action === 'access_granted'
+      && isOccupiedUnlockIntentAccessMethod(event.method)
+      && event.actor?.user_id
+    ) {
+      const { OccupiedUnlockIntentService } = await import(
+        '@/services/occupied-unlock-intent.service'
+      );
+      const intentIdRaw = event.metadata?.occupied_unlock_intent_id;
+      const intentIdFromMetadata =
+        typeof intentIdRaw === 'string' && intentIdRaw.trim().length > 0
+          ? intentIdRaw.trim()
+          : null;
+      const consumed = OccupiedUnlockIntentService.getInstance().tryConsumeForAccessEvent({
+        deviceId: event.device_id,
+        userId: event.actor.user_id,
+        intentIdFromMetadata,
+      });
+      if (consumed) {
+        occupiedOverride = consumed.override;
+        sanitizedMetadata.tenant_unlock_override = {
+          reason: consumed.override.reason,
+          reason_label: consumed.override.reasonLabel,
+          notes: consumed.override.notes ?? null,
+        };
+        sanitizedMetadata.occupied_unit_override = true;
+        sanitizedMetadata.occupied_unlock_intent_id = consumed.intentId;
+      }
+    }
+
     const title = this.buildTitle(event);
-    const description = this.buildDescription(event);
+    let description = this.buildDescription(event);
+    if (occupiedOverride?.reasonLabel) {
+      description = [
+        description,
+        `Reason: ${occupiedOverride.reasonLabel}`,
+        occupiedOverride.notes ? `Notes: ${occupiedOverride.notes}` : null,
+      ].filter(Boolean).join('. ');
+    }
     const actorType = event.actor?.role === 'gateway' ? 'gateway' : event.actor?.role === 'system' ? 'system' : 'user';
     const actorRole = event.actor?.role || 'unknown';
     const occurredAt = new Date(event.occurred_at);

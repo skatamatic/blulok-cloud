@@ -69,6 +69,12 @@ jest.mock('@/services/gateway/gateway-events.service', () => ({
   },
 }));
 
+jest.mock('@/services/gateway/gateway-recovery.service', () => ({
+  GatewayRecoveryService: {
+    isBlockingActiveForFacilitySync: jest.fn().mockReturnValue(false),
+  },
+}));
+
 jest.mock('@/services/websocket.service', () => ({
   WebSocketService: {
     getInstance: jest.fn(() => ({
@@ -992,7 +998,7 @@ describe('AccessCodeService', () => {
     );
   });
 
-  it('sets push state to error when gateway rejects update ACK', async () => {
+  it('rejects push ACK without flipping UI to error (delivery path owns outbox retry state)', async () => {
     const nonce = 'nonce-reject';
     const reject = jest.fn();
     const resolve = jest.fn();
@@ -1009,29 +1015,117 @@ describe('AccessCodeService', () => {
       message: 'Gateway rejected access code update',
     });
     expect(reject).toHaveBeenCalled();
-    expect(service.getPushState('fac-1')).toEqual(expect.objectContaining({
-      facility_id: 'fac-1',
-      status: 'error',
-      last_error: expect.stringContaining('Gateway rejected access code update'),
-    }));
-    expect(mockBroadcastAccessCodePushStateUpdate).toHaveBeenCalledWith(
-      'fac-1',
-      expect.objectContaining({
-        refreshEffectiveCodes: false,
-        state: expect.objectContaining({ status: 'error' }),
-      }),
-    );
+    expect(resolve).not.toHaveBeenCalled();
   });
 
-  it('sets push state to error when gateway ACK times out', async () => {
-    await expect((service as any).awaitPushAcceptance('fac-1', 'nonce-timeout', undefined, 5))
-      .rejects
-      .toThrow('timed out waiting for gateway acceptance');
+  it('accepts push ACK when success=true (gateway alias)', async () => {
+    const nonce = 'nonce-success-alias';
+    const reject = jest.fn();
+    const resolve = jest.fn();
+    const timer = setTimeout(() => undefined, 60_000);
+    (service as any).pendingPushAcksByNonce.set(nonce, {
+      facilityId: 'fac-1',
+      resolve,
+      reject,
+      timer,
+    });
+    service.handleGatewayAccessCodeUpdateAck('fac-1', {
+      nonce,
+      success: true,
+    });
+    expect(resolve).toHaveBeenCalled();
+    expect(reject).not.toHaveBeenCalled();
+  });
+
+  it('keeps push state pending (not error) when gateway ACK times out and retries remain', async () => {
+    mockFindById.mockResolvedValue({
+      id: 'outbox-1',
+      facility_id: 'fac-1',
+      status: 'in_progress',
+      attempt_count: 1,
+    });
+    mockScheduleRetry.mockResolvedValue('failed');
+    jest.spyOn(service, 'getGatewayPollPayload').mockResolvedValue([]);
+    jest.spyOn(service as any, 'awaitPushAcceptance').mockRejectedValue(
+      new Error('timed out waiting for gateway acceptance (nonce=n-1)'),
+    );
+
+    await expect(service.pushCodesToGateway('fac-1')).rejects.toThrow(
+      'timed out waiting for gateway acceptance',
+    );
+
+    expect(mockScheduleRetry).toHaveBeenCalled();
+    expect(service.getPushState('fac-1')).toEqual(expect.objectContaining({
+      facility_id: 'fac-1',
+      status: 'pending',
+      last_error: expect.stringContaining('timed out waiting for gateway acceptance'),
+    }));
+  });
+
+  it('sets push state to error when ACK timeout exhausts retries (dead_letter)', async () => {
+    mockFindById.mockResolvedValue({
+      id: 'outbox-1',
+      facility_id: 'fac-1',
+      status: 'in_progress',
+      attempt_count: 9,
+    });
+    mockScheduleRetry.mockResolvedValue('dead_letter');
+    jest.spyOn(service, 'getGatewayPollPayload').mockResolvedValue([]);
+    jest.spyOn(service as any, 'awaitPushAcceptance').mockRejectedValue(
+      new Error('timed out waiting for gateway acceptance (nonce=n-1)'),
+    );
+
+    await expect(service.pushCodesToGateway('fac-1')).rejects.toThrow(
+      'timed out waiting for gateway acceptance',
+    );
 
     expect(service.getPushState('fac-1')).toEqual(expect.objectContaining({
       facility_id: 'fac-1',
       status: 'error',
       last_error: expect.stringContaining('timed out waiting for gateway acceptance'),
+    }));
+  });
+
+  it('stays pending after ACK when coalesced work remains', async () => {
+    jest.spyOn(service, 'getGatewayPollPayload').mockResolvedValue([]);
+    jest.spyOn(service as any, 'awaitPushAcceptance').mockResolvedValue(undefined);
+    mockMarkDelivered.mockImplementation(async () => {
+      mockFindActiveForFacility.mockResolvedValue({
+        id: 'outbox-1',
+        facility_id: 'fac-1',
+        status: 'pending',
+        attempt_count: 1,
+      });
+    });
+
+    await (service as any).deliverOutboxRow({
+      id: 'outbox-1',
+      facility_id: 'fac-1',
+      attempt_count: 0,
+    });
+
+    expect(service.getPushState('fac-1')).toEqual(expect.objectContaining({
+      status: 'pending',
+    }));
+  });
+
+  it('defers push during recovery without burning outbox attempts', async () => {
+    const { GatewayRecoveryService } = jest.requireMock('@/services/gateway/gateway-recovery.service') as {
+      GatewayRecoveryService: { isBlockingActiveForFacilitySync: jest.Mock };
+    };
+    GatewayRecoveryService.isBlockingActiveForFacilitySync.mockReturnValueOnce(true);
+
+    await (service as any).deliverOutboxRow({
+      id: 'outbox-1',
+      facility_id: 'fac-1',
+      attempt_count: 3,
+    });
+
+    expect(mockMarkInProgress).not.toHaveBeenCalled();
+    expect(mockScheduleRetry).not.toHaveBeenCalled();
+    expect(service.getPushState('fac-1')).toEqual(expect.objectContaining({
+      status: 'pending',
+      last_error: 'deferred: gateway recovery in progress',
     }));
   });
 

@@ -153,7 +153,10 @@ export function EditDeviceMetadataModal({
     setErrors({});
     setShowAdvanced(false);
     setShowIdentityConfirm(false);
-  }, [isOpen, device]);
+    // Seed only when the modal opens or the device identity changes — live telemetry
+    // updates (last_seen, battery, etc.) must not wipe in-progress edits.
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- intentionally ignore live telemetry props
+  }, [isOpen, device?.id, device?.category]);
 
   const identityWillChange = useMemo(() => {
     if (!device) return false;

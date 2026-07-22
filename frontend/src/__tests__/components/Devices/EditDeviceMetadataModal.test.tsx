@@ -155,6 +155,41 @@ describe('EditDeviceMetadataModal', () => {
     expect(onSuccess).not.toHaveBeenCalled();
   });
 
+  it('preserves in-progress edits when live telemetry props update', async () => {
+    const device = {
+      id: 'lock-1',
+      category: 'blulok' as const,
+      device_serial: 'HW-1',
+      device_settings: { displayName: 'Unit 100' },
+      last_seen: '2026-07-22T15:00:00.000Z',
+    };
+
+    const { rerender } = render(
+      <EditDeviceMetadataModal
+        isOpen
+        onClose={onClose}
+        onSuccess={onSuccess}
+        device={device}
+      />,
+    );
+
+    const displayName = screen.getByDisplayValue('Unit 100');
+    await userEvent.clear(displayName);
+    await userEvent.type(displayName, 'My draft name');
+
+    rerender(
+      <EditDeviceMetadataModal
+        isOpen
+        onClose={onClose}
+        onSuccess={onSuccess}
+        device={{ ...device, last_seen: '2026-07-22T16:10:00.000Z', lock_status: 'locked' }}
+      />,
+    );
+
+    expect(screen.getByDisplayValue('My draft name')).toBeInTheDocument();
+    expect(screen.getByText('Last seen')).toBeInTheDocument();
+  });
+
   it('shows gateway sync-managed guidance including lock number overwrite', () => {
     render(
       <EditDeviceMetadataModal
