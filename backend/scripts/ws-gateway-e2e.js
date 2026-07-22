@@ -3923,7 +3923,7 @@ async function run() {
     }
     ok('Manual device created with manuallyAdded=true, createdFromGatewaySync=false');
 
-    step('Testing gateway inventory matches manual device without making it sync-managed');
+    step('Testing gateway inventory matches manual device without changing provenance flags');
     const reqInventoryManualSeen = 'req-inventory-manual-seen';
     ws.send(JSON.stringify({
       type: 'PROXY_REQUEST',
@@ -3947,18 +3947,12 @@ async function run() {
       headers: authHeaders(token),
     });
     const manualSeenMeta = manualAfterSeen.data?.device?.metadata || {};
-    if (manualSeenMeta.manuallyAdded !== true) {
+    if (manualSeenMeta.manuallyAdded !== true || manualSeenMeta.createdFromGatewaySync !== false) {
       throw new Error(
-        `Expected manuallyAdded=true after gateway saw device, got ${JSON.stringify(manualSeenMeta)}`,
+        `Expected dual provenance unchanged after inventory match (manuallyAdded=true, createdFromGatewaySync=false), got ${JSON.stringify(manualSeenMeta)}`,
       );
     }
-    // Matching inventory must not flip a manual row into sync-managed (would delete on omit)
-    if (manualSeenMeta.createdFromGatewaySync === true || manualSeenMeta.manuallyAdded !== true) {
-      throw new Error(
-        `Expected manual device to stay non-sync-managed after inventory match, got ${JSON.stringify(manualSeenMeta)}`,
-      );
-    }
-    ok('Manual device still manuallyAdded after inventory match (not sync-managed)');
+    ok('Manual device provenance unchanged after inventory match (still not sync-managed)');
 
     const reqInventoryManualPreserve = 'req-inventory-manual-preserve';
     ws.send(JSON.stringify({
@@ -3987,9 +3981,9 @@ async function run() {
       headers: authHeaders(token),
     });
     const manualOmitMeta = manualAfterOmit.data?.device?.metadata || {};
-    if (manualOmitMeta.manuallyAdded !== true || manualOmitMeta.createdFromGatewaySync === true) {
+    if (manualOmitMeta.manuallyAdded !== true || manualOmitMeta.createdFromGatewaySync !== false) {
       throw new Error(
-        `Expected manual flags preserved after omit (manuallyAdded=true, createdFromGatewaySync!=true), got ${JSON.stringify(manualOmitMeta)}`,
+        `Expected dual provenance preserved after omit (manuallyAdded=true, createdFromGatewaySync=false), got ${JSON.stringify(manualOmitMeta)}`,
       );
     }
     if ((manualPreserveResult?.skipped_manual ?? 0) < 1) {
@@ -9568,14 +9562,22 @@ async function run() {
     }
 
     // Step 7: Resilience — abrupt WS disconnect during transfer should fail after
-    // the transfer reconnect grace window (default 180s; set FIRMWARE_TRANSFER_DISCONNECT_GRACE_SEC
-    // on the backend — and here — to a short value like 10 for a fast local E2E).
+    // the transfer reconnect grace window. Product default is 180s; override via
+    // /dev/firmware-timeouts so this step finishes in a few seconds.
     step('Testing OTA disconnect failure handling and reconnect recovery');
-    const transferGraceSec =
-      Number(process.env.FIRMWARE_TRANSFER_DISCONNECT_GRACE_SEC) > 0
-        ? Number(process.env.FIRMWARE_TRANSFER_DISCONNECT_GRACE_SEC)
-        : 180;
-    const maxDisconnectFailPolls = Math.ceil((transferGraceSec + 15) / 0.5);
+    const E2E_TRANSFER_GRACE_MS = Number(process.env.E2E_FIRMWARE_TRANSFER_DISCONNECT_GRACE_MS) > 0
+      ? Number(process.env.E2E_FIRMWARE_TRANSFER_DISCONNECT_GRACE_MS)
+      : 1500;
+    step(`Setting firmware transfer disconnect grace to ${E2E_TRANSFER_GRACE_MS}ms via /dev/firmware-timeouts`);
+    const fwTimeoutResp = await axios.put(
+      `${API_BASE}/dev/firmware-timeouts`,
+      { transfer_disconnect_grace_ms: E2E_TRANSFER_GRACE_MS },
+      { headers: { Authorization: `Bearer ${token}` } },
+    );
+    const transferGraceMs = Number(fwTimeoutResp.data?.data?.transfer_disconnect_grace_ms) || E2E_TRANSFER_GRACE_MS;
+    ok(`Firmware transfer disconnect grace override active (${transferGraceMs}ms)`);
+
+    const maxDisconnectFailPolls = Math.ceil((transferGraceMs + 5000) / 500);
     const disconnectPromise = disconnectDuringFirmwareDelivery(ws, loginOpsPublicKey, 30000);
     const resumePushResp = await axios.post(
       `${API_BASE}/firmware/${firmwareId}/push/${created.gatewayId}`,
@@ -9591,24 +9593,35 @@ async function run() {
 
     step('Polling disconnected push status until failed');
     let disconnectedPushStatus = null;
-    for (let poll = 0; poll < maxDisconnectFailPolls; poll++) {
-      await delay(500);
-      const statusResp = await axios.get(
-        `${API_BASE}/firmware/push-status/${created.gatewayId}?target_type=gateway`,
-        { headers: { Authorization: `Bearer ${token}` } },
-      );
-      disconnectedPushStatus = statusResp.data?.data || null;
-      if (disconnectedPushStatus?.id === resumePushId && disconnectedPushStatus?.status === 'failed') {
-        break;
+    try {
+      for (let poll = 0; poll < maxDisconnectFailPolls; poll++) {
+        await delay(500);
+        const statusResp = await axios.get(
+          `${API_BASE}/firmware/push-status/${created.gatewayId}?target_type=gateway`,
+          { headers: { Authorization: `Bearer ${token}` } },
+        );
+        disconnectedPushStatus = statusResp.data?.data || null;
+        if (disconnectedPushStatus?.id === resumePushId && disconnectedPushStatus?.status === 'failed') {
+          break;
+        }
+      }
+      if (!disconnectedPushStatus || disconnectedPushStatus.id !== resumePushId || disconnectedPushStatus.status !== 'failed') {
+        throw new Error(
+          `Expected disconnected push ${resumePushId} to fail within ~${Math.round((transferGraceMs + 5000) / 1000)}s transfer grace, got id=${disconnectedPushStatus?.id} status=${disconnectedPushStatus?.status}`,
+        );
+      }
+      ok(`Disconnected push ${resumePushId} failed as expected`);
+    } finally {
+      try {
+        await axios.put(
+          `${API_BASE}/dev/firmware-timeouts`,
+          { transfer_disconnect_grace_ms: null },
+          { headers: { Authorization: `Bearer ${token}` } },
+        );
+      } catch {
+        /* ignore cleanup */
       }
     }
-    if (!disconnectedPushStatus || disconnectedPushStatus.id !== resumePushId || disconnectedPushStatus.status !== 'failed') {
-      throw new Error(
-        `Expected disconnected push ${resumePushId} to fail within ${transferGraceSec + 15}s transfer grace, got id=${disconnectedPushStatus?.id} status=${disconnectedPushStatus?.status}`,
-      );
-    }
-    ok(`Disconnected push ${resumePushId} failed as expected`);
-
     step('Reconnecting gateway websocket after abrupt disconnect');
     ws = await connectGatewayWsAndAuth(WS_URL, token, facilityId, created.gatewayId);
     ok('Gateway re-authenticated after abrupt disconnect');

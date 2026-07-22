@@ -58,7 +58,7 @@ describe('gateway-sync.utils', () => {
       expect(isGatewaySyncManaged({ manuallyAdded: true })).toBe(false);
     });
 
-    it('returns false for manuallyAdded even after gateway has reported the device', () => {
+    it('returns false for manuallyAdded even if createdFromGatewaySync is incorrectly also true', () => {
       expect(
         isGatewaySyncManaged({ manuallyAdded: true, createdFromGatewaySync: true })
       ).toBe(false);

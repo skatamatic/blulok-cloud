@@ -149,8 +149,8 @@ When `lock_id` is in the payload but not in the DB, the cloud creates the row th
 
 | Flag | Meaning |
 |------|---------|
-| `metadata.createdFromGatewaySync` | `true` when the gateway has reported this device (auto-provision **or** later inventory match on a manual row). Alone does **not** make a row sync-managed if `manuallyAdded` is also true. Always present as boolean on new creates. |
-| `metadata.manuallyAdded` | Admin UI / REST create → `true`; gateway inventory create → `false`. Never removed by gateway delta. Stays true after gateway sees the device. Always present as boolean on new creates. |
+| `metadata.createdFromGatewaySync` | `true` only for gateway inventory auto-provision. Always present as boolean on new creates. Mutually exclusive with `manuallyAdded === true`. |
+| `metadata.manuallyAdded` | Admin UI / REST create → `true`; gateway inventory create → `false`. Never removed by gateway delta. Always present as boolean on new creates. Mutually exclusive with `createdFromGatewaySync === true`. |
 
 ---
 

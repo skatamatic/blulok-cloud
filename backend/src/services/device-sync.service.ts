@@ -23,7 +23,6 @@ import { mapGatewayAccessInventoryPropertiesToDbUpdate } from '../utils/gateway-
 import { mapGatewayLockInventoryPropertiesToDbUpdate } from '../utils/gateway-lock-inventory-map.utils';
 import {
   buildGatewaySyncProvisionMetadata,
-  markGatewayInventorySeenMetadata,
 } from '../utils/device-provision.utils';
 import type { DeviceSyncLogEntry } from '../types/gateway-device-sync.types';
 
@@ -576,25 +575,16 @@ metadata: buildGatewaySyncProvisionMetadata(),
             inventoryItem,
             existing
           );
-          const seenMetadata = markGatewayInventorySeenMetadata(
-            existing.metadata as Record<string, unknown> | null | undefined,
-          );
-          const updatePayload = {
-            ...(propertyUpdate ?? {}),
-            ...(seenMetadata ? { metadata: seenMetadata } : {}),
-          };
-          if (Object.keys(updatePayload).length > 0) {
+          if (propertyUpdate && Object.keys(propertyUpdate).length > 0) {
             try {
-              await this.deviceModel.updateBluLokDevice(existing.id, updatePayload);
+              await this.deviceModel.updateBluLokDevice(existing.id, propertyUpdate);
               result.updated = (result.updated ?? 0) + 1;
               result.entries!.push({
                 action: 'updated',
                 device_kind: 'blulok',
                 identifier: lockId,
                 label: inventoryItem.name?.trim() || lockId,
-                reason: seenMetadata && !propertyUpdate
-                  ? 'Gateway inventory seen — marked createdFromGatewaySync'
-                  : 'Gateway inventory property sync',
+                reason: 'Gateway inventory property sync',
               });
             } catch (error: any) {
               result.errors.push(
@@ -949,25 +939,16 @@ metadata: buildGatewaySyncProvisionMetadata(),
         } else {
           const existing = existingMap.get(key)!;
           const propertyUpdate = mapGatewayAccessInventoryPropertiesToDbUpdate(item, existing);
-          const seenMetadata = markGatewayInventorySeenMetadata(
-            existing.metadata as Record<string, unknown> | null | undefined,
-          );
-          const updatePayload = {
-            ...propertyUpdate,
-            ...(seenMetadata ? { metadata: seenMetadata } : {}),
-          };
-          if (Object.keys(updatePayload).length > 0) {
+          if (Object.keys(propertyUpdate).length > 0) {
             try {
-              await this.deviceModel.updateAccessControlDevice(existing.id, updatePayload);
+              await this.deviceModel.updateAccessControlDevice(existing.id, propertyUpdate);
               result.updated = (result.updated ?? 0) + 1;
               result.entries!.push({
                 action: 'updated',
                 device_kind: 'access_control',
                 identifier: key,
                 label: item.name ?? existing.name,
-                reason: seenMetadata && Object.keys(propertyUpdate).length === 0
-                  ? 'Gateway inventory seen — marked createdFromGatewaySync'
-                  : 'Gateway inventory property sync',
+                reason: 'Gateway inventory property sync',
               });
             } catch (error: any) {
               result.errors.push(

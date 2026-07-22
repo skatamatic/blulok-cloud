@@ -152,4 +152,59 @@ describe('Dev routes (/api/v1/dev)', () => {
       expect(clearResp.body.data.override_active).toBe(false);
     });
   });
+
+  describe('PUT /api/v1/dev/firmware-timeouts', () => {
+    afterEach(() => {
+      const { FirmwareService } = require('@/services/firmware/firmware.service');
+      FirmwareService.setTransferDisconnectGraceMsOverride(null);
+      FirmwareService.setVerifyDisconnectGraceMsOverride(null);
+    });
+
+    it('returns 403 for tenant', async () => {
+      const response = await request(app)
+        .put('/api/v1/dev/firmware-timeouts')
+        .set('Authorization', `Bearer ${testData.users.tenant.token}`)
+        .send({ transfer_disconnect_grace_ms: 1000 })
+        .expect(403);
+
+      expectForbidden(response);
+    });
+
+    it('sets and clears process overrides for admin', async () => {
+      const setResp = await request(app)
+        .put('/api/v1/dev/firmware-timeouts')
+        .set('Authorization', `Bearer ${testData.users.admin.token}`)
+        .send({
+          transfer_disconnect_grace_ms: 1500,
+          verify_disconnect_grace_ms: 2000,
+        })
+        .expect(200);
+
+      expectSuccess(setResp);
+      expect(setResp.body.data.transfer_disconnect_grace_ms).toBe(1500);
+      expect(setResp.body.data.verify_disconnect_grace_ms).toBe(2000);
+      expect(setResp.body.data.transfer_override_active).toBe(true);
+      expect(setResp.body.data.verify_override_active).toBe(true);
+
+      const getResp = await request(app)
+        .get('/api/v1/dev/firmware-timeouts')
+        .set('Authorization', `Bearer ${testData.users.admin.token}`)
+        .expect(200);
+
+      expect(getResp.body.data.transfer_disconnect_grace_ms).toBe(1500);
+      expect(getResp.body.data.verify_disconnect_grace_ms).toBe(2000);
+
+      const clearResp = await request(app)
+        .put('/api/v1/dev/firmware-timeouts')
+        .set('Authorization', `Bearer ${testData.users.admin.token}`)
+        .send({
+          transfer_disconnect_grace_ms: null,
+          verify_disconnect_grace_ms: null,
+        })
+        .expect(200);
+
+      expect(clearResp.body.data.transfer_override_active).toBe(false);
+      expect(clearResp.body.data.verify_override_active).toBe(false);
+    });
+  });
 });

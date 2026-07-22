@@ -46,7 +46,7 @@ export function isGatewaySyncProvisioned(metadata?: Record<string, unknown> | nu
   return metadata.createdFromGatewaySync === true;
 }
 
-/** True when the device was created via admin UI/REST (may also be gateway-seen). */
+/** True when the device was created via admin UI/REST (not gateway inventory). */
 export function isManuallyAddedDevice(metadata?: Record<string, unknown> | null): boolean {
   if (!metadata || typeof metadata !== 'object') return false;
   return metadata.manuallyAdded === true;

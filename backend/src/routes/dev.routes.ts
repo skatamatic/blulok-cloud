@@ -64,12 +64,13 @@ import path from 'path';
 import { WebSocketService } from '../services/websocket.service';
 import { logger } from '../utils/logger';
 import { registerGet, registerPost, registerPut } from '@/openapi/register-route';
-import { devLogsQuerySchema, gatewayOfflineGraceBodySchema, simulatorUserSessionSchema } from '@/schemas/dev.schemas';
+import { devLogsQuerySchema, firmwareTimeoutsBodySchema, gatewayOfflineGraceBodySchema, simulatorUserSessionSchema } from '@/schemas/dev.schemas';
 import { UserModel } from '@/models/user.model';
 import { AuthService } from '@/services/auth.service';
 import { FacilityAccessService } from '@/services/facility-access.service';
 import { Ed25519Service } from '@/services/crypto/ed25519.service';
 import { GatewayEventsService } from '@/services/gateway/gateway-events.service';
+import { FirmwareService } from '@/services/firmware/firmware.service';
 import { DEFAULT_GATEWAY_OFFLINE_GRACE_MS } from '@/constants/gateway-liveness.constants';
 import jwt from 'jsonwebtoken';
 
@@ -519,6 +520,61 @@ registerPut(
       res.status(400).json({
         success: false,
         message: error?.message || 'Invalid grace_ms',
+      });
+    }
+  }),
+);
+
+registerGet(
+  router,
+  '/firmware-timeouts',
+  {
+    openApiPath: `${MOUNT}/firmware-timeouts`,
+    tags: ['Admin'],
+    summary: 'Get firmware OTA reconnect grace timeouts (effective + defaults)',
+    security: 'bearer',
+  },
+  asyncHandler(async (_req: AuthenticatedRequest, res: Response): Promise<void> => {
+    res.json({
+      success: true,
+      data: FirmwareService.getTimeoutSnapshot(),
+    });
+  }),
+);
+
+registerPut(
+  router,
+  '/firmware-timeouts',
+  {
+    openApiPath: `${MOUNT}/firmware-timeouts`,
+    tags: ['Admin'],
+    summary: 'Override firmware OTA reconnect grace timeouts for this process (e2e / local)',
+    security: 'bearer',
+    body: firmwareTimeoutsBodySchema,
+  },
+  asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+    const body = req.body as {
+      transfer_disconnect_grace_ms?: number | null;
+      verify_disconnect_grace_ms?: number | null;
+    };
+    try {
+      if (body.transfer_disconnect_grace_ms !== undefined) {
+        FirmwareService.setTransferDisconnectGraceMsOverride(body.transfer_disconnect_grace_ms);
+      }
+      if (body.verify_disconnect_grace_ms !== undefined) {
+        FirmwareService.setVerifyDisconnectGraceMsOverride(body.verify_disconnect_grace_ms);
+      }
+      logger.info(
+        `Firmware timeouts updated by ${req.user?.email ?? req.user?.userId ?? 'unknown'}: ${JSON.stringify(body)}`,
+      );
+      res.json({
+        success: true,
+        data: FirmwareService.getTimeoutSnapshot(),
+      });
+    } catch (error: any) {
+      res.status(400).json({
+        success: false,
+        message: error?.message || 'Invalid firmware timeout override',
       });
     }
   }),

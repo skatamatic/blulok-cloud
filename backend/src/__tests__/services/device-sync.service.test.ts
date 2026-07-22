@@ -682,7 +682,7 @@ describe('DeviceSyncService', () => {
       });
     });
 
-    it('marks manuallyAdded lock as gateway-seen without making it sync-managed', async () => {
+    it('preserves manuallyAdded lock provenance and skips deletion when omitted', async () => {
       mockDeviceModel.findBluLokDevices.mockResolvedValue([
         createDeviceWithContext({
           id: 'device-1',
@@ -690,26 +690,13 @@ describe('DeviceSyncService', () => {
           metadata: { manuallyAdded: true, createdFromGatewaySync: false },
         }),
       ]);
-      mockDeviceModel.updateBluLokDevice.mockResolvedValue(
-        createDeviceWithContext({ id: 'device-1', device_serial: 'LOCK-1' }),
-      );
 
       const seen = await deviceSyncService.syncDeviceInventory(gatewayId, [
         { lock_id: 'LOCK-1' },
       ]);
 
-      expect(seen.updated).toBe(1);
-      expect(mockDeviceModel.updateBluLokDevice).toHaveBeenCalledWith('device-1', {
-        metadata: { manuallyAdded: true, createdFromGatewaySync: true },
-      });
-
-      mockDeviceModel.findBluLokDevices.mockResolvedValue([
-        createDeviceWithContext({
-          id: 'device-1',
-          device_serial: 'LOCK-1',
-          metadata: { manuallyAdded: true, createdFromGatewaySync: true },
-        }),
-      ]);
+      expect(seen.unchanged).toBe(1);
+      expect(mockDeviceModel.updateBluLokDevice).not.toHaveBeenCalled();
 
       const omitted = await deviceSyncService.syncDeviceInventory(gatewayId, []);
       expect(omitted.removed).toBe(0);
@@ -1031,7 +1018,7 @@ describe('DeviceSyncService', () => {
       ]);
     });
 
-    it('marks manuallyAdded access device as gateway-seen without making it sync-managed', async () => {
+    it('preserves manuallyAdded access device provenance and skips deletion when omitted', async () => {
       mockDeviceModel.findAccessControlDevices.mockResolvedValue([
         {
           id: 'ac-manual',
@@ -1042,27 +1029,13 @@ describe('DeviceSyncService', () => {
           metadata: { manuallyAdded: true, createdFromGatewaySync: false },
         },
       ] as unknown as AccessControlDevice[]);
-      mockDeviceModel.updateAccessControlDevice.mockResolvedValue({} as AccessControlDevice);
 
       const seen = await deviceSyncService.syncAccessDeviceInventory(gatewayId, facilityId, [
         { kind: 'access_control', access_id: 'MANUAL-1', relay_channel: 1 },
       ]);
 
-      expect(seen.updated).toBe(1);
-      expect(mockDeviceModel.updateAccessControlDevice).toHaveBeenCalledWith('ac-manual', {
-        metadata: { manuallyAdded: true, createdFromGatewaySync: true },
-      });
-
-      mockDeviceModel.findAccessControlDevices.mockResolvedValue([
-        {
-          id: 'ac-manual',
-          gateway_id: gatewayId,
-          device_serial: 'MANUAL-1',
-          name: 'Manual Gate',
-          relay_channel: 1,
-          metadata: { manuallyAdded: true, createdFromGatewaySync: true },
-        },
-      ] as unknown as AccessControlDevice[]);
+      expect(seen.unchanged).toBe(1);
+      expect(mockDeviceModel.updateAccessControlDevice).not.toHaveBeenCalled();
 
       const omitted = await deviceSyncService.syncAccessDeviceInventory(gatewayId, facilityId, []);
       expect(omitted.removed).toBe(0);

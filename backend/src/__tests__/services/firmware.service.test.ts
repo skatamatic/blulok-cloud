@@ -101,9 +101,38 @@ beforeEach(() => {
   mockPushModel.hasNonTerminalForFirmware.mockResolvedValue(false);
   _testActivePushes.clear();
   _testResumeInFlightPushes.clear();
+  FirmwareService.setTransferDisconnectGraceMsOverride(null);
+  FirmwareService.setVerifyDisconnectGraceMsOverride(null);
 });
 
 describe('FirmwareService', () => {
+  describe('timeout overrides', () => {
+    it('sets and clears transfer/verify disconnect grace overrides', () => {
+      const defaults = FirmwareService.getTimeoutSnapshot();
+      expect(defaults.transfer_override_active).toBe(false);
+      expect(defaults.verify_override_active).toBe(false);
+
+      expect(FirmwareService.setTransferDisconnectGraceMsOverride(1500)).toBe(1500);
+      expect(FirmwareService.setVerifyDisconnectGraceMsOverride(2500)).toBe(2500);
+      expect(FirmwareService.getTransferDisconnectGraceMs()).toBe(1500);
+      expect(FirmwareService.getVerifyDisconnectGraceMs()).toBe(2500);
+      expect(FirmwareService.isTransferDisconnectGraceOverrideActive()).toBe(true);
+      expect(FirmwareService.isVerifyDisconnectGraceOverrideActive()).toBe(true);
+
+      FirmwareService.setTransferDisconnectGraceMsOverride(null);
+      FirmwareService.setVerifyDisconnectGraceMsOverride(null);
+      expect(FirmwareService.isTransferDisconnectGraceOverrideActive()).toBe(false);
+      expect(FirmwareService.isVerifyDisconnectGraceOverrideActive()).toBe(false);
+      expect(FirmwareService.getTransferDisconnectGraceMs()).toBe(defaults.default_transfer_disconnect_grace_ms);
+      expect(FirmwareService.getVerifyDisconnectGraceMs()).toBe(defaults.default_verify_disconnect_grace_ms);
+    });
+
+    it('rejects out-of-range overrides', () => {
+      expect(() => FirmwareService.setTransferDisconnectGraceMsOverride(50)).toThrow(/between/);
+      expect(() => FirmwareService.setVerifyDisconnectGraceMsOverride(700_000)).toThrow(/between/);
+    });
+  });
+
   // =========================================================================
   // Upload
   // =========================================================================

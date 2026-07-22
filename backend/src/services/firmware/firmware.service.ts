@@ -18,6 +18,12 @@ import { getFirmwareStorageProvider, validateFirmwareFile } from './firmware-sto
 import { logger } from '@/utils/logger';
 import { FIRMWARE_CHUNK_SIZE_BYTES } from '@/constants/firmware-chunk.constants';
 import { FIRMWARE_IMAGES_RETENTION_PER_TARGET } from '@/constants/firmware-retention.constants';
+import {
+  DEFAULT_FIRMWARE_TRANSFER_DISCONNECT_GRACE_MS,
+  DEFAULT_FIRMWARE_VERIFY_DISCONNECT_GRACE_MS,
+  FIRMWARE_TIMEOUT_OVERRIDE_MAX_MS,
+  FIRMWARE_TIMEOUT_OVERRIDE_MIN_MS,
+} from '@/constants/firmware-timeout.constants';
 
 const CHUNK_SIZE_BYTES = FIRMWARE_CHUNK_SIZE_BYTES;
 const MAX_CHUNK_RETRIES = 3;
@@ -31,22 +37,39 @@ const V2_MANIFEST_JWT_TTL_SEC = 60 * 60;
 const V2_TRANSFER_TIMEOUT_MS = (Number(process.env.FIRMWARE_V2_TRANSFER_TIMEOUT_SEC) || 3600) * 1000;
 const VERIFY_TIMEOUT_MS = (Number(process.env.FIRMWARE_VERIFY_TIMEOUT_SEC) || 900) * 1000;
 const GATEWAY_VERIFY_TIMEOUT_MS = (Number(process.env.FIRMWARE_GATEWAY_VERIFY_TIMEOUT_SEC) || 300) * 1000;
-const VERIFY_DISCONNECT_GRACE_MS = (Number(process.env.FIRMWARE_VERIFY_DISCONNECT_GRACE_SEC) || 180) * 1000;
 const VALID_TARGET_TYPES: FirmwareTargetType[] = ['gateway', 'lock', 'friend_node', 'bridge', 'access_control'];
 const VALID_DELIVERY_MODES: FirmwareDeliveryMode[] = ['v1', 'v2'];
+
+/** Dev/e2e process overrides; `null` uses env/default constants. */
+let transferDisconnectGraceMsOverride: number | null = null;
+let verifyDisconnectGraceMsOverride: number | null = null;
 
 export function normalizeFirmwareDeliveryMode(raw?: string | null): FirmwareDeliveryMode {
   if (raw === 'v2') return 'v2';
   return 'v1';
 }
 
-/** Grace window to resume chunk transfer after a gateway WS drop (same default as verify disconnect grace). */
-function transferDisconnectGraceMs(): number {
-  const explicit = Number(process.env.FIRMWARE_TRANSFER_DISCONNECT_GRACE_SEC);
-  if (Number.isFinite(explicit) && explicit > 0) {
-    return explicit * 1000;
+function assertTimeoutOverrideMs(ms: number, field: string): number {
+  if (!Number.isFinite(ms)) {
+    throw new Error(`${field} must be a finite number or null`);
   }
-  return VERIFY_DISCONNECT_GRACE_MS;
+  const rounded = Math.floor(ms);
+  if (rounded < FIRMWARE_TIMEOUT_OVERRIDE_MIN_MS || rounded > FIRMWARE_TIMEOUT_OVERRIDE_MAX_MS) {
+    throw new Error(
+      `${field} must be between ${FIRMWARE_TIMEOUT_OVERRIDE_MIN_MS} and ${FIRMWARE_TIMEOUT_OVERRIDE_MAX_MS}`,
+    );
+  }
+  return rounded;
+}
+
+/** Grace window to resume chunk transfer after a gateway WS drop. */
+function transferDisconnectGraceMs(): number {
+  return transferDisconnectGraceMsOverride ?? DEFAULT_FIRMWARE_TRANSFER_DISCONNECT_GRACE_MS;
+}
+
+/** Grace while verifying during disconnect (gateway may be rebooting). */
+function verifyDisconnectGraceMs(): number {
+  return verifyDisconnectGraceMsOverride ?? DEFAULT_FIRMWARE_VERIFY_DISCONNECT_GRACE_MS;
 }
 
 const GATEWAY_STATUS_FAILED = new Set([
@@ -120,6 +143,84 @@ export class FirmwareService {
   private static pushModel = new FirmwarePushModel();
   private static pushEventModel = new FirmwarePushEventModel();
   private static gatewayModel = new GatewayModel();
+
+  // =========================================================================
+  // Dev / e2e timeout overrides
+  // =========================================================================
+
+  static getTransferDisconnectGraceMs(): number {
+    return transferDisconnectGraceMs();
+  }
+
+  static getVerifyDisconnectGraceMs(): number {
+    return verifyDisconnectGraceMs();
+  }
+
+  static isTransferDisconnectGraceOverrideActive(): boolean {
+    return transferDisconnectGraceMsOverride !== null;
+  }
+
+  static isVerifyDisconnectGraceOverrideActive(): boolean {
+    return verifyDisconnectGraceMsOverride !== null;
+  }
+
+  /**
+   * Dev/e2e: temporarily override transfer reconnect grace for this process.
+   * Pass `null` to restore the env/default value.
+   */
+  static setTransferDisconnectGraceMsOverride(ms: number | null): number {
+    if (ms === null) {
+      transferDisconnectGraceMsOverride = null;
+      logger.info(
+        `Firmware transfer disconnect grace override cleared (default=${DEFAULT_FIRMWARE_TRANSFER_DISCONNECT_GRACE_MS}ms)`,
+      );
+      return transferDisconnectGraceMs();
+    }
+    const rounded = assertTimeoutOverrideMs(ms, 'transfer_disconnect_grace_ms');
+    transferDisconnectGraceMsOverride = rounded;
+    logger.info(
+      `Firmware transfer disconnect grace override set to ${rounded}ms (default=${DEFAULT_FIRMWARE_TRANSFER_DISCONNECT_GRACE_MS}ms)`,
+    );
+    return rounded;
+  }
+
+  /**
+   * Dev/e2e: temporarily override verifying disconnect grace for this process.
+   * Pass `null` to restore the env/default value.
+   */
+  static setVerifyDisconnectGraceMsOverride(ms: number | null): number {
+    if (ms === null) {
+      verifyDisconnectGraceMsOverride = null;
+      logger.info(
+        `Firmware verify disconnect grace override cleared (default=${DEFAULT_FIRMWARE_VERIFY_DISCONNECT_GRACE_MS}ms)`,
+      );
+      return verifyDisconnectGraceMs();
+    }
+    const rounded = assertTimeoutOverrideMs(ms, 'verify_disconnect_grace_ms');
+    verifyDisconnectGraceMsOverride = rounded;
+    logger.info(
+      `Firmware verify disconnect grace override set to ${rounded}ms (default=${DEFAULT_FIRMWARE_VERIFY_DISCONNECT_GRACE_MS}ms)`,
+    );
+    return rounded;
+  }
+
+  static getTimeoutSnapshot(): {
+    transfer_disconnect_grace_ms: number;
+    verify_disconnect_grace_ms: number;
+    default_transfer_disconnect_grace_ms: number;
+    default_verify_disconnect_grace_ms: number;
+    transfer_override_active: boolean;
+    verify_override_active: boolean;
+  } {
+    return {
+      transfer_disconnect_grace_ms: transferDisconnectGraceMs(),
+      verify_disconnect_grace_ms: verifyDisconnectGraceMs(),
+      default_transfer_disconnect_grace_ms: DEFAULT_FIRMWARE_TRANSFER_DISCONNECT_GRACE_MS,
+      default_verify_disconnect_grace_ms: DEFAULT_FIRMWARE_VERIFY_DISCONNECT_GRACE_MS,
+      transfer_override_active: transferDisconnectGraceMsOverride !== null,
+      verify_override_active: verifyDisconnectGraceMsOverride !== null,
+    };
+  }
 
   // =========================================================================
   // Upload
@@ -1425,9 +1526,9 @@ export class FirmwareService {
       const verifyingPushes = (await this.pushModel.findActiveByFacilities([facilityId]))
         .filter((push) => push.status === 'verifying');
       for (const push of verifyingPushes) {
-        this.scheduleVerifyingTimeout(push, VERIFY_DISCONNECT_GRACE_MS);
+        this.scheduleVerifyingTimeout(push, verifyDisconnectGraceMs());
         logger.info(
-          `Firmware push verifying during disconnect; armed ${Math.round(VERIFY_DISCONNECT_GRACE_MS / 1000)}s grace pushId=${push.id} facility=${facilityId}`,
+          `Firmware push verifying during disconnect; armed ${Math.round(verifyDisconnectGraceMs() / 1000)}s grace pushId=${push.id} facility=${facilityId}`,
         );
       }
     } catch (err) {

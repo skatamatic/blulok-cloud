@@ -95,7 +95,7 @@ For each category, per device:
 
 **Sync-managed** means `metadata.createdFromGatewaySync === true`, `metadata.manuallyAdded !== true`, and **not** `metadata.adminIdentityOverride === true`.
 
-**Manual** means admin UI / REST created the row (`metadata.manuallyAdded === true`). After the gateway reports that serial in inventory, cloud also sets `createdFromGatewaySync: true` for app visibility, but the row stays non-deletable by sync.
+**Manual** means admin UI / REST created the row (`metadata.manuallyAdded === true`, `metadata.createdFromGatewaySync === false`). Both flags are always present and mutually exclusive. Inventory match does **not** flip provenance.
 
 | Cloud field | Value on gateway inventory create |
 |-------------|-----------------------------------|
@@ -445,8 +445,8 @@ When an operator adds a BluLok lock or access device via admin REST/UI:
 
 **If the gateway later includes this device in inventory:**
 
-- Cloud sets `metadata.createdFromGatewaySync: true` while **keeping** `metadata.manuallyAdded: true`
-- App can detect “pre-provisioned and now seen by gateway” via both flags
+- Provenance flags stay `{ manuallyAdded: true, createdFromGatewaySync: false }` (mutually exclusive; both always present)
+- Property/telemetry updates may still apply
 - Row remains **not** sync-managed — still preserved if omitted later
 
 **If the gateway omits this device from inventory:**

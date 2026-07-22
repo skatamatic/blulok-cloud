@@ -411,7 +411,7 @@ Tunables (optional env):
 - **`verifying` pushes** (chunks already delivered; gateway may be rebooting) are **not** failed immediately. Instead a shorter grace timeout is armed (same default **180s**). On reconnect (`resumePendingForFacility`), the full verify timeout is re-armed and the cloud sends **`FIRMWARE_PUSH_RESUME`** listing verifying pushes so the gateway can resend terminal `FIRMWARE_UPDATE_STATUS`.
 - If the gateway does not reconnect within the grace window, the transfer or verify push is failed with a reconnect-timeout message.
 - This avoids pushes failing when Cloud Run / GLB recycles the WebSocket mid-transfer or mid-verify.
-
+- **Dev / e2e overrides:** `GET`/`PUT /api/v1/dev/firmware-timeouts` can temporarily set `transfer_disconnect_grace_ms` and/or `verify_disconnect_grace_ms` for the running process (ADMIN / DEV_ADMIN). Pass `null` to clear. `ws:e2e` sets a short transfer grace (~1.5s) before the mid-transfer disconnect failure scenario so it does not wait the full 180s product default.
 ## Upload Race Condition Handling
 
 - If the DB insert fails (e.g. due to a unique constraint violation from a concurrent upload), the already-stored binary is cleaned up from disk automatically.
