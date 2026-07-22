@@ -5,7 +5,7 @@ jest.mock('@/models/gateway.model');
 jest.mock('@/services/gateway/gateway-events.service', () => ({
   GatewayEventsService: {
     getInstance: jest.fn().mockReturnValue({
-      getFacilityConnectionStatus: jest.fn().mockReturnValue({ connected: false }),
+      getFacilityProductLiveness: jest.fn().mockReturnValue({ connected: false }),
     }),
   },
 }));

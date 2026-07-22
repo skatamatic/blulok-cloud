@@ -70,6 +70,7 @@ import {
   queryDateString,
   queryStringArray,
 } from '@/utils/query-boolean.util';
+import { resolveBluLokDeviceDisplayName } from '@/utils/blulok-device-display.utils';
 
 const router = Router();
 const MOUNT = '/api/v1/access-history';
@@ -499,7 +500,13 @@ function generateCSV(logs: AccessHistoryRecord[]): string {
     log.user_name || '',
     log.facility_name || '',
     log.unit_number ? `Unit ${log.unit_number}` : '',
-    log.device_name || (log.device_serial ? `Lock ${log.device_serial}` : ''),
+    log.device_name
+      || (log.device_type === 'blulok'
+        ? resolveBluLokDeviceDisplayName({
+          device_serial: log.device_serial,
+          unit_number: log.unit_number,
+        })
+        : (log.device_serial || '')),
     log.device_type || '',
     log.action || '',
     log.method || '',

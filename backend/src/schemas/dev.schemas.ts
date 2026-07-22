@@ -10,3 +10,9 @@ export const devLogsQuerySchema = Joi.object({
 export const simulatorUserSessionSchema = Joi.object({
   userId: routeIdBodyField(),
 });
+
+/** Temporarily override gateway offline grace for this process (e2e / local speed-up). */
+export const gatewayOfflineGraceBodySchema = Joi.object({
+  /** Milliseconds; `null` clears the override and restores env/default. */
+  grace_ms: Joi.number().integer().min(0).max(120_000).allow(null).required(),
+});

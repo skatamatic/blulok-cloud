@@ -91,7 +91,7 @@ export class DeviceReachabilityEnrichmentService {
     let connected: boolean | null = null;
     try {
       const { GatewayEventsService } = await import('@/services/gateway/gateway-events.service');
-      const conn = GatewayEventsService.getInstance().getFacilityConnectionStatus(facilityId);
+      const conn = GatewayEventsService.getInstance().getFacilityProductLiveness(facilityId);
       connected = conn.connected;
     } catch {
       connected = null;
@@ -115,7 +115,7 @@ export class DeviceReachabilityEnrichmentService {
     let connected: boolean | null = null;
     try {
       const { GatewayEventsService } = await import('@/services/gateway/gateway-events.service');
-      connected = GatewayEventsService.getInstance().getFacilityConnectionStatus(facilityId).connected;
+      connected = GatewayEventsService.getInstance().getFacilityProductLiveness(facilityId).connected;
     } catch {
       connected = null;
     }

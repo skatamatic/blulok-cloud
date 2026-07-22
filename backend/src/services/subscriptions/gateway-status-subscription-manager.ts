@@ -261,7 +261,7 @@ export class GatewayStatusSubscriptionManager extends BaseSubscriptionManager {
       const events = GatewayEventsService.getInstance();
       for (const g of gateways) {
         if (!g.facility_id || byFacility.has(g.facility_id)) continue;
-        byFacility.set(g.facility_id, events.getFacilityConnectionStatus(g.facility_id));
+        byFacility.set(g.facility_id, events.getFacilityProductLiveness(g.facility_id));
       }
     } catch (error) {
       this.logger.warn('Failed to resolve live gateway connectivity for status payload:', error);

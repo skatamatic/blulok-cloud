@@ -137,6 +137,7 @@ export class AccessCodeService {
     status: AccessCodePushStatus,
     lastError: string | null,
     lastNonce: string | null,
+    options?: { broadcast?: boolean },
   ): AccessCodePushState {
     const next: AccessCodePushState = {
       facility_id: facilityId,
@@ -146,13 +147,17 @@ export class AccessCodeService {
       updated_at: new Date(),
     };
     this.pushStateByFacility.set(facilityId, next);
+    if (options?.broadcast !== false) {
+      this.notifyPushStateChanged(facilityId, next, { refreshEffectiveCodes: false });
+    }
     return next;
   }
 
   public getPushState(facilityId: string): AccessCodePushState {
     const existing = this.pushStateByFacility.get(facilityId);
     if (existing) return existing;
-    return this.setPushState(facilityId, 'active', null, null);
+    // Silent default — avoid WS fanout on first REST/WS read before a real transition.
+    return this.setPushState(facilityId, 'active', null, null, { broadcast: false });
   }
 
   public isGatewayOnline(facilityId: string): boolean {
@@ -1372,11 +1377,35 @@ export class AccessCodeService {
     void (async () => {
       try {
         const { WebSocketService } = await import('@/services/websocket.service');
-        await WebSocketService.getInstance().broadcastAccessCodesUpdate(facilityId);
+        const ws = WebSocketService.getInstance();
+        await ws.broadcastAccessCodesUpdate(facilityId);
+        // Admin Access Groups UI: nudge effective-codes refetch (push state unchanged).
+        ws.broadcastAccessCodePushStateUpdate(facilityId, {
+          state: this.getPushState(facilityId),
+          refreshEffectiveCodes: true,
+        });
       } catch (err) {
         logger.warn(`Failed to broadcast access codes update for facility=${facilityId}`, err);
       }
     })();
+  }
+
+  private notifyPushStateChanged(
+    facilityId: string,
+    state: AccessCodePushState,
+    options?: { refreshEffectiveCodes?: boolean },
+  ): void {
+    try {
+      // Sync import path via dynamic require to avoid circular init at module load.
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      const { WebSocketService } = require('@/services/websocket.service') as typeof import('@/services/websocket.service');
+      WebSocketService.getInstance().broadcastAccessCodePushStateUpdate(facilityId, {
+        state,
+        refreshEffectiveCodes: options?.refreshEffectiveCodes === true,
+      });
+    } catch (err) {
+      logger.warn(`Failed to broadcast access code push state for facility=${facilityId}`, err);
+    }
   }
 }
 

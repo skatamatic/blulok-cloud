@@ -63,12 +63,14 @@ import fs from 'fs';
 import path from 'path';
 import { WebSocketService } from '../services/websocket.service';
 import { logger } from '../utils/logger';
-import { registerGet, registerPost } from '@/openapi/register-route';
-import { devLogsQuerySchema, simulatorUserSessionSchema } from '@/schemas/dev.schemas';
+import { registerGet, registerPost, registerPut } from '@/openapi/register-route';
+import { devLogsQuerySchema, gatewayOfflineGraceBodySchema, simulatorUserSessionSchema } from '@/schemas/dev.schemas';
 import { UserModel } from '@/models/user.model';
 import { AuthService } from '@/services/auth.service';
 import { FacilityAccessService } from '@/services/facility-access.service';
 import { Ed25519Service } from '@/services/crypto/ed25519.service';
+import { GatewayEventsService } from '@/services/gateway/gateway-events.service';
+import { DEFAULT_GATEWAY_OFFLINE_GRACE_MS } from '@/constants/gateway-liveness.constants';
 import jwt from 'jsonwebtoken';
 
 const router = Router();
@@ -462,6 +464,63 @@ registerGet(
       error: error.message
     });
   }
+  }),
+);
+
+registerGet(
+  router,
+  '/gateway-offline-grace',
+  {
+    openApiPath: `${MOUNT}/gateway-offline-grace`,
+    tags: ['Admin'],
+    summary: 'Get gateway offline grace (effective + default)',
+    security: 'bearer',
+  },
+  asyncHandler(async (_req: AuthenticatedRequest, res: Response): Promise<void> => {
+    const events = GatewayEventsService.getInstance();
+    res.json({
+      success: true,
+      data: {
+        grace_ms: events.getOfflineGraceMs(),
+        default_grace_ms: DEFAULT_GATEWAY_OFFLINE_GRACE_MS,
+        override_active: events.isOfflineGraceOverrideActive(),
+      },
+    });
+  }),
+);
+
+registerPut(
+  router,
+  '/gateway-offline-grace',
+  {
+    openApiPath: `${MOUNT}/gateway-offline-grace`,
+    tags: ['Admin'],
+    summary: 'Override gateway offline grace for this process (e2e / local)',
+    security: 'bearer',
+    body: gatewayOfflineGraceBodySchema,
+  },
+  asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+    const { grace_ms } = req.body as { grace_ms: number | null };
+    const events = GatewayEventsService.getInstance();
+    try {
+      const applied = events.setOfflineGraceMsOverride(grace_ms);
+      logger.info(
+        `Gateway offline grace ${grace_ms === null ? 'cleared' : `set to ${applied}ms`} by ${req.user?.email ?? req.user?.userId ?? 'unknown'}`,
+      );
+      res.json({
+        success: true,
+        data: {
+          grace_ms: applied,
+          default_grace_ms: DEFAULT_GATEWAY_OFFLINE_GRACE_MS,
+          override_active: events.isOfflineGraceOverrideActive(),
+        },
+      });
+    } catch (error: any) {
+      res.status(400).json({
+        success: false,
+        message: error?.message || 'Invalid grace_ms',
+      });
+    }
   }),
 );
 

@@ -8,11 +8,11 @@ Field names in the UI follow [gateway device inventory payload](./gateway-device
 
 From **Facility → Devices → Add device**:
 
-**BluLok locks** — required: gateway, hardware serial (`lock_id`). Optional: lock number, secondary serial, display name, location note, firmware version, remote lock support, unit assignment. Lock number, display name, and location are stored in `device_settings` (`lockNumber`, `displayName`, `locationDescription`).
+**BluLok locks** — required: gateway, hardware serial (`lock_id`). Optional: gateway inventory number (`lock_number`, stored but **not shown** in operator UI), secondary serial, display name, location note, firmware version, remote lock support, unit assignment. Operator-facing labels use the **unit number** when assigned, or `Unassigned - {first 5 serial digits}` when not. Display name and location are stored in `device_settings` (`displayName`, `locationDescription`); inventory number in `device_settings.lockNumber`.
 
 **Access control** — required: name, hardware serial (`access_id`), relay channel, location. Optional: device type (gate / elevator / door), access methods, remote lock support, widget timed-open support, and lock-feedback behavior. Disable **Hardware reports open/closed state** for relay-only access points; configure **Assume open for** in seconds (`0` keeps Open immediately available).
 
-Create endpoints enforce **facility_admin** gateway scope, **duplicate serial** checks (409), **unit-in-facility** validation, and strip client `createdFromGatewaySync` flags while setting `metadata.manuallyAdded`. Facilities with multiple gateways show a gateway picker in the add-device wizard.
+Create endpoints enforce **facility_admin** gateway scope, **duplicate serial** checks (409), **unit-in-facility** validation, and set dual provenance metadata (`manuallyAdded: true`, `createdFromGatewaySync: false`). Facilities with multiple gateways show a gateway picker in the add-device wizard.
 
 ## Edit device (device details)
 
@@ -22,7 +22,7 @@ The edit dialog exposes the same admin-configurable inventory fields as add:
 |----------|----------------------|--------------------|
 | Hardware serial | `device_serial` (`lock_id`) | `device_serial` (`access_id`) |
 | Secondary serial | `serial` | — |
-| Lock number | `device_settings.lockNumber` | — |
+| Gateway inventory number (not shown in app) | `device_settings.lockNumber` | — |
 | Display name | `device_settings.displayName` / `name` | `name` |
 | Location | `device_settings.locationDescription` / `location_description` | `location_description` |
 | Firmware | `firmware_version` | metadata (read-only in UI for AC) |

@@ -1,5 +1,6 @@
 /**
- * Must match backend `GATEWAY_OFFLINE_GRACE_MS` — delay before surfacing offline toasts
- * for transient `/ws/gateway` disconnects (Cloud Run idle timeout, proxy blips, etc.).
+ * Must match backend `GATEWAY_OFFLINE_GRACE_MS`.
+ * Product liveness (gateway badge / device reachability / toasts) is grace-aware on
+ * the backend; the dashboard reacts to confirmed offline without a second debounce.
  */
-export const GATEWAY_OFFLINE_TOAST_GRACE_MS = 60_000;
+export const GATEWAY_OFFLINE_GRACE_MS = 20_000;

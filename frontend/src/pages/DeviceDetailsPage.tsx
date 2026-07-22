@@ -10,6 +10,7 @@ import { useDetailsBackNavigation, replaceSearchParams } from '@/hooks/useBackNa
 import { canRequestRemoteLock, canRequestRemoteUnlock, isLockTransitionPending, isSupportsRemoteLockEnabled } from '@/utils/unitLock.utils';
 import { lockHardwareFeedbackToasts } from '@/utils/lockHardwareFeedback.constants';
 import { useRemoteUnlockAction } from '@/hooks/useRemoteUnlockAction';
+import { unitHasTenant } from '@/constants/tenantUnlockOverride.constants';
 import { resolveLockTimeoutMsForFacility } from '@/utils/facilityLockTimeout.utils';
 import { startLockHardwareFeedbackWatch } from '@/utils/lockHardwareFeedback.utils';
 import { getApiErrorMessage } from '@/utils/apiError.utils';
@@ -148,11 +149,16 @@ export default function DeviceDetailsPage() {
   const [removingFromInventory, setRemovingFromInventory] = useState(false);
   const [linkedUnitStatus, setLinkedUnitStatus] = useState<string | null>(null);
   const [linkedUnitOverlocked, setLinkedUnitOverlocked] = useState(false);
+  const [linkedUnitTenantHints, setLinkedUnitTenantHints] = useState<{
+    primary_tenant?: { id?: string } | null;
+    shared_tenants?: Array<{ id?: string }> | null;
+    tenant_name?: string | null;
+  } | null>(null);
   const [overlockSaving, setOverlockSaving] = useState(false);
 
   const deviceLockStatusRef = useRef<DeviceDetails['lock_status'] | undefined>(undefined);
   const { facilities: globalFacilities, selectedFacility } = useGlobalFacility();
-  const { requestUnlock, isSubmitting, syncLockStatus } = useRemoteUnlockAction({
+  const { requestUnlock, isSubmitting, syncLockStatus, tenantOverrideDialog } = useRemoteUnlockAction({
     errorToast: lockHardwareFeedbackToasts.failedToUpdateLockStatus,
   });
 
@@ -215,6 +221,7 @@ export default function DeviceDetailsPage() {
       if (!device?.unit_id) {
         setLinkedUnitStatus(null);
         setLinkedUnitOverlocked(false);
+        setLinkedUnitTenantHints(null);
         return;
       }
       try {
@@ -222,9 +229,15 @@ export default function DeviceDetailsPage() {
         const unit = response?.unit ?? response;
         setLinkedUnitStatus(unit?.status ?? null);
         setLinkedUnitOverlocked(Boolean(unit?.is_overlocked));
+        setLinkedUnitTenantHints({
+          primary_tenant: unit?.primary_tenant ?? null,
+          shared_tenants: unit?.shared_tenants ?? null,
+          tenant_name: unit?.tenant_name ?? null,
+        });
       } catch {
         setLinkedUnitStatus(null);
         setLinkedUnitOverlocked(false);
+        setLinkedUnitTenantHints(null);
       }
     };
     void loadLinkedUnit();
@@ -475,15 +488,31 @@ export default function DeviceDetailsPage() {
         clearTransitionalAfterRefresh = true;
         patchLockStatus(status as DeviceDetails['lock_status']);
       },
-      sendUnlockCommand: async (id) => {
+      sendUnlockCommand: async (id, tenantOverride) => {
         if (deviceCategory === 'blulok') {
-          return apiService.updateLockStatus(id, 'unlocked');
+          return apiService.updateLockStatus(id, 'unlocked', tenantOverride);
         }
         return apiService.updateAccessControlLockStatus(id, 'unlocked');
       },
       refresh: refreshAfterUnlockAttempt,
+      requiresTenantOverride:
+        deviceCategory === 'blulok'
+        && unitHasTenant({
+          primary_tenant: device.primary_tenant ?? linkedUnitTenantHints?.primary_tenant,
+          shared_tenants: linkedUnitTenantHints?.shared_tenants,
+          tenant_name: linkedUnitTenantHints?.tenant_name,
+        }),
+      unitLabel: device.unit_number,
     });
-  }, [device, deviceId, deviceCategory, globalFacilities, selectedFacility, requestUnlock]);
+  }, [
+    device,
+    deviceId,
+    deviceCategory,
+    globalFacilities,
+    selectedFacility,
+    requestUnlock,
+    linkedUnitTenantHints,
+  ]);
 
   const lockWatchCancelRef = useRef<(() => void) | null>(null);
   const [lockSubmitting, setLockSubmitting] = useState(false);
@@ -922,6 +951,7 @@ export default function DeviceDetailsPage() {
         }
       />
       {promptDialog}
+      {tenantOverrideDialog}
     </DetailsPageShell>
   );
 }

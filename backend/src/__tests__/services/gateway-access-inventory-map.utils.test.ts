@@ -15,6 +15,16 @@ describe('mapGatewayAccessInventoryPropertiesToDbUpdate', () => {
     });
   });
 
+  it('updates access_methods when inventory advertises a new set', () => {
+    const update = mapGatewayAccessInventoryPropertiesToDbUpdate(
+      { access_methods: ['keypad', 'app'] },
+      { access_methods: ['keypad'] }
+    );
+    expect(update).toEqual({
+      access_methods: ['keypad', 'app'],
+    });
+  });
+
   it('returns empty object when properties are unchanged', () => {
     const update = mapGatewayAccessInventoryPropertiesToDbUpdate(
       { name: 'Main Gate' },

@@ -189,10 +189,10 @@ describe('DeviceDetailsPage', () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByRole('heading', { level: 1, name: 'Lock #5' })).toBeInTheDocument();
+      expect(screen.getByRole('heading', { level: 1, name: 'A-101' })).toBeInTheDocument();
     });
 
-    expect(screen.getByRole('heading', { level: 1, name: 'Lock #5' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { level: 1, name: 'A-101' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /Unassign from unit/i })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /Remove lock from cloud inventory/i })).toBeInTheDocument();
     const matches = screen.getAllByText((_, node) => node?.textContent?.includes('Unit A-101') || false);
@@ -280,7 +280,7 @@ describe('DeviceDetailsPage', () => {
       );
 
       await waitFor(() => {
-        expect(screen.getByRole('heading', { level: 1, name: 'Lock #5' })).toBeInTheDocument();
+        expect(screen.getByRole('heading', { level: 1, name: 'A-101' })).toBeInTheDocument();
       });
 
       expect(screen.queryByRole('button', { name: /Edit device/i })).not.toBeInTheDocument();
@@ -431,7 +431,7 @@ describe('DeviceDetailsPage', () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByRole('heading', { level: 1, name: 'Lock #5' })).toBeInTheDocument();
+      expect(screen.getByRole('heading', { level: 1, name: 'A-101' })).toBeInTheDocument();
     });
 
     expect(screen.queryByRole('button', { name: /Remove lock from cloud inventory/i })).not.toBeInTheDocument();
@@ -453,7 +453,7 @@ describe('DeviceDetailsPage', () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByRole('heading', { level: 1, name: 'Lock #5' })).toBeInTheDocument();
+      expect(screen.getByRole('heading', { level: 1, name: 'A-101' })).toBeInTheDocument();
     });
 
     fireEvent.click(screen.getByRole('button', { name: 'Denylist' }));
@@ -594,15 +594,23 @@ describe('DeviceDetailsPage', () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByRole('heading', { level: 1, name: 'Lock #5' })).toBeInTheDocument();
+      expect(screen.getByRole('heading', { level: 1, name: 'A-101' })).toBeInTheDocument();
     });
 
-    const button = screen.getByRole('button', { name: /Unlock/i });
-    fireEvent.click(button);
+    fireEvent.click(screen.getByRole('button', { name: /Unlock/i }));
 
     await waitFor(() => {
-      // Ensure updateLockStatus was attempted
-      expect(mockApiService.updateLockStatus).toHaveBeenCalledWith('device-1', 'unlocked');
+      expect(screen.getByRole('button', { name: /Unlock anyway/i })).toBeInTheDocument();
+    });
+    fireEvent.click(screen.getByLabelText(/Emergency \(Fire, flood, other\)/i));
+    fireEvent.click(screen.getByRole('button', { name: /Unlock anyway/i }));
+
+    await waitFor(() => {
+      expect(mockApiService.updateLockStatus).toHaveBeenCalledWith(
+        'device-1',
+        'unlocked',
+        expect.objectContaining({ reason: 'emergency' }),
+      );
     });
   });
 
@@ -660,7 +668,7 @@ describe('DeviceDetailsPage', () => {
       );
 
       await waitFor(() => {
-        expect(screen.getByRole('heading', { level: 1, name: 'Lock #5' })).toBeInTheDocument();
+        expect(screen.getByRole('heading', { level: 1, name: 'A-101' })).toBeInTheDocument();
       });
 
       expect(screen.queryByText(/Serial SN123456/i)).not.toBeInTheDocument();
@@ -752,7 +760,7 @@ describe('DeviceDetailsPage', () => {
       );
 
       await waitFor(() => {
-        expect(screen.getByRole('heading', { level: 1, name: 'Lock #5' })).toBeInTheDocument();
+        expect(screen.getByRole('heading', { level: 1, name: 'A-101' })).toBeInTheDocument();
       });
 
       await waitFor(() => {
@@ -777,7 +785,7 @@ describe('DeviceDetailsPage', () => {
       );
 
       await waitFor(() => {
-        expect(screen.getByRole('heading', { level: 1, name: 'Lock #5' })).toBeInTheDocument();
+        expect(screen.getByRole('heading', { level: 1, name: 'A-101' })).toBeInTheDocument();
       });
 
       await waitFor(() => {
@@ -802,7 +810,7 @@ describe('DeviceDetailsPage', () => {
       );
 
       await waitFor(() => {
-        expect(screen.getByRole('heading', { level: 1, name: 'Lock #5' })).toBeInTheDocument();
+        expect(screen.getByRole('heading', { level: 1, name: 'A-101' })).toBeInTheDocument();
       });
 
       await waitFor(() => {
@@ -827,7 +835,7 @@ describe('DeviceDetailsPage', () => {
       );
 
       await waitFor(() => {
-        expect(screen.getByRole('heading', { level: 1, name: 'Lock #5' })).toBeInTheDocument();
+        expect(screen.getByRole('heading', { level: 1, name: 'A-101' })).toBeInTheDocument();
       });
 
       await waitFor(() => {
@@ -855,7 +863,7 @@ describe('DeviceDetailsPage', () => {
       );
 
       await waitFor(() => {
-        expect(screen.getByRole('heading', { level: 1, name: 'Lock #5' })).toBeInTheDocument();
+        expect(screen.getByRole('heading', { level: 1, name: 'A-101' })).toBeInTheDocument();
       });
 
       expect(mockSubscribe).toHaveBeenCalledWith(
@@ -876,7 +884,7 @@ describe('DeviceDetailsPage', () => {
       );
 
       await waitFor(() => {
-        expect(screen.getByRole('heading', { level: 1, name: 'Lock #5' })).toBeInTheDocument();
+        expect(screen.getByRole('heading', { level: 1, name: 'A-101' })).toBeInTheDocument();
       });
 
       unmount();
@@ -902,7 +910,7 @@ describe('DeviceDetailsPage', () => {
       );
 
       await waitFor(() => {
-        expect(screen.getByRole('heading', { level: 1, name: 'Lock #5' })).toBeInTheDocument();
+        expect(screen.getByRole('heading', { level: 1, name: 'A-101' })).toBeInTheDocument();
       });
 
       await waitFor(() => {
@@ -947,7 +955,7 @@ describe('DeviceDetailsPage', () => {
       );
 
       await waitFor(() => {
-        expect(screen.getByRole('heading', { level: 1, name: 'Lock #5' })).toBeInTheDocument();
+        expect(screen.getByRole('heading', { level: 1, name: 'A-101' })).toBeInTheDocument();
       });
 
       await waitFor(() => {

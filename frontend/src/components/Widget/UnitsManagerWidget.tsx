@@ -23,6 +23,7 @@ import { WidgetSize } from '@/types/widget.types';
 import { apiService } from '@/services/api.service';
 import { RemoteUnlockButton } from '@/components/Lock/RemoteUnlockButton';
 import { useRemoteUnlockAction } from '@/hooks/useRemoteUnlockAction';
+import { unitHasTenant } from '@/constants/tenantUnlockOverride.constants';
 import { lockHardwareFeedbackToasts } from '@/utils/lockHardwareFeedback.constants';
 import {
   getWidgetLayoutProfile,
@@ -969,7 +970,7 @@ export const UnitsManagerWidget: React.FC<UnitsManagerWidgetProps> = ({
   const unitsRef = useRef(units);
   unitsRef.current = units;
 
-  const { requestUnlock, isSubmitting, syncLockStatus } = useRemoteUnlockAction({
+  const { requestUnlock, isSubmitting, syncLockStatus, tenantOverrideDialog } = useRemoteUnlockAction({
     timeoutToast: lockHardwareFeedbackToasts.unitUnlockTimeout,
   });
   const { isAllFacilitiesSelected, facilities: globalFacilities } = useGlobalFacility();
@@ -1179,6 +1180,8 @@ export const UnitsManagerWidget: React.FC<UnitsManagerWidgetProps> = ({
         patchUnitLockStatus(status);
       },
       refresh: refreshAfterUnlockAttempt,
+      requiresTenantOverride: unitHasTenant(unit),
+      unitLabel: unit.unit_number,
     });
   };
 
@@ -1501,6 +1504,7 @@ export const UnitsManagerWidget: React.FC<UnitsManagerWidgetProps> = ({
           )}
         </div>
       </div>
+      {tenantOverrideDialog}
     </Widget>
   );
 };

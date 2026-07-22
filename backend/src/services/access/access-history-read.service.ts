@@ -459,6 +459,7 @@ export class AccessHistoryReadService {
     return resolveBluLokDeviceDisplayName({
       device_settings: ctx.blulok_device_settings,
       device_serial: ctx.device_serial,
+      unit_number: ctx.unit_number,
     });
   }
 
@@ -497,6 +498,10 @@ export class AccessHistoryReadService {
     }
     if (baseMetadata.initiated_remotely === true) {
       presentation.initiated_remotely = true;
+    }
+    const tenantUnlockOverride = baseMetadata.tenant_unlock_override;
+    if (tenantUnlockOverride && typeof tenantUnlockOverride === 'object' && tenantUnlockOverride !== null) {
+      presentation.tenant_unlock_override = tenantUnlockOverride;
     }
     const gatewayId = baseMetadata.gateway_id;
     if (typeof gatewayId === 'string') {

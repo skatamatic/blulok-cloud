@@ -366,4 +366,14 @@ export class FirmwarePushModel {
       .whereNotIn('status', TERMINAL_STATUSES)
       .orderBy('created_at', 'desc');
   }
+
+  /** True when any non-terminal push still references this firmware image. */
+  async hasNonTerminalForFirmware(firmwareId: string): Promise<boolean> {
+    const knex = this.db.connection;
+    const row = await knex('firmware_pushes')
+      .where('firmware_id', firmwareId)
+      .whereNotIn('status', TERMINAL_STATUSES)
+      .first('id');
+    return !!row;
+  }
 }

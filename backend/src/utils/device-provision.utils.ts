@@ -16,7 +16,23 @@ type ProvisionUser = {
 const SYNC_MANAGED_METADATA_KEYS = ['createdFromGatewaySync'] as const;
 
 /**
+ * Metadata for gateway inventory / auto-provisioned devices (sync-managed).
+ * Always includes both flags so clients can rely on a stable shape.
+ */
+export function buildGatewaySyncProvisionMetadata(
+  extra?: Record<string, unknown> | null
+): Record<string, unknown> {
+  const base = extra && typeof extra === 'object' ? { ...extra } : {};
+  return {
+    ...base,
+    createdFromGatewaySync: true,
+    manuallyAdded: false,
+  };
+}
+
+/**
  * Build metadata for manually provisioned devices (never sync-managed).
+ * Always includes both flags so clients can rely on a stable shape.
  */
 export function buildManualProvisionMetadata(
   clientMetadata?: Record<string, unknown> | null
@@ -27,6 +43,7 @@ export function buildManualProvisionMetadata(
     delete base[key];
   }
   base.manuallyAdded = true;
+  base.createdFromGatewaySync = false;
   return base;
 }
 

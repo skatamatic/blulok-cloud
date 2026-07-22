@@ -1,9 +1,11 @@
 /**
  * @jest-environment jsdom
  */
+import { isValidElement, type ReactElement, type ReactNode } from 'react';
 import { renderHook, act } from '@testing-library/react';
 import { useRemoteUnlockAction } from '@/hooks/useRemoteUnlockAction';
 import { resolveLockCommandTimeoutMs } from '@/utils/facilityLockTimeout.utils';
+import type { TenantUnlockOverridePayload } from '@/constants/tenantUnlockOverride.constants';
 
 const mockAddToast = jest.fn();
 const mockUpdateLockStatus = jest.fn();
@@ -17,6 +19,23 @@ jest.mock('@/services/api.service', () => ({
     updateLockStatus: (...args: unknown[]) => mockUpdateLockStatus(...args),
   },
 }));
+
+jest.mock('@/components/Lock/TenantUnlockOverrideDialog', () => ({
+  TenantUnlockOverrideDialog: () => null,
+}));
+
+type DialogProps = {
+  isOpen?: boolean;
+  isLoading?: boolean;
+  initialDraft?: TenantUnlockOverridePayload;
+  onConfirm?: (payload: TenantUnlockOverridePayload) => void;
+  onCancel?: () => void;
+};
+
+function dialogProps(node: ReactNode): DialogProps | null {
+  if (!isValidElement(node)) return null;
+  return (node as ReactElement<DialogProps>).props;
+}
 
 describe('useRemoteUnlockAction', () => {
   beforeEach(() => {
@@ -177,5 +196,116 @@ describe('useRemoteUnlockAction', () => {
     expect(mockAddToast).not.toHaveBeenCalledWith(
       expect.objectContaining({ title: 'No confirmation yet' }),
     );
+  });
+
+  it('does not call the unlock API until tenant override is confirmed', async () => {
+    const { result } = renderHook(() => useRemoteUnlockAction());
+
+    await act(async () => {
+      await result.current.requestUnlock({
+        deviceId: 'dev-1',
+        watchKey: 'unit-1',
+        getLockStatus: () => 'locked',
+        applyOptimisticUnlocking: jest.fn(),
+        requiresTenantOverride: true,
+        unitLabel: 'A-101',
+      });
+    });
+
+    expect(mockUpdateLockStatus).not.toHaveBeenCalled();
+    expect(dialogProps(result.current.tenantOverrideDialog)?.isOpen).toBe(true);
+  });
+
+  it('opens override dialog when API returns TENANT_UNLOCK_OVERRIDE_REQUIRED', async () => {
+    mockUpdateLockStatus.mockRejectedValueOnce({
+      response: {
+        data: {
+          code: 'TENANT_UNLOCK_OVERRIDE_REQUIRED',
+          message: 'This unit has a tenant. Select a reason before unlocking remotely.',
+        },
+      },
+    });
+
+    const { result } = renderHook(() => useRemoteUnlockAction());
+
+    await act(async () => {
+      await result.current.requestUnlock({
+        deviceId: 'dev-1',
+        watchKey: 'unit-1',
+        getLockStatus: () => 'locked',
+        applyOptimisticUnlocking: jest.fn(),
+        requiresTenantOverride: false,
+        timeoutMs: 0,
+      });
+    });
+
+    expect(dialogProps(result.current.tenantOverrideDialog)?.isOpen).toBe(true);
+  });
+
+  it('keeps override dialog open with draft when unlock fails after confirm', async () => {
+    const sendUnlockCommand = jest
+      .fn()
+      .mockRejectedValueOnce(new Error('gateway offline'));
+
+    const { result } = renderHook(() => useRemoteUnlockAction());
+
+    await act(async () => {
+      await result.current.requestUnlock({
+        deviceId: 'dev-1',
+        watchKey: 'unit-1',
+        getLockStatus: () => 'locked',
+        applyOptimisticUnlocking: jest.fn(),
+        requiresTenantOverride: true,
+        sendUnlockCommand,
+        timeoutMs: 0,
+      });
+    });
+
+    expect(dialogProps(result.current.tenantOverrideDialog)?.isOpen).toBe(true);
+    expect(sendUnlockCommand).not.toHaveBeenCalled();
+
+    await act(async () => {
+      dialogProps(result.current.tenantOverrideDialog)?.onConfirm?.({
+        reason: 'emergency',
+        notes: 'Retry later',
+      });
+    });
+
+    expect(sendUnlockCommand).toHaveBeenCalledWith('dev-1', {
+      reason: 'emergency',
+      notes: 'Retry later',
+    });
+    expect(dialogProps(result.current.tenantOverrideDialog)?.isOpen).toBe(true);
+    expect(dialogProps(result.current.tenantOverrideDialog)?.initialDraft).toEqual({
+      reason: 'emergency',
+      notes: 'Retry later',
+    });
+  });
+
+  it('closes override dialog after successful unlock with override', async () => {
+    const sendUnlockCommand = jest.fn().mockResolvedValueOnce({ lock_status: 'unlocking' });
+
+    const { result } = renderHook(() => useRemoteUnlockAction());
+
+    await act(async () => {
+      await result.current.requestUnlock({
+        deviceId: 'dev-1',
+        watchKey: 'unit-1',
+        getLockStatus: () => 'locked',
+        applyOptimisticUnlocking: jest.fn(),
+        requiresTenantOverride: true,
+        sendUnlockCommand,
+        timeoutMs: 0,
+      });
+    });
+
+    await act(async () => {
+      dialogProps(result.current.tenantOverrideDialog)?.onConfirm?.({
+        reason: 'testing_maintenance',
+      });
+    });
+
+    expect(sendUnlockCommand).toHaveBeenCalled();
+    expect(dialogProps(result.current.tenantOverrideDialog)?.isOpen).toBe(false);
   });
 });

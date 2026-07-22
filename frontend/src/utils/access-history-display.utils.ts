@@ -1,6 +1,6 @@
 import { AccessLog } from '@/types/access-history.types';
 import { formatDateTime } from '@/utils/datetime.utils';
-import { formatBluLokLockNumberLabel } from '@/utils/blulokDeviceDisplay.utils';
+import { formatBluLokUserFacingLabel } from '@/utils/blulokDeviceDisplay.utils';
 import { readDisplayName } from '@/utils/deviceMetadataForm.utils';
 
 export type AccessLogPresentationMetadata = {
@@ -20,6 +20,11 @@ export type AccessLogPresentationMetadata = {
   };
   description?: string;
   failure_summary?: string;
+  tenant_unlock_override?: {
+    reason?: string;
+    reason_label?: string;
+    notes?: string | null;
+  };
 };
 
 const ACTION_LABELS: Record<string, string> = {
@@ -100,18 +105,17 @@ function normalizeDeviceLabelCandidate(candidate: string | null | undefined): st
 function resolveBluLokAccessHistoryDeviceLabel(
   log: AccessLog,
   meta: AccessLogPresentationMetadata,
-): string | null {
-  const settings = meta.device?.device_settings;
-  const displayName = readDisplayName(settings);
+): string {
+  // Prefer displayName via page-title path without trusting stale meta.device.name (may be Lock #).
+  const displayName = readDisplayName(meta.device?.device_settings);
   if (displayName && !looksLikeUuid(displayName)) return displayName;
 
-  const lockLabel = formatBluLokLockNumberLabel({
+  return formatBluLokUserFacingLabel({
     device_serial: log.device_serial,
-    device_settings: settings,
+    device_settings: meta.device?.device_settings,
+    unit_number: log.unit_number ?? meta.unit?.number ?? null,
+    unit_id: log.unit_id ?? meta.unit?.id ?? null,
   });
-  if (lockLabel !== 'Unknown lock') return lockLabel;
-
-  return null;
 }
 
 /** Human-readable access point / device label (never a cloud row UUID). */
@@ -477,9 +481,26 @@ export function buildAccessLogDetailItems(
     items.push({ label: 'Failure reason', value: failureDetail });
   }
 
+  const unlockOverride = meta.tenant_unlock_override;
+  if (unlockOverride && typeof unlockOverride === 'object') {
+    const reasonLabel =
+      (typeof unlockOverride.reason_label === 'string' && unlockOverride.reason_label.trim())
+      || (typeof unlockOverride.reason === 'string' && unlockOverride.reason.trim())
+      || '';
+    if (reasonLabel) {
+      items.push({ label: 'Unlock reason', value: reasonLabel });
+    }
+    const overrideNotes =
+      typeof unlockOverride.notes === 'string' ? unlockOverride.notes.trim() : '';
+    if (overrideNotes) {
+      items.push({ label: 'Notes', value: overrideNotes });
+    }
+  }
+
   if (meta.description) {
     const notes = meta.description.trim();
-    if (!failureDetail || notes !== failureDetail.trim()) {
+    const alreadyHasNotes = items.some((item) => item.label === 'Notes');
+    if (!alreadyHasNotes && (!failureDetail || notes !== failureDetail.trim())) {
       items.push({ label: 'Notes', value: meta.description });
     }
   }

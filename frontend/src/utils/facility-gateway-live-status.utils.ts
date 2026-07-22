@@ -6,9 +6,9 @@ export type GatewayType = 'physical' | 'http' | 'simulated' | string;
  * Single display rule for facility gateway connectivity across Facility and Gateway tabs,
  * for every gateway type.
  *
- * The live inbound `/ws/gateway` session is the authoritative liveness signal: if the gateway
- * is sending any traffic within the keepalive window, it is online. `connected` is delivered in
- * real time via the `gateway_status_update` broadcast and reconciled by the HTTP status poll.
+ * The live product liveness signal (`connected` on `gateway_status_update`) already
+ * absorbs brief Cloud Run / proxy recycles via backend offline grace. `connected` is
+ * delivered in real time and reconciled by the HTTP status poll.
  *
  * - `connected === true`  → online
  * - `connected === false` → offline

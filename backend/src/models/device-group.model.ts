@@ -240,6 +240,9 @@ export class DeviceGroupModel {
       .leftJoin('blulok_devices as bd', function joinCurrentLock() {
         this.on('bd.unit_id', '=', 'm.source_unit_id').andOnVal('m.device_type', '=', 'blulok');
       })
+      .leftJoin('access_control_devices as ac', function joinAccessControl() {
+        this.on('ac.id', '=', 'm.device_id').andOnVal('m.device_type', '=', 'access_control');
+      })
       .select(
         'm.id',
         'm.group_id',
@@ -249,6 +252,10 @@ export class DeviceGroupModel {
         knex.raw('COALESCE(bd.id, m.device_id) as device_id'),
       )
       .where('m.group_id', groupId)
+      // Hide AC memberships whose device row is already gone (zombies).
+      .andWhere(function excludeMissingAccessControl() {
+        this.where('m.device_type', '!=', 'access_control').orWhereNotNull('ac.id');
+      })
       .orderBy('m.created_at', 'asc');
     return rows as DeviceGroupMember[];
   }
@@ -294,17 +301,40 @@ export class DeviceGroupModel {
   }
 
   /**
+   * Removes all access-control memberships for a device (any group).
+   */
+  async removeAccessControlMembershipsForDevice(
+    deviceId: string,
+    trx?: import('knex').Knex.Transaction,
+  ): Promise<number> {
+    const knex = trx ?? this.db.connection;
+    return knex('device_group_members')
+      .where({ device_id: deviceId, device_type: 'access_control' })
+      .del();
+  }
+
+  /**
    * Removes BluLok rows from default access groups that no longer resolve to a facility unit
    * or inventory lock (stale zombies after unit/lock deletion).
+   * @deprecated Prefer {@link removeOrphanedGroupMembers} — kept for call-site compatibility.
    */
   async removeUnknownBlulokDefaultGroupMembers(): Promise<{ removed: number; byFacility: Record<string, number> }> {
+    return this.removeOrphanedGroupMembers();
+  }
+
+  /**
+   * Removes orphaned access-group memberships:
+   * - access_control rows whose device no longer exists (any group)
+   * - BluLok rows whose unit anchor or lock no longer exists (any group)
+   * Safe to run on every startup — idempotent.
+   */
+  async removeOrphanedGroupMembers(): Promise<{ removed: number; byFacility: Record<string, number> }> {
     const knex = this.db.connection;
 
-    const unknownRows = await knex('device_group_members as m')
+    const blulokUnknown = await knex('device_group_members as m')
       .join('device_groups as g', 'g.id', 'm.group_id')
       .select('m.id', 'g.facility_id')
-      .where('g.is_default', true)
-      .andWhere('m.device_type', 'blulok')
+      .where('m.device_type', 'blulok')
       .where(function markUnknown() {
         this.where(function unitAnchorMissingUnit() {
           this.whereNotNull('m.source_unit_id').whereNotExists(function unitExistsInFacility() {
@@ -324,6 +354,18 @@ export class DeviceGroupModel {
         });
       });
 
+    const accessUnknown = await knex('device_group_members as m')
+      .join('device_groups as g', 'g.id', 'm.group_id')
+      .select('m.id', 'g.facility_id')
+      .where('m.device_type', 'access_control')
+      .whereNotExists(function accessDeviceExists() {
+        this.select(knex.raw('1'))
+          .from('access_control_devices as ac')
+          .whereRaw('ac.id = m.device_id');
+      });
+
+    const unknownRows = [...blulokUnknown, ...accessUnknown];
+
     if (unknownRows.length === 0) {
       return { removed: 0, byFacility: {} };
     }
@@ -335,10 +377,45 @@ export class DeviceGroupModel {
     }
 
     await knex('device_group_members')
-      .whereIn('id', unknownRows.map((row) => String(row.id)))
+      .whereIn(
+        'id',
+        unknownRows.map((row) => String(row.id)),
+      )
       .del();
 
     return { removed: unknownRows.length, byFacility };
+  }
+
+  /**
+   * Before gateway (or facility) cascade deletes devices, drop related group memberships.
+   */
+  async removeMembershipsForGatewayDevices(
+    gatewayId: string,
+    trx?: import('knex').Knex.Transaction,
+  ): Promise<{ accessControl: number; blulokDirect: number }> {
+    const knex = trx ?? this.db.connection;
+
+    const accessIds = await knex('access_control_devices').where('gateway_id', gatewayId).pluck('id');
+    let accessControl = 0;
+    if (accessIds.length > 0) {
+      accessControl = await knex('device_group_members')
+        .whereIn('device_id', accessIds)
+        .andWhere('device_type', 'access_control')
+        .del();
+    }
+
+    const blulokIds = await knex('blulok_devices').where('gateway_id', gatewayId).pluck('id');
+    let blulokDirect = 0;
+    if (blulokIds.length > 0) {
+      // Unit-anchored BluLok memberships are preserved (source_unit_id set); only direct device rows.
+      blulokDirect = await knex('device_group_members')
+        .whereIn('device_id', blulokIds)
+        .andWhere('device_type', 'blulok')
+        .whereNull('source_unit_id')
+        .del();
+    }
+
+    return { accessControl, blulokDirect };
   }
 
   async findDefaultByFacility(facilityId: string): Promise<DeviceGroup | null> {

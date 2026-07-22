@@ -662,8 +662,23 @@ class ApiService {
     return response.data;
   }
 
-  async updateLockStatus(id: string, lock_status: string) {
-    const response = await this.api.put(`/devices/blulok/${id}/lock`, { lock_status });
+  async updateLockStatus(
+    id: string,
+    lock_status: string,
+    tenantOverride?: { reason: string; notes?: string },
+  ) {
+    const body: {
+      lock_status: string;
+      tenant_override_reason?: string;
+      tenant_override_notes?: string;
+    } = { lock_status };
+    if (tenantOverride?.reason) {
+      body.tenant_override_reason = tenantOverride.reason;
+      if (tenantOverride.notes) {
+        body.tenant_override_notes = tenantOverride.notes;
+      }
+    }
+    const response = await this.api.put(`/devices/blulok/${id}/lock`, body);
     return response.data;
   }
 

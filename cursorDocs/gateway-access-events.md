@@ -21,6 +21,17 @@ BluLok Cloud uses **two separate mechanisms**. Choosing the wrong one produces m
 | **Cloud-initiated remote LOCK/UNLOCK** (JWT from cloud) | Confirm final state via `POST /devices/state` only | `lock` / `unlock` (attributed to initiating user) | `lock` / `unlock` with `remote_gateway` / `admin_remote` |
 | **Admin remote open** (operator override at gateway) | `POST /access-events` with `admin_remote_open` | `access_attempt` | Shown as admin remote open |
 
+### Tenant-unit remote unlock override
+
+When a BluLok lock is assigned to a unit that has a tenant (primary/shared assignment or active key share), cloud **requires** a structured override before accepting remote **unlock**:
+
+| Body field | Required when unit has tenant | Values |
+|------------|-------------------------------|--------|
+| `tenant_override_reason` | Yes (unlock only) | `tenant_locked_phone`, `emergency`, `testing_maintenance` |
+| `tenant_override_notes` | No | Free text (max 500) |
+
+Missing reason → `400` with `code: TENANT_UNLOCK_OVERRIDE_REQUIRED`. On success (and on failed/timed-out unlock attempts), Access History shows the initiating user plus **Unlock reason** / optional **Notes** from activity metadata `tenant_unlock_override`. The UI keeps the reason dialog open until unlock succeeds, and re-opens it if the API returns `TENANT_UNLOCK_OVERRIDE_REQUIRED`.
+
 ```mermaid
 flowchart LR
   subgraph gateway [On-site gateway]
@@ -120,6 +131,15 @@ Use this when the **physical lock state** changes. Do **not** send `access-event
 | `state: "UNKNOWN"` | Unknown | `unknown` | No |
 
 `source` (`GATEWAY`, `USER`, `CLOUD`) is accepted on the payload but is **not** used to choose access-history attribution. Attribution for remote commands is determined by whether the cloud recently issued a LOCK/UNLOCK JWT for that device.
+
+### How remote-command attribution works
+
+1. `PUT /devices/blulok/:id/lock` and `PUT /devices/access-control/:id/lock` always pass the authenticated user into `LockCommandService` as the **initiator** (tenant unlock override is optional metadata on BluLok unlock only).
+2. After the gateway accepts the JWT, cloud keeps a **pending attribution** entry keyed by device id (initiator, requested status, optional override).
+3. When `devices/state` reports a terminal `locked` / `unlocked` (including a re-report of the same state), cloud stamps Access History with that user (`remote_gateway` / `admin_remote`). Opposite state → `access_attempt` failure.
+4. Pending entries always have a TTL: facility `lock_command_timeout_sec`, or for one-shot (`0`) a fixed attribution TTL (`ONE_SHOT_ATTRIBUTION_TTL_SEC`) so stale pending cannot mis-attribute later local events.
+
+**Deployment note:** pending attribution is **process-local memory** (same class as inbound gateway WebSocket affinity). On multi-instance Cloud Run without sticky routing, command and state sync can land on different instances and attribution is lost → event may show as `local_device`. Prefer max-instances=1 or session affinity until a shared store exists.
 
 ### Transitional states
 
@@ -524,7 +544,7 @@ After ingestion, `AccessHistoryReadService` maps rows for the API:
 | State sync `lock` | `lock` | `local_device` or remote | success |
 | State sync `unlock` | `unlock` | `local_device` or remote | success |
 
-Presentation metadata includes facility, unit, device name (from `device_settings.displayName` / lock number), initiator links, and `failure_summary` for denials.
+Presentation metadata includes facility, unit, device name (unit number when assigned, otherwise `Unassigned - {serial digits}`), initiator links, and `failure_summary` for denials.
 
 ---
 

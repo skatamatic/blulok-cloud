@@ -1189,6 +1189,40 @@ registerPut(
         return;
       }
 
+      let tenantUnlockOverride:
+        | { reason: string; reasonLabel: string; notes?: string }
+        | undefined;
+
+      if (value.lock_status === 'unlocked' && deviceRow.unit_id) {
+        const { unitHasTenant } = await import('@/utils/unit-has-tenant.utils');
+        const hasTenant = await unitHasTenant(knex, String(deviceRow.unit_id));
+        if (hasTenant) {
+          const {
+            isTenantUnlockOverrideReasonCode,
+            labelForTenantUnlockOverrideReason,
+          } = await import('@/constants/tenant-unlock-override.constants');
+          const reasonRaw = value.tenant_override_reason;
+          if (!isTenantUnlockOverrideReasonCode(reasonRaw)) {
+            res.status(400).json({
+              success: false,
+              message:
+                'This unit has a tenant. Select a reason before unlocking remotely.',
+              code: 'TENANT_UNLOCK_OVERRIDE_REQUIRED',
+            });
+            return;
+          }
+          const notesRaw =
+            typeof value.tenant_override_notes === 'string'
+              ? value.tenant_override_notes.trim()
+              : '';
+          tenantUnlockOverride = {
+            reason: reasonRaw,
+            reasonLabel: labelForTenantUnlockOverrideReason(reasonRaw),
+            ...(notesRaw ? { notes: notesRaw } : {}),
+          };
+        }
+      }
+
       // For locked/unlocked, route through the LockCommandService so the device
       // enters a transitional state ('locking'/'unlocking') and we wait on gateway state updates.
       const { LockCommandService } = await import('@/services/lock-command.service');
@@ -1201,6 +1235,7 @@ registerPut(
           userName: [user.firstName, user.lastName].filter(Boolean).join(' ').trim() || user.email || 'User',
           role: user.role,
         },
+        { tenantUnlockOverride },
       );
 
       if (!result.success) {

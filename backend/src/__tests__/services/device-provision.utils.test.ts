@@ -1,4 +1,5 @@
 import {
+  buildGatewaySyncProvisionMetadata,
   buildManualProvisionMetadata,
   mapDeviceProvisionDatabaseError,
 } from '@/utils/device-provision.utils';
@@ -6,7 +7,7 @@ import { ConflictError } from '@/middleware/error.middleware';
 
 describe('device-provision.utils', () => {
   describe('buildManualProvisionMetadata', () => {
-    it('strips sync-managed flags and sets manuallyAdded', () => {
+    it('sets dual provenance flags and keeps client custom fields', () => {
       const result = buildManualProvisionMetadata({
         createdFromGatewaySync: true,
         custom: 'keep',
@@ -15,6 +16,17 @@ describe('device-provision.utils', () => {
       expect(result).toEqual({
         custom: 'keep',
         manuallyAdded: true,
+        createdFromGatewaySync: false,
+      });
+    });
+  });
+
+  describe('buildGatewaySyncProvisionMetadata', () => {
+    it('sets dual provenance flags for inventory-provisioned devices', () => {
+      expect(buildGatewaySyncProvisionMetadata({ note: 'x' })).toEqual({
+        note: 'x',
+        createdFromGatewaySync: true,
+        manuallyAdded: false,
       });
     });
   });

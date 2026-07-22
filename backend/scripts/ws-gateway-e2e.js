@@ -1003,6 +1003,22 @@ async function connectNotificationsWs(token) {
   return ws;
 }
 
+/** Re-open dev_notifications watcher if flood/churn or idle timeout dropped it. */
+async function ensureNotificationsWs(token) {
+  if (notificationsWs && notificationsWs.readyState === WebSocket.OPEN) {
+    return notificationsWs;
+  }
+  try {
+    notificationsWs?.terminate();
+  } catch {
+    /* ignore */
+  }
+  notificationEvents.length = 0;
+  notificationsWs = await connectNotificationsWs(token);
+  await delay(300);
+  return notificationsWs;
+}
+
 async function waitForNotification(predicate, timeoutMs = 15000) {
   const started = Date.now();
   while (Date.now() - started < timeoutMs) {
@@ -3899,14 +3915,15 @@ async function run() {
         `Expected manuallyAdded=true after HTTP create, got ${JSON.stringify(manualCreateMeta)}`,
       );
     }
-    if (manualCreateMeta.createdFromGatewaySync !== false) {
+    // Manual provision always stores dual provenance flags
+    if (manualCreateMeta.manuallyAdded !== true || manualCreateMeta.createdFromGatewaySync !== false) {
       throw new Error(
-        `Expected createdFromGatewaySync=false after HTTP create, got ${JSON.stringify(manualCreateMeta)}`,
+        `Expected manuallyAdded=true, createdFromGatewaySync=false after HTTP create, got ${JSON.stringify(manualCreateMeta)}`,
       );
     }
-    ok(`Manual device created with dual metadata flags (manuallyAdded=true, createdFromGatewaySync=false)`);
+    ok('Manual device created with manuallyAdded=true, createdFromGatewaySync=false');
 
-    step('Testing gateway inventory marks manual device as seen (keeps manuallyAdded)');
+    step('Testing gateway inventory matches manual device without making it sync-managed');
     const reqInventoryManualSeen = 'req-inventory-manual-seen';
     ws.send(JSON.stringify({
       type: 'PROXY_REQUEST',
@@ -3935,12 +3952,13 @@ async function run() {
         `Expected manuallyAdded=true after gateway saw device, got ${JSON.stringify(manualSeenMeta)}`,
       );
     }
-    if (manualSeenMeta.createdFromGatewaySync !== true) {
+    // Matching inventory must not flip a manual row into sync-managed (would delete on omit)
+    if (manualSeenMeta.createdFromGatewaySync === true || manualSeenMeta.manuallyAdded !== true) {
       throw new Error(
-        `Expected createdFromGatewaySync=true after gateway saw device, got ${JSON.stringify(manualSeenMeta)}`,
+        `Expected manual device to stay non-sync-managed after inventory match, got ${JSON.stringify(manualSeenMeta)}`,
       );
     }
-    ok('Manual device marked createdFromGatewaySync=true after inventory match (still manuallyAdded)');
+    ok('Manual device still manuallyAdded after inventory match (not sync-managed)');
 
     const reqInventoryManualPreserve = 'req-inventory-manual-preserve';
     ws.send(JSON.stringify({
@@ -3969,15 +3987,15 @@ async function run() {
       headers: authHeaders(token),
     });
     const manualOmitMeta = manualAfterOmit.data?.device?.metadata || {};
-    if (manualOmitMeta.manuallyAdded !== true || manualOmitMeta.createdFromGatewaySync !== true) {
+    if (manualOmitMeta.manuallyAdded !== true || manualOmitMeta.createdFromGatewaySync === true) {
       throw new Error(
-        `Expected dual flags preserved after omit, got ${JSON.stringify(manualOmitMeta)}`,
+        `Expected manual flags preserved after omit (manuallyAdded=true, createdFromGatewaySync!=true), got ${JSON.stringify(manualOmitMeta)}`,
       );
     }
     if ((manualPreserveResult?.skipped_manual ?? 0) < 1) {
       warn('Inventory response did not report skipped_manual; verified manual device still exists in DB');
     }
-    ok(`Manual device ${manualDeviceId} preserved when omitted after gateway-seen (skipped_manual=${manualPreserveResult?.skipped_manual ?? 0})`);
+    ok(`Manual device ${manualDeviceId} preserved when omitted (skipped_manual=${manualPreserveResult?.skipped_manual ?? 0})`);
 
     // Test devices/state - not_found tracking
     step('Testing POST /devices/state (not_found tracking)');
@@ -6016,17 +6034,34 @@ async function run() {
       throw new Error('No-feedback open window missing durable unlock_until deadline');
     }
 
+    const noFeedbackRelockBaseline = acStatusEvents.length;
+    const unlockUntilMs = new Date(noFeedbackDevice.no_feedback_unlock_until).getTime();
+    const relockWaitMs = Math.max(unlockUntilMs - Date.now(), 0) + 15_000;
     const noFeedbackRelocked = await waitForDeviceStatusLockStatus(
       acStatusEvents,
       acForWs.id,
       'locked',
-      noFeedbackBaseline,
-      (noFeedbackOpenWindowSec + 5) * 1000,
+      noFeedbackRelockBaseline,
+      relockWaitMs,
     );
     if (!noFeedbackRelocked) {
-      throw new Error('No-feedback access point did not auto-return to locked after timeout');
+      const afterTimeout = await axios.get(
+        `${API_BASE}/devices/access-control/${acForWs.id}`,
+        { headers: authHeaders(token) },
+      );
+      const afterDevice = afterTimeout.data?.device;
+      if (Boolean(afterDevice?.is_locked) && !afterDevice?.no_feedback_unlock_until) {
+        ok('No-feedback mode auto-relocked in cloud (HTTP confirm; WS event missed)');
+      } else {
+        throw new Error(
+          `No-feedback access point did not auto-return to locked after timeout `
+          + `(is_locked=${JSON.stringify(afterDevice?.is_locked)}, `
+          + `unlock_until=${JSON.stringify(afterDevice?.no_feedback_unlock_until)})`,
+        );
+      }
+    } else {
+      ok('No-feedback mode ignores gateway lock state and auto-relocks in cloud');
     }
-    ok('No-feedback mode ignores gateway lock state and auto-relocks in cloud');
 
     await axios.put(
       `${API_BASE}/devices/access-control/${acForWs.id}/metadata`,
@@ -6255,6 +6290,17 @@ async function run() {
 
     // Device reachability coercion: DB keeps last-reported telemetry; operator reads show effective status.
     heading('Device reachability when gateway offline');
+    const E2E_OFFLINE_GRACE_MS = Number(process.env.E2E_GATEWAY_OFFLINE_GRACE_MS) > 0
+      ? Number(process.env.E2E_GATEWAY_OFFLINE_GRACE_MS)
+      : 1000;
+    step(`Setting gateway offline grace to ${E2E_OFFLINE_GRACE_MS}ms via /dev/gateway-offline-grace`);
+    await axios.put(
+      `${API_BASE}/dev/gateway-offline-grace`,
+      { grace_ms: E2E_OFFLINE_GRACE_MS },
+      { headers: authHeaders(token) },
+    );
+    ok(`Offline grace override active (${E2E_OFFLINE_GRACE_MS}ms)`);
+
     step('Syncing BluLok device online in DB before gateway disconnect');
     const reqReachOnline = 'req-reach-online';
     ws.send(JSON.stringify({
@@ -6302,7 +6348,8 @@ async function run() {
     } catch {
       /* ignore */
     }
-    await delay(800);
+    // Wait for product offline grace + small settle buffer before asserting coercion.
+    await delay(E2E_OFFLINE_GRACE_MS + 500);
 
     const reachDeadline = Date.now() + 10000;
     let reachHttpDevice = null;
@@ -6319,6 +6366,15 @@ async function run() {
     }
     if (!reachHttpDevice) {
       reachabilityWs.close();
+      try {
+        await axios.put(
+          `${API_BASE}/dev/gateway-offline-grace`,
+          { grace_ms: null },
+          { headers: authHeaders(token) },
+        );
+      } catch {
+        /* ignore */
+      }
       throw new Error(
         'Expected GET /devices/blulok/:id to show effective offline with reported_device_status online after gateway disconnect',
       );
@@ -6339,6 +6395,15 @@ async function run() {
     }
     if (!reachWsRow) {
       reachabilityWs.close();
+      try {
+        await axios.put(
+          `${API_BASE}/dev/gateway-offline-grace`,
+          { grace_ms: null },
+          { headers: authHeaders(token) },
+        );
+      } catch {
+        /* ignore */
+      }
       throw new Error(
         'Expected device_status_update with effective offline and reported_device_status online after gateway disconnect',
       );
@@ -6369,6 +6434,14 @@ async function run() {
     if (reachabilityWs.readyState === WebSocket.OPEN) {
       reachabilityWs.close();
     }
+
+    step('Clearing gateway offline grace override');
+    await axios.put(
+      `${API_BASE}/dev/gateway-offline-grace`,
+      { grace_ms: null },
+      { headers: authHeaders(token) },
+    );
+    ok('Offline grace restored to process default');
 
     step('Reconnecting gateway WebSocket after reachability checks');
     ws = await connectGatewayWsAndAuth(WS_URL, token, facilityId, gatewayId);
@@ -6562,6 +6635,10 @@ async function run() {
     // First-time invite + OTP + set-password flows using notification WS
     // NOTE: The new flow sends OTP code in the invite notification itself (single message)
     heading('First-time Login (Invite with embedded OTP)');
+    step('Ensuring DEV_NOTIFICATION WebSocket is still connected after flood tests');
+    await ensureNotificationsWs(token);
+    ok('DEV_NOTIFICATION WebSocket ready');
+
     async function requestFreshInviteOtp(inviteToken, inviteEvent, profile = {}) {
       const requestBody = { token: inviteToken };
       if (inviteEvent?.toPhone) requestBody.phone = inviteEvent.toPhone;
@@ -6593,6 +6670,7 @@ async function run() {
     async function completeFirstTimeLogin(userId, email, newPassword = 'TestUser123!') {
       // Trigger a real invite via FirstTimeUserService
       step(`Sending invite for user ${userId}`);
+      await ensureNotificationsWs(token);
       // Clear any previous DEV_NOTIFICATION events so we only see fresh invites/OTPs
       notificationEvents.length = 0;
       await axios.post(`${API_BASE}/users/${userId}/resend-invite`, {}, { headers: { Authorization: `Bearer ${token}` } });

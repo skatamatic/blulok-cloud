@@ -40,9 +40,9 @@ describe('AddDeviceModal - BluLok wizard', () => {
     });
   }
 
-  it('renders lock number input on configure step', async () => {
+  it('renders gateway inventory number input on configure step', async () => {
     await openBlulokConfigureStep();
-    expect(screen.getByLabelText(/Lock number/i)).toBeInTheDocument();
+    expect(screen.getByLabelText(/Gateway inventory number/i)).toBeInTheDocument();
   });
 
   it('renders hardware serial input on configure step', async () => {
@@ -95,7 +95,7 @@ describe('AddDeviceModal - BluLok wizard', () => {
 
     await openBlulokConfigureStep();
 
-    expect(screen.getByLabelText(/^Gateway/i)).toBeInTheDocument();
+    expect(screen.getByLabelText(/Gateway \*/i)).toBeInTheDocument();
     expect(screen.getByRole('option', { name: /Gateway A/i })).toBeInTheDocument();
     expect(screen.getByRole('option', { name: /Gateway B/i })).toBeInTheDocument();
   });
@@ -129,7 +129,7 @@ describe('AddDeviceModal - BluLok wizard', () => {
     await openBlulokConfigureStep();
 
     fireEvent.change(screen.getByLabelText(/Hardware serial/i), { target: { value: 'BL-LOCK-NUM' } });
-    fireEvent.change(screen.getByLabelText(/Lock number/i), { target: { value: '2453' } });
+    fireEvent.change(screen.getByLabelText(/Gateway inventory number/i), { target: { value: '2453' } });
     fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
 
     await waitFor(() => {

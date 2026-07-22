@@ -1,5 +1,9 @@
 import Joi from 'joi';
 import { NO_FEEDBACK_OPEN_TIMEOUT_MAX_SEC } from '@/constants/access-control-feedback.constants';
+import {
+  TENANT_UNLOCK_OVERRIDE_NOTES_MAX_LENGTH,
+  TENANT_UNLOCK_OVERRIDE_REASON_CODES,
+} from '@/constants/tenant-unlock-override.constants';
 
 const noFeedbackFields = {
   has_lock_feedback: Joi.boolean().optional(),
@@ -127,6 +131,10 @@ export const accessControlLockCommandSchema = Joi.object({
 
 export const lockStatusSchema = Joi.object({
   lock_status: Joi.string().valid('locked', 'unlocked', 'error').required(),
+  tenant_override_reason: Joi.string()
+    .valid(...TENANT_UNLOCK_OVERRIDE_REASON_CODES)
+    .optional(),
+  tenant_override_notes: Joi.string().allow('').max(TENANT_UNLOCK_OVERRIDE_NOTES_MAX_LENGTH).optional(),
 });
 
 export const deviceStatusSchema = Joi.object({

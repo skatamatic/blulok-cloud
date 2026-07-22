@@ -225,9 +225,9 @@ Aggregate REST snapshots (facility stats, histogram buckets, dashboard stats sco
 | Unlocked units / units manager widgets | `device_status`, `units` | Debounced REST via `useUnitsData` / widget hook |
 | Activity monitor, histogram, access history | `activity` (with `facility_id` when scoped) | Debounced REST |
 | Lock status, battery, gates, notifications | `device_status`, `battery_status`, etc. | Direct WS or `useLockDeviceRealtime` |
+| Access Groups / Access Codes tab (push badge + codes) | `access_code_push_state` (`facility_id` required; ADMIN / DEV_ADMIN / FACILITY_ADMIN + facility RBAC) | Live push-state payload; debounced REST `getEffectiveAccessCodes` when `refresh_effective_codes` |
 
-**No WS today:** access-code push outbox state (4s poll on Access Code tab until a subscription exists).
-
+**App vs admin access codes:** dashboard widget `access_codes` is for entitled user keypad codes. Admin Access Groups use `access_code_push_state` for gateway push outbox status and effective-code refresh nudges.
 ## Testing Strategy
 
 ### Unit Tests

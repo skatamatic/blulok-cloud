@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ChevronDownIcon,
   ChevronRightIcon,
@@ -10,6 +10,7 @@ import {
 import { apiService } from '@/services/api.service';
 import { AccessControlDevice, AccessMethod, DeviceGroup, EffectiveAccessCode } from '@/types/facility.types';
 import { useToast } from '@/contexts/ToastContext';
+import { useWebSocketSubscription } from '@/hooks/useWebSocketSubscription';
 import { SearchableSelect } from '@/components/Common/SearchableSelect';
 import { DeviceTypeIcon } from '@/components/Common/DeviceTypeIcon';
 import { ConfirmDialog } from '@/components/Common/ConfirmDialog';
@@ -413,27 +414,75 @@ export function DeviceGroupManager({
     }
   };
 
-  const refreshAccessCodeMetadata = async () => {
+  const effectiveCodesRefreshTimerRef = useRef<number | null>(null);
+  const facilityIdRef = useRef(facilityId);
+  facilityIdRef.current = facilityId;
+
+  const refreshAccessCodeMetadata = useCallback(async () => {
     if (!showAccessCodes) return;
     try {
       const [effectiveList, pushStateResp] = await Promise.all([
         apiService.getEffectiveAccessCodes(facilityId),
         apiService.getAccessCodePushState(facilityId),
       ]);
+      if (facilityIdRef.current !== facilityId) return;
       setEffectiveCodes(effectiveList.data || []);
       setPushState(pushStateResp.data || null);
     } catch (error) {
       console.error(error);
     }
-  };
+  }, [facilityId, showAccessCodes]);
+
+  const scheduleEffectiveCodesRefresh = useCallback(() => {
+    if (effectiveCodesRefreshTimerRef.current != null) {
+      window.clearTimeout(effectiveCodesRefreshTimerRef.current);
+    }
+    const requestedFacilityId = facilityId;
+    effectiveCodesRefreshTimerRef.current = window.setTimeout(() => {
+      effectiveCodesRefreshTimerRef.current = null;
+      apiService
+        .getEffectiveAccessCodes(requestedFacilityId)
+        .then((resp) => {
+          if (facilityIdRef.current !== requestedFacilityId) return;
+          setEffectiveCodes(resp.data || []);
+        })
+        .catch((error) => console.error(error));
+    }, 300);
+  }, [facilityId]);
 
   useEffect(() => {
     refreshAccessCodeMetadata().catch(() => undefined);
-    const timer = window.setInterval(() => {
-      refreshAccessCodeMetadata().catch(() => undefined);
-    }, 4000);
-    return () => window.clearInterval(timer);
-  }, [facilityId, showAccessCodes]);
+  }, [refreshAccessCodeMetadata]);
+
+  // Cancel pending effective-code refetch on facility change or unmount.
+  useEffect(() => () => {
+    if (effectiveCodesRefreshTimerRef.current != null) {
+      window.clearTimeout(effectiveCodesRefreshTimerRef.current);
+      effectiveCodesRefreshTimerRef.current = null;
+    }
+  }, [facilityId]);
+  useWebSocketSubscription<{
+    facility_id: string;
+    status: string;
+    last_error: string | null;
+    refresh_effective_codes?: boolean;
+  }>(
+    'access_code_push_state',
+    (payload) => {
+      if (payload.facility_id && payload.facility_id !== facilityId) return;
+      setPushState({
+        status: payload.status,
+        last_error: payload.last_error,
+      });
+      if (payload.refresh_effective_codes) {
+        scheduleEffectiveCodesRefresh();
+      }
+    },
+    {
+      enabled: Boolean(facilityId) && showAccessCodes,
+      filters: { facility_id: facilityId },
+    },
+  );
 
   useEffect(() => {
     loadGroupCounts(groups).catch(() => undefined);

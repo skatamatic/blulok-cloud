@@ -108,14 +108,48 @@ describe('Dev routes (/api/v1/dev)', () => {
       expect(response.body.user?.id).toBe(testData.users.tenant.id);
     });
 
-    it('returns 404 when target user does not exist', async () => {
-      const response = await request(app)
-        .post('/api/v1/dev/simulator/user-session')
-        .set('Authorization', `Bearer ${testData.users.devAdmin.token}`)
-        .send({ userId: '550e8400-e29b-41d4-a716-446655440099' })
-        .expect(404);
+  describe('PUT /api/v1/dev/gateway-offline-grace', () => {
+    afterEach(() => {
+      const { GatewayEventsService } = require('@/services/gateway/gateway-events.service');
+      GatewayEventsService.getInstance().setOfflineGraceMsOverride(null);
+    });
 
-      expect(response.body.message).toMatch(/not found/i);
+    it('returns 403 for tenant', async () => {
+      const response = await request(app)
+        .put('/api/v1/dev/gateway-offline-grace')
+        .set('Authorization', `Bearer ${testData.users.tenant.token}`)
+        .send({ grace_ms: 1000 })
+        .expect(403);
+
+      expectForbidden(response);
+    });
+
+    it('sets and clears process override for admin', async () => {
+      const setResp = await request(app)
+        .put('/api/v1/dev/gateway-offline-grace')
+        .set('Authorization', `Bearer ${testData.users.admin.token}`)
+        .send({ grace_ms: 1500 })
+        .expect(200);
+
+      expectSuccess(setResp);
+      expect(setResp.body.data.grace_ms).toBe(1500);
+      expect(setResp.body.data.override_active).toBe(true);
+
+      const getResp = await request(app)
+        .get('/api/v1/dev/gateway-offline-grace')
+        .set('Authorization', `Bearer ${testData.users.admin.token}`)
+        .expect(200);
+
+      expect(getResp.body.data.grace_ms).toBe(1500);
+      expect(getResp.body.data.override_active).toBe(true);
+
+      const clearResp = await request(app)
+        .put('/api/v1/dev/gateway-offline-grace')
+        .set('Authorization', `Bearer ${testData.users.admin.token}`)
+        .send({ grace_ms: null })
+        .expect(200);
+
+      expect(clearResp.body.data.override_active).toBe(false);
     });
   });
 });

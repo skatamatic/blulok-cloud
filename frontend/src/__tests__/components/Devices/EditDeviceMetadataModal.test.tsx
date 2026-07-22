@@ -171,6 +171,6 @@ describe('EditDeviceMetadataModal', () => {
     );
 
     expect(screen.getByText(/provisioned from gateway inventory/i)).toBeInTheDocument();
-    expect(screen.getByText(/lock number and other settings may be overwritten/i)).toBeInTheDocument();
+    expect(screen.getByText(/inventory number and other settings may be overwritten/i)).toBeInTheDocument();
   });
 });

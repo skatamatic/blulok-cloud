@@ -9,6 +9,8 @@ interface ConfirmDialogProps {
   cancelLabel?: string;
   confirmTone?: 'primary' | 'danger';
   isLoading?: boolean;
+  /** When true, confirm stays disabled (in addition to isLoading). */
+  confirmDisabled?: boolean;
   onConfirm: () => void;
   onCancel: () => void;
   footerExtra?: ReactNode;
@@ -22,6 +24,7 @@ export function ConfirmDialog({
   cancelLabel = 'Cancel',
   confirmTone = 'primary',
   isLoading = false,
+  confirmDisabled = false,
   onConfirm,
   onCancel,
   footerExtra,
@@ -108,7 +111,7 @@ export function ConfirmDialog({
           <button
             type="button"
             onClick={onConfirm}
-            disabled={isLoading}
+            disabled={isLoading || confirmDisabled}
             className={`${confirmClass} !px-3 !py-2 disabled:opacity-50 disabled:cursor-not-allowed`}
           >
             {confirmLabel}

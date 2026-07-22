@@ -15,6 +15,7 @@ import { canRequestRemoteUnlock, isLockTransitionPending } from '@/utils/unitLoc
 import { getWidgetLayoutProfile, WIDGET_LIST_SCROLL_CLASS } from '@/utils/widget-layout.utils';
 import { lockHardwareFeedbackToasts } from '@/utils/lockHardwareFeedback.constants';
 import { useRemoteUnlockAction } from '@/hooks/useRemoteUnlockAction';
+import { unitHasTenant } from '@/constants/tenantUnlockOverride.constants';
 import { resolveLockTimeoutMsForUnit } from '@/utils/facilityLockTimeout.utils';
 import { formatRelativeTime, RELATIVE_LAST_SEEN_OPTS } from '@/utils/datetime.utils';
 
@@ -58,7 +59,7 @@ export const LockStatusWidget: React.FC<LockStatusWidgetProps> = ({
   const fetchRequestIdRef = useRef(0);
   const unitsRef = useRef<Unit[]>([]);
   unitsRef.current = units;
-  const { requestUnlock, isSubmitting, syncLockStatus } = useRemoteUnlockAction({
+  const { requestUnlock, isSubmitting, syncLockStatus, tenantOverrideDialog } = useRemoteUnlockAction({
     timeoutToast: lockHardwareFeedbackToasts.unitUnlockTimeout,
     errorToast: () => ({
       type: 'error' as const,
@@ -265,6 +266,8 @@ export const LockStatusWidget: React.FC<LockStatusWidgetProps> = ({
         patchUnitLockStatus(status);
       },
       refresh: refreshAfterUnlockAttempt,
+      requiresTenantOverride: unitHasTenant(unit),
+      unitLabel: unit.unit_number,
     });
   };
 
@@ -495,6 +498,7 @@ export const LockStatusWidget: React.FC<LockStatusWidgetProps> = ({
           </div>
         )}
       </div>
+      {tenantOverrideDialog}
     </Widget>
   );
 };

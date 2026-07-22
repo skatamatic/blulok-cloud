@@ -61,11 +61,11 @@ export class DeviceGroupService {
   }
 
   /**
-   * Removes stale BluLok members from default access groups (unknown units / deleted locks).
+   * Removes orphaned access-group memberships (missing AC devices / BluLok locks or units).
    * Safe to run on every startup — idempotent.
    */
   async cleanupUnknownDefaultGroupMembers(): Promise<UnknownDefaultGroupMemberCleanupResult> {
-    return this.model.removeUnknownBlulokDefaultGroupMembers();
+    return this.model.removeOrphanedGroupMembers();
   }
 
   static async cleanupUnknownDefaultGroupMembersOnStartup(): Promise<void> {
@@ -73,12 +73,12 @@ export class DeviceGroupService {
       const result = await DeviceGroupService.getInstance().cleanupUnknownDefaultGroupMembers();
       if (result.removed > 0) {
         logger.info(
-          `Removed ${result.removed} unknown unit member(s) from default access groups`,
+          `Removed ${result.removed} orphaned access-group member(s)`,
           { byFacility: result.byFacility },
         );
       }
     } catch (error) {
-      logger.warn('Default access group unit cleanup failed (non-fatal):', error);
+      logger.warn('Access-group orphan membership cleanup failed (non-fatal):', error);
     }
   }
 

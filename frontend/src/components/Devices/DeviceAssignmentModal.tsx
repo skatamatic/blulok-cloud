@@ -13,7 +13,7 @@ import { DeviceFilter } from '@/components/Common/DeviceFilter';
 import { BluLokDeviceSummary } from '@/components/Common/BluLokDeviceSummary';
 import {
   formatBluLokDeviceSubtitle,
-  formatBluLokLockNumberLabel,
+  formatBluLokUserFacingLabel,
   type BluLokDeviceDisplayFields,
 } from '@/utils/blulokDeviceDisplay.utils';
 
@@ -171,7 +171,11 @@ export function DeviceAssignmentModal({ isOpen, onClose, onSuccess, unit }: Devi
                       </div>
                       <div className="min-w-0">
                         <p className="text-base font-semibold text-gray-900 dark:text-white">
-                          {formatBluLokLockNumberLabel(unit.blulok_device!)}
+                          {formatBluLokUserFacingLabel({
+                            ...unit.blulok_device!,
+                            unit_id: unit.id,
+                            unit_number: unit.unit_number,
+                          })}
                         </p>
                         <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
                           {formatBluLokDeviceSubtitle(unit.blulok_device!)}

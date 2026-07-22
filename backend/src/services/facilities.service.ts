@@ -59,6 +59,11 @@ export class FacilitiesService {
       // Device-related cleanup
       if (deviceIds.length > 0) {
         await db('device_denylist_entries').whereIn('device_id', deviceIds).del();
+        await db('device_group_members')
+          .whereIn('device_id', deviceIds)
+          .andWhere('device_type', 'blulok')
+          .whereNull('source_unit_id')
+          .del();
         await db('blulok_devices').whereIn('id', deviceIds).del();
       }
 
@@ -66,11 +71,27 @@ export class FacilitiesService {
       if (unitIds.length > 0) {
         await db('key_sharing').whereIn('unit_id', unitIds).del();
         await db('unit_assignments').whereIn('unit_id', unitIds).del();
+        await db('device_group_members').whereIn('source_unit_id', unitIds).del();
         await db('units').whereIn('id', unitIds).del();
       }
 
-      // Gateways cleanup
+      // Gateways cleanup — memberships before cascading device deletes
       if (gatewayIds.length > 0) {
+        const accessIds = await db('access_control_devices').whereIn('gateway_id', gatewayIds).pluck('id');
+        if (accessIds.length > 0) {
+          await db('device_group_members')
+            .whereIn('device_id', accessIds)
+            .andWhere('device_type', 'access_control')
+            .del();
+        }
+        const remainingBlulokIds = await db('blulok_devices').whereIn('gateway_id', gatewayIds).pluck('id');
+        if (remainingBlulokIds.length > 0) {
+          await db('device_group_members')
+            .whereIn('device_id', remainingBlulokIds)
+            .andWhere('device_type', 'blulok')
+            .whereNull('source_unit_id')
+            .del();
+        }
         await db('access_control_devices').whereIn('gateway_id', gatewayIds).del();
         await db('gateways').whereIn('id', gatewayIds).del();
       }

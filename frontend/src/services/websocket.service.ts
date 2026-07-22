@@ -288,6 +288,9 @@ class WebSocketService implements IWebSocketService {
         case 'access_codes_update':
           this.handleAccessCodesUpdate(message);
           break;
+        case 'access_code_push_state_update':
+          this.handleAccessCodePushStateUpdate(message);
+          break;
         case 'key_sharing_update':
           this.handleKeySharingUpdate(message);
           break;
@@ -442,6 +445,13 @@ class WebSocketService implements IWebSocketService {
 
   private handleAccessCodesUpdate(message: { data?: unknown }): void {
     const handlers = this.messageHandlers.get('access_codes');
+    if (handlers) {
+      handlers.forEach(handler => handler(message.data));
+    }
+  }
+
+  private handleAccessCodePushStateUpdate(message: { data?: unknown }): void {
+    const handlers = this.messageHandlers.get('access_code_push_state');
     if (handlers) {
       handlers.forEach(handler => handler(message.data));
     }

@@ -437,13 +437,14 @@ Legacy rows mapped as `automatic` are surfaced as `local_device`.
 
 ### Remote command attribution
 
-Cloud lock/unlock commands (`PUT /devices/blulok/:id/lock`, access-control equivalent) pass the initiating user into `LockCommandService`. When gateway state sync confirms the final lock/unlock, the activity row is stamped with:
+Cloud lock/unlock commands (`PUT /devices/blulok/:id/lock`, access-control equivalent) **always** pass the initiating user into `LockCommandService` (tenant override is additional metadata when required). When gateway state sync confirms the final lock/unlock — including an unchanged re-report of the requested terminal state — the activity row is stamped with:
 
 - `actor_type: user`, initiator name/id
 - `metadata.method: remote_gateway` or `admin_remote`
 - `metadata.initiated_remotely: true`
+- Optional `metadata.tenant_unlock_override` when a tenant-unit unlock reason was supplied
 
-Failed remote commands (gateway reject, send error, timeout) write `access_attempt` rows with `unlock_attempt` / `lock_attempt`, `success: false`, and a human-readable `reason`.
+Pending attribution is held in-process until settlement or TTL (facility hardware-ack timeout, or one-shot attribution TTL). Failed remote commands (gateway reject, send error, timeout, settlement mismatch) write `access_attempt` rows with `unlock_attempt` / `lock_attempt`, `success: false`, and a human-readable `reason`.
 
 ### Denied unlock attempts
 

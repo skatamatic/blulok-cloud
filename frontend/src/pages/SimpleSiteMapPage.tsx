@@ -16,6 +16,7 @@ import { DetailsPageHeader } from '@/components/Common/DetailsPageLayout';
 import { canRequestRemoteUnlock, isLockTransitionPending } from '@/utils/unitLock.utils';
 import { lockHardwareFeedbackToasts } from '@/utils/lockHardwareFeedback.constants';
 import { useRemoteUnlockAction } from '@/hooks/useRemoteUnlockAction';
+import { unitHasTenant } from '@/constants/tenantUnlockOverride.constants';
 import { resolveLockTimeoutMsForUnit } from '@/utils/facilityLockTimeout.utils';
 
 const statusColors = {
@@ -41,7 +42,7 @@ export default function SimpleSiteMapPage() {
   const [loading, setLoading] = useState(true);
   const unitsDataRef = useRef<Unit[]>([]);
   unitsDataRef.current = units;
-  const { requestUnlock, isSubmitting, syncLockStatus } = useRemoteUnlockAction({
+  const { requestUnlock, isSubmitting, syncLockStatus, tenantOverrideDialog } = useRemoteUnlockAction({
     timeoutToast: lockHardwareFeedbackToasts.unitUnlockTimeout,
   });
 
@@ -130,6 +131,8 @@ export default function SimpleSiteMapPage() {
         patchUnitLockOptimistic(unit.id, status);
       },
       refresh: refreshAfterUnlockAttempt,
+      requiresTenantOverride: unitHasTenant(unit),
+      unitLabel: unit.unit_number,
     });
   };
 
@@ -394,6 +397,7 @@ export default function SimpleSiteMapPage() {
           </div>
         </div>
       </div>
+      {tenantOverrideDialog}
     </div>
   );
 }

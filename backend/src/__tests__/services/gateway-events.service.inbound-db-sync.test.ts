@@ -1,6 +1,7 @@
 /** Real GatewayModel (setup-mocks replaces it globally; we need prototype spies here). */
 jest.unmock('@/models/gateway.model');
 
+import { GATEWAY_OFFLINE_GRACE_MS } from '@/constants/gateway-liveness.constants';
 import { GatewayEventsService } from '@/services/gateway/gateway-events.service';
 import { GatewayModel } from '@/models/gateway.model';
 import { WebSocketService } from '@/services/websocket.service';
@@ -39,16 +40,19 @@ describe('GatewayEventsService inbound WebSocket → gateways.status sync', () =
         connectionCallback = cb;
         return jest.fn();
       }),
-    });
+      getConnectionStatusForFacility: jest.fn().mockReturnValue({ connected: false }),
+    } as any);
   });
 
   afterEach(() => {
     jest.useRealTimers();
+    GatewayEventsService.getInstance().setOfflineGraceMsOverride(null);
     GatewayEventsService.getInstance().setTransport({
       initialize: jest.fn(),
       broadcast: jest.fn(),
       unicastToFacility: jest.fn(),
     });
+    GatewayEventsService.getInstance().shutdown();
   });
 
   it('updates physical gateway to online and broadcasts on connect', async () => {
@@ -99,15 +103,19 @@ describe('GatewayEventsService inbound WebSocket → gateways.status sync', () =
 
     expect(offlineSpy).not.toHaveBeenCalled();
     expect(broadcastSpy).toHaveBeenCalledWith('fac-1', 'gw-physical-1');
+    expect(GatewayEventsService.getInstance().getFacilityConnectionStatus('fac-1').connected).toBe(false);
+    expect(GatewayEventsService.getInstance().getFacilityProductLiveness('fac-1').connected).toBe(true);
 
-    await jest.advanceTimersByTimeAsync(59_999);
+    await jest.advanceTimersByTimeAsync(GATEWAY_OFFLINE_GRACE_MS - 1);
     await flushPromises();
     expect(offlineSpy).not.toHaveBeenCalled();
+    expect(GatewayEventsService.getInstance().getFacilityProductLiveness('fac-1').connected).toBe(true);
 
     await jest.advanceTimersByTimeAsync(1);
     await flushPromises();
     expect(offlineSpy).toHaveBeenCalledWith('gw-physical-1', 'offline');
     expect(onlineSpy).not.toHaveBeenCalled();
+    expect(GatewayEventsService.getInstance().getFacilityProductLiveness('fac-1').connected).toBe(false);
   });
 
   it('cancels pending offline when gateway reconnects within grace period', async () => {
@@ -131,6 +139,7 @@ describe('GatewayEventsService inbound WebSocket → gateways.status sync', () =
     });
     await flushPromises();
     expect(offlineSpy).not.toHaveBeenCalled();
+    expect(GatewayEventsService.getInstance().isFacilityPendingOffline('fac-1')).toBe(true);
 
     connectionCallback({
       facilityId: 'fac-1',
@@ -139,8 +148,9 @@ describe('GatewayEventsService inbound WebSocket → gateways.status sync', () =
     });
     await flushPromises();
     expect(onlineSpy).toHaveBeenCalledWith('gw-physical-1', 'online');
+    expect(GatewayEventsService.getInstance().isFacilityPendingOffline('fac-1')).toBe(false);
 
-    await jest.advanceTimersByTimeAsync(60_000);
+    await jest.advanceTimersByTimeAsync(GATEWAY_OFFLINE_GRACE_MS);
     await flushPromises();
     expect(offlineSpy).not.toHaveBeenCalled();
   });

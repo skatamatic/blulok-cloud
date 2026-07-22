@@ -21,6 +21,7 @@ import {
 import { mapGatewayAccessStateFieldsToDbUpdate } from '../utils/gateway-access-state-map.utils';
 import { mapGatewayAccessInventoryPropertiesToDbUpdate } from '../utils/gateway-access-inventory-map.utils';
 import { mapGatewayLockInventoryPropertiesToDbUpdate } from '../utils/gateway-lock-inventory-map.utils';
+import { buildGatewaySyncProvisionMetadata } from '../utils/device-provision.utils';
 import type { DeviceSyncLogEntry } from '../types/gateway-device-sync.types';
 
 export type { AccessDeviceInventoryItem, AccessDeviceStateUpdate };
@@ -66,7 +67,7 @@ export interface GatewayDeviceData {
 export interface DeviceInventoryItem {
   /** Lock identifier (UUID or serial) - required */
   lock_id: string;
-  /** Lock number for display */
+  /** Gateway inventory lock number (not operator-facing) */
   lock_number?: number;
   /** Device state: 'CLOSED' = locked, 'OPENED' = unlocked */
   state?: 'CLOSED' | 'OPENED' | 'ERROR' | 'UNKNOWN';
@@ -262,9 +263,7 @@ export class DeviceSyncService {
               device_serial: deviceId,
               serial: deviceId,
               supports_remote_lock: true,
-              metadata: {
-                createdFromGatewaySync: true,
-              },
+              metadata: buildGatewaySyncProvisionMetadata(),
             };
 
             if (lockNumber !== undefined) {
@@ -333,9 +332,7 @@ export class DeviceSyncService {
         device_serial: deviceId,
         serial: deviceId,
         supports_remote_lock: true,
-        metadata: {
-          createdFromGatewaySync: true,
-        },
+        metadata: buildGatewaySyncProvisionMetadata(),
       };
 
       if (lockNumber !== undefined) {
@@ -546,9 +543,7 @@ export class DeviceSyncService {
             device_serial: lockId,
             serial: lockId,
             supports_remote_lock: true,
-            metadata: {
-              createdFromGatewaySync: true,
-            },
+            metadata: buildGatewaySyncProvisionMetadata(),
           };
 
           if (inventoryItem.lock_number !== undefined) {
@@ -937,9 +932,7 @@ export class DeviceSyncService {
               Array.isArray(item.access_methods) && item.access_methods.length > 0
                 ? item.access_methods
                 : ['keypad'],
-            metadata: {
-              createdFromGatewaySync: true,
-            },
+            metadata: buildGatewaySyncProvisionMetadata(),
           });
         } else {
           const existing = existingMap.get(key)!;

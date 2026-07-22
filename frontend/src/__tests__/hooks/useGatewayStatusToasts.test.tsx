@@ -1,6 +1,5 @@
 import { renderHook, act } from '@testing-library/react';
 import { useGatewayStatusToasts } from '@/hooks/useGatewayStatusToasts';
-import { GATEWAY_OFFLINE_TOAST_GRACE_MS } from '@/constants/gateway-liveness.constants';
 
 const mockSubscribe = jest.fn();
 const mockUnsubscribe = jest.fn();
@@ -21,7 +20,6 @@ describe('useGatewayStatusToasts', () => {
   let statusHandler: (data: unknown) => void;
 
   beforeEach(() => {
-    jest.useFakeTimers();
     jest.clearAllMocks();
     mockSubscribe.mockImplementation((_type, handler) => {
       statusHandler = handler;
@@ -29,11 +27,40 @@ describe('useGatewayStatusToasts', () => {
     });
   });
 
-  afterEach(() => {
-    jest.useRealTimers();
+  it('does not toast when product liveness stays online across a brief flap', () => {
+    renderHook(() => useGatewayStatusToasts());
+
+    act(() => {
+      statusHandler({
+        gateways: [
+          {
+            id: 'gw-1',
+            name: 'Max Gateway',
+            status: 'online',
+            connected: true,
+          },
+        ],
+      });
+    });
+
+    // Backend product liveness keeps connected=true during grace — no offline transition.
+    act(() => {
+      statusHandler({
+        gateways: [
+          {
+            id: 'gw-1',
+            name: 'Max Gateway',
+            status: 'online',
+            connected: true,
+          },
+        ],
+      });
+    });
+
+    expect(mockAddToast).not.toHaveBeenCalled();
   });
 
-  it('debounces offline toasts and suppresses them on quick reconnect', () => {
+  it('toasts immediately on confirmed offline and again when back online', () => {
     renderHook(() => useGatewayStatusToasts());
 
     act(() => {
@@ -55,72 +82,18 @@ describe('useGatewayStatusToasts', () => {
           {
             id: 'gw-1',
             name: 'Max Gateway',
-            status: 'online',
+            status: 'offline',
             connected: false,
           },
         ],
       });
-    });
-
-    expect(mockAddToast).not.toHaveBeenCalled();
-
-    act(() => {
-      statusHandler({
-        gateways: [
-          {
-            id: 'gw-1',
-            name: 'Max Gateway',
-            status: 'online',
-            connected: true,
-          },
-        ],
-      });
-    });
-
-    act(() => {
-      jest.advanceTimersByTime(GATEWAY_OFFLINE_TOAST_GRACE_MS);
-    });
-
-    expect(mockAddToast).not.toHaveBeenCalled();
-  });
-
-  it('shows offline toast after grace period and online toast after confirmed outage', () => {
-    renderHook(() => useGatewayStatusToasts());
-
-    act(() => {
-      statusHandler({
-        gateways: [
-          {
-            id: 'gw-1',
-            name: 'Max Gateway',
-            status: 'online',
-            connected: true,
-          },
-        ],
-      });
-    });
-
-    act(() => {
-      statusHandler({
-        gateways: [
-          {
-            id: 'gw-1',
-            name: 'Max Gateway',
-            status: 'online',
-            connected: false,
-          },
-        ],
-      });
-    });
-
-    act(() => {
-      jest.advanceTimersByTime(GATEWAY_OFFLINE_TOAST_GRACE_MS);
     });
 
     expect(mockAddToast).toHaveBeenCalledWith(
       expect.objectContaining({
         type: 'error',
         title: 'Max Gateway is offline',
+        message: 'Gateway connection lost.',
       }),
     );
 

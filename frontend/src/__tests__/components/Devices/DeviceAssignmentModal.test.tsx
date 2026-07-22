@@ -84,6 +84,10 @@ describe('DeviceAssignmentModal', () => {
     },
   ];
 
+  /** User-facing label for unassigned BluLok (unit number when assigned). */
+  const unassignedDeviceLabel = (serial: string) =>
+    `Unassigned - ${serial.replace(/\D/g, '').slice(0, 5)}`;
+
   const mockOnClose = jest.fn();
   const mockOnSuccess = jest.fn();
 
@@ -162,7 +166,8 @@ describe('DeviceAssignmentModal', () => {
 
       await waitFor(() => {
         expect(screen.getByText('Current Device')).toBeInTheDocument();
-        expect(screen.getByText(mockUnitWithDevice.blulok_device!.device_serial)).toBeInTheDocument();
+        expect(screen.getByText(mockUnitWithDevice.unit_number)).toBeInTheDocument();
+        expect(screen.getByText(/Serial BLU-001/)).toBeInTheDocument();
       });
     });
   });
@@ -277,7 +282,7 @@ describe('DeviceAssignmentModal', () => {
       await act(async () => {
         fireEvent.focus(input);
       });
-      const option = await screen.findByText(mockUnassignedDevices[0].device_serial);
+      const option = await screen.findByText(unassignedDeviceLabel(mockUnassignedDevices[0].device_serial));
       await act(async () => {
         fireEvent.click(option);
       });
@@ -344,7 +349,7 @@ describe('DeviceAssignmentModal', () => {
       await act(async () => {
         fireEvent.focus(input);
       });
-      const option = await screen.findByText(mockUnassignedDevices[0].device_serial);
+      const option = await screen.findByText(unassignedDeviceLabel(mockUnassignedDevices[0].device_serial));
       await act(async () => {
         fireEvent.click(option);
       });
@@ -389,7 +394,7 @@ describe('DeviceAssignmentModal', () => {
       await act(async () => {
         input.focus();
       });
-      const option = await screen.findByText(mockUnassignedDevices[0].device_serial);
+      const option = await screen.findByText(unassignedDeviceLabel(mockUnassignedDevices[0].device_serial));
       await act(async () => {
         fireEvent.click(option);
       });
@@ -530,7 +535,7 @@ describe('DeviceAssignmentModal', () => {
       await act(async () => {
         input.focus();
       });
-      const item = await screen.findByText(mockUnassignedDevices[0].device_serial);
+      const item = await screen.findByText(unassignedDeviceLabel(mockUnassignedDevices[0].device_serial));
       await act(async () => {
         fireEvent.click(item);
       });
@@ -559,7 +564,7 @@ describe('DeviceAssignmentModal', () => {
       await act(async () => {
         input.focus();
       });
-      const item = await screen.findByText(mockUnassignedDevices[0].device_serial);
+      const item = await screen.findByText(unassignedDeviceLabel(mockUnassignedDevices[0].device_serial));
       await act(async () => {
         fireEvent.click(item);
       });
@@ -610,7 +615,7 @@ describe('DeviceAssignmentModal', () => {
       await act(async () => {
         input.focus();
       });
-      const option = await screen.findByText(mockUnassignedDevices[0].device_serial);
+      const option = await screen.findByText(unassignedDeviceLabel(mockUnassignedDevices[0].device_serial));
       await act(async () => {
         fireEvent.click(option);
       });
@@ -675,7 +680,7 @@ describe('DeviceAssignmentModal', () => {
       await act(async () => {
         input.focus();
       });
-      const item = await screen.findByText(mockUnassignedDevices[0].device_serial);
+      const item = await screen.findByText(unassignedDeviceLabel(mockUnassignedDevices[0].device_serial));
       await act(async () => {
         fireEvent.click(item);
       });
@@ -723,14 +728,14 @@ describe('DeviceAssignmentModal', () => {
       await act(async () => {
         input.focus();
       });
-      const item = await screen.findByText(mockUnassignedDevices[0].device_serial);
+      const item = await screen.findByText(unassignedDeviceLabel(mockUnassignedDevices[0].device_serial));
       await act(async () => {
         fireEvent.click(item);
       });
 
       await waitFor(() => {
         expect(screen.getByText(/selected device/i)).toBeInTheDocument();
-        expect(screen.getByText(mockUnassignedDevices[0].device_serial)).toBeInTheDocument();
+        expect(screen.getByText(unassignedDeviceLabel(mockUnassignedDevices[0].device_serial))).toBeInTheDocument();
         expect(screen.getByText(/FW 1\.1\.0/)).toBeInTheDocument();
       });
     });

@@ -95,7 +95,12 @@ For each category, per device:
 
 **Sync-managed** means `metadata.createdFromGatewaySync === true` and **not** `metadata.adminIdentityOverride === true`.
 
-**Manual** means admin UI / REST created the row (`metadata.manuallyAdded === true`, or missing `createdFromGatewaySync`).
+**Manual** means admin UI / REST created the row (`metadata.manuallyAdded === true`, `metadata.createdFromGatewaySync === false`).
+
+| Cloud field | Value on gateway inventory create |
+|-------------|-----------------------------------|
+| `metadata.createdFromGatewaySync` | `true` |
+| `metadata.manuallyAdded` | `false` |
 
 ### 3.2 Auto-provision defaults (new lock)
 
@@ -105,6 +110,7 @@ When `lock_id` appears in inventory but not in DB:
 |-------------|---------|
 | `supports_remote_lock` | `true` |
 | `metadata.createdFromGatewaySync` | `true` |
+| `metadata.manuallyAdded` | `false` |
 | `lock_status` | From `state` / `locked` if sent; else `unknown` |
 | `device_status` | From `online` if sent; else `offline` |
 
@@ -118,8 +124,9 @@ State/telemetry fields on the **same inventory item** are applied immediately af
 | `relay_channel` | **1** if omitted |
 | `name` | `"{access_id} relay {n}"` if omitted |
 | `location_description` | `"Gateway relay {n}"` if omitted |
-| `access_methods` | `["keypad"]` |
+| `access_methods` | `["keypad"]` if omitted; otherwise use inventory list (`app` / `keypad` / `fob`) |
 | `metadata.createdFromGatewaySync` | `true` |
+| `metadata.manuallyAdded` | `false` |
 
 After access inventory changes, the cloud **pushes access codes** to the gateway for affected devices.
 
@@ -433,8 +440,8 @@ After state persists, the cloud emits dashboard WebSocket **`device_status_updat
 
 When an operator adds a BluLok lock or access device via admin REST/UI:
 
-- Row is created with `metadata.manuallyAdded: true`
-- **`createdFromGatewaySync` is stripped** — row is **not** sync-managed
+- Row is created with `metadata.manuallyAdded: true` and `metadata.createdFromGatewaySync: false`
+- Row is **not** sync-managed
 
 **If the gateway omits this device from inventory:**
 

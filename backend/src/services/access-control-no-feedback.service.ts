@@ -92,13 +92,10 @@ export class AccessControlNoFeedbackService {
     this.timers.delete(deviceId);
     try {
       const device = await this.deviceModel.findAccessControlDeviceWithGateway(deviceId);
-      if (!device || device.has_lock_feedback !== false || !device.no_feedback_unlock_until) {
-        return;
-      }
-
-      const unlockUntil = new Date(device.no_feedback_unlock_until);
-      if (unlockUntil.getTime() > Date.now()) {
-        this.schedule(deviceId, unlockUntil);
+      // Timer already waited for the intended deadline (in-memory schedule). Do not
+      // re-compare against DB datetime — MySQL/JS timezone round-trips can look "still
+      // in the future" and would postpone forever, leaving the gate logically open.
+      if (!device || Boolean(device.has_lock_feedback) || !device.no_feedback_unlock_until) {
         return;
       }
 

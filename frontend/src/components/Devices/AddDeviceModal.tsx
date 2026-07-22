@@ -314,7 +314,7 @@ export function AddDeviceModal({ isOpen, onClose, onSuccess, facilityId, deviceT
         if (!bluLokData.device_serial.trim()) newErrors.device_serial = 'Hardware serial is required';
         if (bluLokData.lock_number.trim()) {
           const n = Number(bluLokData.lock_number);
-          if (!Number.isFinite(n)) newErrors.lock_number = 'Lock number must be numeric';
+          if (!Number.isFinite(n)) newErrors.lock_number = 'Inventory number must be numeric';
         }
       }
     }
@@ -803,7 +803,7 @@ export function AddDeviceModal({ isOpen, onClose, onSuccess, facilityId, deviceT
                   htmlFor="add-blulok-lock-number"
                   className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1.5"
                 >
-                  Lock number <span className="text-gray-400 font-normal">(optional)</span>
+                  Gateway inventory number <span className="text-gray-400 font-normal">(optional, not shown in app)</span>
                 </label>
                 <input
                   id="add-blulok-lock-number"
@@ -951,7 +951,7 @@ export function AddDeviceModal({ isOpen, onClose, onSuccess, facilityId, deviceT
           ...(selectedDeviceType === 'blulok'
             ? [
                 ['Serial (lock_id)', bluLokData.device_serial],
-                ['Lock number', bluLokData.lock_number || '—'],
+                ['Inventory number', bluLokData.lock_number || '—'],
                 ['Secondary serial', bluLokData.serial || '—'],
                 ['Display name', bluLokData.display_name.trim() || bluLokData.device_serial || '—'],
                 ['Location', bluLokData.location_description || '—'],

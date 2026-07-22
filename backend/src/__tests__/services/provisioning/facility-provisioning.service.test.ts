@@ -8,6 +8,8 @@ jest.mock('@/models/facility-provisioning-file.model', () => {
     findByFacilityId: jest.fn(),
     countByFacilityId: jest.fn(),
     deleteById: jest.fn(),
+    findIdsBeyondRetention: jest.fn().mockResolvedValue([]),
+    listDistinctFacilityIds: jest.fn().mockResolvedValue([]),
   };
   return {
     ...actual,
@@ -244,6 +246,41 @@ describe('FacilityProvisioningService', () => {
     const deleted = await FacilityProvisioningService.deleteFile('upload-1');
     expect(deleted).toBe(true);
     expect(mockStorage.remove).toHaveBeenCalled();
+  });
+
+  it('prunes excess uploads beyond retention for a facility', async () => {
+    mockFileModel.findIdsBeyondRetention.mockResolvedValue(['old-1']);
+    mockFileModel.findById.mockResolvedValue({
+      id: 'old-1',
+      facility_id: 'fac-1',
+      filename: 'old.bin',
+      content_type: 'application/octet-stream',
+      size_bytes: 10,
+      sha256_hash: 'b'.repeat(64),
+      storage_path: 'facility-provisioning/fac-1/old-1/old.bin',
+      upload_source: 'app',
+      created_by: null,
+      uploaded_at: new Date(),
+      created_at: new Date(),
+      updated_at: new Date(),
+    });
+    mockFileModel.deleteById.mockResolvedValue(true);
+
+    const pruned = await FacilityProvisioningService.pruneFacilityUploads('fac-1');
+    expect(pruned).toBe(1);
+    expect(mockFileModel.deleteById).toHaveBeenCalledWith('old-1');
+    expect(mockStorage.remove).toHaveBeenCalledWith('facility-provisioning/fac-1/old-1/old.bin');
+  });
+
+  it('schedules retention prune after a new completeUpload', async () => {
+    const pruneSpy = jest
+      .spyOn(FacilityProvisioningService, 'scheduleRetentionPrune')
+      .mockImplementation(() => undefined);
+    mockFileModel.findById.mockResolvedValue(null);
+
+    await FacilityProvisioningService.completeUpload('fac-1', 'upload-1', 'mesh.bin', 1024);
+    expect(pruneSpy).toHaveBeenCalledWith('fac-1');
+    pruneSpy.mockRestore();
   });
 
   it('accepts direct upload with valid token', async () => {

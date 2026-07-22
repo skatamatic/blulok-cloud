@@ -2,7 +2,7 @@ import {
   bluLokDeviceAvatarLabel,
   BluLokDeviceDisplayFields,
   formatBluLokDeviceSubtitle,
-  formatBluLokLockNumberLabel,
+  formatBluLokUserFacingLabel,
 } from '@/utils/blulokDeviceDisplay.utils';
 
 interface BluLokDeviceSummaryProps {
@@ -22,7 +22,7 @@ export function BluLokDeviceSummary({ device, status, className = '' }: BluLokDe
         </div>
         <div className="min-w-0">
           <div className="text-sm font-semibold text-gray-900 dark:text-white truncate">
-            {formatBluLokLockNumberLabel(device)}
+            {formatBluLokUserFacingLabel(device)}
           </div>
           <div className="text-xs text-gray-500 dark:text-gray-400 truncate">
             {formatBluLokDeviceSubtitle(device)}

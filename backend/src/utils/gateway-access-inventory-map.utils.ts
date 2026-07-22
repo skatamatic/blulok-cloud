@@ -11,7 +11,7 @@ export type AccessControlInventoryDbUpdate = Parameters<DeviceModel['updateAcces
 export function mapGatewayAccessInventoryFieldsToDbUpdate(
   item: Pick<
     AccessDeviceInventoryItem,
-    'name' | 'location_description' | 'device_type' | 'online' | 'locked' | 'last_seen'
+    'name' | 'location_description' | 'device_type' | 'access_methods' | 'online' | 'locked' | 'last_seen'
   >
 ): AccessControlInventoryDbUpdate {
   return {
@@ -21,15 +21,24 @@ export function mapGatewayAccessInventoryFieldsToDbUpdate(
 }
 
 export function mapGatewayAccessInventoryPropertiesToDbUpdate(
-  item: Pick<AccessDeviceInventoryItem, 'name' | 'location_description' | 'device_type'>,
+  item: Pick<
+    AccessDeviceInventoryItem,
+    'name' | 'location_description' | 'device_type' | 'access_methods'
+  >,
   existing?: {
     name?: string;
     location_description?: string;
     device_type?: 'gate' | 'door' | 'elevator';
+    access_methods?: Array<'app' | 'keypad' | 'fob'>;
   }
-): Pick<AccessControlInventoryDbUpdate, 'name' | 'location_description' | 'device_type'> {
-  const update: Pick<AccessControlInventoryDbUpdate, 'name' | 'location_description' | 'device_type'> =
-    {};
+): Pick<
+  AccessControlInventoryDbUpdate,
+  'name' | 'location_description' | 'device_type' | 'access_methods'
+> {
+  const update: Pick<
+    AccessControlInventoryDbUpdate,
+    'name' | 'location_description' | 'device_type' | 'access_methods'
+  > = {};
 
   if (item.name !== undefined) {
     const next = item.name.trim();
@@ -49,6 +58,14 @@ export function mapGatewayAccessInventoryPropertiesToDbUpdate(
 
   if (item.device_type !== undefined && item.device_type !== existing?.device_type) {
     update.device_type = item.device_type;
+  }
+
+  if (Array.isArray(item.access_methods) && item.access_methods.length > 0) {
+    const next = [...item.access_methods].sort();
+    const current = [...(existing?.access_methods ?? [])].sort();
+    if (next.length !== current.length || next.some((m, i) => m !== current[i])) {
+      update.access_methods = item.access_methods;
+    }
   }
 
   return update;

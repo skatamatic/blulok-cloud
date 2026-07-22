@@ -20,6 +20,7 @@ import { FirmwarePushSubscriptionManager } from './firmware-push-subscription-ma
 import { GatewayRecoverySubscriptionManager } from './gateway-recovery-subscription-manager';
 import { GatewayRecoveryStatusSubscriptionManager } from './gateway-recovery-status-subscription-manager';
 import { AccessCodesSubscriptionManager } from './access-codes-subscription-manager';
+import { AccessCodePushStateSubscriptionManager } from './access-code-push-state-subscription-manager';
 import { KeySharingSubscriptionManager } from './key-sharing-subscription-manager';
 
 /**
@@ -43,6 +44,7 @@ import { KeySharingSubscriptionManager } from './key-sharing-subscription-manage
  * - gateway_recovery_status: Facility-scoped candidates/sessions/recovery snapshot
  * - command_queue: Command execution queue status
  * - access_codes: Facility-scoped daily keypad codes for app users
+ * - access_code_push_state: Facility-scoped admin push outbox + effective-codes refresh nudge
  * - key_sharing: Facility-scoped shared key records for dashboard widgets
  *
  * Security Considerations:
@@ -78,6 +80,7 @@ export class SubscriptionRegistry {
     this.registerManager(new GatewayTelemetryLogSubscriptionManager());
     this.registerManager(new GatewayDeviceSyncLogSubscriptionManager());
     this.registerManager(new AccessCodesSubscriptionManager());
+    this.registerManager(new AccessCodePushStateSubscriptionManager());
     this.registerManager(new KeySharingSubscriptionManager());
   }
 
@@ -193,6 +196,10 @@ export class SubscriptionRegistry {
 
   public getAccessCodesManager(): AccessCodesSubscriptionManager | undefined {
     return this.getManager('access_codes') as AccessCodesSubscriptionManager;
+  }
+
+  public getAccessCodePushStateManager(): AccessCodePushStateSubscriptionManager | undefined {
+    return this.getManager('access_code_push_state') as AccessCodePushStateSubscriptionManager;
   }
 
   public getKeySharingManager(): KeySharingSubscriptionManager | undefined {

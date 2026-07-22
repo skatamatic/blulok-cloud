@@ -32,6 +32,7 @@ import { canRequestRemoteUnlock, isLockTransitionPending } from '@/utils/unitLoc
 import { lockHardwareFeedbackToasts } from '@/utils/lockHardwareFeedback.constants';
 import { useRemoteUnlockAction } from '@/hooks/useRemoteUnlockAction';
 import { resolveLockTimeoutMsForUnit } from '@/utils/facilityLockTimeout.utils';
+import { unitHasTenant } from '@/constants/tenantUnlockOverride.constants';
 import { ViewModeToggle, type ListViewMode } from '@/components/Common/ViewModeToggle';
 import { SortableTableTh } from '@/components/Common/SortableTableTh';
 
@@ -82,7 +83,7 @@ export default function UnitsPage() {
 
   const unitsDataRef = useRef<Unit[]>([]);
   unitsDataRef.current = units;
-  const { requestUnlock, isSubmitting, syncLockStatus } = useRemoteUnlockAction({
+  const { requestUnlock, isSubmitting, syncLockStatus, tenantOverrideDialog } = useRemoteUnlockAction({
     timeoutToast: lockHardwareFeedbackToasts.unitUnlockTimeout,
     errorToast: () => ({
       type: 'error' as const,
@@ -312,6 +313,8 @@ export default function UnitsPage() {
         patchUnitLockOptimistic(unit.id, status);
       },
       refresh: refreshAfterUnlockAttempt,
+      requiresTenantOverride: unitHasTenant(unit),
+      unitLabel: unit.unit_number,
     });
   };
 
@@ -949,6 +952,7 @@ export default function UnitsPage() {
           setShowAddModal(false);
         }}
       />
+      {tenantOverrideDialog}
     </div>
   );
 }

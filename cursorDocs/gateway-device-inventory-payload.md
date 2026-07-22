@@ -149,8 +149,8 @@ When `lock_id` is in the payload but not in the DB, the cloud creates the row th
 
 | Flag | Meaning |
 |------|---------|
-| `metadata.createdFromGatewaySync` | **Canonical.** Row was auto-provisioned from gateway inventory/state; eligible for removal when omitted from the next inventory sync. |
-| `metadata.manuallyAdded` | Set on admin UI / REST create — never removed by gateway delta. |
+| `metadata.createdFromGatewaySync` | **Canonical.** Row was auto-provisioned from gateway inventory/state; eligible for removal when omitted from the next inventory sync. Always present as boolean (`true`/`false`). |
+| `metadata.manuallyAdded` | Admin UI / REST create → `true`; gateway inventory create → `false`. Always present as boolean. |
 
 ---
 
@@ -174,10 +174,26 @@ Stored in `access_control_devices`. Identity: **`access_id` + `relay_channel`** 
 
 | Cloud field | Default |
 |-------------|---------|
-| `access_methods` | `["keypad"]` |
+| `access_methods` | `["keypad"]` (omit field) — or send e.g. `["keypad","app"]` |
 | `metadata.createdFromGatewaySync` | `true` |
+| `metadata.manuallyAdded` | `false` |
 | `device_type` | `"door"` if omitted |
 | `relay_channel` | **1** if omitted |
+
+**`access_methods` (inventory):** optional array of lowercase strings: `app`, `keypad`, `fob`.  
+Example for keypad + mobile app:
+
+```json
+{
+  "kind": "access_control",
+  "access_id": "f759bd50-a70e-5bba-81c5-25e9a7c695c1",
+  "relay_channel": 1,
+  "access_methods": ["keypad", "app"],
+  "online": true
+}
+```
+
+On **create**, the cloud seeds `access_methods` from the inventory item (default `["keypad"]`). On later inventory syncs, a provided `access_methods` array **updates** the existing row when it differs.
 
 After access inventory changes, the cloud **pushes access codes** to the gateway.
 

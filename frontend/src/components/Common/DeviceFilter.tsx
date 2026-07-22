@@ -7,7 +7,7 @@ import { filterComboboxDropdownClass } from '@/components/Common/list-filters.st
 import { useFilterDropdownPortal } from '@/hooks/useFilterDropdownPortal';
 import {
   bluLokDeviceMatchesSearch,
-  formatBluLokLockNumberLabel,
+  formatBluLokUserFacingLabel,
   type BluLokDeviceDisplayFields,
 } from '@/utils/blulokDeviceDisplay.utils';
 
@@ -60,7 +60,7 @@ export const DeviceFilter: React.FC<DeviceFilterProps> = ({
     if (value && devices.length > 0) {
       const d = devices.find((x) => x.id === value) || null;
       setSelectedDevice(d);
-      if (d) setSearchTerm(formatBluLokLockNumberLabel(d));
+      if (d) setSearchTerm(formatBluLokUserFacingLabel(d));
     } else if (value === '') {
       setSelectedDevice(null);
       setSearchTerm('');
@@ -104,7 +104,7 @@ export const DeviceFilter: React.FC<DeviceFilterProps> = ({
   const handleSelect = (device: Device) => {
     if (!device.id) return;
     setSelectedDevice(device);
-    setSearchTerm(formatBluLokLockNumberLabel(device));
+    setSearchTerm(formatBluLokUserFacingLabel(device));
     onChange(device.id);
     setIsOpen(false);
   };

@@ -3,6 +3,7 @@ import { GatewayService } from '@/services/gateway/gateway.service';
 import { logger } from '@/utils/logger';
 import { lockCommandTimeoutMs } from '@/utils/facility-lock-timeout.utils';
 import { resolveRemoteAccessMethod } from '@/utils/access-history-remote.utils';
+import { ONE_SHOT_ATTRIBUTION_TTL_SEC } from '@/constants/lock-command.constants';
 
 type LockStatus =
   | 'locked'
@@ -25,6 +26,11 @@ export interface LockCommandAttribution {
   facilityId: string;
   unitId?: string;
   requestedStatus: 'locked' | 'unlocked';
+  tenantUnlockOverride?: {
+    reason: string;
+    reasonLabel: string;
+    notes?: string;
+  };
 }
 
 interface PendingLockCommand {
@@ -37,12 +43,23 @@ interface PendingLockCommand {
   facilityId: string;
   unitId?: string;
   deviceType: 'blulok' | 'access_control';
+  tenantUnlockOverride?: {
+    reason: string;
+    reasonLabel: string;
+    notes?: string;
+  };
 }
 
 /**
  * LockCommandService
  *
  * Orchestrates lock/unlock commands from the cloud UI to facility gateways.
+ *
+ * Attribution: pending initiator context is held in-process (Map) until gateway state
+ * settles or the attribution TTL expires. This is affinity-sensitive on multi-instance
+ * Cloud Run — prefer max-instances=1 or sticky sessions until a shared store exists.
+ * Every production BluLok / access-control lock route passes an initiator so Access
+ * History can stamp the originating user (tenant override is optional metadata only).
  */
 export class LockCommandService {
   private static instance: LockCommandService;
@@ -80,6 +97,13 @@ export class LockCommandService {
     deviceId: string,
     requestedStatus: 'locked' | 'unlocked',
     initiator?: LockCommandInitiator,
+    options?: {
+      tenantUnlockOverride?: {
+        reason: string;
+        reasonLabel: string;
+        notes?: string;
+      };
+    },
   ): Promise<{
     success: boolean;
     message: string;
@@ -116,6 +140,7 @@ export class LockCommandService {
         errorMessage: message,
         initiator,
         deviceType: 'blulok',
+        tenantUnlockOverride: options?.tenantUnlockOverride,
       });
       return { success: false, message };
     }
@@ -138,12 +163,14 @@ export class LockCommandService {
         errorMessage: message,
         initiator,
         deviceType: 'blulok',
+        tenantUnlockOverride: options?.tenantUnlockOverride,
       });
       return { success: false, message };
     }
 
     const timeoutMs = await this.resolveFacilityLockTimeoutMs(facilityId);
     const oneShot = timeoutMs === 0;
+    const attributionTimeoutMs = this.resolveAttributionTimeoutMs(timeoutMs);
     const transitionalStatus: LockStatus =
       requestedStatus === 'locked' ? 'locking' : 'unlocking';
 
@@ -185,6 +212,7 @@ export class LockCommandService {
           errorMessage: message,
           initiator,
           deviceType: 'blulok',
+          tenantUnlockOverride: options?.tenantUnlockOverride,
         });
         return { success: false, message };
       }
@@ -209,6 +237,7 @@ export class LockCommandService {
         errorMessage: failureMessage,
         initiator,
         deviceType: 'blulok',
+        tenantUnlockOverride: options?.tenantUnlockOverride,
       });
       return {
         success: false,
@@ -216,28 +245,9 @@ export class LockCommandService {
       };
     }
 
-    if (oneShot) {
-      this.storePendingAttribution({
-        deviceId,
-        previousStatus,
-        requestedStatus,
-        initiator,
-        gatewayId,
-        facilityId,
-        unitId,
-        deviceType: 'blulok',
-      });
-      return {
-        success: true,
-        message: 'Lock command sent',
-        lock_status: previousStatus,
-        previous_status: previousStatus,
-      };
-    }
-
     const timeoutHandle = setTimeout(
       () => void this.handleTimeout(deviceId),
-      timeoutMs,
+      attributionTimeoutMs,
     );
 
     this.storePendingAttribution({
@@ -250,7 +260,17 @@ export class LockCommandService {
       facilityId,
       unitId,
       deviceType: 'blulok',
+      tenantUnlockOverride: options?.tenantUnlockOverride,
     });
+
+    if (oneShot) {
+      return {
+        success: true,
+        message: 'Lock command sent',
+        lock_status: previousStatus,
+        previous_status: previousStatus,
+      };
+    }
 
     return {
       success: true,
@@ -440,13 +460,10 @@ export class LockCommandService {
     }
 
     const timeoutMs = await this.resolveFacilityLockTimeoutMs(facilityId);
-    const timeoutHandle =
-      timeoutMs > 0
-        ? setTimeout(
-            () => void this.handleTimeout(deviceId),
-            timeoutMs,
-          )
-        : undefined;
+    const timeoutHandle = setTimeout(
+      () => void this.handleTimeout(deviceId),
+      this.resolveAttributionTimeoutMs(timeoutMs),
+    );
 
     this.storePendingAttribution({
       deviceId,
@@ -528,6 +545,7 @@ export class LockCommandService {
       errorMessage: params.message,
       initiator: pending.initiator,
       deviceType: params.deviceType,
+      tenantUnlockOverride: pending.tenantUnlockOverride,
     });
   }
 
@@ -547,6 +565,7 @@ export class LockCommandService {
       facilityId: pending.facilityId,
       unitId: pending.unitId,
       requestedStatus: pending.requestedStatus,
+      tenantUnlockOverride: pending.tenantUnlockOverride,
     };
   }
 
@@ -588,6 +607,11 @@ export class LockCommandService {
     errorMessage: string;
     initiator?: LockCommandInitiator;
     deviceType: 'blulok' | 'access_control';
+    tenantUnlockOverride?: {
+      reason: string;
+      reasonLabel: string;
+      notes?: string;
+    };
   }): void {
     void this.notifyLockCommandFailure(params);
   }
@@ -645,6 +669,11 @@ export class LockCommandService {
     errorMessage: string;
     initiator?: LockCommandInitiator;
     deviceType: 'blulok' | 'access_control';
+    tenantUnlockOverride?: {
+      reason: string;
+      reasonLabel: string;
+      notes?: string;
+    };
   }): Promise<void> {
     if (!params.initiator) {
       return;
@@ -657,6 +686,7 @@ export class LockCommandService {
       const title = params.requestedStatus === 'unlocked'
         ? 'Remote Unlock Failed'
         : 'Remote Lock Failed';
+      const override = params.tenantUnlockOverride;
 
       await ActivityService.getInstance().logActivity({
         entityType: 'device',
@@ -683,6 +713,15 @@ export class LockCommandService {
             role: params.initiator.role,
           },
           device_type: params.deviceType,
+          ...(override
+            ? {
+              tenant_unlock_override: {
+                reason: override.reason,
+                reason_label: override.reasonLabel,
+                notes: override.notes ?? null,
+              },
+            }
+            : {}),
           ...(params.errorMessage.toLowerCase().includes('timeout')
             ? { denial_reason: 'timeout' }
             : params.errorMessage.toLowerCase().includes('remained')
@@ -732,6 +771,14 @@ export class LockCommandService {
     }
   }
 
+  /**
+   * Facility timeout 0 = one-shot UI (no transitional state), but attribution still needs a TTL.
+   */
+  private resolveAttributionTimeoutMs(facilityTimeoutMs: number): number {
+    if (facilityTimeoutMs > 0) return facilityTimeoutMs;
+    return ONE_SHOT_ATTRIBUTION_TTL_SEC * 1000;
+  }
+
   private notifyLockCommandFailure(params: {
     facilityId: string;
     deviceId: string;
@@ -741,6 +788,11 @@ export class LockCommandService {
     unitId?: string;
     initiator?: LockCommandInitiator;
     deviceType: 'blulok' | 'access_control';
+    tenantUnlockOverride?: {
+      reason: string;
+      reasonLabel: string;
+      notes?: string;
+    };
   }): void {
     void (async () => {
       if (!(await this.facilityExists(params.facilityId))) {
@@ -818,6 +870,7 @@ export class LockCommandService {
           errorMessage: timeoutMessage,
           initiator: pending.initiator,
           deviceType: 'access_control',
+          tenantUnlockOverride: pending.tenantUnlockOverride,
         });
       }
       return;
@@ -847,6 +900,7 @@ export class LockCommandService {
             errorMessage: timeoutMessage,
             initiator: pending.initiator,
             deviceType: 'blulok',
+            tenantUnlockOverride: pending.tenantUnlockOverride,
           });
         }
         return;
@@ -862,6 +916,7 @@ export class LockCommandService {
           errorMessage: timeoutMessage,
           initiator: pending.initiator,
           deviceType: 'blulok',
+          tenantUnlockOverride: pending.tenantUnlockOverride,
         });
       }
 

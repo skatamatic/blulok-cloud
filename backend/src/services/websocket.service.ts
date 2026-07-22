@@ -684,6 +684,19 @@ export class WebSocketService {
     }
   }
 
+  public broadcastAccessCodePushStateUpdate(
+    facilityId: string,
+    options?: {
+      refreshEffectiveCodes?: boolean;
+      state?: import('@/services/access-code.service').AccessCodePushState;
+    },
+  ): void {
+    const manager = this.subscriptionRegistry.getAccessCodePushStateManager();
+    if (manager) {
+      manager.broadcastPushState(facilityId, options);
+    }
+  }
+
   public async broadcastKeySharingUpdate(facilityId?: string): Promise<void> {
     const manager = this.subscriptionRegistry.getKeySharingManager();
     if (manager) {

@@ -153,7 +153,7 @@ export interface BluLokDevice {
 export interface DeviceStateUpdate {
   /** Lock identifier (UUID or serial) - required */
   lock_id: string;
-  /** Lock number for display */
+  /** Gateway inventory lock number (not operator-facing) */
   lock_number?: number;
   /** Device serial number (optional identifier) */
   serial?: string;
@@ -401,7 +401,9 @@ export class DeviceModel {
           : Boolean(row.has_lock_feedback),
       no_feedback_open_timeout_sec: Number(row.no_feedback_open_timeout_sec ?? 0),
       no_feedback_unlock_until: row.no_feedback_unlock_until
-        ? new Date(String(row.no_feedback_unlock_until))
+        ? row.no_feedback_unlock_until instanceof Date
+          ? row.no_feedback_unlock_until
+          : new Date(String(row.no_feedback_unlock_until))
         : null,
       device_settings: this.safeParseJson(row.device_settings),
       access_methods: this.safeParseJson(row.access_methods) || ['app'],
@@ -1105,11 +1107,18 @@ export class DeviceModel {
   }
 
   /**
-   * Delete an access control device
+   * Delete an access control device and related access-group memberships.
+   * Prefer DevicesService.deleteAccessControlFromInventory for admin/sync paths;
+   * this remains for create-rollback and other low-level callers.
    */
   async deleteAccessControlDevice(deviceId: string): Promise<void> {
     const knex = this.db.connection;
-    await knex('access_control_devices').where('id', deviceId).del();
+    await knex.transaction(async (trx) => {
+      await trx('device_group_members')
+        .where({ device_id: deviceId, device_type: 'access_control' })
+        .del();
+      await trx('access_control_devices').where('id', deviceId).del();
+    });
   }
 
   /**
@@ -1245,6 +1254,25 @@ export class DeviceModel {
         unitId: device.unit_id
       });
       statusChanged = true;
+    } else if (
+      (updates.lock_status === 'locked' || updates.lock_status === 'unlocked')
+      && updates.lock_status === oldLockStatus
+    ) {
+      // Mirror access-control: settle pending remote commands even when hardware
+      // re-reports the same terminal state (e.g. unlock failed — stayed locked).
+      void import('@/services/lock-command.service').then(({ LockCommandService }) => {
+        const lockCommandService = LockCommandService.getInstance();
+        if (!lockCommandService.hasPendingLockCommand(device.id)) return;
+        this.eventService.emitLockStatusChanged({
+          deviceId: device.id,
+          oldStatus: oldLockStatus || 'unknown',
+          newStatus: updates.lock_status!,
+          gatewayId: device.gateway_id,
+          unitId: device.unit_id,
+        });
+      }).catch((err) => {
+        logger.warn('Failed to settle pending BluLok lock command on unchanged state', err);
+      });
     }
 
     if (updates.device_status && updates.device_status !== oldDeviceStatus) {

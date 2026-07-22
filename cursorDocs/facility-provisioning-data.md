@@ -61,12 +61,18 @@ No gateway-online requirement, no restore progress, no WebSocket subscription.
 - **Gateway firmware:** remove `PROVISIONING_*` WebSocket handlers and internal `/internal/gateway/provisioning/*` PROXY routes
 - **Swap recovery:** firmware → inventory snapshot only; provisioning zips are no longer pushed during gateway replacement
 
+## Retention
+
+- Keep the newest **50** uploads per facility (`PROVISIONING_MAX_FILES_PER_FACILITY`), ordered by `uploaded_at`.
+- Excess rows are deleted via the normal delete path (DB then best-effort `storage.remove`).
+- Prune runs on **startup** (all facilities with uploads) and after each successful **complete** upload.
+
 ## Out of scope (v1)
 
 - Gateway WebSocket provisioning push/restore
 - Provisioning phase in swap recovery
 - Signed GCS download URLs (stream-through only)
-- Scheduled uploads, retention/TTL, per-file encryption
+- Scheduled/cron retention beyond startup + on-upload prune, per-file encryption
 - Tenant self-service without facility admin role
 - `facility_admin` delete via API or mobile app
 

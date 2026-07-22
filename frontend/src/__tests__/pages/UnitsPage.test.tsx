@@ -258,7 +258,7 @@ describe('UnitsPage', () => {
       });
 
       await waitFor(() => {
-        expect(mockUpdateLockStatus).toHaveBeenCalledWith('dev-1', 'unlocked');
+        expect(mockUpdateLockStatus).toHaveBeenCalledWith('dev-1', 'unlocked', undefined);
       });
       expect(mockAddToast).toHaveBeenCalledWith(
         expect.objectContaining({ type: 'success', title: 'Unlock command sent' }),

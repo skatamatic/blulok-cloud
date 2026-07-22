@@ -118,6 +118,54 @@ export class FirmwareModel {
     return updated > 0;
   }
 
+  /** Hard-delete catalog row (CASCADE removes pushes/events). */
+  async hardDelete(id: string): Promise<boolean> {
+    const knex = this.db.connection;
+    const deleted = await knex('firmware_images').where('id', id).del();
+    return deleted > 0;
+  }
+
+  async listDistinctTargetTypes(): Promise<FirmwareTargetType[]> {
+    const knex = this.db.connection;
+    const rows = await knex('firmware_images').distinct('target_type');
+    return rows
+      .map((r: { target_type: FirmwareTargetType }) => r.target_type)
+      .filter(Boolean);
+  }
+
+  /**
+   * Active package ids older than the newest `keep` for a target type
+   * (ordered by created_at desc). Candidates for retention prune.
+   */
+  async findActiveIdsBeyondRetention(targetType: FirmwareTargetType, keep: number): Promise<string[]> {
+    if (keep < 0) return [];
+    const knex = this.db.connection;
+    const keepIds: string[] = await knex('firmware_images')
+      .where('is_active', true)
+      .where('target_type', targetType)
+      .orderBy('created_at', 'desc')
+      .limit(keep)
+      .pluck('id');
+
+    if (keepIds.length === 0) {
+      // Nothing kept — delete all active for this type (keep=0) or empty catalog.
+      if (keep === 0) {
+        return knex('firmware_images')
+          .where('is_active', true)
+          .where('target_type', targetType)
+          .pluck('id');
+      }
+      return [];
+    }
+
+    return knex('firmware_images')
+      .where('is_active', true)
+      .where('target_type', targetType)
+      .whereNotIn('id', keepIds)
+      .orderBy('created_at', 'asc')
+      .pluck('id');
+  }
+
   private deserialize(row: any): FirmwareImage {
     return {
       ...row,

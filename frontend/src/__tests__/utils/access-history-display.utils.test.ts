@@ -273,14 +273,16 @@ describe('access-history-display.utils', () => {
     })).toBe('Access point');
   });
 
-  it('shows BluLok lock number instead of lock id UUID', () => {
+  it('shows BluLok unit number instead of lock id UUID or lock number', () => {
     const lockId = 'ae4097b2-16b3-4b1d-b964-6021c7be6ea2';
     const log: AccessLog = {
       ...baseLog,
       device_serial: lockId,
+      unit_number: '106',
       device_name: `Lock ${lockId}`,
       metadata: {
         ...baseLog.metadata,
+        unit: { id: 'unit-1', number: '106', navigation_url: '/units/unit-1' },
         device: {
           id: 'dev-1',
           name: `Lock ${lockId}`,
@@ -290,7 +292,27 @@ describe('access-history-display.utils', () => {
       },
     };
 
-    expect(formatAccessHistoryDeviceLabel(log, getAccessLogMetadata(log))).toBe('Lock #106');
+    expect(formatAccessHistoryDeviceLabel(log, getAccessLogMetadata(log))).toBe('106');
+  });
+
+  it('shows Unassigned serial prefix for vacant BluLok devices', () => {
+    const log: AccessLog = {
+      ...baseLog,
+      device_serial: 'SN12345678',
+      unit_number: undefined,
+      device_name: 'Lock #106',
+      metadata: {
+        ...baseLog.metadata,
+        device: {
+          id: 'dev-1',
+          name: 'Lock #106',
+          navigation_url: '/devices/blulok/dev-1',
+          device_settings: { lockNumber: 106 },
+        },
+      },
+    };
+
+    expect(formatAccessHistoryDeviceLabel(log, getAccessLogMetadata(log))).toBe('Unassigned - 12345');
   });
 
   it('partitions failure and notes from contextual detail fields', () => {

@@ -35,7 +35,7 @@ import { formatAccessDeviceListSubtitle } from '@/utils/accessDeviceDisplay.util
 import { formatDate, formatDateTime } from '@/utils/datetime.utils';
 import {
   formatBluLokDeviceSubtitle,
-  formatBluLokLockNumberLabel,
+  formatBluLokUserFacingLabel,
 } from '@/utils/blulokDeviceDisplay.utils';
 import { formatNetworkInfraKindLabel } from '@/utils/device-icon.utils';
 
@@ -705,14 +705,12 @@ export default function DevicesPage({ initialCommandQueue }: DevicesPageProps = 
                         <div>
                           <div className="text-sm font-medium text-gray-900 dark:text-white">
                             {isBlulok
-                              ? formatBluLokLockNumberLabel(blulokDevice)
+                              ? formatBluLokUserFacingLabel(blulokDevice)
                               : accessDevice.name}
                           </div>
                           <div className="text-sm text-gray-500 dark:text-gray-400">
                             {isBlulok
-                              ? `${formatBluLokDeviceSubtitle(blulokDevice)}${
-                                  blulokDevice.unit_number ? ` · Unit ${blulokDevice.unit_number}` : ''
-                                }`
+                              ? formatBluLokDeviceSubtitle(blulokDevice)
                               : formatAccessDeviceListSubtitle(accessDevice)}
                           </div>
                         </div>

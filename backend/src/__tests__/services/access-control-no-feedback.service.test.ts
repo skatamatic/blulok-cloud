@@ -94,4 +94,27 @@ describe('AccessControlNoFeedbackService', () => {
       no_feedback_unlock_until: null,
     });
   });
+
+  it('settles when the timer fires even if DB unlock_until still looks in the future', async () => {
+    const service = AccessControlNoFeedbackService.getInstance();
+    mockFindAccessControlDeviceWithGateway.mockResolvedValue({
+      id: 'ac-1',
+      has_lock_feedback: false,
+      // Simulate MySQL/JS timezone skew making the deadline appear ~1h ahead
+      no_feedback_unlock_until: new Date('2026-07-15T21:00:00.000Z'),
+    });
+
+    await service.applyAcceptedCommand({
+      deviceId: 'ac-1',
+      requestedStatus: 'unlocked',
+      timeoutSec: 30,
+    });
+
+    await jest.advanceTimersByTimeAsync(30_000);
+
+    expect(mockUpdateAccessControlDevice).toHaveBeenNthCalledWith(2, 'ac-1', {
+      is_locked: true,
+      no_feedback_unlock_until: null,
+    });
+  });
 });

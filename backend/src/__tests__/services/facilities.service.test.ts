@@ -82,7 +82,10 @@ describe('FacilitiesService', () => {
         const chain: Record<string, unknown> = {
           where: jest.fn().mockReturnThis(),
           whereIn: jest.fn().mockReturnThis(),
+          andWhere: jest.fn().mockReturnThis(),
+          whereNull: jest.fn().mockReturnThis(),
           select: jest.fn(),
+          pluck: jest.fn(),
           del: jest.fn(),
         };
 
@@ -92,6 +95,8 @@ describe('FacilitiesService', () => {
           if (table === 'gateways') return [];
           return [];
         });
+
+        (chain.pluck as jest.Mock).mockResolvedValue([]);
 
         (chain.del as jest.Mock).mockImplementation(async () => {
           const n = delResults[table] ?? 0;
@@ -121,7 +126,10 @@ describe('FacilitiesService', () => {
         const chain: Record<string, unknown> = {
           where: jest.fn().mockReturnThis(),
           whereIn: jest.fn().mockReturnThis(),
+          andWhere: jest.fn().mockReturnThis(),
+          whereNull: jest.fn().mockReturnThis(),
           select: jest.fn(),
+          pluck: jest.fn(),
           del: jest.fn(),
         };
 
@@ -129,6 +137,12 @@ describe('FacilitiesService', () => {
           if (table === 'units') return unitIds.map((id) => ({ id }));
           if (table === 'blulok_devices') return deviceIds.map((id) => ({ id }));
           if (table === 'gateways') return gatewayIds.map((id) => ({ id }));
+          return [];
+        });
+
+        (chain.pluck as jest.Mock).mockImplementation(async () => {
+          if (table === 'access_control_devices') return ['ac-1'];
+          if (table === 'blulok_devices') return deviceIds;
           return [];
         });
 
@@ -150,6 +164,7 @@ describe('FacilitiesService', () => {
       await expect(svc.deleteFacilityCascade('fac-1', 'admin-1')).resolves.toBeUndefined();
 
       expect(knex).toHaveBeenCalledWith('device_denylist_entries');
+      expect(knex).toHaveBeenCalledWith('device_group_members');
       expect(knex).toHaveBeenCalledWith('blulok_devices');
       expect(knex).toHaveBeenCalledWith('key_sharing');
       expect(knex).toHaveBeenCalledWith('unit_assignments');

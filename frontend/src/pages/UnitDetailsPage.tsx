@@ -35,6 +35,7 @@ import { loadAccessGroupRefsForBlulokLock } from '@/utils/access-groups-load.uti
 import { canRequestRemoteUnlock, isLockTransitionPending } from '@/utils/unitLock.utils';
 import { lockHardwareFeedbackToasts } from '@/utils/lockHardwareFeedback.constants';
 import { useRemoteUnlockAction } from '@/hooks/useRemoteUnlockAction';
+import { unitHasTenant } from '@/constants/tenantUnlockOverride.constants';
 import { resolveLockTimeoutMsForUnit } from '@/utils/facilityLockTimeout.utils';
 import { useLockDeviceRealtime } from '@/hooks/useLockDeviceRealtime';
 import { useToast } from '@/contexts/ToastContext';
@@ -142,7 +143,7 @@ export default function UnitDetailsPage() {
   const [activeTab, setActiveTab] = useState<UnitDetailsTab>(() => getUnitTabFromSearch(location.search));
   const unitLockStatusRef = useRef<string | undefined>(undefined);
   const { facilities: globalFacilities, selectedFacility } = useGlobalFacility();
-  const { requestUnlock, isSubmitting, syncLockStatus } = useRemoteUnlockAction({
+  const { requestUnlock, isSubmitting, syncLockStatus, tenantOverrideDialog } = useRemoteUnlockAction({
     timeoutToast: lockHardwareFeedbackToasts.unitUnlockTimeout,
   });
 
@@ -440,6 +441,8 @@ export default function UnitDetailsPage() {
         patchLockStatus(status);
       },
       refresh: refreshAfterUnlockAttempt,
+      requiresTenantOverride: unitHasTenant(unit),
+      unitLabel: unit.unit_number,
     });
   };
 
@@ -663,6 +666,7 @@ export default function UnitDetailsPage() {
           }
         }}
       />
+      {tenantOverrideDialog}
     </DetailsPageShell>
   );
 }

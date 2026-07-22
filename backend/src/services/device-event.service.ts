@@ -433,8 +433,13 @@ export class DeviceEventService extends EventEmitter {
     const actorType = appliedAttribution ? 'user' : 'gateway';
     const actorId = appliedAttribution?.initiator.userId;
     const actorName = appliedAttribution?.initiator.userName ?? 'Gateway';
+    const override = appliedAttribution?.tenantUnlockOverride;
     const description = appliedAttribution
-      ? `Device was ${lockActivityVerb(activityType)} remotely via gateway by ${appliedAttribution.initiator.userName}`
+      ? [
+          `Device was ${lockActivityVerb(activityType)} remotely via gateway by ${appliedAttribution.initiator.userName}`,
+          override?.reasonLabel ? `Reason: ${override.reasonLabel}` : null,
+          override?.notes ? `Notes: ${override.notes}` : null,
+        ].filter(Boolean).join('. ')
       : `Device was ${lockActivityVerb(activityType)} locally at the device`;
 
     await ActivityService.getInstance().logActivity({
@@ -465,6 +470,15 @@ export class DeviceEventService extends EventEmitter {
               name: appliedAttribution.initiator.userName,
               role: appliedAttribution.initiator.role,
             },
+            ...(override
+              ? {
+                tenant_unlock_override: {
+                  reason: override.reason,
+                  reason_label: override.reasonLabel,
+                  notes: override.notes ?? null,
+                },
+              }
+              : {}),
           }
           : {
             method: 'local_device',

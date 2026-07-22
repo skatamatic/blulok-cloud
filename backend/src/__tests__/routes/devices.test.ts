@@ -4,18 +4,31 @@ import { createMockTestData, MockTestData, expectUnauthorized, expectForbidden, 
 import { DatabaseService } from '@/services/database.service';
 import { DevicesService } from '@/services/devices.service';
 
-/** Matches knex chains used by devices.routes (join + select + where + first). */
-function mockKnexChainForFirstRow(row: Record<string, unknown>) {
-  return jest.fn(() => ({
-    select: jest.fn().mockReturnThis(),
-    join: jest.fn().mockReturnThis(),
-    where: jest.fn().mockReturnThis(),
-    first: jest.fn().mockResolvedValue(row),
-    whereIn: jest.fn().mockReturnThis(),
-    orderBy: jest.fn().mockReturnThis(),
-    limit: jest.fn().mockReturnThis(),
-    offset: jest.fn().mockReturnThis(),
-  }));
+/**
+ * Matches knex chains used by devices.routes (join + select + where + first).
+ * Tenant-check tables default to vacant so unlock tests don't trip override enforcement.
+ */
+function mockKnexChainForFirstRow(
+  row: Record<string, unknown>,
+  options?: { hasTenant?: boolean },
+) {
+  return jest.fn((table: string) => {
+    const isTenantCheck = table === 'unit_assignments' || table === 'key_sharing';
+    return {
+      select: jest.fn().mockReturnThis(),
+      join: jest.fn().mockReturnThis(),
+      where: jest.fn().mockReturnThis(),
+      first: jest.fn().mockResolvedValue(
+        isTenantCheck
+          ? (options?.hasTenant ? { id: 'assignment-1' } : null)
+          : row,
+      ),
+      whereIn: jest.fn().mockReturnThis(),
+      orderBy: jest.fn().mockReturnThis(),
+      limit: jest.fn().mockReturnThis(),
+      offset: jest.fn().mockReturnThis(),
+    };
+  });
 }
 
 // Mock DevicesService
@@ -131,13 +144,18 @@ describe('Devices Routes', () => {
     mockAssignAccessControlToDefaultGroup.mockClear();
     mockAssignBluLokToDefaultGroup.mockClear();
     
-    // Create mock knex connection
+    // Create mock knex connection (vacant tenant tables by default)
     const createMockKnex = (returnValue?: any) => {
       const mockKnexFn = jest.fn((table: string) => {
+        const isTenantCheck = table === 'unit_assignments' || table === 'key_sharing';
         const queryBuilder = {
           select: jest.fn().mockReturnThis(),
           where: jest.fn().mockReturnThis(),
-          first: jest.fn().mockResolvedValue(returnValue || { unit_id: testData.units.unit1.id }),
+          first: jest.fn().mockResolvedValue(
+            isTenantCheck
+              ? null
+              : (returnValue || { unit_id: testData.units.unit1.id }),
+          ),
           whereIn: jest.fn().mockReturnThis(),
           join: jest.fn().mockReturnThis(),
           orderBy: jest.fn().mockReturnThis(),
@@ -974,6 +992,62 @@ describe('Devices Routes', () => {
           .expect(400);
 
         expectBadRequest(response);
+      });
+
+      it('should require tenant override reason when unit has a tenant', async () => {
+        mockDeviceModel.db.connection = mockKnexChainForFirstRow(
+          { unit_id: testData.units.unit1.id },
+          { hasTenant: true },
+        );
+        mockUnitsService.hasUserAccessToUnit.mockResolvedValueOnce(true);
+        const { __mocks } = require('@/services/lock-command.service');
+        __mocks.issueLockCommandMock.mockClear();
+
+        const response = await request(app)
+          .put('/api/v1/devices/blulok/device-1/lock')
+          .set('Authorization', `Bearer ${testData.users.admin.token}`)
+          .send(validLockData)
+          .expect(400);
+
+        expect(response.body).toMatchObject({
+          success: false,
+          code: 'TENANT_UNLOCK_OVERRIDE_REQUIRED',
+        });
+        expect(__mocks.issueLockCommandMock).not.toHaveBeenCalled();
+      });
+
+      it('should unlock with valid tenant override and pass it to LockCommandService', async () => {
+        mockDeviceModel.db.connection = mockKnexChainForFirstRow(
+          { unit_id: testData.units.unit1.id },
+          { hasTenant: true },
+        );
+        mockUnitsService.hasUserAccessToUnit.mockResolvedValueOnce(true);
+        const { __mocks } = require('@/services/lock-command.service');
+        __mocks.issueLockCommandMock.mockClear();
+
+        const response = await request(app)
+          .put('/api/v1/devices/blulok/device-1/lock')
+          .set('Authorization', `Bearer ${testData.users.admin.token}`)
+          .send({
+            lock_status: 'unlocked',
+            tenant_override_reason: 'emergency',
+            tenant_override_notes: 'Flood under door',
+          })
+          .expect(200);
+
+        expectSuccess(response);
+        expect(__mocks.issueLockCommandMock).toHaveBeenCalledWith(
+          'device-1',
+          'unlocked',
+          expect.objectContaining({ userId: expect.any(String) }),
+          {
+            tenantUnlockOverride: {
+              reason: 'emergency',
+              reasonLabel: 'Emergency (Fire, flood, other)',
+              notes: 'Flood under door',
+            },
+          },
+        );
       });
     });
 

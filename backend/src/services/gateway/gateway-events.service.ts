@@ -7,7 +7,11 @@ import { notifyGatewayStatusAfterDbUpdate } from '@/utils/gateway-status-notific
 import { WebSocketService } from '@/services/websocket.service';
 import { GatewayTelemetryLogService } from '@/services/gateway-telemetry-log.service';
 import { formatGatewayDisconnectReason } from '@/utils/gateway-telemetry-system-log.utils';
-import { GATEWAY_OFFLINE_GRACE_MS } from '@/constants/gateway-liveness.constants';
+import {
+  DEFAULT_GATEWAY_OFFLINE_GRACE_MS,
+  GATEWAY_OFFLINE_GRACE_OVERRIDE_MAX_MS,
+  GATEWAY_OFFLINE_GRACE_OVERRIDE_MIN_MS,
+} from '@/constants/gateway-liveness.constants';
 import { GatewayRecoveryService } from '@/services/gateway/gateway-recovery.service';
 import {
   isOperationalOutboundBlockedDuringRecovery,
@@ -72,6 +76,8 @@ export class GatewayEventsService {
   private readonly gatewayModel = new GatewayModel();
   private unbindTransportConnectionListener?: () => void;
   private pendingOfflineByFacility = new Map<string, PendingOfflineEntry>();
+  /** Dev/e2e override for offline grace; `null` uses {@link DEFAULT_GATEWAY_OFFLINE_GRACE_MS}. */
+  private offlineGraceMsOverride: number | null = null;
   private connectionListeners = new Set<(event: {
     facilityId: string;
     connected: boolean;
@@ -179,7 +185,11 @@ export class GatewayEventsService {
     }
   }
 
-  // Lightweight connection status for a facility (for UI/status endpoints)
+  /**
+   * Raw transport socket status — use for command delivery, firmware, outbox flush.
+   * Does **not** include offline grace; a Cloud Run recycle reports `connected: false`
+   * until AUTH completes again.
+   */
   public getFacilityConnectionStatus(facilityId: string): { connected: boolean; lastPongAt?: number } {
     const t: any = this.transport as any;
     if (t && typeof t.getConnectionStatusForFacility === 'function') {
@@ -193,6 +203,67 @@ export class GatewayEventsService {
       }
     }
     return { connected: false };
+  }
+
+  /** True while a disconnect is waiting on offline grace before persisting offline. */
+  public isFacilityPendingOffline(facilityId: string): boolean {
+    return this.pendingOfflineByFacility.has(facilityId);
+  }
+
+  /**
+   * Product-facing liveness for UI pills, device reachability, and status broadcasts.
+   * Stays `connected: true` while a pending-offline grace timer is active so brief
+   * Cloud Run / proxy recycles do not flap gateway or device offline state.
+   */
+  public getFacilityProductLiveness(facilityId: string): { connected: boolean; lastPongAt?: number } {
+    const transport = this.getFacilityConnectionStatus(facilityId);
+    if (transport.connected) {
+      return transport;
+    }
+    if (this.pendingOfflineByFacility.has(facilityId)) {
+      return { connected: true, lastPongAt: transport.lastPongAt };
+    }
+    return transport;
+  }
+
+  /** Effective offline grace (runtime override or env/default). */
+  public getOfflineGraceMs(): number {
+    return this.offlineGraceMsOverride ?? DEFAULT_GATEWAY_OFFLINE_GRACE_MS;
+  }
+
+  public isOfflineGraceOverrideActive(): boolean {
+    return this.offlineGraceMsOverride !== null;
+  }
+
+  /**
+   * Dev/e2e: temporarily override offline grace for this process.
+   * Pass `null` to restore the env/default value.
+   */
+  public setOfflineGraceMsOverride(ms: number | null): number {
+    if (ms === null) {
+      this.offlineGraceMsOverride = null;
+      logger.info(
+        `Gateway offline grace override cleared (default=${DEFAULT_GATEWAY_OFFLINE_GRACE_MS}ms)`,
+      );
+      return this.getOfflineGraceMs();
+    }
+
+    if (!Number.isFinite(ms)) {
+      throw new Error('grace_ms must be a finite number or null');
+    }
+    const rounded = Math.floor(ms);
+    if (
+      rounded < GATEWAY_OFFLINE_GRACE_OVERRIDE_MIN_MS
+      || rounded > GATEWAY_OFFLINE_GRACE_OVERRIDE_MAX_MS
+    ) {
+      throw new Error(
+        `grace_ms must be between ${GATEWAY_OFFLINE_GRACE_OVERRIDE_MIN_MS} and ${GATEWAY_OFFLINE_GRACE_OVERRIDE_MAX_MS}`,
+      );
+    }
+
+    this.offlineGraceMsOverride = rounded;
+    logger.info(`Gateway offline grace override set to ${rounded}ms (default=${DEFAULT_GATEWAY_OFFLINE_GRACE_MS}ms)`);
+    return rounded;
   }
 
   public getTransport(): GatewayTransport {
@@ -305,7 +376,7 @@ export class GatewayEventsService {
     const timer = setTimeout(() => {
       this.pendingOfflineByFacility.delete(facilityId);
       void this.applyPendingGatewayOffline(facilityId);
-    }, GATEWAY_OFFLINE_GRACE_MS);
+    }, this.getOfflineGraceMs());
     timer.unref?.();
 
     this.pendingOfflineByFacility.set(facilityId, {

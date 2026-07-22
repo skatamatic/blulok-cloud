@@ -18,6 +18,7 @@ import {
   type PublicProvisioningUploadSession,
 } from '@/services/provisioning/provisioning-storage.factory';
 import {
+  PROVISIONING_MAX_FILES_PER_FACILITY,
   PROVISIONING_PENDING_UPLOAD_TTL_MS,
   PROVISIONING_UPLOAD_RATE_LIMIT_MAX,
   PROVISIONING_UPLOAD_RATE_LIMIT_WINDOW_MS,
@@ -199,6 +200,7 @@ export class FacilityProvisioningService {
       logger.info(
         `Facility provisioning file completed fileId=${uploadId} facility=${facilityId} source=${uploadSource}`,
       );
+      this.scheduleRetentionPrune(facilityId);
       return sanitizeFacilityProvisioningFile(row);
     } catch (err) {
       try {
@@ -267,6 +269,51 @@ export class FacilityProvisioningService {
     }
     logger.info(`Facility provisioning file deleted fileId=${fileId} facility=${row.facility_id}`);
     return deleted;
+  }
+
+  /**
+   * Keep the newest {@link PROVISIONING_MAX_FILES_PER_FACILITY} uploads per facility.
+   * Older rows are deleted (DB + storage) via {@link deleteFile}.
+   */
+  static async pruneFacilityUploads(
+    facilityId: string,
+    keep: number = PROVISIONING_MAX_FILES_PER_FACILITY,
+  ): Promise<number> {
+    const excessIds = await this.fileModel.findIdsBeyondRetention(facilityId, keep);
+    let pruned = 0;
+    for (const id of excessIds) {
+      try {
+        if (await this.deleteFile(id)) {
+          pruned += 1;
+        }
+      } catch (err) {
+        logger.warn(`Provisioning retention prune failed fileId=${id}:`, err);
+      }
+    }
+    return pruned;
+  }
+
+  static scheduleRetentionPrune(facilityId: string): void {
+    void this.pruneFacilityUploads(facilityId).catch((err) => {
+      logger.warn(`Provisioning retention prune failed facility=${facilityId}:`, err);
+    });
+  }
+
+  static async pruneAllFacilitiesRetentionOnStartup(
+    keep: number = PROVISIONING_MAX_FILES_PER_FACILITY,
+  ): Promise<void> {
+    try {
+      const facilityIds = await this.fileModel.listDistinctFacilityIds();
+      let pruned = 0;
+      for (const facilityId of facilityIds) {
+        pruned += await this.pruneFacilityUploads(facilityId, keep);
+      }
+      if (pruned > 0) {
+        logger.info(`Provisioning retention startup prune removed ${pruned} file(s)`);
+      }
+    } catch (err) {
+      logger.warn('Provisioning retention startup prune failed:', err);
+    }
   }
 
   static async receiveDirectUpload(

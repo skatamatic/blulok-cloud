@@ -116,7 +116,7 @@ describe('GatewayStatusSubscriptionManager', () => {
       ] as any);
       const lastActivityAt = Date.now();
       jest
-        .spyOn(GatewayEventsService.getInstance(), 'getFacilityConnectionStatus')
+        .spyOn(GatewayEventsService.getInstance(), 'getFacilityProductLiveness')
         .mockReturnValue({ connected: true, lastPongAt: lastActivityAt });
 
       const mgr = new GatewayStatusSubscriptionManager();

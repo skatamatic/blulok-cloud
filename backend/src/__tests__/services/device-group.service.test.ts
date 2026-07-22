@@ -16,6 +16,9 @@ jest.mock('@/models/device-group.model', () => ({
     getMembers: jest.fn(),
     getGroupsForDevice: jest.fn(),
     removeUnknownBlulokDefaultGroupMembers: jest.fn(),
+    removeOrphanedGroupMembers: jest.fn(),
+    removeAccessControlMembershipsForDevice: jest.fn(),
+    removeMembershipsForGatewayDevices: jest.fn(),
   })),
 }));
 
@@ -999,8 +1002,8 @@ describe('DeviceGroupService', () => {
     });
   });
 
-  it('cleanupUnknownDefaultGroupMembers delegates to model cleanup', async () => {
-    model.removeUnknownBlulokDefaultGroupMembers.mockResolvedValue({
+  it('cleanupUnknownDefaultGroupMembers delegates to orphaned-member cleanup', async () => {
+    model.removeOrphanedGroupMembers.mockResolvedValue({
       removed: 3,
       byFacility: { 'fac-1': 2, 'fac-2': 1 },
     });
@@ -1008,11 +1011,11 @@ describe('DeviceGroupService', () => {
     const result = await service.cleanupUnknownDefaultGroupMembers();
 
     expect(result).toEqual({ removed: 3, byFacility: { 'fac-1': 2, 'fac-2': 1 } });
-    expect(model.removeUnknownBlulokDefaultGroupMembers).toHaveBeenCalledTimes(1);
+    expect(model.removeOrphanedGroupMembers).toHaveBeenCalledTimes(1);
   });
 
   it('cleanupUnknownDefaultGroupMembersOnStartup swallows model errors', async () => {
-    model.removeUnknownBlulokDefaultGroupMembers.mockRejectedValue(new Error('db unavailable'));
+    model.removeOrphanedGroupMembers.mockRejectedValue(new Error('db unavailable'));
 
     await expect(DeviceGroupService.cleanupUnknownDefaultGroupMembersOnStartup()).resolves.toBeUndefined();
   });

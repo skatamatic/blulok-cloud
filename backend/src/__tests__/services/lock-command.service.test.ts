@@ -293,6 +293,46 @@ describe('LockCommandService', () => {
     });
   });
 
+  it('expires one-shot pending attribution after attribution TTL', async () => {
+    jest.useFakeTimers();
+    knexInvocation = 0;
+    mockKnex.mockImplementation((table: string) => {
+      knexInvocation += 1;
+      if (table === 'facilities') {
+        return {
+          where: jest.fn().mockReturnThis(),
+          select: jest.fn().mockReturnThis(),
+          first: jest.fn().mockResolvedValue({ lock_command_timeout_sec: 0 }),
+        };
+      }
+      if (knexInvocation === 1 && table === 'blulok_devices') {
+        return buildJoinFirst({
+          id: 'dev-1',
+          lock_status: 'unlocked',
+          supports_remote_lock: true,
+          gateway_id: 'gw-1',
+          facility_id: 'fac-1',
+        });
+      }
+      return buildTimeoutQuery('unlocked');
+    });
+
+    sendLockCommand.mockResolvedValueOnce({ success: true });
+
+    const svc = LockCommandService.getInstance();
+    await svc.issueLockCommand('dev-1', 'locked', {
+      userId: 'user-1',
+      userName: 'Admin',
+      role: 'facility_admin',
+    });
+
+    expect(svc.peekCommandAttribution('dev-1')).not.toBeNull();
+
+    await jest.advanceTimersByTimeAsync(300_000);
+
+    expect(svc.peekCommandAttribution('dev-1')).toBeNull();
+  });
+
   it('logs access history failure when initiator present on gateway failure', async () => {
     sendLockCommand.mockResolvedValueOnce({ success: false, error: 'gw-busy' });
 
@@ -313,6 +353,45 @@ describe('LockCommandService', () => {
           action: 'lock_attempt',
           method: 'admin_remote',
           device_type: 'blulok',
+        }),
+      }),
+    );
+  });
+
+  it('includes tenant unlock override on gateway failure activity metadata', async () => {
+    sendLockCommand.mockResolvedValueOnce({ success: false, error: 'gw-busy' });
+
+    const svc = LockCommandService.getInstance();
+    await svc.issueLockCommand(
+      'dev-1',
+      'unlocked',
+      {
+        userId: 'user-1',
+        userName: 'Admin',
+        role: 'facility_admin',
+      },
+      {
+        tenantUnlockOverride: {
+          reason: 'emergency',
+          reasonLabel: 'Emergency (Fire, flood, other)',
+          notes: 'Flood',
+        },
+      },
+    );
+
+    await flushAsyncNotifications();
+
+    expect(mockLogActivity).toHaveBeenCalledWith(
+      expect.objectContaining({
+        activityType: 'access_attempt',
+        result: 'failure',
+        metadata: expect.objectContaining({
+          action: 'unlock_attempt',
+          tenant_unlock_override: {
+            reason: 'emergency',
+            reason_label: 'Emergency (Fire, flood, other)',
+            notes: 'Flood',
+          },
         }),
       }),
     );

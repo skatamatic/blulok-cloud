@@ -654,7 +654,8 @@ registerPost(
       }
 
       case 'LOCK': {
-        // Send lock command for each device as JWT (`device_id` claim = hardware serial, like route passes)
+        // Dev-tools only: bypasses LockCommandService pending attribution (no Access History stamp).
+        // Production operator unlock/lock must use PUT /devices/.../lock.
         const jwts: string[] = [];
         const gatewaySvc = GatewayService.getInstance();
         for (const deviceId of targetDeviceIds) {
@@ -689,7 +690,7 @@ registerPost(
       }
 
       case 'UNLOCK': {
-        // Send unlock command for each device as JWT (`device_id` claim = hardware serial, like route passes)
+        // Dev-tools only: bypasses LockCommandService pending attribution (no Access History stamp).
         const jwts: string[] = [];
         const gatewaySvc = GatewayService.getInstance();
         for (const deviceId of targetDeviceIds) {

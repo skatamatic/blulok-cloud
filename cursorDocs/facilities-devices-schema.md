@@ -190,9 +190,14 @@ CREATE TABLE device_groups (
 CREATE TABLE device_group_members (
   id UUID PRIMARY KEY,
   group_id UUID NOT NULL REFERENCES device_groups(id) ON DELETE CASCADE,
-  device_id UUID NOT NULL REFERENCES access_control_devices(id) ON DELETE CASCADE,
+  -- device_id is a free UUID (no FK to device tables). Memberships are cleaned by:
+  -- DevicesService.delete*FromInventory, DeviceModel.deleteAccessControlDevice,
+  -- GatewayModel.delete / facility cascade, and startup orphan sweeper.
+  device_id UUID NOT NULL,
+  device_type ENUM('access_control', 'blulok') NOT NULL DEFAULT 'access_control',
+  source_unit_id UUID NULL, -- BluLok unit-anchored membership
   created_at TIMESTAMP,
-  UNIQUE(group_id, device_id)
+  UNIQUE(group_id, device_id, device_type)
 );
 ```
 
@@ -407,7 +412,9 @@ These endpoints are used by the web UI when an admin adds or edits access contro
 | Gateway inventory/state | `access_id` | `relay_channel` | `{access_id}::{relay_channel}` in sync `not_found` responses |
 | Admin API / DB / frontend | `device_serial` | `relay_channel` | Unique `(gateway_id, device_serial, relay_channel)` |
 
-Manual devices have no `metadata.createdFromGatewaySync` and are **never** removed by gateway inventory omission. Gateway auto-provision sets `metadata.createdFromGatewaySync: true` and default `access_methods: ["keypad"]`.
+Manual devices have no `metadata.createdFromGatewaySync` (or `createdFromGatewaySync: false`) and are **never** removed by gateway inventory omission. Gateway auto-provision sets `metadata.createdFromGatewaySync: true` and default `access_methods: ["keypad"]`.
+
+**Access group memberships:** `device_group_members.device_id` is not FK-cascaded from device tables. Memberships are removed when devices are deleted via inventory/admin services, gateway/facility cascade helpers, create-rollback `deleteAccessControlDevice`, and the startup orphan sweeper (`DeviceGroupService.cleanupUnknownDefaultGroupMembersOnStartup`).
 
 **Frontend types:** `CreateAccessControlDevicePayload` and `UpdateAccessControlDevicePayload` in `frontend/src/types/facility.types.ts`; list/card subtitle helper `formatAccessDeviceListSubtitle()` in `frontend/src/utils/accessDeviceDisplay.utils.ts`.
 

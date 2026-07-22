@@ -449,6 +449,8 @@ Migration `046_seed_default_storage_config.ts` seeds the default local provider 
 
 - When firmware is soft-deleted via the API, the binary is also removed from the configured storage backend.
 - The storage provider's `remove()` method cleans up the file and its parent directory if empty (local provider).
+- **Retention:** keep the newest **50** active packages per `target_type` (`FIRMWARE_IMAGES_RETENTION_PER_TARGET`). Excess packages are **hard-deleted** (storage object + DB row; push/events CASCADE). Packages with a non-terminal push are skipped until that push finishes.
+- Prune runs on **startup**, after **upload** (multipart + signed finalize), and after **initiatePush**.
 
 ## API Endpoints
 
@@ -485,7 +487,25 @@ Browser DevTools uploads PUT directly to a GCS resumable session URL (`storage.g
 
 Apply with `gcloud storage buckets update gs://YOUR_BUCKET --cors-file=cors.json` (or `gsutil cors set cors.json gs://YOUR_BUCKET`).
 
-The Cloud Run service account needs **`storage.objectCreator`** (create resumable session + upload) and **`storage.objectViewer`** (read/hash on finalize). Unlike V4 signed URLs, resumable sessions do **not** require `iam.serviceAccounts.signBlob` / `roles/iam.serviceAccountTokenCreator`.
+### Cloud Run service account (GCS firmware)
+
+| Capability | Roles / permission | Notes |
+|------------|--------------------|-------|
+| Resumable upload (DevTools prepare/finalize) | Bucket **`storage.objectCreator`** + **`storage.objectViewer`** | Uses OAuth; does **not** need `signBlob` |
+| OTA **v2** signed download URLs | Same storage roles **plus** **`roles/iam.serviceAccountTokenCreator`** on the runtime SA **to itself** | ADC on Cloud Run has no private key; `@google-cloud/storage` calls `iam.serviceAccounts.signBlob` |
+
+Grant self-impersonation (example for the default Compute Engine SA used by Cloud Run):
+
+```bash
+PROJECT=blulok-cloud-dev
+SA="${PROJECT_NUMBER}-compute@developer.gserviceaccount.com"
+gcloud iam service-accounts add-iam-policy-binding "$SA" \
+  --project="$PROJECT" \
+  --member="serviceAccount:$SA" \
+  --role="roles/iam.serviceAccountTokenCreator"
+```
+
+Without Token Creator, v2 push fails with `Permission 'iam.serviceAccounts.signBlob' denied` (v1 chunk push still works).
 
 ## Key Files
 

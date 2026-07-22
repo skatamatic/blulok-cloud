@@ -368,7 +368,13 @@ export class GatewayModel {
 
   async delete(id: string): Promise<boolean> {
     const knex = this.db.connection;
-    const deleted = await knex('gateways').where('id', id).del();
+    const deleted = await knex.transaction(async (trx) => {
+      // Gateway FK cascades wipe access_control_devices / blulok_devices; clear memberships first.
+      const { DeviceGroupModel } = await import('@/models/device-group.model');
+      await new DeviceGroupModel().removeMembershipsForGatewayDevices(id, trx);
+      const count = await trx('gateways').where('id', id).del();
+      return count as number;
+    });
     return deleted > 0;
   }
 

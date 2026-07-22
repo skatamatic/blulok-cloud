@@ -91,4 +91,36 @@ export class FacilityProvisioningFileModel {
     const deleted = await this.db.connection('facility_provisioning_files').where('id', id).delete();
     return deleted > 0;
   }
+
+  async listDistinctFacilityIds(): Promise<string[]> {
+    const rows = await this.db.connection('facility_provisioning_files').distinct('facility_id');
+    return rows.map((r: { facility_id: string }) => r.facility_id).filter(Boolean);
+  }
+
+  /**
+   * File ids older than the newest `keep` for a facility (by uploaded_at desc).
+   */
+  async findIdsBeyondRetention(facilityId: string, keep: number): Promise<string[]> {
+    if (keep < 0) return [];
+    const knex = this.db.connection;
+    const keepIds: string[] = await knex('facility_provisioning_files')
+      .where('facility_id', facilityId)
+      .orderBy('uploaded_at', 'desc')
+      .orderBy('created_at', 'desc')
+      .limit(keep)
+      .pluck('id');
+
+    if (keepIds.length === 0) {
+      if (keep === 0) {
+        return knex('facility_provisioning_files').where('facility_id', facilityId).pluck('id');
+      }
+      return [];
+    }
+
+    return knex('facility_provisioning_files')
+      .where('facility_id', facilityId)
+      .whereNotIn('id', keepIds)
+      .orderBy('uploaded_at', 'asc')
+      .pluck('id');
+  }
 }

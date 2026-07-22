@@ -215,7 +215,7 @@ export function EditDeviceMetadataModal({
       if (!bluForm.device_serial.trim()) next.device_serial = 'Serial is required';
       if (bluForm.lock_number.trim()) {
         const n = Number(bluForm.lock_number);
-        if (!Number.isFinite(n)) next.lock_number = 'Lock number must be numeric';
+        if (!Number.isFinite(n)) next.lock_number = 'Inventory number must be numeric';
       }
     } else {
       if (!acForm.name.trim()) next.name = 'Name is required';
@@ -357,7 +357,7 @@ export function EditDeviceMetadataModal({
               <p className="text-sm text-amber-900 dark:text-amber-200">
                 This device was provisioned from gateway inventory. Saving identity changes marks it
                 as admin-corrected so sync will not remove it if the gateway still reports the old
-                serial. Lock number and other settings may be overwritten when the gateway sends a
+                serial. Inventory number and other settings may be overwritten when the gateway sends a
                 matching inventory update.
               </p>
             </div>
@@ -388,7 +388,8 @@ export function EditDeviceMetadataModal({
                   htmlFor="edit-blulok-lock-number"
                   className="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300"
                 >
-                  Lock number
+                  Gateway inventory number
+                  <span className="ml-1 font-normal text-gray-500 dark:text-gray-400">(not shown in app)</span>
                 </label>
                 <input
                   id="edit-blulok-lock-number"
@@ -404,7 +405,8 @@ export function EditDeviceMetadataModal({
                   <p className="mt-1 text-sm text-red-600 dark:text-red-400">{errors.lock_number}</p>
                 )}
                 <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
-                  Gateway inventory field <code className="font-mono">lock_number</code>
+                  Gateway inventory field <code className="font-mono">lock_number</code>. Operators see the
+                  unit number (or Unassigned + serial) instead of this value.
                 </p>
               </div>
               <div>

@@ -5,8 +5,8 @@ import {
   EffectiveAccessCode,
 } from '@/types/facility.types';
 import { UserRole } from '@/types/auth.types';
-import { formatBluLokDevicePageTitle } from '@/utils/blulokDeviceDisplay.utils';
-import { readDisplayName, readLockNumber } from '@/utils/deviceMetadataForm.utils';
+import { formatBluLokDevicePageTitle, formatBluLokUserFacingLabel } from '@/utils/blulokDeviceDisplay.utils';
+import { readDisplayName } from '@/utils/deviceMetadataForm.utils';
 
 export const DEFAULT_GROUP_CONFIG: AccessCodeGroupConfig = {
   is_enabled: false,
@@ -164,7 +164,7 @@ export function resolveAccessGroupMemberTitle(
     if (member.source_unit_id) {
       return 'Unit';
     }
-    return device ? formatBluLokDevicePageTitle(device) : 'Unknown unit';
+    return device ? formatBluLokUserFacingLabel(device) : 'Unknown unit';
   }
   const name = typeof device?.name === 'string' ? device.name.trim() : '';
   return name || member.device_id;
@@ -214,7 +214,7 @@ export function buildGroupableUnitSearchKeywords(unit: GroupableUnitFields): str
 
 export function resolveGroupableDeviceLabel(device: GroupableDeviceFields): string {
   if (device.device_category === 'blulok') {
-    return formatBluLokDevicePageTitle(device);
+    return formatBluLokUserFacingLabel(device);
   }
   const name = typeof device.name === 'string' ? device.name.trim() : '';
   if (name) return name;
@@ -228,15 +228,14 @@ export function resolveGroupableDeviceLabel(device: GroupableDeviceFields): stri
 export function buildGroupableBlulokSearchKeywords(device: GroupableDeviceFields): string[] {
   const title = formatBluLokDevicePageTitle(device);
   const displayName = readDisplayName(device.device_settings);
-  const lockNumber = readLockNumber(device.device_settings);
+  const identity = formatBluLokUserFacingLabel(device);
   return [
     device.id,
     device.name,
     device.unit_number,
     device.device_serial,
     displayName,
-    lockNumber,
-    lockNumber ? `Lock #${lockNumber}` : '',
+    identity,
     title,
   ].filter(Boolean) as string[];
 }

@@ -385,7 +385,7 @@ describe('LockStatusWidget', () => {
         expect(mockUpdateLockStatus).toHaveBeenCalled();
       }, { timeout: 3000 });
       
-      expect(mockUpdateLockStatus).toHaveBeenCalledWith('dev-1', 'unlocked');
+      expect(mockUpdateLockStatus).toHaveBeenCalledWith('dev-1', 'unlocked', undefined);
     });
 
     it('does not remote-lock an unlocked unit (no Lock action)', async () => {

@@ -1,7 +1,6 @@
 import { useEffect, useRef } from 'react';
 import { useWebSocket } from '@/contexts/WebSocketContext';
 import { useToast } from '@/contexts/ToastContext';
-import { GATEWAY_OFFLINE_TOAST_GRACE_MS } from '@/constants/gateway-liveness.constants';
 import {
   resolveEffectiveGatewayStatus,
   type GatewayOperationalStatus,
@@ -15,14 +14,14 @@ type GatewayStatusRow = {
 };
 
 /**
- * Debounced gateway connectivity toasts. Transient WS drops (common on Cloud Run) should
- * not spam "offline" toasts when the gateway reconnects within the grace window.
+ * Gateway connectivity toasts. Backend product liveness already absorbs brief
+ * `/ws/gateway` drops (Cloud Run recycle) via the shared offline grace window;
+ * this hook toasts when the broadcast reports a confirmed offline transition.
  */
 export function useGatewayStatusToasts(): void {
   const ws = useWebSocket();
   const { addToast } = useToast();
   const lastEffectiveRef = useRef<Record<string, GatewayOperationalStatus>>({});
-  const pendingOfflineRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
   const confirmedOfflineRef = useRef<Set<string>>(new Set());
 
   useEffect(() => {
@@ -46,34 +45,21 @@ export function useGatewayStatusToasts(): void {
             const label = row.name?.trim() || 'Facility gateway';
 
             if (effective === 'offline') {
-              if (pendingOfflineRef.current[row.id]) {
-                return;
-              }
-              pendingOfflineRef.current[row.id] = setTimeout(() => {
-                delete pendingOfflineRef.current[row.id];
-                confirmedOfflineRef.current.add(row.id);
-                addToast({
-                  type: 'error',
-                  title: `${label} is offline`,
-                  message: 'No gateway connection for over a minute.',
-                });
-              }, GATEWAY_OFFLINE_TOAST_GRACE_MS);
+              confirmedOfflineRef.current.add(row.id);
+              addToast({
+                type: 'error',
+                title: `${label} is offline`,
+                message: 'Gateway connection lost.',
+              });
               return;
             }
 
-            if (effective === 'online') {
-              if (pendingOfflineRef.current[row.id]) {
-                clearTimeout(pendingOfflineRef.current[row.id]);
-                delete pendingOfflineRef.current[row.id];
-                return;
-              }
-              if (confirmedOfflineRef.current.has(row.id)) {
-                confirmedOfflineRef.current.delete(row.id);
-                addToast({
-                  type: 'success',
-                  title: `${label} is back online`,
-                });
-              }
+            if (effective === 'online' && confirmedOfflineRef.current.has(row.id)) {
+              confirmedOfflineRef.current.delete(row.id);
+              addToast({
+                type: 'success',
+                title: `${label} is back online`,
+              });
             }
           });
         } catch (error) {
@@ -83,8 +69,6 @@ export function useGatewayStatusToasts(): void {
     );
 
     return () => {
-      Object.values(pendingOfflineRef.current).forEach(clearTimeout);
-      pendingOfflineRef.current = {};
       if (subscriptionId) {
         ws.unsubscribe(subscriptionId);
       }

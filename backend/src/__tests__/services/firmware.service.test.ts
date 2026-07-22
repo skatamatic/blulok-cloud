@@ -29,6 +29,9 @@ const mockFirmwareModel = {
   findAll: jest.fn(),
   create: jest.fn(),
   softDelete: jest.fn(),
+  hardDelete: jest.fn(),
+  listDistinctTargetTypes: jest.fn(),
+  findActiveIdsBeyondRetention: jest.fn(),
 };
 
 const mockPushModel = {
@@ -51,6 +54,7 @@ const mockPushModel = {
   updateDeviceCounts: jest.fn().mockResolvedValue(undefined),
   findActiveByFacilities: jest.fn().mockResolvedValue([]),
   findAllActive: jest.fn().mockResolvedValue([]),
+  hasNonTerminalForFirmware: jest.fn().mockResolvedValue(false),
 };
 
 const mockPushEventModel = {
@@ -92,6 +96,9 @@ function wireAllMocks() {
 beforeEach(() => {
   jest.clearAllMocks();
   wireAllMocks();
+  mockFirmwareModel.findActiveIdsBeyondRetention.mockResolvedValue([]);
+  mockFirmwareModel.listDistinctTargetTypes.mockResolvedValue([]);
+  mockPushModel.hasNonTerminalForFirmware.mockResolvedValue(false);
   _testActivePushes.clear();
   _testResumeInFlightPushes.clear();
 });
@@ -1485,6 +1492,37 @@ describe('FirmwareService', () => {
 
       expect(transferGraceSpy).toHaveBeenCalledWith('transfer-1', expect.any(Number));
       transferGraceSpy.mockRestore();
+    });
+  });
+
+  describe('pruneFirmwareRetention', () => {
+    it('hard-deletes excess packages and removes storage', async () => {
+      mockFirmwareModel.findActiveIdsBeyondRetention.mockResolvedValue(['old-fw']);
+      mockPushModel.hasNonTerminalForFirmware.mockResolvedValue(false);
+      mockFirmwareModel.findById.mockResolvedValue({
+        id: 'old-fw',
+        version: '1.0.0',
+        target_type: 'lock',
+        storage_path: 'firmware/old-fw/a.bin',
+        is_active: true,
+      });
+      mockFirmwareModel.hardDelete.mockResolvedValue(true);
+
+      const pruned = await FirmwareService.pruneFirmwareRetention('lock');
+
+      expect(pruned).toBe(1);
+      expect(mockStorageProvider.remove).toHaveBeenCalledWith('firmware/old-fw/a.bin');
+      expect(mockFirmwareModel.hardDelete).toHaveBeenCalledWith('old-fw');
+    });
+
+    it('skips packages with an active push', async () => {
+      mockFirmwareModel.findActiveIdsBeyondRetention.mockResolvedValue(['busy-fw']);
+      mockPushModel.hasNonTerminalForFirmware.mockResolvedValue(true);
+
+      const pruned = await FirmwareService.pruneFirmwareRetention('gateway');
+
+      expect(pruned).toBe(0);
+      expect(mockFirmwareModel.hardDelete).not.toHaveBeenCalled();
     });
   });
 });

@@ -58,11 +58,22 @@ jest.mock('@/services/crypto/ed25519.service', () => ({
 
 const mockUnicast = jest.fn();
 const mockGatewayConnectionStatus = jest.fn(() => ({ connected: true }));
+const mockBroadcastAccessCodesUpdate = jest.fn().mockResolvedValue(undefined);
+const mockBroadcastAccessCodePushStateUpdate = jest.fn();
 jest.mock('@/services/gateway/gateway-events.service', () => ({
   GatewayEventsService: {
     getInstance: jest.fn(() => ({
       unicastToFacility: mockUnicast,
       getFacilityConnectionStatus: mockGatewayConnectionStatus,
+    })),
+  },
+}));
+
+jest.mock('@/services/websocket.service', () => ({
+  WebSocketService: {
+    getInstance: jest.fn(() => ({
+      broadcastAccessCodesUpdate: (...args: unknown[]) => mockBroadcastAccessCodesUpdate(...args),
+      broadcastAccessCodePushStateUpdate: (...args: unknown[]) => mockBroadcastAccessCodePushStateUpdate(...args),
     })),
   },
 }));
@@ -953,6 +964,13 @@ describe('AccessCodeService', () => {
       facility_id: 'fac-1',
       status: 'pending',
     }));
+    expect(mockBroadcastAccessCodePushStateUpdate).toHaveBeenCalledWith(
+      'fac-1',
+      expect.objectContaining({
+        refreshEffectiveCodes: false,
+        state: expect.objectContaining({ status: 'pending' }),
+      }),
+    );
   });
 
   it('records active push state when gateway accepts update', async () => {
@@ -965,6 +983,13 @@ describe('AccessCodeService', () => {
       facility_id: 'fac-1',
       status: 'active',
     }));
+    expect(mockBroadcastAccessCodePushStateUpdate).toHaveBeenCalledWith(
+      'fac-1',
+      expect.objectContaining({
+        refreshEffectiveCodes: false,
+        state: expect.objectContaining({ status: 'active' }),
+      }),
+    );
   });
 
   it('sets push state to error when gateway rejects update ACK', async () => {
@@ -989,6 +1014,13 @@ describe('AccessCodeService', () => {
       status: 'error',
       last_error: expect.stringContaining('Gateway rejected access code update'),
     }));
+    expect(mockBroadcastAccessCodePushStateUpdate).toHaveBeenCalledWith(
+      'fac-1',
+      expect.objectContaining({
+        refreshEffectiveCodes: false,
+        state: expect.objectContaining({ status: 'error' }),
+      }),
+    );
   });
 
   it('sets push state to error when gateway ACK times out', async () => {
@@ -1057,5 +1089,13 @@ describe('AccessCodeService', () => {
       'user-1',
     );
     expect(pushSpy).toHaveBeenCalledWith('fac-1');
+
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(mockBroadcastAccessCodesUpdate).toHaveBeenCalledWith('fac-1');
+    expect(mockBroadcastAccessCodePushStateUpdate).toHaveBeenCalledWith(
+      'fac-1',
+      expect.objectContaining({ refreshEffectiveCodes: true }),
+    );
   });
 });

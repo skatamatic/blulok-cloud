@@ -62,7 +62,7 @@ describe('AccessHistoryReadService', () => {
     expect(result.logs[0].metadata?.device).toMatchObject({ name: 'Front Gate Lock' });
   });
 
-  it('resolves BluLok lock number when serial is a lock id UUID', async () => {
+  it('resolves BluLok unit number when assigned (never lock number)', async () => {
     mockFindWithContext.mockResolvedValue([
       {
         id: 'log-lock-number',
@@ -78,13 +78,39 @@ describe('AccessHistoryReadService', () => {
         metadata: { device_type: 'blulok' },
         device_serial: 'ae4097b2-16b3-4b1d-b964-6021c7be6ea2',
         blulok_device_settings: { lockNumber: 106 },
+        unit_number: '106',
         facility_name: 'Petrolia Storage Facility',
       },
     ]);
 
     const service = new AccessHistoryReadService();
     const result = await service.query('user-1', UserRole.ADMIN, undefined, { action: 'lock' });
-    expect(result.logs[0].device_name).toBe('Lock #106');
+    expect(result.logs[0].device_name).toBe('106');
+  });
+
+  it('resolves Unassigned serial prefix when BluLok has no unit', async () => {
+    mockFindWithContext.mockResolvedValue([
+      {
+        id: 'log-unassigned',
+        activity_type: 'lock',
+        entity_id: 'dev-1',
+        device_id: 'dev-1',
+        actor_type: 'gateway',
+        actor_name: 'Gateway',
+        result: 'success',
+        occurred_at: new Date(),
+        created_at: new Date(),
+        updated_at: new Date(),
+        metadata: { device_type: 'blulok' },
+        device_serial: 'SN987654321',
+        blulok_device_settings: { lockNumber: 106 },
+        facility_name: 'Petrolia Storage Facility',
+      },
+    ]);
+
+    const service = new AccessHistoryReadService();
+    const result = await service.query('user-1', UserRole.ADMIN, undefined, { action: 'lock' });
+    expect(result.logs[0].device_name).toBe('Unassigned - 98765');
   });
 
   it('resolves route-pass actor display name from joined user record', async () => {

@@ -59,12 +59,13 @@ import { useDetailsBackNavigation, replaceSearchParams, withReturnPath } from '@
 import { formatDateTime } from '@/utils/datetime.utils';
 import { lockHardwareFeedbackToasts } from '@/utils/lockHardwareFeedback.constants';
 import { useRemoteUnlockAction } from '@/hooks/useRemoteUnlockAction';
+import { unitHasTenant } from '@/constants/tenantUnlockOverride.constants';
 import { resolveLockTimeoutMsForFacility } from '@/utils/facilityLockTimeout.utils';
 import { formatAccessDeviceListSubtitle } from '@/utils/accessDeviceDisplay.utils';
 import { formatNetworkInfraKindLabel } from '@/utils/device-icon.utils';
 import {
   formatBluLokDeviceSubtitle,
-  formatBluLokLockNumberLabel,
+  formatBluLokUserFacingLabel,
 } from '@/utils/blulokDeviceDisplay.utils';
 import { canRequestRemoteUnlock } from '@/utils/unitLock.utils';
 import { useLockDeviceRealtime } from '@/hooks/useLockDeviceRealtime';
@@ -244,7 +245,7 @@ const normalizeFacilityTab = (value: string | null): FacilityTab | null => {
   const facilityUnitsRef = useRef<Unit[]>([]);
   facilityUnitsRef.current = facilityUnitsPageData;
 
-  const { requestUnlock, isSubmitting, syncLockStatus } = useRemoteUnlockAction({
+  const { requestUnlock, isSubmitting, syncLockStatus, tenantOverrideDialog } = useRemoteUnlockAction({
     timeoutToast: lockHardwareFeedbackToasts.unitUnlockTimeout,
   });
 
@@ -593,6 +594,8 @@ const normalizeFacilityTab = (value: string | null): FacilityTab | null => {
         await refreshAfterUnlockAttempt();
         await loadFacilityData();
       },
+      requiresTenantOverride: unitHasTenant(unit),
+      unitLabel: unit.unit_number,
     });
   };
 
@@ -1403,14 +1406,12 @@ const normalizeFacilityTab = (value: string | null): FacilityTab | null => {
                                 <div>
                                   <div className="text-sm font-medium text-gray-900 dark:text-white">
                                     {isBlulok
-                                      ? formatBluLokLockNumberLabel(blulokDevice)
+                                      ? formatBluLokUserFacingLabel(blulokDevice)
                                       : accessDevice.name}
                                   </div>
                                   <div className="text-sm text-gray-500 dark:text-gray-400">
                                     {isBlulok
-                                      ? `${formatBluLokDeviceSubtitle(blulokDevice)}${
-                                          blulokDevice.unit_number ? ` · Unit ${blulokDevice.unit_number}` : ''
-                                        }`
+                                      ? formatBluLokDeviceSubtitle(blulokDevice)
                                       : formatAccessDeviceListSubtitle(accessDevice)}
                                   </div>
                                 </div>
@@ -1861,6 +1862,7 @@ const normalizeFacilityTab = (value: string | null): FacilityTab | null => {
         cancelText="Cancel"
         isLoading={deletingInfraDevice}
       />
+      {tenantOverrideDialog}
     </DetailsPageShell>
   );
 }

@@ -1,6 +1,7 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { DeviceGroupManager } from '@/components/AccessCodes/DeviceGroupManager';
+import { useWebSocketSubscription } from '@/hooks/useWebSocketSubscription';
 
 const mockAddToast = jest.fn();
 const mockCreateDeviceGroup = jest.fn();
@@ -15,10 +16,15 @@ const mockGetScheduleUsage = jest.fn();
 const mockDeleteDeviceGroup = jest.fn();
 const mockGetDeviceGroupUsers = jest.fn();
 const mockOnGroupChange = jest.fn();
+const mockUseWebSocketSubscription = useWebSocketSubscription as jest.MockedFunction<typeof useWebSocketSubscription>;
 
 jest.mock('@/contexts/ToastContext', () => ({
   ...jest.requireActual('@/contexts/ToastContext'),
   useToast: () => ({ addToast: mockAddToast }),
+}));
+
+jest.mock('@/hooks/useWebSocketSubscription', () => ({
+  useWebSocketSubscription: jest.fn(),
 }));
 
 jest.mock('@/services/api.service', () => ({
@@ -1116,5 +1122,133 @@ describe('DeviceGroupManager', () => {
       expect(mockGetDeviceGroupUsers).toHaveBeenCalledWith('group-default');
       expect(screen.getByText('Jane Tenant')).toBeInTheDocument();
     });
+  });
+
+  const keypadAccessControlDevice = {
+    id: 'ac-1',
+    facility_id: 'facility-1',
+    gateway_id: 'gw-1',
+    name: 'Front Gate',
+    device_type: 'gate' as const,
+    access_methods: ['keypad' as const],
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+  };
+
+  it('subscribes to access_code_push_state when access-control devices exist', async () => {
+    render(
+      <MemoryRouter>
+        <DeviceGroupManager
+          facilityId="facility-1"
+          devices={[]}
+          accessControlDevices={[keypadAccessControlDevice]}
+          groups={[defaultGroup]}
+          onGroupsChanged={async () => undefined}
+        />
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => {
+      expect(mockUseWebSocketSubscription).toHaveBeenCalledWith(
+        'access_code_push_state',
+        expect.any(Function),
+        expect.objectContaining({
+          enabled: true,
+          filters: { facility_id: 'facility-1' },
+        }),
+      );
+    });
+    expect(mockGetEffectiveAccessCodes).toHaveBeenCalledWith('facility-1');
+    expect(mockGetAccessCodePushState).toHaveBeenCalledWith('facility-1');
+  });
+
+  it('does not enable access_code_push_state subscription without access-control devices', async () => {
+    render(
+      <MemoryRouter>
+        <DeviceGroupManager
+          facilityId="facility-1"
+          devices={[]}
+          accessControlDevices={[]}
+          groups={[defaultGroup]}
+          onGroupsChanged={async () => undefined}
+        />
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => {
+      expect(mockGetDeviceGroup).toHaveBeenCalledWith('group-default');
+    });
+
+    expect(mockUseWebSocketSubscription).toHaveBeenCalledWith(
+      'access_code_push_state',
+      expect.any(Function),
+      expect.objectContaining({ enabled: false }),
+    );
+  });
+
+  it('applies push-state WS updates and refreshes effective codes on nudge', async () => {
+    const realSetTimeout = window.setTimeout.bind(window);
+    const setTimeoutSpy = jest.spyOn(window, 'setTimeout').mockImplementation(((
+      handler: TimerHandler,
+      timeout?: number,
+      ...args: unknown[]
+    ) => {
+      // Flush our 300ms debounce immediately; leave other timers (waitFor) alone.
+      if (timeout === 300 && typeof handler === 'function') {
+        handler(...args);
+        return 0 as unknown as number;
+      }
+      return realSetTimeout(handler as TimerHandler, timeout as number, ...args);
+    }) as typeof setTimeout);
+
+    mockGetEffectiveAccessCodes
+      .mockResolvedValueOnce({ data: [] })
+      .mockResolvedValue({
+        data: [{
+          device_id: 'ac-1',
+          code: '654321',
+          source_scope_type: 'device_group',
+          source_scope_id: 'group-default',
+        }],
+      });
+
+    render(
+      <MemoryRouter>
+        <DeviceGroupManager
+          facilityId="facility-1"
+          devices={[]}
+          accessControlDevices={[keypadAccessControlDevice]}
+          groups={[defaultGroup]}
+          onGroupsChanged={async () => undefined}
+        />
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => {
+      expect(mockUseWebSocketSubscription).toHaveBeenCalled();
+    });
+
+    const pushHandler = mockUseWebSocketSubscription.mock.calls.find(
+      (call) => call[0] === 'access_code_push_state',
+    )?.[1] as ((payload: unknown) => void) | undefined;
+    expect(pushHandler).toBeDefined();
+
+    const initialEffectiveCalls = mockGetEffectiveAccessCodes.mock.calls.length;
+
+    act(() => {
+      pushHandler?.({
+        facility_id: 'facility-1',
+        status: 'pending',
+        last_error: null,
+        refresh_effective_codes: true,
+      });
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText(/Gateway push:\s*pending/i)).toBeInTheDocument();
+      expect(mockGetEffectiveAccessCodes.mock.calls.length).toBeGreaterThan(initialEffectiveCalls);
+    });
+
+    setTimeoutSpy.mockRestore();
   });
 });

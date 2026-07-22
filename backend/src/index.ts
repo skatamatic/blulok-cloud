@@ -74,6 +74,9 @@ async function bootstrap(): Promise<void> {
     await GatewayRecoveryService.recoverInFlightStateOnStartup();
     const { FirmwareService } = await import('@/services/firmware/firmware.service');
     await FirmwareService.recoverInFlightStateOnStartup();
+    await FirmwareService.pruneFirmwareRetentionOnStartup();
+    const { FacilityProvisioningService } = await import('@/services/provisioning/facility-provisioning.service');
+    await FacilityProvisioningService.pruneAllFacilitiesRetentionOnStartup();
 
     const server = app.listen(config.port, () => {
       logger.info(`BluLok API server running on port ${config.port}`);

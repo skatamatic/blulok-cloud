@@ -7,8 +7,7 @@ import { formatAccessDeviceListSubtitle } from '@/utils/accessDeviceDisplay.util
 import { formatDateTime } from '@/utils/datetime.utils';
 import {
   formatBluLokDeviceSubtitle,
-  formatBluLokLockNumberLabel,
-  getBluLokLockNumber,
+  formatBluLokUserFacingLabel,
 } from '@/utils/blulokDeviceDisplay.utils';
 
 const statusColors = {
@@ -168,11 +167,10 @@ export function BluLokDeviceCard({ device, onViewDevice }: {
           <DeviceTypeIcon device={{ device_category: 'blulok' }} size="lg" className="mr-4" />
           <div>
             <h3 className="text-lg font-medium text-gray-900 dark:text-white">
-              {formatBluLokLockNumberLabel(device)}
+              {formatBluLokUserFacingLabel(device)}
             </h3>
             <p className="text-sm text-gray-500 dark:text-gray-400">
               {formatBluLokDeviceSubtitle(device)}
-              {device.unit_number ? ` · Unit ${device.unit_number}` : ' · Unassigned'}
             </p>
           </div>
         </div>
@@ -193,12 +191,6 @@ export function BluLokDeviceCard({ device, onViewDevice }: {
       )}
 
       <div className="space-y-3">
-        {getBluLokLockNumber(device) != null && (
-          <div className="flex items-center justify-between text-sm">
-            <span className="text-gray-500 dark:text-gray-400">Lock Number</span>
-            <span className="font-medium text-gray-900 dark:text-white">#{getBluLokLockNumber(device)}</span>
-          </div>
-        )}
         <div className="flex items-center justify-between text-sm">
           <span className="text-gray-500 dark:text-gray-400">Lock Status</span>
           <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${(statusColors as Record<string, string>)[device.lock_status] || statusColors.unknown}`}>

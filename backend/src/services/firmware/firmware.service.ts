@@ -17,6 +17,7 @@ import { GatewayModel } from '@/models/gateway.model';
 import { getFirmwareStorageProvider, validateFirmwareFile } from './firmware-storage.factory';
 import { logger } from '@/utils/logger';
 import { FIRMWARE_CHUNK_SIZE_BYTES } from '@/constants/firmware-chunk.constants';
+import { FIRMWARE_IMAGES_RETENTION_PER_TARGET } from '@/constants/firmware-retention.constants';
 
 const CHUNK_SIZE_BYTES = FIRMWARE_CHUNK_SIZE_BYTES;
 const MAX_CHUNK_RETRIES = 3;
@@ -171,7 +172,9 @@ export class FirmwareService {
     };
 
     try {
-      return await this.firmwareModel.create(data);
+      const created = await this.firmwareModel.create(data);
+      this.scheduleRetentionPrune(targetType);
+      return created;
     } catch (err) {
       // Clean up orphaned binary on disk
       try {
@@ -280,7 +283,9 @@ export class FirmwareService {
     };
 
     try {
-      return await this.firmwareModel.create(data);
+      const created = await this.firmwareModel.create(data);
+      this.scheduleRetentionPrune(targetType);
+      return created;
     } catch (err) {
       try {
         await storage.remove(storagePath);
@@ -353,6 +358,75 @@ export class FirmwareService {
       }
     }
     return deleted;
+  }
+
+  /**
+   * Keep the newest {@link FIRMWARE_IMAGES_RETENTION_PER_TARGET} active packages per
+   * target type. Excess packages are hard-deleted (storage + DB; push history CASCADE).
+   * Packages with an in-flight push are skipped until the push terminates.
+   */
+  static async pruneFirmwareRetention(targetType?: FirmwareTargetType): Promise<number> {
+    const types = targetType
+      ? [targetType]
+      : await this.firmwareModel.listDistinctTargetTypes();
+    let pruned = 0;
+
+    for (const type of types) {
+      const excessIds = await this.firmwareModel.findActiveIdsBeyondRetention(
+        type,
+        FIRMWARE_IMAGES_RETENTION_PER_TARGET,
+      );
+      for (const id of excessIds) {
+        try {
+          if (await this.pushModel.hasNonTerminalForFirmware(id)) {
+            logger.info(`Skipping firmware retention prune id=${id} — active push in progress`);
+            continue;
+          }
+          const firmware = await this.firmwareModel.findById(id);
+          if (!firmware) continue;
+
+          if (firmware.storage_path) {
+            try {
+              const storage = await getFirmwareStorageProvider();
+              await storage.initialize();
+              await storage.remove(firmware.storage_path);
+            } catch (err) {
+              logger.warn(`Firmware retention: failed to remove binary id=${id}:`, err);
+            }
+          }
+
+          const deleted = await this.firmwareModel.hardDelete(id);
+          if (deleted) {
+            pruned += 1;
+            logger.info(
+              `Firmware retention pruned id=${id} version=${firmware.version} target_type=${type}`,
+            );
+          }
+        } catch (err) {
+          logger.warn(`Firmware retention prune failed id=${id}:`, err);
+        }
+      }
+    }
+
+    return pruned;
+  }
+
+  /** Startup / fire-and-forget wrapper around {@link pruneFirmwareRetention}. */
+  static scheduleRetentionPrune(targetType?: FirmwareTargetType): void {
+    void this.pruneFirmwareRetention(targetType).catch((err) => {
+      logger.warn('Firmware retention prune failed:', err);
+    });
+  }
+
+  static async pruneFirmwareRetentionOnStartup(): Promise<void> {
+    try {
+      const pruned = await this.pruneFirmwareRetention();
+      if (pruned > 0) {
+        logger.info(`Firmware retention startup prune removed ${pruned} package(s)`);
+      }
+    } catch (err) {
+      logger.warn('Firmware retention startup prune failed:', err);
+    }
   }
 
   // =========================================================================
@@ -460,6 +534,7 @@ export class FirmwareService {
       }
     });
 
+    this.scheduleRetentionPrune(targetType);
     return push;
   }
 

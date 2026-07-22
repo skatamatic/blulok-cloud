@@ -200,7 +200,17 @@ describe('UnitsManagerWidget', () => {
     });
 
     await waitFor(() => {
-      expect(mockUpdateLockStatus).toHaveBeenCalledWith('dev-1', 'unlocked');
+      expect(screen.getByRole('button', { name: /Unlock anyway/i })).toBeInTheDocument();
+    });
+    fireEvent.click(screen.getByLabelText(/Emergency \(Fire, flood, other\)/i));
+    fireEvent.click(screen.getByRole('button', { name: /Unlock anyway/i }));
+
+    await waitFor(() => {
+      expect(mockUpdateLockStatus).toHaveBeenCalledWith(
+        'dev-1',
+        'unlocked',
+        expect.objectContaining({ reason: 'emergency' }),
+      );
     });
   });
 

@@ -195,6 +195,7 @@ describe('DeviceSyncService', () => {
         serial: 'ABC123',
         metadata: {
           createdFromGatewaySync: true,
+          manuallyAdded: false,
         },
         supports_remote_lock: true,
       }]);
@@ -598,7 +599,7 @@ describe('DeviceSyncService', () => {
         device_serial: 'LOCK-1',
         serial: 'LOCK-1',
         device_settings: { lockNumber: 101 },
-        metadata: { createdFromGatewaySync: true },
+        metadata: { createdFromGatewaySync: true, manuallyAdded: false },
         firmware_version: '1.0.0',
         supports_remote_lock: true,
       }]);
@@ -870,7 +871,7 @@ describe('DeviceSyncService', () => {
           relay_channel: 2,
           device_type: 'gate',
           access_methods: ['keypad'],
-          metadata: { createdFromGatewaySync: true },
+          metadata: { createdFromGatewaySync: true, manuallyAdded: false },
         }),
       ]);
       expect(mockPushCodesToGateway).toHaveBeenCalledWith(facilityId);

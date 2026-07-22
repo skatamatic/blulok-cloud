@@ -23,6 +23,7 @@ import type { BluLokUnit } from '@/api/bludesign';
 import { apiService } from '@/services/api.service';
 import { RemoteUnlockButton } from '@/components/Lock/RemoteUnlockButton';
 import { useRemoteUnlockAction } from '@/hooks/useRemoteUnlockAction';
+import { unitHasTenant } from '@/constants/tenantUnlockOverride.constants';
 import { useGlobalFacility } from '@/contexts/GlobalFacilityContext';
 import { useAuth } from '@/contexts/AuthContext';
 import { resolveLockTimeoutMsForUnit } from '@/utils/facilityLockTimeout.utils';
@@ -372,7 +373,7 @@ export const ViewerUnitInfoSection: React.FC<ViewerUnitInfoSectionProps> = ({
   const { authState } = useAuth();
   const { facilities } = useGlobalFacility();
   const showRemoteUnlock = canUseRemoteUnlockControls(authState.user?.role);
-  const { requestUnlock, isSubmitting, syncLockStatus } = useRemoteUnlockAction();
+  const { requestUnlock, isSubmitting, syncLockStatus, tenantOverrideDialog } = useRemoteUnlockAction();
   const [optimisticLockStatus, setOptimisticLockStatus] = useState<string | null>(null);
   const [logs, setLogs] = useState<AccessLogEntry[] | null>(null);
   const [logsError, setLogsError] = useState<string | null>(null);
@@ -462,6 +463,8 @@ export const ViewerUnitInfoSection: React.FC<ViewerUnitInfoSectionProps> = ({
           setOptimisticLockStatus(previousStatus);
         }
       },
+      requiresTenantOverride: unitHasTenant(unit),
+      unitLabel: unit.unit_number,
     });
   }, [deviceId, unit, facilities, requestUnlock, supportsRemoteUnlock, deviceStatus, isSubmitting]);
 
@@ -689,6 +692,7 @@ export const ViewerUnitInfoSection: React.FC<ViewerUnitInfoSectionProps> = ({
         </div>
         </div>
       </motion.div>
+      {tenantOverrideDialog}
     </div>
   );
 };

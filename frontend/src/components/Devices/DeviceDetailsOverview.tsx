@@ -37,9 +37,6 @@ import {
   statusBadgeSmClass,
 } from '@/utils/statusBadge.utils';
 import { isGatewaySyncProvisioned } from '@/utils/accessDeviceDisplay.utils';
-import {
-  getBluLokLockNumber,
-} from '@/utils/blulokDeviceDisplay.utils';
 import { readDisplayName } from '@/utils/deviceMetadataForm.utils';
 import { formatDateTime } from '@/utils/datetime.utils';
 import { isSupportsRemoteLockEnabled } from '@/utils/unitLock.utils';
@@ -189,7 +186,6 @@ export function DeviceDetailsOverview({
   onSendDenylistAdd,
   onSendDenylistRemove,
 }: DeviceDetailsOverviewProps) {
-  const blulokLockNumber = deviceCategory === 'blulok' ? getBluLokLockNumber(device) : null;
   const blulokDisplayName = deviceCategory === 'blulok' ? readDisplayName(device.device_settings) : '';
 
   const tempNum =
@@ -305,9 +301,6 @@ export function DeviceDetailsOverview({
             {deviceCategory === 'blulok' && (
               <>
                 {blulokDisplayName && <OverviewField label="Display name">{blulokDisplayName}</OverviewField>}
-                <OverviewField label="Lock number">
-                  {blulokLockNumber != null ? `#${blulokLockNumber}` : '—'}
-                </OverviewField>
               </>
             )}
             {deviceCategory === 'access_control' && device.name && (

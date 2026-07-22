@@ -2,6 +2,9 @@
 export const PROVISIONING_MAX_SIZE_MB = 500;
 export const PROVISIONING_MAX_SIZE_BYTES = PROVISIONING_MAX_SIZE_MB * 1024 * 1024;
 
+/** Max catalog uploads retained per facility (newest by `uploaded_at`). */
+export const PROVISIONING_MAX_FILES_PER_FACILITY = 50;
+
 /** Internal prepare/complete rate limit per facility (requests per window). */
 export const PROVISIONING_UPLOAD_RATE_LIMIT_WINDOW_MS = 60_000;
 export const PROVISIONING_UPLOAD_RATE_LIMIT_MAX = 30;

@@ -25,6 +25,7 @@ import { canRequestRemoteUnlock, isLockTransitionPending } from '@/utils/unitLoc
 import { useLockDeviceRealtime } from '@/hooks/useLockDeviceRealtime';
 import { lockHardwareFeedbackToasts } from '@/utils/lockHardwareFeedback.constants';
 import { useRemoteUnlockAction } from '@/hooks/useRemoteUnlockAction';
+import { unitHasTenant } from '@/constants/tenantUnlockOverride.constants';
 import { resolveLockTimeoutMsForUnit } from '@/utils/facilityLockTimeout.utils';
 
 const statusColors = {
@@ -96,7 +97,7 @@ export default function FacilitySiteMapPage() {
   const loadUnitsRef = useRef<() => Promise<void>>(async () => {});
   const unitsDataRef = useRef<Unit[]>([]);
   unitsDataRef.current = units;
-  const { requestUnlock, isSubmitting, syncLockStatus } = useRemoteUnlockAction({
+  const { requestUnlock, isSubmitting, syncLockStatus, tenantOverrideDialog } = useRemoteUnlockAction({
     timeoutToast: lockHardwareFeedbackToasts.unitUnlockTimeout,
   });
 
@@ -191,6 +192,8 @@ export default function FacilitySiteMapPage() {
         patchUnitLockOptimistic(unit.id, status);
       },
       refresh: refreshAfterUnlockAttempt,
+      requiresTenantOverride: unitHasTenant(unit),
+      unitLabel: unit.unit_number,
     });
   };
 
@@ -684,6 +687,7 @@ export default function FacilitySiteMapPage() {
           )}
         </div>
       </div>
+      {tenantOverrideDialog}
     </div>
   );
 }
