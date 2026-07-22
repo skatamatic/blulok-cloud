@@ -21,7 +21,10 @@ import {
 import { mapGatewayAccessStateFieldsToDbUpdate } from '../utils/gateway-access-state-map.utils';
 import { mapGatewayAccessInventoryPropertiesToDbUpdate } from '../utils/gateway-access-inventory-map.utils';
 import { mapGatewayLockInventoryPropertiesToDbUpdate } from '../utils/gateway-lock-inventory-map.utils';
-import { buildGatewaySyncProvisionMetadata } from '../utils/device-provision.utils';
+import {
+  buildGatewaySyncProvisionMetadata,
+  markGatewayInventorySeenMetadata,
+} from '../utils/device-provision.utils';
 import type { DeviceSyncLogEntry } from '../types/gateway-device-sync.types';
 
 export type { AccessDeviceInventoryItem, AccessDeviceStateUpdate };
@@ -263,7 +266,7 @@ export class DeviceSyncService {
               device_serial: deviceId,
               serial: deviceId,
               supports_remote_lock: true,
-              metadata: buildGatewaySyncProvisionMetadata(),
+metadata: buildGatewaySyncProvisionMetadata(),
             };
 
             if (lockNumber !== undefined) {
@@ -332,7 +335,7 @@ export class DeviceSyncService {
         device_serial: deviceId,
         serial: deviceId,
         supports_remote_lock: true,
-        metadata: buildGatewaySyncProvisionMetadata(),
+metadata: buildGatewaySyncProvisionMetadata(),
       };
 
       if (lockNumber !== undefined) {
@@ -543,7 +546,7 @@ export class DeviceSyncService {
             device_serial: lockId,
             serial: lockId,
             supports_remote_lock: true,
-            metadata: buildGatewaySyncProvisionMetadata(),
+metadata: buildGatewaySyncProvisionMetadata(),
           };
 
           if (inventoryItem.lock_number !== undefined) {
@@ -573,16 +576,25 @@ export class DeviceSyncService {
             inventoryItem,
             existing
           );
-          if (propertyUpdate) {
+          const seenMetadata = markGatewayInventorySeenMetadata(
+            existing.metadata as Record<string, unknown> | null | undefined,
+          );
+          const updatePayload = {
+            ...(propertyUpdate ?? {}),
+            ...(seenMetadata ? { metadata: seenMetadata } : {}),
+          };
+          if (Object.keys(updatePayload).length > 0) {
             try {
-              await this.deviceModel.updateBluLokDevice(existing.id, propertyUpdate);
+              await this.deviceModel.updateBluLokDevice(existing.id, updatePayload);
               result.updated = (result.updated ?? 0) + 1;
               result.entries!.push({
                 action: 'updated',
                 device_kind: 'blulok',
                 identifier: lockId,
                 label: inventoryItem.name?.trim() || lockId,
-                reason: 'Gateway inventory property sync',
+                reason: seenMetadata && !propertyUpdate
+                  ? 'Gateway inventory seen — marked createdFromGatewaySync'
+                  : 'Gateway inventory property sync',
               });
             } catch (error: any) {
               result.errors.push(
@@ -932,21 +944,30 @@ export class DeviceSyncService {
               Array.isArray(item.access_methods) && item.access_methods.length > 0
                 ? item.access_methods
                 : ['keypad'],
-            metadata: buildGatewaySyncProvisionMetadata(),
+metadata: buildGatewaySyncProvisionMetadata(),
           });
         } else {
           const existing = existingMap.get(key)!;
           const propertyUpdate = mapGatewayAccessInventoryPropertiesToDbUpdate(item, existing);
-          if (Object.keys(propertyUpdate).length > 0) {
+          const seenMetadata = markGatewayInventorySeenMetadata(
+            existing.metadata as Record<string, unknown> | null | undefined,
+          );
+          const updatePayload = {
+            ...propertyUpdate,
+            ...(seenMetadata ? { metadata: seenMetadata } : {}),
+          };
+          if (Object.keys(updatePayload).length > 0) {
             try {
-              await this.deviceModel.updateAccessControlDevice(existing.id, propertyUpdate);
+              await this.deviceModel.updateAccessControlDevice(existing.id, updatePayload);
               result.updated = (result.updated ?? 0) + 1;
               result.entries!.push({
                 action: 'updated',
                 device_kind: 'access_control',
                 identifier: key,
                 label: item.name ?? existing.name,
-                reason: 'Gateway inventory property sync',
+                reason: seenMetadata && Object.keys(propertyUpdate).length === 0
+                  ? 'Gateway inventory seen — marked createdFromGatewaySync'
+                  : 'Gateway inventory property sync',
               });
             } catch (error: any) {
               result.errors.push(
@@ -1056,12 +1077,12 @@ export class DeviceSyncService {
         }
       }
 
-      if (inventoryChanged) {
-        try {
-          await AccessCodeService.getInstance().pushCodesToGateway(facilityId);
-        } catch (pushError: any) {
-          result.errors.push(`Failed to push access codes after inventory sync: ${pushError.message}`);
-        }
+      // Always push after inventory sync so reconnect / unchanged inventory still refreshes
+      // gateway keypad state (AUTH also pushes; this covers post-inventory race).
+      try {
+        await AccessCodeService.getInstance().pushCodesToGateway(facilityId);
+      } catch (pushError: any) {
+        result.errors.push(`Failed to push access codes after inventory sync: ${pushError.message}`);
       }
 
       if (facilityId) {

@@ -149,8 +149,8 @@ When `lock_id` is in the payload but not in the DB, the cloud creates the row th
 
 | Flag | Meaning |
 |------|---------|
-| `metadata.createdFromGatewaySync` | **Canonical.** Row was auto-provisioned from gateway inventory/state; eligible for removal when omitted from the next inventory sync. Always present as boolean (`true`/`false`). |
-| `metadata.manuallyAdded` | Admin UI / REST create → `true`; gateway inventory create → `false`. Always present as boolean. |
+| `metadata.createdFromGatewaySync` | `true` when the gateway has reported this device (auto-provision **or** later inventory match on a manual row). Alone does **not** make a row sync-managed if `manuallyAdded` is also true. Always present as boolean on new creates. |
+| `metadata.manuallyAdded` | Admin UI / REST create → `true`; gateway inventory create → `false`. Never removed by gateway delta. Stays true after gateway sees the device. Always present as boolean on new creates. |
 
 ---
 
@@ -375,7 +375,7 @@ Unknown `{kind}:{serial}` → `network_infra.not_found[]` entry like `bridge:BR-
 }
 ```
 
-`operational_devices` carries the cloud’s active denylist per lock/access_control row so gateways (and the desktop simulator) can reconcile local denylist state after inventory sync or swap recovery. Recovery snapshots embed the same `denylist` array on each operational device row in the pushed JSON payload.
+`operational_devices` carries the cloud’s active denylist per lock/access_control row so gateways (and the desktop simulator) can reconcile local denylist state after inventory sync or swap recovery. Recovery snapshots embed the same `denylist` array on each operational device row in the pushed JSON payload. Active-gateway **`AUTH_OK`** also pushes a WebSocket **`DENYLIST_SYNC`** JWT with the same per-device replace snapshot so reconnect does not depend on a subsequent inventory POST.
 
 **Recovery snapshot identity (schema v2):** operational rows use gateway-native identifiers only — locks carry **`lock_id`** (hardware serial), access control carries **`access_id`** (+ optional `relay_channel`), bridge/friend_node carry **`serial`**. Cloud row UUIDs and duplicate `serial` fields are **not** included on lock/access rows. **`lock_number`** comes from `device_settings.lockNumber`. **`properties.online`** carries the last-known connectivity from cloud (`device_status` / access `status` / infra `state`) so the replacement gateway can seed mesh devices as online without waiting for BLE heartbeats. Denylist entries are embedded per operational row.
 

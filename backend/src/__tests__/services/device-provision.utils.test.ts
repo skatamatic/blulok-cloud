@@ -1,7 +1,9 @@
 import {
   buildGatewaySyncProvisionMetadata,
+  buildGatewayProvisionMetadata,
   buildManualProvisionMetadata,
   mapDeviceProvisionDatabaseError,
+  markGatewayInventorySeenMetadata,
 } from '@/utils/device-provision.utils';
 import { ConflictError } from '@/middleware/error.middleware';
 
@@ -28,6 +30,47 @@ describe('device-provision.utils', () => {
         createdFromGatewaySync: true,
         manuallyAdded: false,
       });
+    });
+  });
+
+  describe('buildGatewayProvisionMetadata', () => {
+    it('aliases sync provision metadata without extras', () => {
+      expect(buildGatewayProvisionMetadata()).toEqual({
+        createdFromGatewaySync: true,
+        manuallyAdded: false,
+      });
+    });
+  });
+
+  describe('markGatewayInventorySeenMetadata', () => {
+    it('marks a manually added device as seen by gateway without clearing manuallyAdded', () => {
+      expect(
+        markGatewayInventorySeenMetadata({
+          manuallyAdded: true,
+          createdFromGatewaySync: false,
+          custom: 'keep',
+        }),
+      ).toEqual({
+        manuallyAdded: true,
+        createdFromGatewaySync: true,
+        custom: 'keep',
+      });
+    });
+
+    it('returns null when createdFromGatewaySync is already true', () => {
+      expect(
+        markGatewayInventorySeenMetadata({
+          manuallyAdded: true,
+          createdFromGatewaySync: true,
+        }),
+      ).toBeNull();
+    });
+
+    it('returns null for non-manual rows', () => {
+      expect(markGatewayInventorySeenMetadata({})).toBeNull();
+      expect(
+        markGatewayInventorySeenMetadata({ createdFromGatewaySync: true, manuallyAdded: false }),
+      ).toBeNull();
     });
   });
 

@@ -31,6 +31,13 @@ export function buildGatewaySyncProvisionMetadata(
 }
 
 /**
+ * Alias for inventory auto-provision metadata (no extra fields).
+ */
+export function buildGatewayProvisionMetadata(): Record<string, unknown> {
+  return buildGatewaySyncProvisionMetadata();
+}
+
+/**
  * Build metadata for manually provisioned devices (never sync-managed).
  * Always includes both flags so clients can rely on a stable shape.
  */
@@ -45,6 +52,28 @@ export function buildManualProvisionMetadata(
   base.manuallyAdded = true;
   base.createdFromGatewaySync = false;
   return base;
+}
+
+/**
+ * When inventory matches a manually pre-provisioned row, mark that the gateway reported it.
+ * Preserves `manuallyAdded` so the row stays non-deletable by sync.
+ * Returns null when the row is not manual or already marked seen.
+ */
+export function markGatewayInventorySeenMetadata(
+  existing?: Record<string, unknown> | null
+): Record<string, unknown> | null {
+  const base = existing && typeof existing === 'object' ? { ...existing } : {};
+  if (base.manuallyAdded !== true) {
+    return null;
+  }
+  if (base.createdFromGatewaySync === true) {
+    return null;
+  }
+  return {
+    ...base,
+    manuallyAdded: true,
+    createdFromGatewaySync: true,
+  };
 }
 
 export async function assertUserCanProvisionOnGateway(

@@ -79,6 +79,11 @@ export function isGatewaySyncManaged(metadata: Record<string, unknown> | null | 
   if (metadata.adminIdentityOverride === true) {
     return false;
   }
+  // Manually pre-provisioned rows stay preserved even after gateway reports them
+  // (createdFromGatewaySync may become true for app visibility).
+  if (metadata.manuallyAdded === true) {
+    return false;
+  }
   return metadata.createdFromGatewaySync === true;
 }
 
