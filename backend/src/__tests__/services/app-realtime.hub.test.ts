@@ -196,6 +196,17 @@ describe('AppRealtimeHub', () => {
     expect(mockWs.send).not.toHaveBeenCalled();
   });
 
+  it('clears client subscription state when snapshot build fails', async () => {
+    (FacilityAccessService.hasAccessToFacility as jest.Mock).mockResolvedValue(true);
+    jest.spyOn(hub as any, 'buildSnapshot').mockRejectedValue(new Error('units boom'));
+    const client = tenantClient();
+    const result = await hub.subscribe(mockWs, client, 'facility-1', 'sub-1');
+    expect(result).toEqual({ ok: false, error: 'Failed to load app snapshot' });
+    expect(client.subscriptionId).toBeUndefined();
+    expect(client.facilityId).toBeUndefined();
+    expect(hub.getSubscriberCount()).toBe(0);
+  });
+
   it('sends RBAC-scoped app_snapshot on subscribe for tenants', async () => {
     (FacilityAccessService.hasAccessToFacility as jest.Mock).mockResolvedValue(true);
 

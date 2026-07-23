@@ -47,8 +47,13 @@ export function summarizeAppRealtimeMessage(msg: unknown): {
   if (type === 'error') {
     const code = (msg as { code?: unknown }).code;
     const message = (msg as { message?: unknown }).message;
+    const error = (msg as { error?: unknown }).error;
+    const detail =
+      (typeof error === 'string' && error) ||
+      (typeof message === 'string' && message) ||
+      '';
     return {
-      summary: `error${typeof code === 'string' ? ` ${code}` : ''}${typeof message === 'string' ? `: ${message}` : ''}`,
+      summary: `error${typeof code === 'string' ? ` ${code}` : ''}${detail ? `: ${detail}` : ''}`,
     };
   }
 

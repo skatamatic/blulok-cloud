@@ -181,7 +181,7 @@ No manual email/password entry — users must already exist in the backend.
 | Present at lock | Local verify + access event + live state sync | **Try open with user device** on device detail |
 | Open phone app | `/ws/app` subscribe + live events | **Open app** on user panel (opt-in; not auto) |
 
-**App realtime (opt-in):** User panel **App** tab connects to `/ws/app` with the cached tenant JWT, subscribes to one facility, and stores every inbound/outbound frame in a readable event log (snapshot + live `app_event`s). Heartbeats are sent client-side so the idle timeout does not drop the socket. Closing the app (or removing the user) disconnects; there is **no** auto-connect on restore and **no** auto-reconnect after drops — reopen explicitly to simulate launching the app again.
+**App realtime (opt-in):** User panel **App** tab connects to `/ws/app` with the cached tenant JWT, subscribes to one facility, and stores every inbound/outbound frame in a readable event log (snapshot + live `app_event`s). The facility picker loads facilities the **user JWT can access** (`GET /facilities`), marks which ones have a local simulator gateway, and defaults to an accessible+local match — so you are less likely to hit “Access denied to facility” from picking a gateway-only facility the user cannot subscribe to. Heartbeats are sent client-side so the idle timeout does not drop the socket. Closing the app (or removing the user) disconnects; there is **no** auto-connect on restore and **no** auto-reconnect after drops — reopen explicitly to simulate launching the app again.
 
 **User panel tabs** (same pattern as gateway panel): **Session** (JWT / identity), **Devices** (phones, keys, route passes), **App** (`/ws/app` + event log).
 

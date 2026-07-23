@@ -28,6 +28,15 @@ describe('app realtime message utils', () => {
     expect(result.summary).toContain('Subscription created successfully');
   });
 
+  it('summarizes backend error payloads that use the error field', () => {
+    const result = summarizeAppRealtimeMessage({
+      type: 'error',
+      error: 'Access denied to facility',
+      timestamp: '2026-07-22T00:00:00.000Z',
+    });
+    expect(result.summary).toBe('error: Access denied to facility');
+  });
+
   it('detects heartbeats', () => {
     expect(
       isAppRealtimeHeartbeat({

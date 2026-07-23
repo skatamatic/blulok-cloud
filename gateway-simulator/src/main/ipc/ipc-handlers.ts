@@ -226,6 +226,9 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(IPC.LOGIN_USER, async (_e, userId: string, appDeviceId?: string) => {
     return gatewayManager.loginUser(userId, appDeviceId);
   });
+  ipcMain.handle(IPC.LIST_USER_ACCESSIBLE_FACILITIES, async (_e, userId: string) => {
+    return gatewayManager.listUserAccessibleFacilities(userId);
+  });
   ipcMain.handle(IPC.CONNECT_USER_APP_REALTIME, async (_e, userId: string, facilityId: string) => {
     return gatewayManager.connectUserAppRealtime(userId, facilityId);
   });

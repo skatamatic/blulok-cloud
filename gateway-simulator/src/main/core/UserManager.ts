@@ -24,6 +24,7 @@ import {
 } from '../users/user-device.utils';
 import { mobileApiClient, type MobileApiClient } from '../auth/MobileApiClient';
 import type { CloudUserDetail, MintUserSessionResult } from '../auth/BackendClient';
+import type { MobileFacilitySummary } from '../auth/MobileApiClient';
 import { isJwtFresh, parseJwtExpiry } from '../auth/session-jwt.utils';
 import { parseRoutePassExpiry, buildRoutePassDetails } from '../users/route-pass-jwt.utils';
 import { AppRealtimeConnection } from '../net/AppRealtimeConnection';
@@ -350,6 +351,16 @@ export class UserManager {
   }
 
   /**
+   * Facilities this user's JWT can access (GET /facilities) — use for App realtime picker.
+   */
+  async listAccessibleFacilities(userId: string): Promise<MobileFacilitySummary[]> {
+    const profile = this.require(userId);
+    await this.ensureSession(profile);
+    if (!profile.sessionToken) throw new Error('No session token — refresh session first');
+    return this.mobileApi.listFacilities(profile.backendUrl, profile.sessionToken, { limit: 200 });
+  }
+
+  /**
    * Opt-in: simulate the user opening the phone app — connect `/ws/app` and subscribe.
    * Does not auto-reconnect; call again after Close / unexpected drop.
    */
@@ -409,6 +420,11 @@ export class UserManager {
       await this.persist(profile);
       return this.emitUser(profile);
     } catch (err) {
+      try {
+        connection.disconnect();
+      } catch {
+        /* ignore */
+      }
       runtime.connection = null;
       runtime.status = 'error';
       runtime.lastError = err instanceof Error ? err.message : String(err);

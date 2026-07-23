@@ -62,3 +62,8 @@ Thumbs.db
 backend/data
 .blulok-local-data
 backend/test-storage
+backend/_snap-visual-out/
+integration-tests/_last-run.txt
+
+# Local gateway workspace (not part of this repo)
+/gateway/

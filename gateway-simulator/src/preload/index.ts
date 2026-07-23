@@ -96,6 +96,10 @@ const api = {
     ipcRenderer.invoke(IPC.ADD_USER_DEVICE, userId, req),
   removeUserDevice: (userId: string, deviceId: string) => ipcRenderer.invoke(IPC.REMOVE_USER_DEVICE, userId, deviceId),
   loginUser: (userId: string, appDeviceId?: string) => ipcRenderer.invoke(IPC.LOGIN_USER, userId, appDeviceId),
+  listUserAccessibleFacilities: (userId: string) =>
+    ipcRenderer.invoke(IPC.LIST_USER_ACCESSIBLE_FACILITIES, userId) as Promise<
+      import('@protocol/ipc-channels').FacilitySummary[]
+    >,
   connectUserAppRealtime: (userId: string, facilityId: string) =>
     ipcRenderer.invoke(IPC.CONNECT_USER_APP_REALTIME, userId, facilityId),
   disconnectUserAppRealtime: (userId: string) =>

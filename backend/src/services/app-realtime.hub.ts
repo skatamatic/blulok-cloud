@@ -185,6 +185,9 @@ export class AppRealtimeHub {
     } catch (error) {
       logger.error('[AppRealtime] Failed to build snapshot:', error);
       this.subscribers.delete(ws);
+      client.subscriptionId = undefined;
+      client.facilityId = undefined;
+      client.accessibleUnitIds = undefined;
       return { ok: false, error: 'Failed to load app snapshot' };
     }
 

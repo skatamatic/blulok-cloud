@@ -7,7 +7,13 @@ export const MOBILE_API_PATHS = {
   registerKey: '/user-devices/register-key',
   listDevices: '/user-devices/me',
   requestPass: '/passes/request',
+  facilities: '/facilities',
 } as const;
+
+export type MobileFacilitySummary = {
+  id: string;
+  name: string;
+};
 
 export type MobileLoginResult = {
   token: string;
@@ -110,6 +116,42 @@ export class MobileApiClient {
       appDeviceId: String(device.app_device_id ?? req.appDeviceId),
       publicKey: String(device.public_key ?? req.publicKeyB64),
     };
+  }
+
+  /**
+   * Facilities the user JWT can see (RBAC-scoped — same set App realtime checks).
+   */
+  async listFacilities(
+    backendUrl: string,
+    userToken: string,
+    options?: { limit?: number },
+  ): Promise<MobileFacilitySummary[]> {
+    const params = new URLSearchParams();
+    if (options?.limit != null) params.set('limit', String(options.limit));
+    const qs = params.toString();
+    const path = qs
+      ? `${MOBILE_API_PATHS.facilities}?${qs}`
+      : MOBILE_API_PATHS.facilities;
+    const url = `${apiBaseUrl(backendUrl)}${path}`;
+    const res = await this.fetchFn(url, {
+      method: 'GET',
+      headers: { Authorization: `Bearer ${userToken}` },
+    });
+    const body = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+    if (!res.ok) {
+      throw new Error(extractErrorMessage(body, res.status));
+    }
+    const data = unwrapEnvelope<{ facilities?: unknown }>(body);
+    const raw = (data.facilities ?? body.facilities ?? []) as unknown[];
+    if (!Array.isArray(raw)) return [];
+    return raw
+      .map((row) => {
+        const f = row as Record<string, unknown>;
+        const id = String(f.id ?? '').trim();
+        if (!id) return null;
+        return { id, name: String(f.name ?? id).trim() || id };
+      })
+      .filter((f): f is MobileFacilitySummary => f != null);
   }
 
   async requestRoutePass(

@@ -339,6 +339,10 @@ export class GatewayManager {
     return this.userManager.loginUser(userId, appDeviceId);
   }
 
+  async listUserAccessibleFacilities(userId: string) {
+    return this.userManager.listAccessibleFacilities(userId);
+  }
+
   async connectUserAppRealtime(userId: string, facilityId: string): Promise<UserInstanceState> {
     return this.userManager.connectAppRealtime(userId, facilityId);
   }

@@ -132,6 +132,8 @@ export const IPC = {
   ADD_USER_DEVICE: 'sim:add-user-device',
   REMOVE_USER_DEVICE: 'sim:remove-user-device',
   LOGIN_USER: 'sim:login-user',
+  /** Facilities the simulated user's JWT can access (for App realtime picker). */
+  LIST_USER_ACCESSIBLE_FACILITIES: 'sim:list-user-accessible-facilities',
   REGISTER_USER_DEVICE: 'sim:register-user-device',
   FETCH_USER_ROUTE_PASS: 'sim:fetch-user-route-pass',
   GET_USER_ROUTE_PASS_DETAILS: 'sim:get-user-route-pass-details',

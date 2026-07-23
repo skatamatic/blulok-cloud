@@ -123,11 +123,18 @@ export class AppRealtimeConnection {
             subscriptionId?: string;
             code?: string;
             message?: string;
+            error?: string;
           };
           if (msg.type === 'error') {
             clearTimeout(timer);
             this.ws?.off('message', onMsg);
-            reject(new Error(`${msg.code || 'error'}: ${msg.message || 'subscribe failed'}`));
+            // Backend `/ws/app` (and dashboard WS) send `{ type: 'error', error: string }`.
+            const detail =
+              (typeof msg.error === 'string' && msg.error.trim())
+              || (typeof msg.message === 'string' && msg.message.trim())
+              || 'subscribe failed';
+            const code = typeof msg.code === 'string' && msg.code.trim() ? msg.code : undefined;
+            reject(new Error(code ? `${code}: ${detail}` : detail));
             return;
           }
           if (

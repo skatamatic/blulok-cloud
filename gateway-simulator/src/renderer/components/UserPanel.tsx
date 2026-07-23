@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ArrowLeftIcon,
   MagnifyingGlassIcon,
@@ -9,6 +9,11 @@ import type { CloudUserSummary, UserInstanceState } from '@protocol/user-simulat
 import type { CatalogSessionSummary } from '@protocol/ipc-channels';
 import { useToast } from '../contexts/ToastContext';
 import { errorMessage } from '../utils/error-message.utils';
+import {
+  buildAppFacilityOptions,
+  pickDefaultAppFacilityId,
+  type AppFacilityOption,
+} from '../utils/app-facility-options.utils';
 import {
   readUserPanelTab,
   writeUserPanelTab,
@@ -40,10 +45,15 @@ export function UserPanel({ user, gateways, onRefresh }: Props) {
   const [busy, setBusy] = useState<string | null>(null);
   const [expandedDeviceIds, setExpandedDeviceIds] = useState<Set<string>>(() => new Set());
   const [selectedFacilityId, setSelectedFacilityId] = useState('');
+  const [appFacilityId, setAppFacilityId] = useState('');
+  const [appFacilityOptions, setAppFacilityOptions] = useState<AppFacilityOption[]>([]);
+  const [appFacilitiesLoading, setAppFacilitiesLoading] = useState(false);
+  const [appFacilitiesError, setAppFacilitiesError] = useState<string | null>(null);
   const [tab, setTab] = useState<UserPanelTabId>(readUserPanelTab);
   const [tabDirection, setTabDirection] = useState<TabSlideDirection>('right');
   const previousTabRef = useRef(tab);
 
+  /** Devices / route-pass picker — facilities that have a local simulator gateway. */
   const facilities = useMemo(() => {
     const map = new Map<string, string>();
     for (const gw of gateways) {
@@ -57,6 +67,35 @@ export function UserPanel({ user, gateways, onRefresh }: Props) {
     return user.devices.find((d) => d.id === expandedId) ?? user.devices[0] ?? null;
   }, [expandedDeviceIds, user.devices]);
   const effectiveFacilityId = selectedFacilityId || facilities[0]?.id || '';
+
+  const loadAppFacilities = useCallback(async () => {
+    if (!user.loggedIn) {
+      setAppFacilityOptions(buildAppFacilityOptions([], facilities));
+      setAppFacilitiesError(null);
+      return;
+    }
+    setAppFacilitiesLoading(true);
+    setAppFacilitiesError(null);
+    try {
+      const accessible = await window.simulator.listUserAccessibleFacilities(user.id);
+      const options = buildAppFacilityOptions(accessible, facilities);
+      setAppFacilityOptions(options);
+      setAppFacilityId((current) => pickDefaultAppFacilityId(options, current));
+    } catch (err) {
+      setAppFacilitiesError(errorMessage(err));
+      // Fall back to gateway facilities so the picker is still usable.
+      const fallback = buildAppFacilityOptions(facilities, facilities);
+      setAppFacilityOptions(fallback);
+      setAppFacilityId((current) => pickDefaultAppFacilityId(fallback, current));
+    } finally {
+      setAppFacilitiesLoading(false);
+    }
+  }, [user.id, user.loggedIn, facilities]);
+
+  useEffect(() => {
+    if (tab !== 'app') return;
+    void loadAppFacilities();
+  }, [tab, loadAppFacilities]);
 
   useEffect(() => {
     setExpandedDeviceIds((current) => {
@@ -98,6 +137,9 @@ export function UserPanel({ user, gateways, onRefresh }: Props) {
     void run('login', async () => {
       await window.simulator.loginUser(user.id, selectedDevice?.appDeviceId);
       toast.success('Session refreshed');
+      if (tab === 'app') {
+        await loadAppFacilities();
+      }
     });
 
   const handleAddDevice = () =>
@@ -274,14 +316,17 @@ export function UserPanel({ user, gateways, onRefresh }: Props) {
           {tab === 'app' && (
             <AppRealtimeSection
               user={user}
-              facilities={facilities}
-              facilityId={effectiveFacilityId}
-              onFacilityChange={setSelectedFacilityId}
+              facilities={appFacilityOptions}
+              facilityId={appFacilityId}
+              onFacilityChange={setAppFacilityId}
+              facilitiesLoading={appFacilitiesLoading}
+              facilitiesError={appFacilitiesError}
+              onRefreshFacilities={() => void loadAppFacilities()}
               busy={busy === 'app-open' || busy === 'app-close' || busy === 'app-clear'}
               fillHeight
               onOpenApp={() =>
                 void run('app-open', async () => {
-                  await window.simulator.connectUserAppRealtime(user.id, effectiveFacilityId);
+                  await window.simulator.connectUserAppRealtime(user.id, appFacilityId);
                   toast.success('App realtime connected');
                 })
               }
