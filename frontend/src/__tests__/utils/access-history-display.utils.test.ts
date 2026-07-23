@@ -141,6 +141,47 @@ describe('access-history-display.utils', () => {
     expect(getAccessUserDisplay(uuidLog).primary).toBe('—');
   });
 
+  it('ignores Unknown User placeholders when a resolved user name exists', () => {
+    const log: AccessLog = {
+      ...baseLog,
+      method: 'mobile_key',
+      actor_type: 'user',
+      user_id: 'user-1',
+      user_name: 'Casey Jones',
+      metadata: {
+        actor: { type: 'user', name: 'Unknown User' },
+        user: {
+          id: 'user-1',
+          name: 'Casey Jones',
+          navigation_url: '/users/user-1/details',
+        },
+      },
+    };
+
+    expect(getAccessUserDisplay(log).primary).toBe('Casey Jones');
+  });
+
+  it('ignores Unknown User when it is the only name candidate', () => {
+    const log: AccessLog = {
+      ...baseLog,
+      method: 'mobile_key',
+      actor_type: 'user',
+      user_id: 'user-1',
+      user_name: 'Unknown User',
+      user_email: 'casey@example.com',
+      metadata: {
+        user: {
+          id: 'user-1',
+          name: 'Unknown User',
+          email: 'casey@example.com',
+          navigation_url: '/users/user-1/details',
+        },
+      },
+    };
+
+    expect(getAccessUserDisplay(log).primary).toBe('casey@example.com');
+  });
+
   it('uses email when route-pass style logs only have a linked user id', () => {
     const linkedLog: AccessLog = {
       ...baseLog,

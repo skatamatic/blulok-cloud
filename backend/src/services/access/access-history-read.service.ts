@@ -13,6 +13,7 @@ import {
 import { parseQueryDateFrom, parseQueryDateTo, toIsoStringOrEpoch } from '@/utils/datetime.utils';
 import { mapLegacyAccessAction, mapLegacyAccessMethod } from '@/utils/access-history-remote.utils';
 import { resolveBluLokDeviceDisplayName, isLikelyUuid } from '@/utils/blulok-device-display.utils';
+import { isUsableAccessDisplayName } from '@/utils/access-event-placeholder.utils';
 
 export type QueryFilters = {
   facility_id?: string;
@@ -360,17 +361,17 @@ export class AccessHistoryReadService {
       .filter((part) => typeof part === 'string' && part.trim().length > 0)
       .join(' ')
       .trim();
-    if (joinedName && !isLikelyUuid(joinedName)) {
+    if (joinedName && !isLikelyUuid(joinedName) && isUsableAccessDisplayName(joinedName)) {
       return joinedName;
     }
 
     const actorMetaName = typeof actor?.name === 'string' ? actor.name.trim() : '';
-    if (actorMetaName && !isLikelyUuid(actorMetaName) && !/^user$/i.test(actorMetaName)) {
+    if (actorMetaName && !isLikelyUuid(actorMetaName) && isUsableAccessDisplayName(actorMetaName)) {
       return actorMetaName;
     }
 
     const actorName = typeof storedActorName === 'string' ? storedActorName.trim() : '';
-    if (actorName && !isLikelyUuid(actorName) && !/^user$/i.test(actorName)) {
+    if (actorName && !isLikelyUuid(actorName) && isUsableAccessDisplayName(actorName)) {
       return actorName;
     }
 
@@ -491,6 +492,10 @@ export class AccessHistoryReadService {
     const method = baseMetadata.method;
     if (typeof method === 'string') {
       presentation.method = method === 'automatic' ? 'local_device' : method;
+    }
+    const eventId = baseMetadata.event_id;
+    if (typeof eventId === 'string' && eventId.trim()) {
+      presentation.event_id = eventId.trim();
     }
     const denialReason = baseMetadata.denial_reason;
     if (typeof denialReason === 'string') {

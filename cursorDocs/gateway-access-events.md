@@ -285,6 +285,14 @@ Human-readable labels are applied in the read layer (`DENIAL_REASON_MESSAGES` in
 
 `user_id` should be the **cloud user UUID** when known so Access History can link to the user profile. Local-only actors without a cloud user may omit `user_id` but should still set `role` and `name` when possible.
 
+**Cloud resolution:** Gateway firmware may send placeholders (`role: "unknown"`, `name: "Unknown User"`, `app_device_id: "unknown-app-device"`, `metadata.unit_id: "unknown-unit-id"`). The cloud **ignores those display fields** and resolves:
+
+1. **User** — `actor.user_id` → `users` row (name + role)
+2. **Device** — `device_id`, then `metadata.hardware_lock_id` / `lock_id`, then unique `metadata.lock_number` in the facility → cloud `blulok_devices.id` or access-control id (also accepts hardware `device_serial`)
+3. **Unit** — non-placeholder `unit_id`, else the resolved device’s `unit_id`
+
+Persisted activity rows therefore store cloud IDs and resolved display names when lookup succeeds.
+
 ### Keypad context
 
 ```json
@@ -323,7 +331,7 @@ Used for support/debug correlation only; not shown verbatim to tenants.
 | `devices/state` (access) | **`access_id`** + **`relay_channel`** (default 1) | `KP-7F2A-001::2` |
 | **`access-events`** | **Cloud row UUID** | `blulok_devices.id` or `access_control_devices.id` |
 
-`access-events` joins activity rows to device names and unit links by **cloud primary key**. Sending `lock_id` instead of cloud UUID will ingest but **breaks enrichment** in Access History (missing device name, wrong joins).
+`access-events` joins activity rows to device names and unit links by **cloud primary key**. Prefer sending the cloud UUID. If the gateway only has the hardware `lock_id` / serial, send that as `device_id` (and/or `metadata.hardware_lock_id`) — cloud will resolve to the facility device row when possible. Unresolvable identifiers still ingest but **may lack** Access History enrichment until mapped.
 
 ### Building `lock_id` → cloud `device_id` map
 
@@ -559,7 +567,7 @@ Presentation metadata includes facility, unit, device name (unit number when ass
 ## Implementation checklist
 
 - [ ] Authenticate `/ws/gateway` with facility-scoped JWT before any PROXY calls.
-- [ ] Map hardware `lock_id` → cloud `device_id` before sending `access-events`.
+- [ ] Prefer cloud `device_id` on `access-events`; hardware `lock_id` / serial is accepted and resolved when unique in the facility.
 - [ ] Send **`devices/state`** for every terminal BluLok lock/unlock.
 - [ ] Send **`access-events`** for credential evaluation (grant/deny/keypad/admin open).
 - [ ] Always include `denial_reason` when `success: false`.

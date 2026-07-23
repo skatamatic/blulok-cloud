@@ -182,6 +182,9 @@ function trimPersonDisplayText(value: string | undefined | null): string | null 
   const trimmed = trimDisplayText(value);
   if (!trimmed || looksLikeUuid(trimmed) || /^user$/i.test(trimmed)) return null;
   if (/^(gateway|system)$/i.test(trimmed)) return null;
+  // Gateway placeholder names — cloud resolves the real user from user_id.
+  if (/^unknown(\s|-)?user$/i.test(trimmed) || /^unknown$/i.test(trimmed)) return null;
+  if (/^unknown[-_\s]/i.test(trimmed)) return null;
   return trimmed;
 }
 

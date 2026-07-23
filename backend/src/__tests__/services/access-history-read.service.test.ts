@@ -156,6 +156,44 @@ describe('AccessHistoryReadService', () => {
     });
   });
 
+  it('ignores gateway Unknown User placeholders and falls back to email', async () => {
+    mockFindWithContext.mockResolvedValue([
+      {
+        id: 'log-placeholder',
+        activity_type: 'access_attempt',
+        entity_id: 'dev-1',
+        device_id: 'dev-1',
+        actor_type: 'user',
+        actor_id: 'user-9',
+        actor_name: 'Unknown User',
+        result: 'success',
+        occurred_at: new Date(),
+        created_at: new Date(),
+        updated_at: new Date(),
+        metadata: {
+          action: 'access_granted',
+          method: 'mobile_key',
+          device_type: 'blulok',
+          event_id: 'evt-placeholder-1',
+          actor: {
+            user_id: 'user-9',
+            role: 'unknown',
+            name: 'Unknown User',
+          },
+        },
+        actor_user_first_name: null,
+        actor_user_last_name: null,
+        actor_user_email: 'casey@example.com',
+        device_serial: 'ae4097b2-16b3-4b1d-b964-6021c7be6ea2',
+      },
+    ]);
+
+    const service = new AccessHistoryReadService();
+    const result = await service.query('user-1', UserRole.ADMIN, undefined, {});
+    expect(result.logs[0].user_name).toBe('casey@example.com');
+    expect(result.logs[0].metadata?.event_id).toBe('evt-placeholder-1');
+  });
+
   it('uses end-of-day UTC for date-only date_to filters', async () => {
     mockFindWithContext.mockResolvedValue([]);
     mockCount.mockResolvedValue(0);

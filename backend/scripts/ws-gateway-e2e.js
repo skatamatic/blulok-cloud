@@ -7265,6 +7265,87 @@ async function run() {
     }
     ok('Rejected access event when device_id belongs to a different facility');
 
+    step('Ingest access event with gateway placeholder actor/device/unit fields');
+    const placeholderEventId = `evt-placeholder-resolve-${Date.now()}`;
+    const reqPlaceholder = `req-access-events-placeholder-${Date.now()}`;
+    ws.send(JSON.stringify({
+      type: 'PROXY_REQUEST',
+      id: reqPlaceholder,
+      method: 'POST',
+      path: '/internal/gateway/access-events',
+      body: {
+        facility_id: facilityId,
+        tid: 121,
+        events: [
+          {
+            event_id: placeholderEventId,
+            occurred_at: new Date().toISOString(),
+            facility_id: facilityId,
+            // Hardware serial as device_id (cloud UUID omitted on purpose)
+            device_id: remainingSerial,
+            action: 'access_granted',
+            method: 'mobile_key',
+            success: true,
+            actor: {
+              role: 'unknown',
+              user_id: primaryId,
+              name: 'Unknown User',
+              app_device_id: 'unknown-app-device',
+            },
+            metadata: {
+              reason: 'none',
+              placeholder_fields: true,
+              lock: 'closed',
+              source: 'gateway_lock_state',
+              event: 'none',
+              lock_number: initialDevices[0]?.lock_number ?? 495,
+              unit_id: 'unknown-unit-id',
+              hardware_lock_id: remainingSerial,
+            },
+          },
+        ],
+      },
+    }));
+    const placeholderResp = await waitForProxyResponse(ws, reqPlaceholder);
+    if (placeholderResp.status !== 200) {
+      throw new Error(
+        `Placeholder access-event ingestion failed: ${placeholderResp.status} ${JSON.stringify(placeholderResp.body)}`,
+      );
+    }
+    const placeholderActivityId = placeholderResp.body?.data?.activity_ids?.[0];
+    if (!placeholderActivityId) {
+      throw new Error('Placeholder ingest missing activity_ids');
+    }
+    ok('Ingested placeholder-style access event (Unknown User / hardware device_id)');
+
+    step('Validating cloud resolved user/device/unit from placeholder payload');
+    const placeholderHistory = await axios.get(`${API_BASE}/access-history`, {
+      headers: authHeaders(platformAdmin.token),
+      params: { facility_id: facilityId, limit: 50 },
+    });
+    const resolvedLog = (placeholderHistory.data?.logs || []).find((x) => x.id === placeholderActivityId);
+    if (!resolvedLog) {
+      throw new Error(`Access history missing resolved placeholder event ${placeholderActivityId}`);
+    }
+    if (resolvedLog.user_id !== primaryId) {
+      throw new Error(`Expected resolved user_id=${primaryId}, got ${resolvedLog.user_id}`);
+    }
+    if (resolvedLog.user_name === 'Unknown User') {
+      throw new Error('user_name still shows gateway placeholder "Unknown User"');
+    }
+    if (resolvedLog.user_name !== 'FMS Primary') {
+      throw new Error(`Expected resolved user_name "FMS Primary", got ${JSON.stringify(resolvedLog.user_name)}`);
+    }
+    if (resolvedLog.device_id !== deviceId) {
+      throw new Error(
+        `Expected cloud device_id=${deviceId}, got ${resolvedLog.device_id} (hardware was ${remainingSerial})`,
+      );
+    }
+    if (resolvedLog.unit_id !== unitId) {
+      throw new Error(`Expected unit_id=${unitId} from device mapping, got ${resolvedLog.unit_id}`);
+    }
+    ok('Placeholder access event resolved to FMS Primary, cloud device, and unit');
+
     await delay(1200);
 
     step('Validating activity_new accessLog payloads from bulk ingestion');
@@ -7385,8 +7466,8 @@ async function run() {
     };
 
     const realtimeToken = `rt-${Date.now()}`;
-    const realtimePrimaryActorName = `Realtime Primary ${realtimeToken}`;
-    const realtimeShadowActorName = `Realtime Shadow ${realtimeToken}`;
+    const realtimePrimaryEventId = `evt-realtime-primary-${realtimeToken}`;
+    const realtimeShadowEventId = `evt-realtime-shadow-${realtimeToken}`;
     const reqRealtimeAccessEvents = `req-access-events-realtime-${Date.now()}`;
     ws.send(JSON.stringify({
       type: 'PROXY_REQUEST',
@@ -7397,7 +7478,7 @@ async function run() {
         facility_id: facilityId,
         events: [
           {
-            event_id: `evt-realtime-primary-${Date.now()}`,
+            event_id: realtimePrimaryEventId,
             occurred_at: new Date().toISOString(),
             facility_id: facilityId,
             unit_id: unitId,
@@ -7408,11 +7489,11 @@ async function run() {
             actor: {
               user_id: platformAdmin.id,
               role: 'admin',
-              name: realtimePrimaryActorName,
+              name: 'Unknown User',
             },
           },
           {
-            event_id: `evt-realtime-shadow-${Date.now()}`,
+            event_id: realtimeShadowEventId,
             occurred_at: new Date().toISOString(),
             facility_id: facilityId,
             unit_id: shadowUnit.id,
@@ -7424,7 +7505,7 @@ async function run() {
             actor: {
               user_id: share2Id,
               role: 'shared_user',
-              name: realtimeShadowActorName,
+              name: 'Unknown User',
             },
           },
         ],
@@ -7435,12 +7516,12 @@ async function run() {
       throw new Error(`Realtime probe ingestion failed: ${realtimeResp.status} ${JSON.stringify(realtimeResp.body)}`);
     }
 
-    const matchesActorName = (evt, actorName) => evt?.type === 'activity_new'
-      && evt?.data?.activity?.actor?.name === actorName;
-    const matchesRealtimePrimary = (evt) => matchesActorName(evt, realtimePrimaryActorName)
-      && evt?.data?.activity?.unitId === unitId;
-    const matchesRealtimeShadow = (evt) => matchesActorName(evt, realtimeShadowActorName)
-      && evt?.data?.activity?.unitId === shadowUnit.id;
+    const matchesRealtimeEventId = (evt, eventId) => evt?.type === 'activity_new'
+      && evt?.data?.accessLog?.metadata?.event_id === eventId;
+    const matchesRealtimePrimary = (evt) => matchesRealtimeEventId(evt, realtimePrimaryEventId)
+      && evt?.data?.accessLog?.unit_id === unitId;
+    const matchesRealtimeShadow = (evt) => matchesRealtimeEventId(evt, realtimeShadowEventId)
+      && evt?.data?.accessLog?.unit_id === shadowUnit.id;
 
     await Promise.all([
       waitForFeedEvent(tenantFeed, matchesRealtimePrimary, 'tenant primary-unit event'),
@@ -8390,7 +8471,9 @@ async function run() {
     ok('Login returns isDeviceRegistered: false for unknown device');
 
     heading('Password Reset Flow Test (Deeplink + Token E2E)');
-    // Clear any prior notification events so we only capture fresh password reset notification
+    // Ensure the notifications watcher is alive before clearing/requesting — a dropped
+    // DEV_NOTIFICATION socket after long gateway churn otherwise races the reset SMS.
+    await ensureNotificationsWs(token);
     notificationEvents.length = 0;
 
     step('Requesting password reset for primary tenant');

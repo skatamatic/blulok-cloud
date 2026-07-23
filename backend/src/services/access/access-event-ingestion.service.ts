@@ -7,8 +7,10 @@ import {
   AccessEventPayload,
   AccessEventDenialReason,
 } from '@/services/access/access-event.types';
+import { AccessEventEntityResolverService } from '@/services/access/access-event-entity-resolver.service';
 import { DENIAL_REASON_MESSAGES } from '@/constants/access-history.constants';
 import { isOccupiedUnlockIntentAccessMethod } from '@/constants/occupied-unlock-intent.constants';
+import { coerceOptionalAccessId } from '@/utils/access-event-placeholder.utils';
 
 type IngestContext = {
   facilityId: string;
@@ -29,6 +31,7 @@ export class AccessEventIngestionService {
   private readonly activityService = ActivityService.getInstance();
   private readonly unitModel = new UnitModel();
   private readonly deviceModel = new DeviceModel();
+  private readonly entityResolver = new AccessEventEntityResolverService();
 
   public async ingestMany(events: AccessEventPayload[], context: IngestContext): Promise<ActivityLogResponse[]> {
     const writes: ActivityLogResponse[] = [];
@@ -40,22 +43,23 @@ export class AccessEventIngestionService {
   }
 
   public async ingestOne(event: AccessEventPayload, context: IngestContext): Promise<ActivityLogResponse> {
-    await this.assertFacilityEntityConsistency(event, context.facilityId);
+    const resolved = await this.entityResolver.resolve(event, context.facilityId);
+    await this.assertFacilityEntityConsistency(resolved, context.facilityId);
 
-    const deviceType = await this.resolveDeviceType(event.device_id);
+    const deviceType = await this.resolveDeviceType(resolved.device_id);
 
     const sanitizedMetadata: Record<string, unknown> = {
       ingestion_source: context.source,
-      event_id: event.event_id || randomUUID(),
-      correlation_id: event.correlation_id || null,
-      action: event.action,
-      method: event.method,
-      denial_reason: event.denial_reason || null,
-      reason_message: event.reason_message || null,
-      actor: event.actor || null,
-      route_pass: event.route_pass || null,
-      keypad: this.sanitizeKeypad(event.keypad),
-      metadata: event.metadata || {},
+      event_id: resolved.event_id || randomUUID(),
+      correlation_id: resolved.correlation_id || null,
+      action: resolved.action,
+      method: resolved.method,
+      denial_reason: resolved.denial_reason || null,
+      reason_message: resolved.reason_message || null,
+      actor: resolved.actor || null,
+      route_pass: resolved.route_pass || null,
+      keypad: this.sanitizeKeypad(resolved.keypad),
+      metadata: resolved.metadata || {},
       device_type: deviceType,
     };
 
@@ -66,22 +70,22 @@ export class AccessEventIngestionService {
     } | null = null;
 
     if (
-      event.success
-      && event.action === 'access_granted'
-      && isOccupiedUnlockIntentAccessMethod(event.method)
-      && event.actor?.user_id
+      resolved.success
+      && resolved.action === 'access_granted'
+      && isOccupiedUnlockIntentAccessMethod(resolved.method)
+      && resolved.actor?.user_id
     ) {
       const { OccupiedUnlockIntentService } = await import(
         '@/services/occupied-unlock-intent.service'
       );
-      const intentIdRaw = event.metadata?.occupied_unlock_intent_id;
+      const intentIdRaw = resolved.metadata?.occupied_unlock_intent_id;
       const intentIdFromMetadata =
         typeof intentIdRaw === 'string' && intentIdRaw.trim().length > 0
           ? intentIdRaw.trim()
           : null;
       const consumed = OccupiedUnlockIntentService.getInstance().tryConsumeForAccessEvent({
-        deviceId: event.device_id,
-        userId: event.actor.user_id,
+        deviceId: resolved.device_id,
+        userId: resolved.actor.user_id,
         intentIdFromMetadata,
       });
       if (consumed) {
@@ -96,8 +100,8 @@ export class AccessEventIngestionService {
       }
     }
 
-    const title = this.buildTitle(event);
-    let description = this.buildDescription(event);
+    const title = this.buildTitle(resolved);
+    let description = this.buildDescription(resolved);
     if (occupiedOverride?.reasonLabel) {
       description = [
         description,
@@ -105,33 +109,39 @@ export class AccessEventIngestionService {
         occupiedOverride.notes ? `Notes: ${occupiedOverride.notes}` : null,
       ].filter(Boolean).join('. ');
     }
-    const actorType = event.actor?.role === 'gateway' ? 'gateway' : event.actor?.role === 'system' ? 'system' : 'user';
-    const actorRole = event.actor?.role || 'unknown';
-    const occurredAt = new Date(event.occurred_at);
-    const result = event.success ? 'success' : 'failure';
-    const resultMessage = event.success
+    const actorType =
+      resolved.actor?.role === 'gateway'
+        ? 'gateway'
+        : resolved.actor?.role === 'system'
+          ? 'system'
+          : 'user';
+    const actorRole = resolved.actor?.role || 'unknown';
+    const occurredAt = new Date(resolved.occurred_at);
+    const result = resolved.success ? 'success' : 'failure';
+    const resultMessage = resolved.success
       ? undefined
-      : event.reason_message || (event.denial_reason ? denialReasonToResultMessage(event.denial_reason) : 'Access denied');
+      : resolved.reason_message
+        || (resolved.denial_reason ? denialReasonToResultMessage(resolved.denial_reason) : 'Access denied');
 
     return this.activityService.logActivity({
       entityType: 'device',
-      entityId: event.device_id,
+      entityId: resolved.device_id,
       activityType: 'access_attempt',
       title,
       description,
       actorType,
-      actorId: event.actor?.user_id,
-      actorName: event.actor?.name,
+      actorId: resolved.actor?.user_id,
+      actorName: resolved.actor?.name,
       result,
       resultMessage,
       facilityId: context.facilityId,
-      unitId: event.unit_id,
-      deviceId: event.device_id,
+      unitId: resolved.unit_id,
+      deviceId: resolved.device_id,
       occurredAt,
       metadata: {
         ...sanitizedMetadata,
         actor_role: actorRole,
-        gateway_id: event.gateway_id || null,
+        gateway_id: resolved.gateway_id || null,
       },
     });
   }
@@ -171,8 +181,9 @@ export class AccessEventIngestionService {
       throw new ValidationError('facility_id must match scoped facility');
     }
 
-    if (event.unit_id) {
-      const unit = await this.unitModel.findById(event.unit_id);
+    const unitId = coerceOptionalAccessId(event.unit_id);
+    if (unitId) {
+      const unit = await this.unitModel.findById(unitId);
       if (!unit) {
         throw new ValidationError('unit_id not found');
       }
