@@ -61,6 +61,10 @@ import { logger } from '@/utils/logger';
 import { shouldAutoAcceptChanges } from './fms-auto-accept.utils';
 import { isFmsChangeDismissible, isFmsChangePending, partitionChangesForAutoApply, resolveFmsAutoApplyOutcome, sortChangesForApply } from './fms-apply-order.utils';
 import {
+  buildFmsApplyErrorDetail,
+  formatFmsApplyErrorFallback,
+} from './fms-apply-error.utils';
+import {
   clearFmsMappingRemoved,
   isFmsMappingMarkedRemoved,
   isFmsUserRemovedFromFacility,
@@ -1201,6 +1205,7 @@ export class FMSService {
       changesApplied: 0,
       changesFailed: 0,
       errors: [],
+      errorDetails: [],
       appliedChangeIds: [],
       failedChangeIds: [],
       accessChanges: {
@@ -1270,11 +1275,9 @@ export class FMSService {
         logger.error(`Failed to apply change ${change.id}:`, error);
         result.changesFailed++;
         result.failedChangeIds.push(change.id);
-        result.errors.push(
-          `Failed to apply ${change.change_type} for ${change.external_id}: ${
-            error instanceof Error ? error.message : 'Unknown error'
-          }`
-        );
+        const detail = buildFmsApplyErrorDetail(change, error);
+        result.errorDetails.push(detail);
+        result.errors.push(formatFmsApplyErrorFallback(detail));
       }
     }
 
@@ -2476,6 +2479,7 @@ export class FMSService {
       changesApplied: 0,
       changesFailed: 0,
       errors: [],
+      errorDetails: [],
       appliedChangeIds: [],
       failedChangeIds: [],
       accessChanges: {

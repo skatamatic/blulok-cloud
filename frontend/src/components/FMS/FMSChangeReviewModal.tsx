@@ -42,6 +42,7 @@ import {
   getDismissibleChangeIds,
   isFmsChangeDismissible,
 } from '@/utils/fms-change-dismiss.utils';
+import { formatFmsApplyFailureToast } from '@/utils/fms-apply-error-display.utils';
 import { ApplyProgressOverlay } from '@/components/FMS/ApplyProgressOverlay';
 
 interface FMSChangeReviewModalProps {
@@ -66,21 +67,6 @@ function estimateRemainingSeconds(elapsedSec: number, percent: number): number |
   if (percent <= 0 || percent >= 100 || elapsedSec < 3) return null;
   const totalEstimate = elapsedSec / (percent / 100);
   return Math.max(0, Math.round(totalEstimate - elapsedSec));
-}
-
-function formatApplyErrors(errors: string[], changesFailed?: number, maxLines = 4): string {
-  if (errors.length === 0) {
-    if (changesFailed && changesFailed > 0) {
-      return `${changesFailed} change${changesFailed !== 1 ? 's' : ''} failed to apply.`;
-    }
-    return 'One or more changes could not be applied.';
-  }
-  const lines = errors.slice(0, maxLines);
-  let message = lines.join(' · ');
-  if (errors.length > maxLines) {
-    message += ` · …and ${errors.length - maxLines} more`;
-  }
-  return message;
 }
 
 type ChangeVisualStyle = {
@@ -518,11 +504,12 @@ export function FMSChangeReviewModal({
         const result = await fmsService.applyChanges(syncResult.syncLogId, changeIds);
         clearApplyProgressSubscription();
 
-        if (result.changesFailed > 0 || result.errors.length > 0) {
+        if (result.changesFailed > 0 || result.errors.length > 0 || (result.errorDetails?.length ?? 0) > 0) {
+          const failureToast = formatFmsApplyFailureToast(result, totalToApply, reviewChanges);
           addToast({
-            type: result.changesApplied > 0 ? 'warning' : 'error',
-            title: result.changesApplied > 0 ? 'Some Changes Failed' : 'Apply Failed',
-            message: formatApplyErrors(result.errors, result.changesFailed, 4),
+            type: failureToast.toastType,
+            title: failureToast.title,
+            message: failureToast.message,
             duration: 12000,
           });
 

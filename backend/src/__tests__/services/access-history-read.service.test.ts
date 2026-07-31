@@ -113,6 +113,139 @@ describe('AccessHistoryReadService', () => {
     expect(result.logs[0].device_name).toBe('Unassigned - 98765');
   });
 
+  it('uses access-control join when metadata wrongly says blulok (HQ Admin route_pass case)', async () => {
+    // Mirrors deployed row: device_id is an AC cloud UUID, but ingest stored device_type=blulok.
+    // BluLok join misses (no serial) → old code rendered "Unassigned - ?????".
+    mockFindWithContext.mockResolvedValue([
+      {
+        id: '9632b7eb-5745-44a0-bf23-dcd6e07d9599',
+        activity_type: 'access_attempt',
+        entity_id: 'f759bd50-a70e-5bba-81c5-25e9a7c695c1',
+        device_id: 'f759bd50-a70e-5bba-81c5-25e9a7c695c1',
+        facility_id: 'a7333c15-5ca8-4790-9860-e0dd44e3c581',
+        actor_type: 'user',
+        actor_id: 'd9aaf16d-a228-488b-b2b4-066f88e8f6b9',
+        actor_name: 'HQ Admin',
+        result: 'success',
+        occurred_at: new Date('2026-07-28T22:23:10.000Z'),
+        created_at: new Date('2026-07-28T22:23:09.000Z'),
+        updated_at: new Date('2026-07-28T22:23:09.000Z'),
+        metadata: {
+          action: 'access_granted',
+          method: 'route_pass',
+          device_type: 'blulok',
+          event_id: 'gateway-mobile-7917bfe6-6ac4-4e39-ae91-80138c7d3ed2',
+          actor: {
+            user_id: 'd9aaf16d-a228-488b-b2b4-066f88e8f6b9',
+            role: 'admin',
+            name: 'HQ Admin',
+          },
+        },
+        actor_user_first_name: 'HQ',
+        actor_user_last_name: 'Admin',
+        actor_user_email: 'hqadmin@blulok.com',
+        facility_name: 'BluLok HQ',
+        device_serial: null,
+        blulok_device_settings: null,
+        unit_number: null,
+        access_control_device_id: 'f759bd50-a70e-5bba-81c5-25e9a7c695c1',
+        access_control_device_name: 'Main Entrance',
+        access_control_device_serial: 'KP-HQ-1',
+        device_location: 'Lobby',
+      },
+    ]);
+
+    const service = new AccessHistoryReadService();
+    const result = await service.query('user-1', UserRole.ADMIN, undefined, {});
+    const log = result.logs[0];
+
+    expect(log.device_name).toBe('Main Entrance');
+    expect(log.device_type).toBe('access_control');
+    expect(log.device_name).not.toBe('Unassigned - ?????');
+    expect(log.metadata?.device).toMatchObject({
+      id: 'f759bd50-a70e-5bba-81c5-25e9a7c695c1',
+      name: 'Main Entrance',
+      type: 'access_control',
+      navigation_url: '/devices/access-control/f759bd50-a70e-5bba-81c5-25e9a7c695c1',
+    });
+  });
+
+  it('enriches legacy rows that stored AC hardware serial as device_id', async () => {
+    const serial = 'f759bd50-a70e-5bba-81c5-25e9a7c695c1';
+    const cloudId = 'cloud-ac-keypad-1';
+    mockFindWithContext.mockResolvedValue([
+      {
+        id: 'log-serial-legacy',
+        activity_type: 'access_attempt',
+        entity_id: serial,
+        device_id: serial,
+        facility_id: 'fac-hq',
+        actor_type: 'user',
+        actor_id: 'user-hq',
+        result: 'success',
+        occurred_at: new Date(),
+        created_at: new Date(),
+        updated_at: new Date(),
+        metadata: {
+          action: 'keypad_attempt',
+          method: 'keypad',
+          device_type: 'blulok',
+        },
+        device_serial: null,
+        blulok_device_settings: null,
+        access_control_device_id: cloudId,
+        access_control_device_name: 'Keypad-f759bd50',
+        access_control_device_serial: serial,
+        device_location: 'Gateway relay 1',
+        facility_name: 'BluLok HQ',
+      },
+    ]);
+
+    const service = new AccessHistoryReadService();
+    const result = await service.query('user-1', UserRole.ADMIN, undefined, {});
+    const log = result.logs[0];
+
+    expect(log.device_id).toBe(cloudId);
+    expect(log.device_name).toBe('Keypad-f759bd50');
+    expect(log.device_type).toBe('access_control');
+    expect(log.metadata?.device).toMatchObject({
+      id: cloudId,
+      name: 'Keypad-f759bd50',
+      serial,
+      navigation_url: `/devices/access-control/${cloudId}`,
+    });
+  });
+
+  it('does not invent Unassigned - ????? when neither device table joins', async () => {
+    mockFindWithContext.mockResolvedValue([
+      {
+        id: 'log-orphan-device',
+        activity_type: 'access_attempt',
+        entity_id: 'missing-device',
+        device_id: 'missing-device',
+        actor_type: 'user',
+        actor_id: 'user-9',
+        result: 'success',
+        occurred_at: new Date(),
+        created_at: new Date(),
+        updated_at: new Date(),
+        metadata: {
+          action: 'access_granted',
+          method: 'route_pass',
+          device_type: 'blulok',
+        },
+        device_serial: null,
+        blulok_device_settings: null,
+        access_control_device_name: null,
+      },
+    ]);
+
+    const service = new AccessHistoryReadService();
+    const result = await service.query('user-1', UserRole.ADMIN, undefined, {});
+    expect(result.logs[0].device_name).toBeUndefined();
+    expect(result.logs[0].device_name).not.toBe('Unassigned - ?????');
+  });
+
   it('resolves route-pass actor display name from joined user record', async () => {
     mockFindWithContext.mockResolvedValue([
       {

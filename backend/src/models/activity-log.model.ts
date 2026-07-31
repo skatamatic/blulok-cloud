@@ -141,9 +141,15 @@ export interface ActivityLogFilters {
 export interface ActivityLogWithContext extends ActivityLog {
   unit_number?: string;
   device_serial?: string;
+  /** blulok_devices.id when joined by id or hardware serial */
+  blulok_device_id?: string;
   blulok_device_settings?: Record<string, unknown> | null;
   device_location?: string;
   access_control_device_name?: string;
+  /** access_control_devices.id when joined by id or hardware serial */
+  access_control_device_id?: string;
+  /** access_control_devices.device_serial when the activity device_id matches an AC row */
+  access_control_device_serial?: string;
   facility_name?: string;
   actor_user_first_name?: string | null;
   actor_user_last_name?: string | null;
@@ -316,9 +322,12 @@ export class ActivityLogModel {
       .select(
         'activity_logs.*',
         'units.unit_number',
+        'blulok_devices.id as blulok_device_id',
         'blulok_devices.device_serial',
         'blulok_devices.device_settings as blulok_device_settings_raw',
+        'access_control_devices.id as access_control_device_id',
         'access_control_devices.name as access_control_device_name',
+        'access_control_devices.device_serial as access_control_device_serial',
         'access_control_devices.location_description as device_location',
         'facilities.name as facility_name',
         'actor_users.first_name as actor_user_first_name',
@@ -326,8 +335,15 @@ export class ActivityLogModel {
         'actor_users.email as actor_user_email',
       )
       .leftJoin('units', 'activity_logs.unit_id', 'units.id')
-      .leftJoin('blulok_devices', 'activity_logs.device_id', 'blulok_devices.id')
-      .leftJoin('access_control_devices', 'activity_logs.device_id', 'access_control_devices.id')
+      // Match cloud PK or hardware serial (gateways send serial on access-events).
+      .leftJoin('blulok_devices', function joinBluLokByIdOrSerial() {
+        this.on('activity_logs.device_id', '=', 'blulok_devices.id')
+          .orOn('activity_logs.device_id', '=', 'blulok_devices.device_serial');
+      })
+      .leftJoin('access_control_devices', function joinAccessControlByIdOrSerial() {
+        this.on('activity_logs.device_id', '=', 'access_control_devices.id')
+          .orOn('activity_logs.device_id', '=', 'access_control_devices.device_serial');
+      })
       .leftJoin('facilities', 'activity_logs.facility_id', 'facilities.id')
       .leftJoin('users as actor_users', 'activity_logs.actor_id', 'actor_users.id');
 
@@ -352,11 +368,14 @@ export class ActivityLogModel {
       ...this.parseActivityLog(l),
       unit_number: l.unit_number,
       device_serial: l.device_serial,
+      blulok_device_id: l.blulok_device_id ?? undefined,
       blulok_device_settings: l.blulok_device_settings_raw
         ? this.safeParseJson(l.blulok_device_settings_raw)
         : null,
       device_location: l.device_location,
+      access_control_device_id: l.access_control_device_id ?? undefined,
       access_control_device_name: l.access_control_device_name,
+      access_control_device_serial: l.access_control_device_serial ?? undefined,
       facility_name: l.facility_name,
       actor_user_first_name: l.actor_user_first_name ?? null,
       actor_user_last_name: l.actor_user_last_name ?? null,

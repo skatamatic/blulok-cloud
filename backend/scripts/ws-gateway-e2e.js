@@ -3391,6 +3391,192 @@ async function run() {
       ok('Access-control cloud unlock (OPEN) accepted');
     }
 
+    // ---- Access History: remote unlock → 3 rows (grant + site unlock + manual lock) ----
+    heading('Access History — BluLok remote unlock (3-row semantics)');
+    step('Settle prior cloud unlock pending, then lock device locally for clean cycle');
+    {
+      const settlePrior = await stateSync(
+        ws,
+        facilityId,
+        [gwLockDevice({ lock_id: remainingSerial, locked: false, state: 'OPENED', online: true })],
+        `req-hist-settle-prior-${Date.now()}`,
+      );
+      if (settlePrior.status !== 200) {
+        throw new Error(`Prior unlock settle failed: ${settlePrior.status} ${JSON.stringify(settlePrior.body)}`);
+      }
+      await delay(400);
+      const preLock = await stateSync(
+        ws,
+        facilityId,
+        [gwLockDevice({ lock_id: remainingSerial, locked: true, state: 'CLOSED', online: true })],
+        `req-hist-prelock-${Date.now()}`,
+      );
+      if (preLock.status !== 200) {
+        throw new Error(`Pre-lock for history cycle failed: ${preLock.status} ${JSON.stringify(preLock.body)}`);
+      }
+      await delay(400);
+      ok('Device locked and ready for remote unlock history cycle');
+    }
+
+    const historyCycleStartedAt = new Date().toISOString();
+    step('Issue cloud remote unlock (expect outbound remote_access_granted)');
+    const histUnlockRes = await axios.put(
+      `${API_BASE}/devices/blulok/${deviceId}/lock`,
+      { lock_status: 'unlocked' },
+      { headers: authHeaders(token) },
+    );
+    if (histUnlockRes.status !== 200 || histUnlockRes.data?.success === false) {
+      throw new Error(`History-cycle cloud unlock failed: ${histUnlockRes.status} ${JSON.stringify(histUnlockRes.data)}`);
+    }
+    ok('Cloud remote unlock accepted for history cycle');
+
+    step('While pending, attempt grant-like access-events (must be suppressed)');
+    {
+      const suppressEvtId = `evt-suppress-remote-${Date.now()}`;
+      const reqSuppress = `req-access-suppress-${Date.now()}`;
+      ws.send(JSON.stringify({
+        type: 'PROXY_REQUEST',
+        id: reqSuppress,
+        method: 'POST',
+        path: '/internal/gateway/access-events',
+        body: {
+          facility_id: facilityId,
+          events: [{
+            event_id: suppressEvtId,
+            occurred_at: new Date().toISOString(),
+            facility_id: facilityId,
+            unit_id: unitId,
+            device_id: deviceId,
+            action: 'access_granted',
+            method: 'mobile_key',
+            success: true,
+            actor: { role: 'tenant', name: 'Should Not Persist' },
+          }],
+        },
+      }));
+      const respSuppress = await waitForProxyResponse(ws, reqSuppress);
+      if (respSuppress.status !== 200) {
+        throw new Error(`Suppress access-events request failed: ${respSuppress.status} ${JSON.stringify(respSuppress.body)}`);
+      }
+      const ingested = respSuppress.body?.data?.ingested;
+      if (ingested !== 0) {
+        throw new Error(`Expected suppressed grant ingest ingested=0, got ${ingested}`);
+      }
+      ok('Pending-remote grant-like access-event suppressed (ingested=0)');
+    }
+
+    step('Settle unlock via devices/state, then local re-lock');
+    {
+      const settleUnlock = await stateSync(
+        ws,
+        facilityId,
+        [gwLockDevice({ lock_id: remainingSerial, locked: false, state: 'OPENED', online: true })],
+        `req-hist-settle-unlock-${Date.now()}`,
+      );
+      if (settleUnlock.status !== 200) {
+        throw new Error(`History unlock settle failed: ${settleUnlock.status} ${JSON.stringify(settleUnlock.body)}`);
+      }
+      await delay(500);
+      const settleLock = await stateSync(
+        ws,
+        facilityId,
+        [gwLockDevice({ lock_id: remainingSerial, locked: true, state: 'CLOSED', online: true })],
+        `req-hist-settle-lock-${Date.now()}`,
+      );
+      if (settleLock.status !== 200) {
+        throw new Error(`History local lock settle failed: ${settleLock.status} ${JSON.stringify(settleLock.body)}`);
+      }
+      await delay(500);
+      ok('Physical unlock + manual lock settled');
+    }
+
+    step('Assert Access History has remote_access_granted, correlated unlock, and local lock');
+    {
+      let inWindow = [];
+      let grant = null;
+      for (let attempt = 0; attempt < 8; attempt++) {
+        const histRes = await axios.get(`${API_BASE}/access-history`, {
+          headers: authHeaders(token),
+          params: {
+            facility_id: facilityId,
+            device_id: deviceId,
+            date_from: historyCycleStartedAt,
+            limit: 50,
+          },
+        });
+        if (histRes.status !== 200) {
+          throw new Error(`GET access-history failed: ${histRes.status}`);
+        }
+        const logs = histRes.data?.logs || histRes.data?.data?.logs || [];
+        inWindow = logs.filter((l) => {
+          const t = l.occurred_at || l.created_at;
+          return t && new Date(t).getTime() >= new Date(historyCycleStartedAt).getTime() - 5000;
+        });
+        grant = inWindow.find((l) => l.action === 'remote_access_granted');
+        if (
+          grant
+          && inWindow.some((l) => l.action === 'unlock' && l.metadata?.correlated_remote === true)
+          && inWindow.some((l) => l.action === 'lock' && l.method === 'local_device')
+        ) {
+          break;
+        }
+        await delay(400);
+      }
+      if (!grant) {
+        throw new Error(`Missing remote_access_granted row; actions=${inWindow.map((l) => l.action).join(',')}`);
+      }
+      if (grant.method !== 'admin_remote' && grant.method !== 'remote_gateway') {
+        throw new Error(`remote_access_granted method expected admin_remote|remote_gateway, got ${grant.method}`);
+      }
+      if (!grant.user_id && !grant.metadata?.initiated_by?.id) {
+        throw new Error('remote_access_granted missing initiator user');
+      }
+
+      const siteUnlock = inWindow.find(
+        (l) => l.action === 'unlock' && l.metadata?.correlated_remote === true,
+      );
+      if (!siteUnlock) {
+        throw new Error(`Missing correlated site unlock; actions=${inWindow.map((l) => `${l.action}/${l.method}/corr=${l.metadata?.correlated_remote}`).join(',')}`);
+      }
+      if (siteUnlock.method !== 'local_device') {
+        throw new Error(`Site unlock method expected local_device, got ${siteUnlock.method}`);
+      }
+      if (siteUnlock.metadata?.correlated_remote !== true) {
+        throw new Error('Site unlock missing metadata.correlated_remote=true');
+      }
+      const grantUser = grant.user_id || grant.metadata?.initiated_by?.id;
+      const unlockUser = siteUnlock.user_id || siteUnlock.metadata?.initiated_by?.id;
+      if (!unlockUser || unlockUser !== grantUser) {
+        throw new Error(`Site unlock user mismatch: grant=${grantUser} unlock=${unlockUser}`);
+      }
+
+      const manualLock = inWindow.find((l) => l.action === 'lock' && l.method === 'local_device');
+      if (!manualLock) {
+        throw new Error(`Missing Manually Locked row; actions=${inWindow.map((l) => `${l.action}/${l.method}`).join(',')}`);
+      }
+      if (manualLock.user_id || manualLock.metadata?.initiated_by?.id) {
+        throw new Error('Manually Locked row should not have a user initiator');
+      }
+
+      for (const row of [grant, siteUnlock, manualLock]) {
+        if (row.device_id !== deviceId) {
+          throw new Error(`Expected device_id ${deviceId}, got ${row.device_id} on action=${row.action}`);
+        }
+        if (unitId && row.unit_id && row.unit_id !== unitId) {
+          throw new Error(`Expected unit_id ${unitId}, got ${row.unit_id} on action=${row.action}`);
+        }
+      }
+
+      const spuriousGrant = inWindow.find(
+        (l) => l.action === 'access_granted' && l.method === 'mobile_key',
+      );
+      if (spuriousGrant) {
+        throw new Error('Unexpected access_granted/mobile_key row during remote unlock cycle');
+      }
+
+      ok('Access History 3-row remote unlock cycle verified (grant + site unlock + manual lock; grant suppressed)');
+    }
+
     // ---- Gateway-specific tests via PROXY_REQUEST over WS ----
     heading('Gateway Proxy API Tests');
     // PROXY: GET devices scoped to facility
@@ -11492,7 +11678,12 @@ async function run() {
       { headers: { Authorization: `Bearer ${created.facilityAdminToken}` } },
     );
     const facilitySchedules = accessCodeSchedulesResp.data?.schedules || [];
-    const selectedSchedule = facilitySchedules.find((schedule) => schedule.is_active) || facilitySchedules[0];
+    // Prefer a schedule already exercised by group rotate for keypadDeviceA so zone-linked
+    // devices resolve under the same tenant schedule assignment as the default-group keypad.
+    const selectedSchedule =
+      facilitySchedules.find((schedule) => schedule.is_active && rotationScheduleIds.includes(schedule.id))
+      || facilitySchedules.find((schedule) => schedule.is_active)
+      || facilitySchedules[0];
     if (selectedSchedule && primaryToken && created.primaryTenantId) {
       selectedAccessCodeScheduleId = selectedSchedule.id;
       await axios.put(
@@ -11502,6 +11693,7 @@ async function run() {
       );
 
       const scheduledGroupCode = '121212';
+      const scheduledZoneGroupCode = '131313';
       const expectScheduleScopedSet = waitForCommand(
         ws,
         (cmd) =>
@@ -11530,6 +11722,33 @@ async function run() {
       );
       await expectScheduleScopedSet;
 
+      // Zone-linked keypadDeviceA is not in the default group; tenants only see schedule-scoped
+      // pairings, so the zone device's access-code group needs the same schedule context.
+      const expectZoneScheduleScopedSet = waitForCommand(
+        ws,
+        (cmd) =>
+          cmd.cmd_type === 'ACCESS_CODE_UPDATE' &&
+          Array.isArray(cmd.codes) &&
+          normalizeCodeRowsForDevice(cmd, keypadDeviceA).some(
+            (entry) =>
+              entry.code === scheduledZoneGroupCode &&
+              entry.schedule_id === selectedSchedule.id,
+          ),
+        15000,
+      );
+      await axios.put(
+        `${API_BASE}/access-codes/manual/set`,
+        {
+          facility_id: created.facilityId,
+          scope_type: 'device_group',
+          scope_id: accessCodeGroupId,
+          schedule_id: selectedSchedule.id,
+          code: scheduledZoneGroupCode,
+        },
+        { headers: { Authorization: `Bearer ${created.facilityAdminToken}` } },
+      );
+      await expectZoneScheduleScopedSet;
+
       const tenantScheduledAppCodesResp = await axios.get(
         `${API_BASE}/access-codes/app/my`,
         {
@@ -11543,6 +11762,12 @@ async function run() {
         throw new Error('Expected tenant /access-codes/app/my to resolve schedule-scoped group code for assigned schedule');
       }
       assertAccessCodePairing(scheduledEntry, 'GET /access-codes/app/my (tenant schedule-scoped)');
+      const scheduledZoneEntry = tenantScheduledAppCodes.find(
+        (entry) => entry.device_id === keypadDeviceA && entry.schedule_id === selectedSchedule.id,
+      );
+      if (!scheduledZoneEntry || scheduledZoneEntry.code !== scheduledZoneGroupCode) {
+        throw new Error('Expected tenant /access-codes/app/my to resolve schedule-scoped code for zone-linked keypad');
+      }
       ok('Schedule-scoped code payload and tenant schedule resolution validated');
     } else {
       ok('Skipped schedule-scoped access-code E2E branch (missing schedule or primary tenant context)');

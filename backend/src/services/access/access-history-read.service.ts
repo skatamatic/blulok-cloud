@@ -290,7 +290,10 @@ export class AccessHistoryReadService {
     if (role !== UserRole.TENANT) {
       return rows;
     }
-    return rows.filter((row) => this.inferDeviceType(this.extractMetadata(row)) !== 'access_control');
+    return rows.filter((row) => {
+      const ctx = row as ActivityLogWithContext;
+      return this.inferDeviceType(this.extractMetadata(row), ctx) !== 'access_control';
+    });
   }
 
   private applyPostQueryScope(rows: ActivityLog[], scope: { allowedUnitIds?: string[]; ownUserId?: string }): ActivityLog[] {
@@ -398,12 +401,13 @@ export class AccessHistoryReadService {
     const userName = this.resolveActorDisplayName(ctx, actor, row.actor_name
       || (actor && typeof actor.name === 'string' ? actor.name : undefined));
     const userIdFromActor = actor && typeof actor.user_id === 'string' ? actor.user_id : undefined;
-    const deviceType = this.inferDeviceType(metadata);
+    const deviceType = this.inferDeviceType(metadata, ctx);
     const createdAt = toIsoStringOrEpoch(row.created_at);
     const updatedAt = toIsoStringOrEpoch(row.updated_at);
     const occurredAt = toIsoStringOrEpoch(row.occurred_at);
 
     const deviceName = this.resolveDeviceName(ctx, deviceType);
+    const resolvedDeviceId = this.resolveCloudDeviceId(row, ctx, deviceType);
     const resolvedUserId = userIdFromActor || row.actor_id || undefined;
     const resultStatus = this.deriveResultStatus(row.result);
     const failureSummary = buildAccessFailureSummary(denialReason, reasonMessage);
@@ -417,11 +421,12 @@ export class AccessHistoryReadService {
       userName,
       resolvedUserId,
       failureSummary,
+      resolvedDeviceId,
     );
 
     return {
       id: row.id,
-      device_id: row.device_id || row.entity_id,
+      device_id: resolvedDeviceId,
       device_type: deviceType,
       facility_id: row.facility_id || undefined,
       unit_id: row.unit_id || undefined,
@@ -443,25 +448,48 @@ export class AccessHistoryReadService {
       actor_type: row.actor_type,
       device_name: deviceName,
       device_location: ctx.device_location || undefined,
-      device_serial: ctx.device_serial || undefined,
+      device_serial: ctx.device_serial || ctx.access_control_device_serial || undefined,
     };
   }
 
   private resolveDeviceName(ctx: ActivityLogWithContext, deviceType: 'blulok' | 'access_control'): string | undefined {
-    if (deviceType === 'access_control') {
+    if (deviceType === 'access_control' || this.hasAccessControlJoin(ctx)) {
       const name = ctx.access_control_device_name?.trim();
       if (name) return name;
       const location = ctx.device_location?.trim();
       if (location) return location;
-      if (ctx.device_serial) return ctx.device_serial;
-      return 'Access point';
+      const acSerial = ctx.access_control_device_serial?.trim() || ctx.device_serial?.trim();
+      if (acSerial) return acSerial;
+      if (deviceType === 'access_control' || this.hasAccessControlJoin(ctx)) {
+        return 'Access point';
+      }
     }
 
-    return resolveBluLokDeviceDisplayName({
-      device_settings: ctx.blulok_device_settings,
-      device_serial: ctx.device_serial,
-      unit_number: ctx.unit_number,
-    });
+    if (this.hasBluLokJoin(ctx)) {
+      return resolveBluLokDeviceDisplayName({
+        device_settings: ctx.blulok_device_settings,
+        device_serial: ctx.device_serial,
+        unit_number: ctx.unit_number,
+      });
+    }
+
+    // No device row joined — avoid "Unassigned - ?????" for missing devices.
+    return undefined;
+  }
+
+  private hasBluLokJoin(ctx: ActivityLogWithContext): boolean {
+    return Boolean(
+      (typeof ctx.device_serial === 'string' && ctx.device_serial.trim())
+      || (ctx.blulok_device_settings && typeof ctx.blulok_device_settings === 'object'),
+    );
+  }
+
+  private hasAccessControlJoin(ctx: ActivityLogWithContext): boolean {
+    return Boolean(
+      (typeof ctx.access_control_device_name === 'string' && ctx.access_control_device_name.trim())
+      || (typeof ctx.access_control_device_serial === 'string' && ctx.access_control_device_serial.trim())
+      || (typeof ctx.device_location === 'string' && ctx.device_location.trim()),
+    );
   }
 
   private normalizeActionFilter(action: string): string {
@@ -477,6 +505,22 @@ export class AccessHistoryReadService {
     };
   }
 
+  private resolveCloudDeviceId(
+    row: ActivityLog,
+    ctx: ActivityLogWithContext,
+    deviceType: 'blulok' | 'access_control',
+  ): string {
+    if (deviceType === 'access_control' && ctx.access_control_device_id) {
+      return ctx.access_control_device_id;
+    }
+    if (deviceType === 'blulok' && ctx.blulok_device_id) {
+      return ctx.blulok_device_id;
+    }
+    if (ctx.access_control_device_id) return ctx.access_control_device_id;
+    if (ctx.blulok_device_id) return ctx.blulok_device_id;
+    return row.device_id || row.entity_id || '';
+  }
+
   private buildPresentationMetadata(
     row: ActivityLog,
     ctx: ActivityLogWithContext,
@@ -486,6 +530,7 @@ export class AccessHistoryReadService {
     userName: string | undefined,
     userId: string | undefined,
     failureSummary: string | undefined,
+    resolvedDeviceId?: string,
   ): Record<string, unknown> {
     const presentation: Record<string, unknown> = {};
 
@@ -503,6 +548,12 @@ export class AccessHistoryReadService {
     }
     if (baseMetadata.initiated_remotely === true) {
       presentation.initiated_remotely = true;
+    }
+    if (baseMetadata.correlated_remote === true) {
+      presentation.correlated_remote = true;
+    }
+    if (baseMetadata.occupied_unit_override === true) {
+      presentation.occupied_unit_override = true;
     }
     const tenantUnlockOverride = baseMetadata.tenant_unlock_override;
     if (tenantUnlockOverride && typeof tenantUnlockOverride === 'object' && tenantUnlockOverride !== null) {
@@ -577,19 +628,20 @@ export class AccessHistoryReadService {
       };
     }
 
-    if (row.device_id && deviceName) {
+    const deviceId = resolvedDeviceId || row.device_id;
+    if (deviceId && deviceName) {
       presentation.device = {
-        id: row.device_id,
+        id: deviceId,
         name: deviceName,
         type: deviceType,
         location: ctx.device_location || undefined,
-        serial: ctx.device_serial || undefined,
+        serial: ctx.access_control_device_serial || ctx.device_serial || undefined,
         ...(deviceType === 'blulok' && ctx.blulok_device_settings
           ? { device_settings: ctx.blulok_device_settings }
           : {}),
         navigation_url: deviceType === 'blulok'
-          ? `/devices/blulok/${row.device_id}`
-          : `/devices/access-control/${row.device_id}`,
+          ? `/devices/blulok/${deviceId}`
+          : `/devices/access-control/${deviceId}`,
       };
     }
 
@@ -633,14 +685,15 @@ export class AccessHistoryReadService {
   private extractMethod(row: ActivityLog, metadata: Record<string, unknown>): string {
     if (row.activity_type === 'lock' || row.activity_type === 'unlock') {
       const storedMethod = metadata.method;
-      if (storedMethod === 'remote_gateway' || storedMethod === 'admin_remote') {
-        return String(storedMethod);
+      // Prefer explicit stored method (e.g. correlated remote unlock → local_device).
+      if (typeof storedMethod === 'string' && storedMethod.trim()) {
+        return storedMethod === 'automatic' ? 'local_device' : storedMethod;
       }
       if (metadata.initiated_remotely === true) {
-        return storedMethod === 'admin_remote' ? 'admin_remote' : 'remote_gateway';
+        return 'remote_gateway';
       }
-      if (row.actor_type === 'user') {
-        return storedMethod === 'admin_remote' ? 'admin_remote' : 'remote_gateway';
+      if (row.actor_type === 'user' && metadata.correlated_remote !== true) {
+        return 'remote_gateway';
       }
       return 'local_device';
     }
@@ -658,7 +711,18 @@ export class AccessHistoryReadService {
     return typeof reason === 'string' ? reason : undefined;
   }
 
-  private inferDeviceType(metadata: Record<string, unknown>): 'blulok' | 'access_control' {
+  private inferDeviceType(
+    metadata: Record<string, unknown>,
+    ctx?: ActivityLogWithContext,
+  ): 'blulok' | 'access_control' {
+    // Live joins beat stale ingest metadata (gateway often defaults / mis-tags device_type).
+    if (ctx) {
+      const hasAc = this.hasAccessControlJoin(ctx);
+      const hasBluLok = this.hasBluLokJoin(ctx);
+      if (hasAc && !hasBluLok) return 'access_control';
+      if (hasBluLok && !hasAc) return 'blulok';
+    }
+
     const type = metadata.device_type;
     return type === 'access_control' ? 'access_control' : 'blulok';
   }

@@ -25,6 +25,8 @@ export type AccessLogPresentationMetadata = {
     reason_label?: string;
     notes?: string | null;
   };
+  correlated_remote?: boolean;
+  occupied_unit_override?: boolean;
 };
 
 const ACTION_LABELS: Record<string, string> = {
@@ -32,6 +34,7 @@ const ACTION_LABELS: Record<string, string> = {
   lock_attempt: 'Lock attempt failed',
   access_denied: 'Unlock attempt denied',
   access_granted: 'Access granted',
+  remote_access_granted: 'Remote Access Granted',
   admin_remote_open: 'Admin remote open',
   keypad_attempt: 'Keypad attempt',
   unlock: 'Unlock',
@@ -154,18 +157,66 @@ export function getAccessLogUserDetailsPath(userId: string): string {
   return `/users/${userId}/details`;
 }
 
-export function formatAccessAction(action: string): string {
-  if (ACTION_LABELS[action]) {
-    return ACTION_LABELS[action];
-  }
-  return action.replace(/_/g, ' ').replace(/\b\w/g, (char) => char.toUpperCase());
+export function isCorrelatedRemoteUnlock(log: Pick<AccessLog, 'action' | 'method' | 'metadata'>): boolean {
+  const meta = (log.metadata || {}) as AccessLogPresentationMetadata;
+  if (log.action !== 'unlock') return false;
+  if (meta.correlated_remote === true) return true;
+  return Boolean(meta.initiated_by?.id || meta.initiated_by?.name) && log.method === 'local_device';
 }
 
-export function formatAccessMethod(method: string): string {
-  if (METHOD_LABELS[method]) {
-    return METHOD_LABELS[method];
+export function isManualLockEvent(log: Pick<AccessLog, 'action' | 'method'>): boolean {
+  return log.action === 'lock' && (log.method === 'local_device' || log.method === 'automatic');
+}
+
+export function hasOccupiedUnlockOverride(log: Pick<AccessLog, 'metadata'>): boolean {
+  const meta = (log.metadata || {}) as AccessLogPresentationMetadata;
+  if (meta.occupied_unit_override === true) return true;
+  return Boolean(meta.tenant_unlock_override?.reason || meta.tenant_unlock_override?.reason_label);
+}
+
+/** Human action label. Pass a full log for context-aware labels (Manually Locked, Unlocked at site). */
+export function formatAccessAction(actionOrLog: string | AccessLog): string {
+  if (typeof actionOrLog !== 'string') {
+    const log = actionOrLog;
+    if (log.action === 'remote_access_granted') return 'Remote Access Granted';
+    if (isCorrelatedRemoteUnlock(log)) return 'Unlocked at site';
+    if (isManualLockEvent(log)) return 'Manually Locked';
+    if (ACTION_LABELS[log.action]) return ACTION_LABELS[log.action];
+    return log.action.replace(/_/g, ' ').replace(/\b\w/g, (char) => char.toUpperCase());
   }
-  return method.replace(/_/g, ' ').replace(/\b\w/g, (char) => char.toUpperCase());
+
+  if (ACTION_LABELS[actionOrLog]) {
+    return ACTION_LABELS[actionOrLog];
+  }
+  return actionOrLog.replace(/_/g, ' ').replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
+export function formatAccessMethod(methodOrLog: string | AccessLog): string {
+  if (typeof methodOrLog !== 'string') {
+    if (isManualLockEvent(methodOrLog)) return 'Manual lock';
+    if (isCorrelatedRemoteUnlock(methodOrLog)) return 'At site';
+    return formatAccessMethod(methodOrLog.method);
+  }
+  if (METHOD_LABELS[methodOrLog]) {
+    return METHOD_LABELS[methodOrLog];
+  }
+  return methodOrLog.replace(/_/g, ' ').replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
+/** Tailwind text color class for the action column. */
+export function getAccessActionToneClass(log: Pick<AccessLog, 'action' | 'method' | 'success' | 'metadata'>): string {
+  if (!log.success) return 'text-red-600 dark:text-red-400';
+  if (isManualLockEvent(log) || log.action === 'lock') return 'text-red-600 dark:text-red-400';
+  if (
+    log.action === 'unlock'
+    || log.action === 'access_granted'
+    || log.action === 'remote_access_granted'
+    || log.action === 'door_open'
+    || log.action === 'gate_open'
+  ) {
+    return 'text-green-600 dark:text-green-400';
+  }
+  return 'text-gray-600 dark:text-gray-400';
 }
 
 export function formatDenialReason(reason: string): string {
@@ -304,6 +355,14 @@ export function getAccessUserDisplay(log: AccessLog): { primary: string; seconda
     };
   }
 
+  // Correlated remote unlock keeps the initiator even though method is local_device.
+  if (meta.initiated_by?.name && (isCorrelatedRemoteUnlock(log) || log.action === 'remote_access_granted')) {
+    return {
+      primary: trimPersonDisplayText(meta.initiated_by.name) || '—',
+      secondary: meta.user?.email || log.user_email || null,
+    };
+  }
+
   if (log.method === 'local_device' || log.method === 'automatic' || log.method === 'keypad') {
     return { primary: '—', secondary: null };
   }
@@ -419,8 +478,8 @@ export function buildAccessLogDetailItems(
 
   if (!omitRow) {
     items.push(
-      { label: 'Action', value: formatAccessAction(log.action) },
-      { label: 'Method', value: formatAccessMethod(log.method) },
+      { label: 'Action', value: formatAccessAction(log) },
+      { label: 'Method', value: formatAccessMethod(log) },
       { label: 'Status', value: getAccessStatusDisplay(log).label },
       {
         label: 'User',

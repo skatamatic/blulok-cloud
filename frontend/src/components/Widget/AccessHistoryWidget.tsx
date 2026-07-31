@@ -17,10 +17,13 @@ import {
   formatAccessAction,
   formatAccessHistoryDeviceLabel,
   formatAccessHistoryUnitLabel,
+  getAccessActionToneClass,
   getAccessFailureDetail,
   getAccessLocationDisplay,
   getAccessLogMetadata,
   getAccessUserDisplay,
+  hasOccupiedUnlockOverride,
+  isManualLockEvent,
 } from '@/utils/access-history-display.utils';
 import { formatRelativeWithExact } from '@/utils/datetime.utils';
 
@@ -121,23 +124,18 @@ export const AccessHistoryWidget: React.FC<AccessHistoryWidgetProps> = ({
     formatRelativeWithExact(dateString, { absoluteAfterHours: 24, absoluteStyle: 'datetime' });
 
   const getActionIcon = (log: AccessLog) => {
-    const { action, success } = log;
-    
-    if (!success) {
-      return <ExclamationTriangleIcon className="h-4 w-4 text-red-600" />;
+    const tone = getAccessActionToneClass(log);
+    if (!log.success || hasOccupiedUnlockOverride(log)) {
+      return <ExclamationTriangleIcon className={`h-4 w-4 ${tone}`} />;
     }
-    
-    if (action === 'unlock' || action === 'access_granted' || action === 'door_open' || action === 'gate_open') {
-      return <LockOpenIcon className="h-4 w-4 text-green-600" />;
-    } else if (action === 'lock' || action === 'door_close' || action === 'gate_close') {
-      return <LockClosedIcon className="h-4 w-4 text-blue-600" />;
-    } else {
-      return <LockOpenIcon className="h-4 w-4 text-gray-600" />;
+    if (isManualLockEvent(log) || log.action === 'lock' || log.action === 'door_close' || log.action === 'gate_close') {
+      return <LockClosedIcon className={`h-4 w-4 ${tone}`} />;
     }
+    return <LockOpenIcon className={`h-4 w-4 ${tone}`} />;
   };
 
   const getActionText = (log: AccessLog): string => {
-    const label = formatAccessAction(log.action);
+    const label = formatAccessAction(log);
     if (!log.success) {
       const failure = getAccessFailureDetail(log);
       return failure ? `${label} — ${failure}` : label;
@@ -147,23 +145,11 @@ export const AccessHistoryWidget: React.FC<AccessHistoryWidgetProps> = ({
 
   const getActionSummary = (log: AccessLog): { primary: string; title: string } => {
     const title = getActionText(log);
-    const primary = formatAccessAction(log.action);
+    const primary = formatAccessAction(log);
     return { primary, title };
   };
 
-  const getActionColor = (log: AccessLog): string => {
-    const { action, success } = log;
-    
-    if (!success) return 'text-red-600';
-    
-    if (action === 'unlock' || action === 'access_granted' || action === 'door_open' || action === 'gate_open') {
-      return 'text-green-600';
-    } else if (action === 'lock' || action === 'door_close' || action === 'gate_close') {
-      return 'text-blue-600';
-    } else {
-      return 'text-gray-600';
-    }
-  };
+  const getActionColor = (log: AccessLog): string => getAccessActionToneClass(log);
 
   const getUserDisplayName = (log: AccessLog): string => getAccessUserDisplay(log).primary;
 

@@ -21,6 +21,7 @@ function emptyApplyResult() {
     changesApplied: 0,
     changesFailed: 0,
     errors: [] as string[],
+    errorDetails: [] as [],
     appliedChangeIds: [] as string[],
     failedChangeIds: [] as string[],
     accessChanges: {

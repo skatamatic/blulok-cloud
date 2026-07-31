@@ -160,7 +160,7 @@ const transformAccessLogToActivity = (log: AccessLog): ActivityLogEntry => {
       message = `Manual override on ${unitNumber} by ${userName}`;
       break;
     default:
-      message = `${formatAccessAction(log.action)} on ${unitNumber}`;
+      message = `${formatAccessAction(log)} on ${unitNumber}`;
       if (failureDetail) {
         message += ` — ${failureDetail}`;
       }

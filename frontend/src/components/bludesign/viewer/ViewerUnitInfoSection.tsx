@@ -339,7 +339,7 @@ const AccessLogRow: React.FC<{ log: AccessLogEntry; index: number }> = ({ log, i
             succeeded ? 'bg-emerald-500' : 'bg-rose-500'
           }`}
         />
-        <span className="text-gray-800 dark:text-gray-200">{formatAccessAction(accessLog.action ?? 'event')}</span>
+        <span className="text-gray-800 dark:text-gray-200">{formatAccessAction(accessLog)}</span>
         <span className="truncate">{userLabel !== '—' ? userLabel : formatAccessMethod(accessLog.method ?? '')}</span>
       </span>
       <span className="shrink-0 tabular-nums" title={relativeTs.title}>

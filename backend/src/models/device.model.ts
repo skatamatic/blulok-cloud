@@ -619,6 +619,35 @@ export class DeviceModel {
     return this.deserializeAccessControlRow(device as Record<string, unknown>);
   }
 
+  /**
+   * Resolve an access-control device by hardware access_id / serial within a facility.
+   * When multiple relays share a serial, pass relayChannel (or expect exactly one match).
+   */
+  async findAccessControlBySerialInFacility(
+    facilityId: string,
+    deviceSerial: string,
+    relayChannel?: number,
+  ): Promise<(AccessControlDevice & { facility_id: string }) | null> {
+    const knex = this.db.connection;
+    const serial = deviceSerial.trim();
+    if (!serial) return null;
+
+    let query = knex('access_control_devices')
+      .select('access_control_devices.*', 'gateways.facility_id')
+      .join('gateways', 'access_control_devices.gateway_id', 'gateways.id')
+      .where('gateways.facility_id', facilityId)
+      .where('access_control_devices.device_serial', serial);
+
+    if (relayChannel != null && Number.isFinite(relayChannel)) {
+      query = query.where('access_control_devices.relay_channel', relayChannel);
+    }
+
+    const rows = await query;
+    if (!Array.isArray(rows) || rows.length !== 1) return null;
+    const row = rows[0] as Record<string, unknown>;
+    return this.deserializeAccessControlRow(row) as AccessControlDevice & { facility_id: string };
+  }
+
   async findAccessControlByRelayChannel(
     gatewayId: string,
     relayChannel: number

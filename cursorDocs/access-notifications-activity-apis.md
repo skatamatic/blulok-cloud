@@ -419,32 +419,45 @@ Access history reads from `activity_logs` and exposes a unified API at `GET /api
 
 | Stream | `activity_type` | Typical API `action` | Meaning |
 |--------|-------------------|----------------------|---------|
-| Gateway access attempts | `access_attempt` | `access_granted`, `unlock_attempt`, `lock_attempt` | Credential/policy evaluation at the lock (includes denials with `denial_reason`) |
+| Gateway access attempts | `access_attempt` | `access_granted`, `remote_access_granted`, `unlock_attempt`, `lock_attempt` | Credential/policy evaluation, or cloud remote unlock authorization |
 | Lock state sync | `lock`, `unlock` | `lock`, `unlock` | Physical state change reported by gateway |
 
 In-flight transitional states (`locking`, `unlocking`) are **not** included in access history list/export queries.
+
+### BluLok remote unlock (three Access History rows)
+
+| Step | When | API `action` | Method | User |
+|------|------|--------------|--------|------|
+| Outbound | Cloud issues unlock JWT | `remote_access_granted` | `admin_remote` / `remote_gateway` | Initiator |
+| Inbound | State sync unlock settles pending command | `unlock` | `local_device` + `metadata.correlated_remote` | Same initiator (`initiated_by`) |
+| Local re-lock | Later physical lock (no remote lock product) | `lock` | `local_device` | None (`—`) |
+
+UI labels: **Remote Access Granted**, **Unlocked at site**, **Manually Locked** (lock actions render red). Occupied-unit override sets `tenant_unlock_override` / `occupied_unit_override` and shows a warning indicator.
+
+Grant-like gateway `access-events` for a device with a **pending remote unlock** are skipped so history does not duplicate Mobile key “Access granted” rows.
 
 ### Method taxonomy (read layer)
 
 | Method | Meaning |
 |--------|---------|
 | `app`, `mobile_key`, `keypad`, `route_pass` | Preserved from gateway access-event ingestion |
-| `remote_gateway` | Cloud-issued lock/unlock command via gateway (tenant/app user) |
-| `admin_remote` | Cloud-issued lock/unlock command by admin/facility admin |
-| `local_device` | Physical state change with no known cloud initiator |
+| `remote_gateway` | Cloud-issued unlock authorization (tenant/app user) on `remote_access_granted` |
+| `admin_remote` | Cloud-issued unlock authorization by admin/facility admin |
+| `local_device` | Physical state change; may still carry `initiated_by` when `correlated_remote` |
 
 Legacy rows mapped as `automatic` are surfaced as `local_device`.
 
 ### Remote command attribution
 
-Cloud lock/unlock commands (`PUT /devices/blulok/:id/lock`, access-control equivalent) **always** pass the initiating user into `LockCommandService` (tenant override is additional metadata when a **non-occupant** unlocks an occupied unit). Occupants and key-share recipients unlock without override. When gateway state sync confirms the final lock/unlock via a **real status transition** matching the requested terminal state, the activity row is stamped with:
+Cloud BluLok unlock commands (`PUT /devices/blulok/:id/lock` → unlocked) **always** pass the initiating user into `LockCommandService` and write an outbound `remote_access_granted` activity immediately. Tenant override is additional metadata when a **non-occupant** unlocks an occupied unit. Occupants and key-share recipients unlock without override.
 
-- `actor_type: user`, initiator name/id
-- `metadata.method: remote_gateway` or `admin_remote`
-- `metadata.initiated_remotely: true`
-- Optional `metadata.tenant_unlock_override` when a staff occupied-unit reason was supplied
+When gateway state sync confirms unlock via a **real status transition** matching the pending command:
 
-Pending attribution is held in-process until settlement or TTL (facility hardware-ack timeout, or **60s** one-shot attribution TTL). Same-state telemetry re-reports do **not** success-consume pending attribution. Failed remote commands (gateway reject, send error, timeout, settlement mismatch, superseded by a newer command) write `access_attempt` rows with `unlock_attempt` / `lock_attempt`, `success: false`, and a human-readable `reason`.
+- `activity_type: unlock`, `method: local_device`, `correlated_remote: true`
+- `actor_type: user`, initiator name/id via `initiated_by`
+- Optional `tenant_unlock_override` / `occupied_unit_override` when a staff occupied-unit reason was supplied
+
+Pending attribution is held in-process until settlement or TTL (facility hardware-ack timeout, or **60s** one-shot attribution TTL). Same-state telemetry re-reports do **not** success-consume pending attribution. Failed remote commands (gateway reject, send error, timeout, settlement mismatch, superseded by a newer command) write `access_attempt` rows with `unlock_attempt` / `lock_attempt`, `success: false`, and a human-readable `reason` (outbound grant may already exist).
 
 On-ground staff unlocks use a separate short-lived intent (`POST …/occupied-unit-override`); see [`app-occupied-unit-override.md`](./app-occupied-unit-override.md).
 

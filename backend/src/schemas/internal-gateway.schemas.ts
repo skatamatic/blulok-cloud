@@ -4,6 +4,7 @@ import {
   ACCESS_EVENT_ACTIONS,
   ACCESS_EVENT_ACTOR_ROLES,
   ACCESS_EVENT_DENIAL_REASONS,
+  ACCESS_EVENT_DEVICE_TYPES,
   ACCESS_EVENT_METHODS,
 } from '@/services/access/access-event.types';
 
@@ -26,6 +27,8 @@ export const gatewayAccessEventSchema = Joi.object({
   facility_id: Joi.string().optional(),
   unit_id: Joi.string().optional(),
   device_id: Joi.string().required(),
+  device_type: Joi.string().valid(...ACCESS_EVENT_DEVICE_TYPES).optional(),
+  relay_channel: Joi.number().integer().min(1).max(8).optional(),
   gateway_id: Joi.string().optional(),
   action: Joi.string().valid(...ACCESS_EVENT_ACTIONS).required(),
   method: Joi.string().valid(...ACCESS_EVENT_METHODS).required(),

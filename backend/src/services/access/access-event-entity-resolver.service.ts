@@ -13,6 +13,7 @@ import {
 import {
   AccessEventActor,
   AccessEventActorRole,
+  AccessEventDeviceType,
   AccessEventPayload,
   ACCESS_EVENT_ACTOR_ROLES,
 } from '@/services/access/access-event.types';
@@ -27,6 +28,8 @@ type ResolvedDevice = {
 /**
  * Enrich gateway access-event payloads with cloud truth for user, device, and unit.
  * Ignores placeholder name/role/unit fields when IDs are present.
+ * `device_id` is expected to be the access device hardware serial / access_id / lock_id;
+ * cloud rewrites to the device row PK when resolved.
  */
 export class AccessEventEntityResolverService {
   private readonly deviceModel = new DeviceModel();
@@ -35,7 +38,7 @@ export class AccessEventEntityResolverService {
   public async resolve(
     event: AccessEventPayload,
     facilityId: string,
-  ): Promise<AccessEventPayload> {
+  ): Promise<{ event: AccessEventPayload; deviceType?: 'blulok' | 'access_control' }> {
     const device = await this.resolveDevice(event, facilityId);
     const unitId = await this.resolveUnitId(event, facilityId, device);
     const actor = await this.resolveActor(event.actor);
@@ -51,6 +54,8 @@ export class AccessEventEntityResolverService {
       const meta = { ...(event.metadata || {}) };
       if (device && device.id !== event.device_id) {
         meta.resolved_device_id = device.id;
+        meta.hardware_device_id = event.device_id;
+        // Back-compat for older consumers of gateway_device_id.
         meta.gateway_device_id = event.device_id;
       }
       if (unitId && unitId !== event.unit_id) {
@@ -61,7 +66,7 @@ export class AccessEventEntityResolverService {
       }
     }
 
-    return next;
+    return { event: next, deviceType: device?.deviceType };
   }
 
   private async resolveDevice(
@@ -72,15 +77,29 @@ export class AccessEventEntityResolverService {
       coerceOptionalAccessId(event.device_id),
       coerceOptionalAccessId(readMetadataString(event.metadata, 'hardware_lock_id')),
       coerceOptionalAccessId(readMetadataString(event.metadata, 'lock_id')),
+      coerceOptionalAccessId(readMetadataString(event.metadata, 'access_id')),
+      coerceOptionalAccessId(readMetadataString(event.metadata, 'hardware_access_id')),
     ].filter((id, index, arr): id is string => Boolean(id) && arr.indexOf(id) === index);
 
+    const relayChannel =
+      (typeof event.relay_channel === 'number' && Number.isFinite(event.relay_channel)
+        ? event.relay_channel
+        : undefined)
+      ?? readMetadataNumber(event.metadata, 'relay_channel');
+
+    const preferAc = event.device_type === 'access_control';
+
     for (const candidate of candidates) {
-      const resolved = await this.lookupDeviceInFacility(candidate, facilityId);
+      const resolved = preferAc
+        ? await this.lookupAccessControlInFacility(candidate, facilityId, relayChannel)
+          ?? await this.lookupBluLokInFacility(candidate, facilityId)
+        : await this.lookupBluLokInFacility(candidate, facilityId)
+          ?? await this.lookupAccessControlInFacility(candidate, facilityId, relayChannel);
       if (resolved) return resolved;
     }
 
     const lockNumber = readMetadataNumber(event.metadata, 'lock_number');
-    if (lockNumber != null) {
+    if (lockNumber != null && event.device_type !== 'access_control') {
       const byNumber = await this.findBluLokByLockNumber(facilityId, lockNumber);
       if (byNumber) return byNumber;
     }
@@ -88,7 +107,7 @@ export class AccessEventEntityResolverService {
     return null;
   }
 
-  private async lookupDeviceInFacility(
+  private async lookupBluLokInFacility(
     deviceKey: string,
     facilityId: string,
   ): Promise<ResolvedDevice | null> {
@@ -115,12 +134,34 @@ export class AccessEventEntityResolverService {
       };
     }
 
+    return null;
+  }
+
+  private async lookupAccessControlInFacility(
+    deviceKey: string,
+    facilityId: string,
+    relayChannel?: number,
+  ): Promise<ResolvedDevice | null> {
     const ac = await this.deviceModel.findAccessControlDeviceWithGateway(deviceKey);
     if (ac) {
       if (ac.facility_id && ac.facility_id !== facilityId) return null;
       return {
         id: ac.id,
         facilityId: ac.facility_id ?? null,
+        unitId: null,
+        deviceType: 'access_control',
+      };
+    }
+
+    const acBySerial = await this.deviceModel.findAccessControlBySerialInFacility(
+      facilityId,
+      deviceKey,
+      relayChannel,
+    );
+    if (acBySerial) {
+      return {
+        id: acBySerial.id,
+        facilityId: acBySerial.facility_id ?? facilityId,
         unitId: null,
         deviceType: 'access_control',
       };
@@ -232,4 +273,10 @@ export class AccessEventEntityResolverService {
     }
     return undefined;
   }
+}
+
+export function coerceAccessEventDeviceType(
+  value: unknown,
+): AccessEventDeviceType | undefined {
+  return value === 'blulok' || value === 'access_control' ? value : undefined;
 }

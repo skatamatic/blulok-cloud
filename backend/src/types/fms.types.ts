@@ -202,11 +202,24 @@ export interface FMSSyncResult {
   requiresReview: boolean;
 }
 
+/** Structured failure from applyChanges for user-facing summaries. */
+export interface FMSApplyErrorDetail {
+  changeId: string;
+  changeType: FMSChangeType;
+  entityType: 'tenant' | 'unit';
+  externalId: string;
+  /** Human label (unit number, email, name) — prefer over externalId in UI. */
+  entityLabel: string;
+  /** Underlying Error.message only (no change_type / id wrapper). */
+  message: string;
+}
+
 export interface FMSChangeApplicationResult {
   success: boolean;
   changesApplied: number;
   changesFailed: number;
   errors: string[];
+  errorDetails: FMSApplyErrorDetail[];
   appliedChangeIds: string[];
   failedChangeIds: string[];
   accessChanges: {

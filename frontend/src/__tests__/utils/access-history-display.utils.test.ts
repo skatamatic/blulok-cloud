@@ -245,6 +245,43 @@ describe('access-history-display.utils', () => {
     expect(getAccessFailureDetail(denied)).toBe('Out of schedule window');
   });
 
+  it('labels remote unlock cycle actions and shows initiator on correlated site unlock', () => {
+    const grant: AccessLog = {
+      ...baseLog,
+      action: 'remote_access_granted',
+      method: 'admin_remote',
+      metadata: {
+        initiated_by: { id: 'fm-1', name: 'Facility Manager', navigation_url: '/users/fm-1/details' },
+      },
+    };
+    const siteUnlock: AccessLog = {
+      ...baseLog,
+      action: 'unlock',
+      method: 'local_device',
+      user_id: 'fm-1',
+      user_name: 'Facility Manager',
+      metadata: {
+        correlated_remote: true,
+        initiated_by: { id: 'fm-1', name: 'Facility Manager', navigation_url: '/users/fm-1/details' },
+      },
+    };
+    const manualLock: AccessLog = {
+      ...baseLog,
+      action: 'lock',
+      method: 'local_device',
+      user_id: undefined,
+      user_name: undefined,
+      metadata: {},
+    };
+
+    expect(formatAccessAction(grant)).toBe('Remote Access Granted');
+    expect(formatAccessAction(siteUnlock)).toBe('Unlocked at site');
+    expect(formatAccessAction(manualLock)).toBe('Manually Locked');
+    expect(formatAccessMethod(manualLock)).toBe('Manual lock');
+    expect(getAccessUserDisplay(siteUnlock).primary).toBe('Facility Manager');
+    expect(getAccessUserDisplay(manualLock).primary).toBe('—');
+  });
+
   it('hides facility in location primary when facility scoped', () => {
     const scoped = getAccessLocationDisplay(baseLog, { hideFacility: true });
     expect(scoped.primary).toBe('Unit A-101');

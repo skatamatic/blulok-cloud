@@ -480,10 +480,68 @@ describe('LockCommandService', () => {
       role: 'facility_admin',
     });
 
+    expect(mockLogActivity).toHaveBeenCalledWith(
+      expect.objectContaining({
+        activityType: 'access_attempt',
+        metadata: expect.objectContaining({ action: 'remote_access_granted' }),
+      }),
+    );
+    mockLogActivity.mockClear();
+
     await jest.advanceTimersByTimeAsync(10_000);
 
     expect(mockNotifyRemoteLockCommandFailed).not.toHaveBeenCalled();
     expect(mockLogActivity).not.toHaveBeenCalled();
+  });
+
+  it('logs Remote Access Granted when BluLok unlock is issued with an initiator', async () => {
+    knexInvocation = 0;
+    mockKnex.mockImplementation((table: string) => {
+      knexInvocation += 1;
+      if (table === 'facilities') {
+        return {
+          where: jest.fn().mockReturnThis(),
+          select: jest.fn().mockReturnThis(),
+          first: jest.fn().mockResolvedValue({ lock_command_timeout_sec: 30 }),
+        };
+      }
+      if (knexInvocation === 1 && table === 'blulok_devices') {
+        return buildJoinFirst({
+          id: 'dev-1',
+          lock_status: 'locked',
+          supports_remote_lock: true,
+          gateway_id: 'gw-1',
+          facility_id: 'fac-1',
+          unit_id: 'unit-1',
+        });
+      }
+      return buildJoinFirst(null);
+    });
+    sendLockCommand.mockResolvedValueOnce({ success: true });
+
+    const svc = LockCommandService.getInstance();
+    await svc.issueLockCommand('dev-1', 'unlocked', {
+      userId: 'user-1',
+      userName: 'Facility Manager',
+      role: 'facility_admin',
+    });
+
+    expect(mockLogActivity).toHaveBeenCalledWith(
+      expect.objectContaining({
+        activityType: 'access_attempt',
+        title: 'Remote Access Granted',
+        actorId: 'user-1',
+        actorName: 'Facility Manager',
+        unitId: 'unit-1',
+        deviceId: 'dev-1',
+        metadata: expect.objectContaining({
+          action: 'remote_access_granted',
+          method: 'admin_remote',
+          initiated_remotely: true,
+          device_type: 'blulok',
+        }),
+      }),
+    );
   });
 
   it('cancelPendingCommandsForFacility clears in-memory timeouts before facility delete', async () => {

@@ -106,7 +106,7 @@ describe('FMS routes — critical paths', () => {
       expect(response.body.changes).toHaveLength(1);
       const ch = response.body.changes[0];
       expect(Array.isArray(ch.validation_errors)).toBe(true);
-      expect(ch.validation_errors.some((e: string) => /email/i.test(e))).toBe(true);
+      expect(ch.validation_errors.some((e: string) => /email/i.test(e) && /phone/i.test(e))).toBe(true);
       expect(ch.validation_errors.some((e: string) => /first name/i.test(e))).toBe(true);
     });
   });

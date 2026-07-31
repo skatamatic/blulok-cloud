@@ -48,6 +48,10 @@ export const ACCESS_EVENT_DENIAL_REASONS = [
 
 export type AccessEventDenialReason = (typeof ACCESS_EVENT_DENIAL_REASONS)[number];
 
+export const ACCESS_EVENT_DEVICE_TYPES = ['blulok', 'access_control'] as const;
+
+export type AccessEventDeviceType = (typeof ACCESS_EVENT_DEVICE_TYPES)[number];
+
 export interface AccessEventActor {
   user_id?: string;
   role: AccessEventActorRole;
@@ -77,7 +81,12 @@ export interface AccessEventPayload {
   occurred_at: string;
   facility_id: string;
   unit_id?: string;
+  /** Access device hardware serial / access_id / lock_id (cloud rewrites to device PK when resolved). */
   device_id: string;
+  /** Optional hint: steers AC vs BluLok lookup order. Not gate/door/elevator. */
+  device_type?: AccessEventDeviceType;
+  /** AC relay channel when serial is shared across relays. */
+  relay_channel?: number;
   gateway_id?: string;
   action: AccessEventAction;
   method: AccessEventMethod;

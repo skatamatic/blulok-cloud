@@ -24,6 +24,7 @@ function emptyApplyResult() {
     changesApplied: 0,
     changesFailed: 0,
     errors: [] as string[],
+    errorDetails: [] as [],
     accessChanges: {
       usersCreated: [] as string[],
       usersDeactivated: [] as string[],

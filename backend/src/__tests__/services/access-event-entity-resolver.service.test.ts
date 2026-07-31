@@ -14,6 +14,7 @@ describe('AccessEventEntityResolverService', () => {
   let findBluLokDeviceById: jest.Mock;
   let findBluLokDeviceByIdOrSerial: jest.Mock;
   let findAccessControlDeviceWithGateway: jest.Mock;
+  let findAccessControlBySerialInFacility: jest.Mock;
   let findBluLokDevices: jest.Mock;
   let findUnitById: jest.Mock;
 
@@ -44,6 +45,7 @@ describe('AccessEventEntityResolverService', () => {
     findBluLokDeviceById = jest.fn().mockResolvedValue(null);
     findBluLokDeviceByIdOrSerial = jest.fn().mockResolvedValue(null);
     findAccessControlDeviceWithGateway = jest.fn().mockResolvedValue(null);
+    findAccessControlBySerialInFacility = jest.fn().mockResolvedValue(null);
     findBluLokDevices = jest.fn().mockResolvedValue([]);
     findUnitById = jest.fn().mockResolvedValue(null);
 
@@ -51,6 +53,7 @@ describe('AccessEventEntityResolverService', () => {
       findBluLokDeviceById,
       findBluLokDeviceByIdOrSerial,
       findAccessControlDeviceWithGateway,
+      findAccessControlBySerialInFacility,
       findBluLokDevices,
     }));
     (UnitModel as unknown as jest.Mock).mockImplementation(() => ({
@@ -84,8 +87,9 @@ describe('AccessEventEntityResolverService', () => {
     });
     findUnitById.mockResolvedValue({ id: 'unit-1', facility_id: facilityId });
 
-    const resolved = await resolver.resolve(baseEvent(), facilityId);
+    const { event: resolved, deviceType } = await resolver.resolve(baseEvent(), facilityId);
 
+    expect(deviceType).toBe('blulok');
     expect(resolved.actor).toEqual({
       user_id: 'user-1',
       role: 'tenant',
@@ -95,6 +99,7 @@ describe('AccessEventEntityResolverService', () => {
     expect(resolved.device_id).toBe('cloud-device-1');
     expect(resolved.unit_id).toBe('unit-1');
     expect(resolved.metadata?.resolved_device_id).toBe('cloud-device-1');
+    expect(resolved.metadata?.hardware_device_id).toBe('hw-lock-1');
     expect(resolved.metadata?.gateway_device_id).toBe('hw-lock-1');
   });
 
@@ -104,7 +109,7 @@ describe('AccessEventEntityResolverService', () => {
       facility_id: facilityId,
     });
 
-    const resolved = await resolver.resolve(
+    const { event: resolved, deviceType } = await resolver.resolve(
       {
         ...baseEvent(),
         device_id: 'ac-1',
@@ -113,8 +118,80 @@ describe('AccessEventEntityResolverService', () => {
       facilityId,
     );
 
+    expect(deviceType).toBe('access_control');
     expect(resolved.device_id).toBe('ac-1');
     expect(resolved.actor?.name).toBe('Casey Jones');
+  });
+
+  it('resolves access-control devices by hardware serial within the facility', async () => {
+    findAccessControlBySerialInFacility.mockResolvedValue({
+      id: 'ac-serial-1',
+      facility_id: facilityId,
+      device_serial: 'KP-FRONT',
+    });
+
+    const { event: resolved, deviceType } = await resolver.resolve(
+      {
+        ...baseEvent(),
+        device_id: 'KP-FRONT',
+        metadata: { relay_channel: 2 },
+      },
+      facilityId,
+    );
+
+    expect(findAccessControlBySerialInFacility).toHaveBeenCalledWith(facilityId, 'KP-FRONT', 2);
+    expect(deviceType).toBe('access_control');
+    expect(resolved.device_id).toBe('ac-serial-1');
+    expect(resolved.metadata?.hardware_device_id).toBe('KP-FRONT');
+  });
+
+  it('resolves Keypad serial to cloud PK using device_type hint and top-level relay_channel', async () => {
+    const serial = 'f759bd50-a70e-5bba-81c5-25e9a7c695c1';
+    findAccessControlBySerialInFacility.mockResolvedValue({
+      id: 'cloud-ac-keypad-1',
+      facility_id: facilityId,
+      device_serial: serial,
+      relay_channel: 1,
+    });
+
+    const { event: resolved, deviceType } = await resolver.resolve(
+      {
+        ...baseEvent(),
+        device_id: serial,
+        device_type: 'access_control',
+        relay_channel: 1,
+        action: 'keypad_attempt',
+        method: 'keypad',
+        metadata: {},
+      },
+      facilityId,
+    );
+
+    expect(findAccessControlBySerialInFacility).toHaveBeenCalledWith(facilityId, serial, 1);
+    expect(findBluLokDeviceById).not.toHaveBeenCalled();
+    expect(deviceType).toBe('access_control');
+    expect(resolved.device_id).toBe('cloud-ac-keypad-1');
+    expect(resolved.metadata?.hardware_device_id).toBe(serial);
+  });
+
+  it('tries access-control before BluLok when device_type hint is access_control', async () => {
+    findAccessControlDeviceWithGateway.mockResolvedValue({
+      id: 'ac-first',
+      facility_id: facilityId,
+    });
+
+    await resolver.resolve(
+      {
+        ...baseEvent(),
+        device_id: 'shared-looking-id',
+        device_type: 'access_control',
+        metadata: {},
+      },
+      facilityId,
+    );
+
+    expect(findAccessControlDeviceWithGateway).toHaveBeenCalled();
+    expect(findBluLokDeviceById).not.toHaveBeenCalled();
   });
 
   it('keeps user_id but drops placeholder name when user row is missing', async () => {
@@ -125,7 +202,7 @@ describe('AccessEventEntityResolverService', () => {
       unit_id: null,
     });
 
-    const resolved = await resolver.resolve(baseEvent(), facilityId);
+    const { event: resolved } = await resolver.resolve(baseEvent(), facilityId);
 
     expect(resolved.actor).toEqual({
       user_id: 'user-1',
@@ -146,7 +223,7 @@ describe('AccessEventEntityResolverService', () => {
     ]);
     findUnitById.mockResolvedValue({ id: 'unit-2', facility_id: facilityId });
 
-    const resolved = await resolver.resolve(baseEvent(), facilityId);
+    const { event: resolved } = await resolver.resolve(baseEvent(), facilityId);
 
     expect(resolved.device_id).toBe('cloud-device-2');
     expect(resolved.unit_id).toBe('unit-2');
@@ -160,7 +237,7 @@ describe('AccessEventEntityResolverService', () => {
       unit_id: null,
     });
 
-    const resolved = await resolver.resolve(baseEvent(), facilityId);
+    const { event: resolved } = await resolver.resolve(baseEvent(), facilityId);
 
     expect(resolved.unit_id).toBeUndefined();
     expect(findUnitById).not.toHaveBeenCalledWith('unknown-unit-id');

@@ -69,10 +69,10 @@ export function AccessLogExpandedDetails({
       <div className="flex flex-col gap-3 border-b border-gray-100 px-5 py-4 dark:border-gray-700/80 sm:flex-row sm:items-center sm:justify-between">
         <div className="min-w-0">
           <p className="text-sm font-semibold text-gray-900 dark:text-white">
-            {formatAccessAction(log.action)}
+            {formatAccessAction(log)}
           </p>
           <p className="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
-            {formatAccessMethod(log.method)}
+            {formatAccessMethod(log)}
             <span className="mx-1.5 text-gray-300 dark:text-gray-600" aria-hidden>
               ·
             </span>

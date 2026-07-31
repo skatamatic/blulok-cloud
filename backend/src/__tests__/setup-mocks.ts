@@ -921,6 +921,7 @@ jest.mock('../services/fms/fms.service', () => ({
         changesApplied: 0,
         changesFailed: 0,
         errors: [],
+        errorDetails: [],
         accessChanges: {
           usersCreated: [],
           usersDeactivated: [],

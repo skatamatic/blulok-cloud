@@ -25,6 +25,7 @@ import {
   isFmsWebhookPushLog,
 } from '@/utils/fmsSyncLogDisplay';
 import { isFMSSyncInProgressError } from '@/utils/fms-sync.utils';
+import { formatFmsApplyFailureToast } from '@/utils/fms-apply-error-display.utils';
 import { useWidgetSizeState } from '@/hooks/useWidgetSizeState';
 import { usePressWithoutDrag } from '@/hooks/usePressWithoutDrag';
 import { DashboardFacilityScopePlaceholder } from '@/components/Widget/DashboardFacilityScopePlaceholder';
@@ -452,29 +453,46 @@ export const SyncFMSWidget: React.FC<SyncFMSWidgetProps> = ({
           const changeIds = result.changesDetected.map(c => c.id);
           const applyResult = await fmsService.applyChanges(result.syncLogId, changeIds);
 
-          // Generate summary message
-          const details: string[] = [];
-          if (applyResult.accessChanges.usersCreated.length > 0) {
-            details.push(`${applyResult.accessChanges.usersCreated.length} user${applyResult.accessChanges.usersCreated.length !== 1 ? 's' : ''} created`);
-          }
-          if (applyResult.accessChanges.usersDeactivated.length > 0) {
-            details.push(`${applyResult.accessChanges.usersDeactivated.length} user${applyResult.accessChanges.usersDeactivated.length !== 1 ? 's' : ''} deactivated`);
-          }
-          if (applyResult.accessChanges.accessGranted.length > 0) {
-            details.push(`${applyResult.accessChanges.accessGranted.length} unit access granted`);
-          }
-          if (applyResult.accessChanges.accessRevoked.length > 0) {
-            details.push(`${applyResult.accessChanges.accessRevoked.length} unit access revoked`);
-          }
+          if (
+            applyResult.changesFailed > 0 ||
+            applyResult.errors.length > 0 ||
+            (applyResult.errorDetails?.length ?? 0) > 0
+          ) {
+            const failureToast = formatFmsApplyFailureToast(
+              applyResult,
+              changeIds.length,
+              result.changesDetected,
+            );
+            addToast({
+              type: failureToast.toastType,
+              title: failureToast.title,
+              message: failureToast.message,
+              duration: 12000,
+            });
+          } else {
+            const details: string[] = [];
+            if (applyResult.accessChanges.usersCreated.length > 0) {
+              details.push(`${applyResult.accessChanges.usersCreated.length} user${applyResult.accessChanges.usersCreated.length !== 1 ? 's' : ''} created`);
+            }
+            if (applyResult.accessChanges.usersDeactivated.length > 0) {
+              details.push(`${applyResult.accessChanges.usersDeactivated.length} user${applyResult.accessChanges.usersDeactivated.length !== 1 ? 's' : ''} deactivated`);
+            }
+            if (applyResult.accessChanges.accessGranted.length > 0) {
+              details.push(`${applyResult.accessChanges.accessGranted.length} unit access granted`);
+            }
+            if (applyResult.accessChanges.accessRevoked.length > 0) {
+              details.push(`${applyResult.accessChanges.accessRevoked.length} unit access revoked`);
+            }
 
-          addToast({
-            type: 'success',
-            title: 'Changes Applied Automatically',
-            message: details.length > 0 
-              ? details.join(', ')
-              : `${applyResult.changesApplied} changes applied successfully`,
-            duration: 6000,
-          });
+            addToast({
+              type: 'success',
+              title: 'Changes Applied Automatically',
+              message: details.length > 0
+                ? details.join(', ')
+                : `${applyResult.changesApplied} changes applied successfully`,
+              duration: 6000,
+            });
+          }
         }
         // Note: Review modal will be shown when user clicks the status bar, not automatically
       } else {

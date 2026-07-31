@@ -28,6 +28,7 @@ export interface LockCommandAttribution {
   facilityId: string;
   unitId?: string;
   requestedStatus: 'locked' | 'unlocked';
+  deviceType: 'blulok' | 'access_control';
   tenantUnlockOverride?: {
     reason: string;
     reasonLabel: string;
@@ -265,6 +266,22 @@ export class LockCommandService {
       deviceType: 'blulok',
       tenantUnlockOverride: options?.tenantUnlockOverride,
     });
+
+    // Outbound Access History row for remote unlock (physical unlock is logged on state settle).
+    if (requestedStatus === 'unlocked' && initiator) {
+      const pending = this.peekCommandAttribution(deviceId);
+      await this.logRemoteAccessGranted({
+        facilityId,
+        deviceId,
+        unitId,
+        gatewayId,
+        initiator,
+        method: resolveRemoteAccessMethod(initiator.role),
+        deviceType: 'blulok',
+        commandId: pending?.commandId,
+        tenantUnlockOverride: options?.tenantUnlockOverride,
+      });
+    }
 
     if (oneShot) {
       return {
@@ -569,6 +586,7 @@ export class LockCommandService {
       facilityId: pending.facilityId,
       unitId: pending.unitId,
       requestedStatus: pending.requestedStatus,
+      deviceType: pending.deviceType,
       tenantUnlockOverride: pending.tenantUnlockOverride,
     };
   }
@@ -665,6 +683,73 @@ export class LockCommandService {
     };
   }): void {
     void this.notifyLockCommandFailure(params);
+  }
+
+  /**
+   * Access History: "Remote Access Granted" when a BluLok remote unlock command is issued.
+   */
+  private async logRemoteAccessGranted(params: {
+    facilityId: string;
+    deviceId: string;
+    unitId?: string;
+    gatewayId: string;
+    initiator: LockCommandInitiator;
+    method: 'admin_remote' | 'remote_gateway';
+    deviceType: 'blulok' | 'access_control';
+    commandId?: string;
+    tenantUnlockOverride?: {
+      reason: string;
+      reasonLabel: string;
+      notes?: string;
+    };
+  }): Promise<void> {
+    try {
+      const { ActivityService } = await import('@/services/activity.service');
+      const override = params.tenantUnlockOverride;
+      await ActivityService.getInstance().logActivity({
+        entityType: 'device',
+        entityId: params.deviceId,
+        activityType: 'access_attempt',
+        title: 'Remote Access Granted',
+        description: `Remote unlock authorized for ${params.initiator.userName}`,
+        actorType: 'user',
+        actorId: params.initiator.userId,
+        actorName: params.initiator.userName,
+        result: 'success',
+        facilityId: params.facilityId,
+        unitId: params.unitId,
+        deviceId: params.deviceId,
+        metadata: {
+          action: 'remote_access_granted',
+          method: params.method,
+          initiated_remotely: true,
+          gateway_id: params.gatewayId,
+          remote_command_id: params.commandId ?? null,
+          initiated_by: {
+            id: params.initiator.userId,
+            name: params.initiator.userName,
+            role: params.initiator.role,
+          },
+          device_type: params.deviceType,
+          ...(override
+            ? {
+              occupied_unit_override: true,
+              tenant_unlock_override: {
+                reason: override.reason,
+                reason_label: override.reasonLabel,
+                notes: override.notes ?? null,
+              },
+            }
+            : {}),
+        },
+      });
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      logger.error('LockCommandService: failed to log remote access granted', {
+        deviceId: params.deviceId,
+        error: message,
+      });
+    }
   }
 
   private async logRemoteCommandSuccess(params: {

@@ -10,6 +10,18 @@ export type FmsTenantValidationPayload = {
   login_identifier?: string | null;
 };
 
+/** Sync detection: tenant needs email and/or phone for login. */
+export const FMS_TENANT_MISSING_CONTACT_SYNC =
+  'Missing both email and phone number';
+
+/** Webhook payloads: same rule, slightly different wording. */
+export const FMS_TENANT_MISSING_CONTACT_WEBHOOK =
+  'Tenant must have an email or a phone number — both are missing';
+
+/** Persisted identity / contact messages that should be rewritten for display. */
+const IDENTITY_ERROR_RE =
+  /username\s*\(email\)|missing or empty username|login identity \(email or phone|must have an email or(?: a)? phone|missing both email and phone|tenant must have an email/i;
+
 function readTenantField(
   tenant: FmsTenantValidationPayload,
   camel: 'email' | 'phone' | 'firstName' | 'lastName',
@@ -44,7 +56,7 @@ export function validateFmsTenantSyncFields(tenant: FmsTenantValidationPayload):
   const errors: string[] = [];
 
   if (!hasFmsTenantLoginIdentity(tenant)) {
-    errors.push('Missing or empty login identity (email or phone number)');
+    errors.push(FMS_TENANT_MISSING_CONTACT_SYNC);
   }
 
   const firstName = readTenantField(tenant, 'firstName', 'first_name');
@@ -65,7 +77,7 @@ export function validateFmsTenantWebhookFields(tenant: FmsTenantValidationPayloa
   const errors: string[] = [];
 
   if (!hasFmsTenantLoginIdentity(tenant)) {
-    errors.push('Tenant must have an email or phone number');
+    errors.push(FMS_TENANT_MISSING_CONTACT_WEBHOOK);
   }
 
   const firstName = readTenantField(tenant, 'firstName', 'first_name');
@@ -87,7 +99,103 @@ export function formatFmsTenantContactLabel(tenant: { email?: string | null; pho
   if (email) return email;
   const phone = tenant.phone?.trim();
   if (phone) return phone;
-  return 'no contact info';
+  return 'no email or phone';
+}
+
+function refreshImpactSummaryContactLabel(
+  impactSummary: string | undefined,
+  tenant: FmsTenantValidationPayload,
+): string | undefined {
+  if (!impactSummary) return impactSummary;
+  const contactLabel = formatFmsTenantContactLabel(tenant);
+  return impactSummary
+    .replace(/\(no email\)/gi, `(${contactLabel})`)
+    .replace(/\(no contact info\)/gi, `(${contactLabel})`);
+}
+
+/**
+ * Refresh persisted tenant change display fields for current email-or-phone rules.
+ * Rewrites stale "username (email)" / "(no email)" copy without requiring a re-sync.
+ * Does not clear unrelated validation errors (e.g. unmapped tenant).
+ */
+export function refreshPendingTenantChangeForDisplay<
+  T extends {
+    entity_type?: string;
+    is_valid?: boolean | number | null;
+    validation_errors?: string[] | null;
+    impact_summary?: string;
+    after_data?: unknown;
+    before_data?: unknown;
+  },
+>(change: T): T {
+  if (change.entity_type !== 'tenant') return change;
+
+  const tenantPayload = (change.after_data ?? change.before_data) as
+    | FmsTenantValidationPayload
+    | null
+    | undefined;
+  if (!tenantPayload || typeof tenantPayload !== 'object') return change;
+
+  const isInvalid = change.is_valid === false || change.is_valid === 0;
+  const existingErrors = Array.isArray(change.validation_errors) ? change.validation_errors : [];
+  const impactSummary = refreshImpactSummaryContactLabel(change.impact_summary, tenantPayload);
+
+  // Invalid row with no stored errors: derive full sync-field messages.
+  if (isInvalid && existingErrors.length === 0) {
+    const derived = deriveFmsTenantValidationErrors(tenantPayload);
+    if (derived.length === 0) {
+      return {
+        ...change,
+        is_valid: true,
+        validation_errors: [],
+        impact_summary: impactSummary ?? change.impact_summary,
+      };
+    }
+    return {
+      ...change,
+      validation_errors: derived,
+      impact_summary: impactSummary ?? change.impact_summary,
+    };
+  }
+
+  const hasIdentityErrors = existingErrors.some((e) => IDENTITY_ERROR_RE.test(e));
+  if (!hasIdentityErrors && impactSummary === change.impact_summary) {
+    return change;
+  }
+
+  let nextErrors = existingErrors;
+  if (hasIdentityErrors) {
+    const withoutIdentity = existingErrors.filter((e) => !IDENTITY_ERROR_RE.test(e));
+    const identityError = hasFmsTenantLoginIdentity(tenantPayload)
+      ? null
+      : FMS_TENANT_MISSING_CONTACT_SYNC;
+    nextErrors = identityError
+      ? [...withoutIdentity, identityError]
+      : withoutIdentity;
+    // Dedupe while preserving order
+    nextErrors = [...new Set(nextErrors)];
+  }
+
+  const nextValid =
+    isInvalid && nextErrors.length === 0 && hasFmsTenantLoginIdentity(tenantPayload)
+      ? true
+      : change.is_valid;
+
+  if (
+    nextValid === change.is_valid &&
+    impactSummary === change.impact_summary &&
+    nextErrors.length === existingErrors.length &&
+    nextErrors.every((e, i) => e === existingErrors[i])
+  ) {
+    return change;
+  }
+
+  return {
+    ...change,
+    is_valid: nextValid,
+    validation_errors: nextErrors,
+    impact_summary: impactSummary ?? change.impact_summary,
+  };
 }
 
 type FacilityUserLike = {

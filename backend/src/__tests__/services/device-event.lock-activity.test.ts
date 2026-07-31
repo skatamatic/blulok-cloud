@@ -124,6 +124,41 @@ describe('DeviceEventService logLockActivity', () => {
     );
   });
 
+  it('logs correlated remote unlock as local_device site unlock with initiator', async () => {
+    mockPeekCommandAttribution.mockReturnValue({
+      commandId: 'cmd-unlock',
+      initiator: { userId: 'user-1', userName: 'Admin', role: 'facility_admin' },
+      gatewayId: 'gw-1',
+      facilityId: 'fac-1',
+      requestedStatus: 'unlocked',
+    });
+    mockTryConsumeAttribution.mockReturnValue({
+      commandId: 'cmd-unlock',
+      initiator: { userId: 'user-1', userName: 'Admin', role: 'facility_admin' },
+      gatewayId: 'gw-1',
+      facilityId: 'fac-1',
+      requestedStatus: 'unlocked',
+    });
+
+    await emitLockChanged('unlocked', 'locked');
+
+    expect(mockLogActivity).toHaveBeenCalledWith(
+      expect.objectContaining({
+        activityType: 'unlock',
+        title: 'Unlocked at Site',
+        actorType: 'user',
+        actorId: 'user-1',
+        metadata: expect.objectContaining({
+          method: 'local_device',
+          correlated_remote: true,
+          remote_command_id: 'cmd-unlock',
+          initiated_by: expect.objectContaining({ id: 'user-1', name: 'Admin' }),
+        }),
+      }),
+    );
+    expect(mockLogActivity.mock.calls[0][0].metadata.initiated_remotely).toBeUndefined();
+  });
+
   it('records remote unlock failure when lock confirms but unlock was requested', async () => {
     mockPeekCommandAttribution.mockReturnValue({
       commandId: 'cmd-2',

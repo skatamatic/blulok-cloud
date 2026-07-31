@@ -11,6 +11,7 @@ export interface AccessLog {
   credential_id?: string;
   credential_type?: 'physical_key' | 'mobile_app' | 'card' | 'keypad';
   action: 'unlock' | 'lock' | 'access_granted' | 'access_denied' | 'unlock_attempt' | 'lock_attempt' | 'manual_override' | 'admin_remote_open' | 'keypad_attempt' |
+          'remote_access_granted' |
           'door_open' | 'door_close' | 'gate_open' | 'gate_close' | 'elevator_call' |
           'system_error' | 'timeout' | 'invalid_credential' | 'schedule_violation';
   method: 'app' | 'keypad' | 'card' | 'manual' | 'automatic' | 'physical_key' |

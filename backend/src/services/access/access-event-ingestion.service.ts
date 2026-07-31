@@ -6,8 +6,12 @@ import { ValidationError } from '@/middleware/error.middleware';
 import {
   AccessEventPayload,
   AccessEventDenialReason,
+  AccessEventDeviceType,
 } from '@/services/access/access-event.types';
-import { AccessEventEntityResolverService } from '@/services/access/access-event-entity-resolver.service';
+import {
+  AccessEventEntityResolverService,
+  coerceAccessEventDeviceType,
+} from '@/services/access/access-event-entity-resolver.service';
 import { DENIAL_REASON_MESSAGES } from '@/constants/access-history.constants';
 import { isOccupiedUnlockIntentAccessMethod } from '@/constants/occupied-unlock-intent.constants';
 import { coerceOptionalAccessId } from '@/utils/access-event-placeholder.utils';
@@ -37,16 +41,27 @@ export class AccessEventIngestionService {
     const writes: ActivityLogResponse[] = [];
     for (const event of events) {
       const log = await this.ingestOne(event, context);
-      writes.push(log);
+      if (log) writes.push(log);
     }
     return writes;
   }
 
-  public async ingestOne(event: AccessEventPayload, context: IngestContext): Promise<ActivityLogResponse> {
-    const resolved = await this.entityResolver.resolve(event, context.facilityId);
+  public async ingestOne(event: AccessEventPayload, context: IngestContext): Promise<ActivityLogResponse | null> {
+    const { event: resolved, deviceType: resolvedDeviceType } = await this.entityResolver.resolve(
+      event,
+      context.facilityId,
+    );
     await this.assertFacilityEntityConsistency(resolved, context.facilityId);
 
-    const deviceType = await this.resolveDeviceType(resolved.device_id);
+    if (await this.shouldSkipDuplicateGrantDuringRemoteUnlock(resolved)) {
+      return null;
+    }
+
+    const deviceType = await this.resolveStoredDeviceType(
+      resolvedDeviceType,
+      resolved.device_type ?? coerceAccessEventDeviceType(event.device_type),
+      resolved.device_id,
+    );
 
     const sanitizedMetadata: Record<string, unknown> = {
       ingestion_source: context.source,
@@ -207,7 +222,43 @@ export class AccessEventIngestionService {
     }
   }
 
-  private async resolveDeviceType(deviceId: string): Promise<'blulok' | 'access_control'> {
+  /**
+   * While a cloud remote unlock is pending, ignore grant-like access-events for that device
+   * so Access History does not get orphan "Access granted / Mobile key" rows.
+   */
+  private async shouldSkipDuplicateGrantDuringRemoteUnlock(
+    event: AccessEventPayload,
+  ): Promise<boolean> {
+    if (!event.success) return false;
+    const grantLikeAction =
+      event.action === 'access_granted' || event.action === 'admin_remote_open';
+    const grantLikeMethod = (
+      ['app', 'mobile_key', 'route_pass', 'admin_remote'] as const
+    ).includes(event.method as 'app' | 'mobile_key' | 'route_pass' | 'admin_remote');
+    if (!grantLikeAction && !grantLikeMethod) return false;
+
+    const { LockCommandService } = await import('@/services/lock-command.service');
+    const pending = LockCommandService.getInstance().peekCommandAttribution(event.device_id);
+    // Only BluLok remote unlock creates the duplicate Mobile key / Access granted noise.
+    // Access-control OPEN pending must not swallow legitimate access-events.
+    return Boolean(
+      pending
+      && pending.requestedStatus === 'unlocked'
+      && pending.deviceType === 'blulok',
+    );
+  }
+
+  /**
+   * Precedence: DB-resolved type → payload device_type hint → blulok default.
+   */
+  private async resolveStoredDeviceType(
+    resolvedDeviceType: AccessEventDeviceType | undefined,
+    payloadHint: AccessEventDeviceType | undefined,
+    deviceId: string,
+  ): Promise<AccessEventDeviceType> {
+    if (resolvedDeviceType) return resolvedDeviceType;
+    if (payloadHint) return payloadHint;
+
     const [blulokDevice, acDevice] = await Promise.all([
       this.deviceModel.findBluLokDeviceById(deviceId),
       this.deviceModel.findAccessControlDeviceWithGateway(deviceId),

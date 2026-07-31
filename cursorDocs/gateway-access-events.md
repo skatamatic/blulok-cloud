@@ -143,9 +143,11 @@ Use this when the **physical lock state** changes. Do **not** send `access-event
 ### How remote-command attribution works
 
 1. `PUT /devices/blulok/:id/lock` and `PUT /devices/access-control/:id/lock` always pass the authenticated user into `LockCommandService` as the **initiator** (Occupied Unit Override metadata only when a non-occupant unlocks an occupied BluLok unit — see [`app-occupied-unit-override.md`](./app-occupied-unit-override.md)).
-2. After the gateway accepts the JWT, cloud keeps a **pending attribution** entry keyed by device id (`commandId`, initiator, requested status, optional override).
-3. When `devices/state` reports a **real transition** to terminal `locked` / `unlocked` matching the request, cloud stamps Access History with that user (`remote_gateway` / `admin_remote`). Opposite state → `access_attempt` failure. Same-state re-reports do not success-consume pending attribution.
-4. Pending entries always have a TTL: facility `lock_command_timeout_sec`, or for one-shot (`0`) a fixed **60s** attribution TTL so stale pending cannot mis-attribute later local events.
+2. For BluLok **unlock**, cloud immediately writes Access History **`remote_access_granted`** (`admin_remote` / `remote_gateway`) for the initiator, then keeps a **pending attribution** entry keyed by device id (`commandId`, initiator, requested status, optional override).
+3. When `devices/state` reports a **real transition** to terminal `unlocked` matching the request, cloud writes **`unlock`** with `method: local_device`, `correlated_remote: true`, and the same `initiated_by`. Opposite state → `access_attempt` failure. Same-state re-reports do not success-consume pending attribution.
+4. Later physical re-lock is a separate **`lock` / `local_device`** row (**Manually Locked** in the UI) with no user.
+5. While a remote unlock is pending, grant-like gateway `access-events` for that device are **skipped** (avoids duplicate Mobile key “Access granted” rows).
+6. Pending entries always have a TTL: facility `lock_command_timeout_sec`, or for one-shot (`0`) a fixed **60s** attribution TTL so stale pending cannot mis-attribute later local events.
 
 **Deployment note:** pending attribution is **process-local memory** (same class as inbound gateway WebSocket affinity). On multi-instance Cloud Run without sticky routing, command and state sync can land on different instances and attribution is lost → event may show as `local_device`. Prefer max-instances=1 or session affinity until a shared store exists.
 
@@ -155,12 +157,14 @@ You may report in-flight states for live UI (`locking`, `unlocking` via repeated
 
 ### Remote commands (cloud → gateway JWT)
 
-When the cloud sends `LOCK` / `UNLOCK` JWTs:
+When the cloud sends BluLok `UNLOCK` JWTs:
 
-1. Gateway executes on hardware.
-2. Gateway reports **final** state through `devices/state`.
-3. Cloud attributes the activity to the initiating user (`remote_gateway` or `admin_remote`) when the pending command matches.
-4. If the final state **opposes** the requested command (e.g. unlock requested, lock observed), cloud logs an **`access_attempt` failure** (`unlock_attempt` / `lock_attempt`) — **do not** send a compensating `access-events` row for that mismatch.
+1. Cloud logs **Remote Access Granted** for the initiator.
+2. Gateway executes on hardware.
+3. Gateway reports **final** state through `devices/state`.
+4. Cloud logs **Unlocked at site** (`unlock` / `local_device` / `correlated_remote`) for the same initiator.
+5. If the final state **opposes** the requested command (e.g. unlock requested, lock observed), cloud logs an **`access_attempt` failure** (`unlock_attempt`) — **do not** send a compensating `access-events` row for that mismatch.
+6. Do **not** also POST `access-events` `access_granted` for the same cloud remote unlock (cloud suppresses those while pending anyway).
 
 ### Access control state updates
 
@@ -203,10 +207,12 @@ Events in one request are processed **sequentially**. There is no server-side de
 |-------|----------|------|-------|
 | `event_id` | **yes** | string | Unique idempotency key (stored in metadata; not deduped yet) |
 | `occurred_at` | **yes** | ISO-8601 UTC | When the event happened **on site**, not when the HTTP request was sent |
-| `device_id` | **yes** | string | **Cloud device row UUID** — see [Device identifiers](#device-identifiers) |
+| `device_id` | **yes** | string | **Access device hardware serial** (`access_id` / `lock_id`) — see [Device identifiers](#device-identifiers). Not the gateway id. Cloud rewrites to the device row UUID when resolved. |
+| `device_type` | no | enum | Hint: `blulok` \| `access_control` — steers lookup order (keypads/gates should send `access_control`) |
+| `relay_channel` | no | number 1–8 | Access control only; disambiguates when one serial maps to multiple relays (also accepted as `metadata.relay_channel`) |
 | `facility_id` | no | string | Must match scoped facility |
 | `unit_id` | no | string | Unit UUID when known; validated against facility |
-| `gateway_id` | no | string | Cloud `gateways.id` — recommended for tracing |
+| `gateway_id` | no | string | Cloud `gateways.id` — transport/tracing only; **not** the access device identity |
 | `correlation_id` | no | string | Tie to cloud command JWT / local trace |
 | `action` | **yes** | enum | See [Actions](#actions) |
 | `method` | **yes** | enum | See [Methods](#methods) |
@@ -288,10 +294,12 @@ Human-readable labels are applied in the read layer (`DENIAL_REASON_MESSAGES` in
 **Cloud resolution:** Gateway firmware may send placeholders (`role: "unknown"`, `name: "Unknown User"`, `app_device_id: "unknown-app-device"`, `metadata.unit_id: "unknown-unit-id"`). The cloud **ignores those display fields** and resolves:
 
 1. **User** — `actor.user_id` → `users` row (name + role)
-2. **Device** — `device_id`, then `metadata.hardware_lock_id` / `lock_id`, then unique `metadata.lock_number` in the facility → cloud `blulok_devices.id` or access-control id (also accepts hardware `device_serial`)
+2. **Device** — `device_id` is the access device’s hardware serial / `access_id` / `lock_id` (or a cloud UUID if ever sent). Cloud looks up `blulok_devices` / `access_control_devices` by **id or `device_serial`** in the facility. Optional `device_type` prefers AC-first vs BluLok-first. Optional `relay_channel` (top-level or `metadata.relay_channel`) disambiguates multi-relay AC serials. On success, activity stores the **cloud device PK** and keeps the original serial in `metadata.hardware_device_id` (and `gateway_device_id` for back-compat).
 3. **Unit** — non-placeholder `unit_id`, else the resolved device’s `unit_id`
 
-Persisted activity rows therefore store cloud IDs and resolved display names when lookup succeeds.
+Persisted activity rows therefore store cloud device IDs and resolved display names when lookup succeeds. Stored `metadata.device_type` precedence: DB match → payload `device_type` hint → default `blulok`.
+
+**Access History display:** Read-path enrichment joins both device tables on `activity_logs.device_id` **matching cloud PK or hardware serial** (legacy rows that stored serial before rewrite). Live join hits override stale ingest `metadata.device_type` — so a keypad serial / AC UUID that was mistakenly stored as `device_type: blulok` still renders the AC device name (instead of `Unassigned - ?????`).
 
 ### Keypad context
 
@@ -328,20 +336,26 @@ Used for support/debug correlation only; not shown verbatim to tenants.
 | API | Identifier to send | Example |
 |-----|-------------------|---------|
 | `devices/state` (locks) | Hardware **`lock_id`** (same as inventory `lock_id` / `device_serial`) | `ae4097b2-16b3-4b1d-b964-6021c7be6ea2` |
-| `devices/state` (access) | **`access_id`** + **`relay_channel`** (default 1) | `KP-7F2A-001::2` |
-| **`access-events`** | **Cloud row UUID** | `blulok_devices.id` or `access_control_devices.id` |
+| `devices/state` (access) | **`access_id`** + **`relay_channel`** (default 1) | Composite key in inventory: `KP-7F2A-001::2` |
+| **`access-events`** | Access device **hardware serial** / `access_id` / `lock_id` | `f759bd50-a70e-5bba-81c5-25e9a7c695c1` (+ optional `relay_channel`, `device_type`) |
 
-`access-events` joins activity rows to device names and unit links by **cloud primary key**. Prefer sending the cloud UUID. If the gateway only has the hardware `lock_id` / serial, send that as `device_id` (and/or `metadata.hardware_lock_id`) — cloud will resolve to the facility device row when possible. Unresolvable identifiers still ingest but **may lack** Access History enrichment until mapped.
+Firmware does **not** need cloud device UUIDs for access-events. Send the same hardware id the device uses in inventory:
 
-### Building `lock_id` → cloud `device_id` map
+- **Access control (keypad/gate/door):** `device_id` = `access_id` / hardware serial; set `device_type: "access_control"`; include `relay_channel` when the serial is shared across relays. Do **not** encode relay into `device_id` (`serial::1` is inventory/`devices/state` style only).
+- **BluLok lock:** `device_id` = `lock_id` / serial; optional `device_type: "blulok"`.
 
-Inventory sync keys devices by `lock_id` but the sync response today reports hardware identifiers in `entries[]`, not cloud UUIDs. Recommended approaches:
+Cloud resolves that serial to the facility device row and stores the cloud PK on the activity log. Unresolvable identifiers still ingest but may lack enrichment until the device is provisioned. Cross-facility resolved devices are rejected with **400** (`device_id does not belong to scoped facility`).
 
-1. **Access control:** `GET /internal/gateway/access-codes` returns `device_id` per relay — cache that map.
-2. **BluLok:** Maintain a local map as devices are commissioned. After auto-provision from inventory, resolve cloud IDs via your operator tooling or a one-time facility device export until an internal list endpoint exists.
-3. Always send the **same** `device_id` you will use for unit assignment and cloud APIs.
-
-Cross-facility `device_id` values are rejected with **400** (`device_id does not belong to scoped facility`).
+```json
+{
+  "device_id": "f759bd50-a70e-5bba-81c5-25e9a7c695c1",
+  "device_type": "access_control",
+  "relay_channel": 1,
+  "action": "keypad_attempt",
+  "method": "keypad",
+  "success": true
+}
+```
 
 ---
 
@@ -496,7 +510,9 @@ Access History shows **two rows**: grant (`access_granted` / unlock attempt succ
       "event_id": "evt-20260616-004",
       "occurred_at": "2026-06-16T23:23:00.000Z",
       "facility_id": "550e8400-e29b-41d4-a716-446655440011",
-      "device_id": "cloud-access-control-device-uuid",
+      "device_id": "KP-7F2A-001",
+      "device_type": "access_control",
+      "relay_channel": 1,
       "action": "admin_remote_open",
       "method": "admin_remote",
       "success": true,
@@ -528,7 +544,7 @@ User turns a thumbturn / motor completes lock — **only** state sync:
 }
 ```
 
-Access History shows **Lock** / **Local device** / **Success** with no user column.
+Access History shows **Manually Locked** / **Manual lock** / **Success** with no user column (red lock styling in the UI).
 
 ### 6 — Batch ingest
 
@@ -557,8 +573,10 @@ After ingestion, `AccessHistoryReadService` maps rows for the API:
 | `keypad_attempt` + failure | `unlock_attempt` | `keypad` | failed |
 | `keypad_attempt` + success | `keypad_attempt` | `keypad` | success |
 | `admin_remote_open` | `admin_remote_open` | `admin_remote` | per `success` |
-| State sync `lock` | `lock` | `local_device` or remote | success |
-| State sync `unlock` | `unlock` | `local_device` or remote | success |
+| Cloud BluLok unlock issued | `remote_access_granted` | `admin_remote` / `remote_gateway` | success |
+| State sync `lock` (local) | `lock` | `local_device` | success |
+| State sync `unlock` (correlated remote) | `unlock` | `local_device` (+ `correlated_remote`) | success |
+| State sync `unlock` (local / on-ground) | `unlock` | `local_device` or `app` | success |
 
 Presentation metadata includes facility, unit, device name (unit number when assigned, otherwise `Unassigned - {serial digits}`), initiator links, and `failure_summary` for denials.
 
@@ -567,7 +585,7 @@ Presentation metadata includes facility, unit, device name (unit number when ass
 ## Implementation checklist
 
 - [ ] Authenticate `/ws/gateway` with facility-scoped JWT before any PROXY calls.
-- [ ] Prefer cloud `device_id` on `access-events`; hardware `lock_id` / serial is accepted and resolved when unique in the facility.
+- [ ] Send access device hardware serial / `access_id` / `lock_id` as `device_id`; for keypads set `device_type: "access_control"` and `relay_channel` when needed.
 - [ ] Send **`devices/state`** for every terminal BluLok lock/unlock.
 - [ ] Send **`access-events`** for credential evaluation (grant/deny/keypad/admin open).
 - [ ] Always include `denial_reason` when `success: false`.

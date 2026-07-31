@@ -468,6 +468,8 @@ export class DeviceEventService extends EventEmitter {
     }
 
     const appliedAttribution = appliedRemoteAttribution;
+    const isCorrelatedRemoteUnlock =
+      Boolean(appliedAttribution) && activityType === 'unlock';
     const actorType = appliedAttribution || occupiedStateAttr ? 'user' : 'gateway';
     const actorId = appliedAttribution?.initiator.userId ?? occupiedStateAttr?.userId;
     const actorName =
@@ -476,25 +478,35 @@ export class DeviceEventService extends EventEmitter {
       ?? 'Gateway';
     const override =
       appliedAttribution?.tenantUnlockOverride ?? occupiedStateAttr?.override;
-    const description = appliedAttribution
+    const description = isCorrelatedRemoteUnlock && appliedAttribution
       ? [
-          `Device was ${lockActivityVerb(activityType)} remotely via gateway by ${appliedAttribution.initiator.userName}`,
+          `Device was unlocked at the site following remote access by ${appliedAttribution.initiator.userName}`,
           override?.reasonLabel ? `Reason: ${override.reasonLabel}` : null,
           override?.notes ? `Notes: ${override.notes}` : null,
         ].filter(Boolean).join('. ')
-      : occupiedStateAttr
+      : appliedAttribution
         ? [
-            `Device was ${lockActivityVerb(activityType)} via app by ${occupiedStateAttr.userName}`,
+            `Device was ${lockActivityVerb(activityType)} remotely via gateway by ${appliedAttribution.initiator.userName}`,
             override?.reasonLabel ? `Reason: ${override.reasonLabel}` : null,
             override?.notes ? `Notes: ${override.notes}` : null,
           ].filter(Boolean).join('. ')
-        : `Device was ${lockActivityVerb(activityType)} locally at the device`;
+        : occupiedStateAttr
+          ? [
+              `Device was ${lockActivityVerb(activityType)} via app by ${occupiedStateAttr.userName}`,
+              override?.reasonLabel ? `Reason: ${override.reasonLabel}` : null,
+              override?.notes ? `Notes: ${override.notes}` : null,
+            ].filter(Boolean).join('. ')
+          : `Device was ${lockActivityVerb(activityType)} locally at the device`;
+
+    const title = isCorrelatedRemoteUnlock
+      ? 'Unlocked at Site'
+      : lockActivityTitle(activityType);
 
     await ActivityService.getInstance().logActivity({
       entityType: 'device',
       entityId: event.deviceId,
       activityType,
-      title: lockActivityTitle(activityType),
+      title,
       description,
       actorType,
       actorId,
@@ -508,10 +520,12 @@ export class DeviceEventService extends EventEmitter {
         newStatus: event.newStatus,
         gatewayId: event.gatewayId,
         device_type: deviceType,
-        ...(remoteMethod && appliedAttribution
+        ...(isCorrelatedRemoteUnlock && appliedAttribution
           ? {
-            method: remoteMethod,
-            initiated_remotely: true,
+            // Physical site unlock; outbound "Remote Access Granted" already recorded the remote method.
+            method: 'local_device',
+            correlated_remote: true,
+            remote_command_id: appliedAttribution.commandId,
             gateway_id: event.gatewayId,
             initiated_by: {
               id: appliedAttribution.initiator.userId,
@@ -520,6 +534,7 @@ export class DeviceEventService extends EventEmitter {
             },
             ...(override
               ? {
+                occupied_unit_override: true,
                 tenant_unlock_override: {
                   reason: override.reason,
                   reason_label: override.reasonLabel,
@@ -528,26 +543,46 @@ export class DeviceEventService extends EventEmitter {
               }
               : {}),
           }
-          : occupiedStateAttr
+          : remoteMethod && appliedAttribution
             ? {
-              method: 'app',
-              initiated_remotely: false,
-              occupied_unit_override: true,
+              method: remoteMethod,
+              initiated_remotely: true,
               gateway_id: event.gatewayId,
               initiated_by: {
-                id: occupiedStateAttr.userId,
-                name: occupiedStateAttr.userName,
-                role: occupiedStateAttr.role,
+                id: appliedAttribution.initiator.userId,
+                name: appliedAttribution.initiator.userName,
+                role: appliedAttribution.initiator.role,
               },
-              tenant_unlock_override: {
-                reason: occupiedStateAttr.override.reason,
-                reason_label: occupiedStateAttr.override.reasonLabel,
-                notes: occupiedStateAttr.override.notes ?? null,
-              },
+              ...(override
+                ? {
+                  tenant_unlock_override: {
+                    reason: override.reason,
+                    reason_label: override.reasonLabel,
+                    notes: override.notes ?? null,
+                  },
+                }
+                : {}),
             }
-            : {
-              method: 'local_device',
-            }),
+            : occupiedStateAttr
+              ? {
+                method: 'app',
+                initiated_remotely: false,
+                occupied_unit_override: true,
+                gateway_id: event.gatewayId,
+                initiated_by: {
+                  id: occupiedStateAttr.userId,
+                  name: occupiedStateAttr.userName,
+                  role: occupiedStateAttr.role,
+                },
+                tenant_unlock_override: {
+                  reason: occupiedStateAttr.override.reason,
+                  reason_label: occupiedStateAttr.override.reasonLabel,
+                  notes: occupiedStateAttr.override.notes ?? null,
+                },
+              }
+              : {
+                method: 'local_device',
+              }),
       },
     });
   }

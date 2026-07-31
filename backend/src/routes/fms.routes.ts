@@ -81,7 +81,7 @@ import {
   fmsApplyChangesResponseSchema,
 } from '@/schemas/fms.schemas';
 import { errorEnvelopeSchema } from '@/openapi/common-schemas';
-import { deriveFmsTenantValidationErrors } from '@/services/fms/fms-tenant-validation.utils';
+import { refreshPendingTenantChangeForDisplay } from '@/services/fms/fms-tenant-validation.utils';
 
 const router = Router();
 const MOUNT = '/api/v1/fms';
@@ -632,18 +632,9 @@ registerGet(
       }
     }
 
-    const changes = (await getFMSService().getPendingChanges(syncLogId)).map((c) => {
-      if (c.is_valid === false && (!c.validation_errors || c.validation_errors.length === 0)) {
-        const tenantPayload: any = c.after_data ?? c.before_data;
-        if (c.entity_type === 'tenant' && tenantPayload) {
-          const derived = deriveFmsTenantValidationErrors(tenantPayload);
-          if (derived.length > 0) {
-            return { ...c, validation_errors: derived };
-          }
-        }
-      }
-      return c;
-    });
+    const changes = (await getFMSService().getPendingChanges(syncLogId)).map((c) =>
+      refreshPendingTenantChangeForDisplay(c),
+    );
 
     res.json({
       success: true,

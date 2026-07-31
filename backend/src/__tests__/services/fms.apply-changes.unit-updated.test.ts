@@ -134,6 +134,15 @@ describe('FMSService.applyChanges — UNIT_UPDATED accounting', () => {
         expect.stringMatching(/unit_updated.*unit update failed/is),
       ]),
     );
+    expect(result.errorDetails).toEqual([
+      expect.objectContaining({
+        changeId: 'chg-1',
+        changeType: FMSChangeType.UNIT_UPDATED,
+        entityType: 'unit',
+        entityLabel: '101',
+        message: 'unit update failed',
+      }),
+    ]);
     expect(svc.changeModel.bulkMarkApplied).not.toHaveBeenCalled();
     expect(svc.syncLogModel.update).toHaveBeenCalledWith(
       'sync-1',

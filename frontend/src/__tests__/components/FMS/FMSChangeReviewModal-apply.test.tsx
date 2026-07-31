@@ -299,6 +299,16 @@ describe('FMSChangeReviewModal - Apply Changes', () => {
         changesApplied: 2,
         changesFailed: 1,
         errors: ['Failed to apply tenant_added for EXT-001: Email already exists'],
+        errorDetails: [
+          {
+            changeId: 'chg-fail',
+            changeType: FMSChangeType.TENANT_ADDED,
+            entityType: 'tenant',
+            externalId: 'EXT-001',
+            entityLabel: 'a@example.com',
+            message: 'Email already exists',
+          },
+        ],
         accessChanges: {
           usersCreated: ['user-2'],
           usersDeactivated: [],
@@ -326,7 +336,8 @@ describe('FMSChangeReviewModal - Apply Changes', () => {
       // Should show error toast
       await waitFor(() => {
         expect(screen.getByText('Some Changes Failed')).toBeInTheDocument();
-        expect(screen.getByText(/Email already exists/)).toBeInTheDocument();
+        expect(screen.getByText(/Applied 2 of \d+ changes/)).toBeInTheDocument();
+        expect(screen.getByText(/email already exists/i)).toBeInTheDocument();
       });
 
       // Modal should NOT close
@@ -369,6 +380,7 @@ describe('FMSChangeReviewModal - Apply Changes', () => {
       await waitFor(() => {
         expect(screen.getByText('Some Changes Failed')).toBeInTheDocument();
         expect(screen.getByText(/2 changes failed to apply/)).toBeInTheDocument();
+        expect(screen.getByText(/Open the review list for details/)).toBeInTheDocument();
       });
     });
   });

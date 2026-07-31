@@ -44,7 +44,7 @@ import { DatabaseService } from '@/services/database.service';
 import { FMSChange, FMSChangeType, FMSChangeAction } from '@/types/fms.types';
 import { logger } from '@/utils/logger';
 import { isFmsChangePending } from '@/services/fms/fms-apply-order.utils';
-import { deriveFmsTenantValidationErrors } from '@/services/fms/fms-tenant-validation.utils';
+import { refreshPendingTenantChangeForDisplay } from '@/services/fms/fms-tenant-validation.utils';
 
 export class FMSChangeModel {
   private db: Knex;
@@ -392,32 +392,13 @@ export class FMSChangeModel {
       ? JSON.parse(record.after_data)
       : record.after_data;
 
-    let validationErrors = typeof record.validation_errors === 'string'
+    const validationErrors = typeof record.validation_errors === 'string'
       ? JSON.parse(record.validation_errors)
       : record.validation_errors;
 
-    // Derive validation errors if missing but the change is marked invalid
-    let derivedInvalid = false;
-    if ((record.is_valid === false || record.is_valid === 0) && (!validationErrors || validationErrors.length === 0)) {
-      const tenantPayload = parsedAfter ?? parsedBefore;
-      if (record.entity_type === 'tenant' && tenantPayload) {
-        const derived = deriveFmsTenantValidationErrors(tenantPayload);
-        if (derived.length > 0) {
-          validationErrors = derived;
-          derivedInvalid = true;
-        }
-      }
-    }
-
     // Convert MySQL integer (0/1) to boolean — null/undefined means valid (legacy rows)
-    let isValidBoolean: boolean;
-    if (derivedInvalid) {
-      isValidBoolean = false;
-    } else if (record.is_valid === false || record.is_valid === 0) {
-      isValidBoolean = false;
-    } else {
-      isValidBoolean = true;
-    }
+    const isValidBoolean =
+      record.is_valid === false || record.is_valid === 0 ? false : true;
 
     const result: FMSChange = {
       id: record.id,
@@ -447,7 +428,7 @@ export class FMSChangeModel {
       result.validation_errors = validationErrors;
     }
 
-    return result;
+    return refreshPendingTenantChangeForDisplay(result);
   }
 }
 

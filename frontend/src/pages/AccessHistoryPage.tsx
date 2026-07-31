@@ -28,11 +28,15 @@ import { AccessLogExpandedDetails } from '@/components/AccessHistory/AccessLogEx
 import {
   formatAccessAction,
   formatAccessMethod,
+  getAccessActionToneClass,
   getAccessLocationDisplay,
   getAccessLogMetadata,
   getAccessLogUserLink,
   getAccessStatusDisplay,
   getAccessUserDisplay,
+  hasOccupiedUnlockOverride,
+  isCorrelatedRemoteUnlock,
+  isManualLockEvent,
 } from '@/utils/access-history-display.utils';
 import {
   buildLocalDateRangeQuery,
@@ -83,6 +87,7 @@ const actionIcons = {
   unlock: LockOpenIcon,
   lock: LockClosedIcon,
   access_granted: CheckCircleIcon,
+  remote_access_granted: CheckCircleIcon,
   access_denied: XCircleIcon,
   door_open: LockOpenIcon,
   door_close: LockClosedIcon,
@@ -125,13 +130,14 @@ const methodIcons = {
 
 const actionColors = {
   unlock: 'text-green-600 dark:text-green-400',
-  lock: 'text-blue-600 dark:text-blue-400',
+  lock: 'text-red-600 dark:text-red-400',
   access_granted: 'text-green-600 dark:text-green-400',
+  remote_access_granted: 'text-green-600 dark:text-green-400',
   access_denied: 'text-red-600 dark:text-red-400',
   door_open: 'text-green-600 dark:text-green-400',
-  door_close: 'text-blue-600 dark:text-blue-400',
+  door_close: 'text-red-600 dark:text-red-400',
   gate_open: 'text-green-600 dark:text-green-400',
-  gate_close: 'text-blue-600 dark:text-blue-400',
+  gate_close: 'text-red-600 dark:text-red-400',
   elevator_call: 'text-purple-600 dark:text-purple-400',
   elevator_access: 'text-purple-600 dark:text-purple-400',
   manual_override: 'text-orange-600 dark:text-orange-400',
@@ -566,14 +572,18 @@ export default function AccessHistoryPage() {
     }
   };
 
-  const getActionIcon = (action: string) => {
-    const IconComponent = actionIcons[action as keyof typeof actionIcons] || KeyIcon;
-    return IconComponent;
+  const getActionIcon = (log: AccessLog) => {
+    if (hasOccupiedUnlockOverride(log)) return ExclamationTriangleIcon;
+    if (isManualLockEvent(log)) return LockClosedIcon;
+    if (isCorrelatedRemoteUnlock(log)) return LockOpenIcon;
+    if (log.action === 'remote_access_granted') return CheckCircleIcon;
+    return actionIcons[log.action as keyof typeof actionIcons] || KeyIcon;
   };
 
-  const getMethodIcon = (method: string) => {
-    const IconComponent = methodIcons[method as keyof typeof methodIcons] || KeyIcon;
-    return IconComponent;
+  const getMethodIcon = (log: AccessLog) => {
+    if (isManualLockEvent(log)) return LockClosedIcon;
+    if (isCorrelatedRemoteUnlock(log)) return LockOpenIcon;
+    return methodIcons[log.method as keyof typeof methodIcons] || KeyIcon;
   };
 
   const totalPages = Math.ceil(total / (filters.limit || 50));
@@ -718,6 +728,7 @@ export default function AccessHistoryPage() {
               { key: 'access_granted', label: 'Access Granted' },
               { key: 'unlock_attempt', label: 'Unlock Attempt Denied' },
               { key: 'lock_attempt', label: 'Lock Attempt Failed' },
+              { key: 'remote_access_granted', label: 'Remote Access Granted' },
               { key: 'manual_override', label: 'Manual Override' },
               { key: 'schedule_violation', label: 'Schedule Violation' },
             ],
@@ -909,18 +920,20 @@ export default function AccessHistoryPage() {
               </thead>
               <tbody className="bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700">
                 {logs.map((log) => {
-                  const ActionIcon = getActionIcon(log.action);
-                  const MethodIcon = getMethodIcon(log.method);
+                  const ActionIcon = getActionIcon(log);
+                  const MethodIcon = getMethodIcon(log);
                   const isExpanded = expandedRow === log.id;
                   const metadata = getAccessLogMetadata(log);
                   const userDisplay = getAccessUserDisplay(log);
                   const userLink = getAccessLogUserLink(log);
                   const locationDisplay = getAccessLocationDisplay(log, { hideFacility: isFacilityScoped });
                   const statusDisplay = getAccessStatusDisplay(log);
-                  const actionLabel = formatAccessAction(log.action);
-                  const actionToneClass = actionColors[log.action as keyof typeof actionColors]
+                  const actionLabel = formatAccessAction(log);
+                  const actionToneClass = getAccessActionToneClass(log)
+                    || actionColors[log.action as keyof typeof actionColors]
                     || (log.success ? 'text-gray-900 dark:text-white' : 'text-red-600 dark:text-red-400');
                   const showsDenialInLabel = /\b(denied|failed)\b/i.test(actionLabel);
+                  const showOverrideBadge = hasOccupiedUnlockOverride(log);
                   
                   return (
                     <Fragment key={log.id}>
@@ -934,8 +947,16 @@ export default function AccessHistoryPage() {
                       >
                         <td className="px-4 py-3 align-middle">
                           <div className="flex items-center gap-2.5 min-w-0">
-                            <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-gray-100 dark:bg-gray-700">
-                              <ActionIcon className={`h-4 w-4 ${actionColors[log.action as keyof typeof actionColors] || 'text-gray-400'}`} />
+                            <div className="relative flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-gray-100 dark:bg-gray-700">
+                              <ActionIcon className={`h-4 w-4 ${actionToneClass}`} />
+                              {showOverrideBadge && ActionIcon !== ExclamationTriangleIcon && (
+                                <span title="Occupied unit override" className="absolute -right-1 -top-1">
+                                  <ExclamationTriangleIcon
+                                    className="h-3.5 w-3.5 text-amber-500 dark:text-amber-400"
+                                    aria-hidden
+                                  />
+                                </span>
+                              )}
                             </div>
                             <div className="min-w-0 flex-1">
                               <div
@@ -1056,12 +1077,20 @@ export default function AccessHistoryPage() {
                         </td>
                         <td className="px-4 py-3 align-middle">
                           <div className="flex min-w-0 items-center gap-1.5">
-                            <MethodIcon className={`h-4 w-4 shrink-0 ${methodColors[log.method as keyof typeof methodColors] || 'text-gray-400'}`} />
+                            <MethodIcon
+                              className={`h-4 w-4 shrink-0 ${
+                                isManualLockEvent(log)
+                                  ? 'text-red-600 dark:text-red-400'
+                                  : isCorrelatedRemoteUnlock(log)
+                                    ? 'text-green-600 dark:text-green-400'
+                                    : (methodColors[log.method as keyof typeof methodColors] || 'text-gray-400')
+                              }`}
+                            />
                             <span
                               className="truncate text-sm text-gray-900 dark:text-white"
-                              title={formatAccessMethod(log.method)}
+                              title={formatAccessMethod(log)}
                             >
-                              {formatAccessMethod(log.method)}
+                              {formatAccessMethod(log)}
                             </span>
                           </div>
                         </td>

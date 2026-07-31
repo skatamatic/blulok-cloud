@@ -212,12 +212,23 @@ export interface FMSTestConnectionResponse {
   error?: string;
 }
 
+/** Structured failure from applyChanges for user-facing summaries. */
+export interface FMSApplyErrorDetail {
+  changeId: string;
+  changeType: FMSChangeType;
+  entityType: 'tenant' | 'unit';
+  externalId: string;
+  entityLabel: string;
+  message: string;
+}
+
 // Result of applying FMS changes
 export interface FMSChangeApplicationResult {
   success: boolean;
   changesApplied: number;
   changesFailed: number;
   errors: string[];
+  errorDetails?: FMSApplyErrorDetail[];
   appliedChangeIds?: string[];
   failedChangeIds?: string[];
   accessChanges: {
