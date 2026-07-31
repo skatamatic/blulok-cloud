@@ -132,7 +132,7 @@ export class AccessHistoryReadService {
         if (filters.user_id && log.user_id !== filters.user_id) return false;
         if (filters.device_id && log.device_id !== filters.device_id) return false;
         if (filters.action && log.action !== this.normalizeActionFilter(filters.action)) return false;
-        if (filters.method && log.method !== filters.method) return false;
+        if (filters.method && !this.methodMatchesFilter(log.method, filters.method)) return false;
         if (filters.denial_reason && log.denial_reason !== filters.denial_reason) return false;
         if (filters.success !== undefined && log.success !== filters.success) return false;
 
@@ -328,8 +328,8 @@ export class AccessHistoryReadService {
 
     if (filters.action && action !== this.normalizeActionFilter(filters.action)) return false;
     if (filters.method) {
-      const normalizedFilter = filters.method === 'automatic' ? 'local_device' : filters.method;
-      if (method !== normalizedFilter) return false;
+      const methodMatches = this.methodMatchesFilter(method, filters.method);
+      if (!methodMatches) return false;
     }
     if (filters.denial_reason && denialReason !== filters.denial_reason) return false;
     if (filters.success !== undefined) {
@@ -704,6 +704,15 @@ export class AccessHistoryReadService {
       return method;
     }
     return 'app';
+  }
+
+  /** `cloud` matches both admin and tenant/app cloud-issued remote methods. */
+  private methodMatchesFilter(method: string, filter: string): boolean {
+    if (filter === 'cloud') {
+      return method === 'admin_remote' || method === 'remote_gateway';
+    }
+    const normalizedFilter = filter === 'automatic' ? 'local_device' : filter;
+    return method === normalizedFilter;
   }
 
   private extractDenialReason(metadata: Record<string, unknown>): string | undefined {

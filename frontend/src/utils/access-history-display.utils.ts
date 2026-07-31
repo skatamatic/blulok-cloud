@@ -43,8 +43,8 @@ const ACTION_LABELS: Record<string, string> = {
 };
 
 const METHOD_LABELS: Record<string, string> = {
-  remote_gateway: 'Remote via gateway',
-  admin_remote: 'Remote (admin)',
+  remote_gateway: 'Cloud',
+  admin_remote: 'Cloud',
   local_device: 'Local device',
   automatic: 'Local device',
   app: 'Mobile app',
@@ -174,6 +174,33 @@ export function hasOccupiedUnlockOverride(log: Pick<AccessLog, 'metadata'>): boo
   return Boolean(meta.tenant_unlock_override?.reason || meta.tenant_unlock_override?.reason_label);
 }
 
+/** Human reason label for occupied-unit override, when present. */
+export function getOccupiedUnlockOverrideReasonLabel(
+  log: Pick<AccessLog, 'metadata'>,
+): string | null {
+  if (!hasOccupiedUnlockOverride(log)) return null;
+  const meta = (log.metadata || {}) as AccessLogPresentationMetadata;
+  const override = meta.tenant_unlock_override;
+  const reasonLabel =
+    typeof override?.reason_label === 'string' ? override.reason_label.trim() : '';
+  if (reasonLabel) return reasonLabel;
+
+  const reasonCode = typeof override?.reason === 'string' ? override.reason.trim() : '';
+  if (!reasonCode) return null;
+  return reasonCode
+    .replace(/_/g, ' ')
+    .replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+/** Compact subtitle for Access History rows, e.g. "Occupied unit · Emergency". */
+export function formatOccupiedUnlockOverrideSubtitle(
+  log: Pick<AccessLog, 'metadata'>,
+): string | null {
+  if (!hasOccupiedUnlockOverride(log)) return null;
+  const reason = getOccupiedUnlockOverrideReasonLabel(log);
+  return reason ? `Occupied unit · ${reason}` : 'Occupied unit override';
+}
+
 /** Human action label. Pass a full log for context-aware labels (Manually Locked, Unlocked at site). */
 export function formatAccessAction(actionOrLog: string | AccessLog): string {
   if (typeof actionOrLog !== 'string') {
@@ -206,7 +233,10 @@ export function formatAccessMethod(methodOrLog: string | AccessLog): string {
 /** Tailwind text color class for the action column. */
 export function getAccessActionToneClass(log: Pick<AccessLog, 'action' | 'method' | 'success' | 'metadata'>): string {
   if (!log.success) return 'text-red-600 dark:text-red-400';
-  if (isManualLockEvent(log) || log.action === 'lock') return 'text-red-600 dark:text-red-400';
+  if (hasOccupiedUnlockOverride(log)) return 'text-amber-800 dark:text-amber-300';
+  if (isManualLockEvent(log) || log.action === 'lock' || log.action === 'door_close' || log.action === 'gate_close') {
+    return 'text-red-600 dark:text-red-400';
+  }
   if (
     log.action === 'unlock'
     || log.action === 'access_granted'
@@ -216,7 +246,79 @@ export function getAccessActionToneClass(log: Pick<AccessLog, 'action' | 'method
   ) {
     return 'text-green-600 dark:text-green-400';
   }
+  if (log.action === 'elevator_call' || log.action === 'elevator_access') {
+    return 'text-purple-600 dark:text-purple-400';
+  }
+  if (log.action === 'manual_override' || log.action === 'admin_remote_open') {
+    return 'text-orange-600 dark:text-orange-400';
+  }
+  if (log.action === 'timeout' || log.action === 'schedule_violation') {
+    return 'text-amber-700 dark:text-amber-300';
+  }
   return 'text-gray-600 dark:text-gray-400';
+}
+
+/** Matching tinted tile behind the action icon (avoids monochrome gray wells). */
+export function getAccessActionIconTileClass(
+  log: Pick<AccessLog, 'action' | 'method' | 'success' | 'metadata'>,
+): string {
+  if (!log.success) return 'bg-red-100 dark:bg-red-900/40';
+  if (hasOccupiedUnlockOverride(log)) return 'bg-amber-100 dark:bg-amber-900/45';
+  if (isManualLockEvent(log) || log.action === 'lock' || log.action === 'door_close' || log.action === 'gate_close') {
+    return 'bg-red-100 dark:bg-red-900/40';
+  }
+  if (
+    log.action === 'unlock'
+    || log.action === 'access_granted'
+    || log.action === 'remote_access_granted'
+    || log.action === 'door_open'
+    || log.action === 'gate_open'
+  ) {
+    return 'bg-green-100 dark:bg-green-900/40';
+  }
+  if (log.action === 'elevator_call' || log.action === 'elevator_access') {
+    return 'bg-purple-100 dark:bg-purple-900/40';
+  }
+  if (log.action === 'manual_override' || log.action === 'admin_remote_open') {
+    return 'bg-orange-100 dark:bg-orange-900/40';
+  }
+  if (log.action === 'timeout' || log.action === 'schedule_violation') {
+    return 'bg-amber-100 dark:bg-amber-900/40';
+  }
+  return 'bg-gray-100 dark:bg-gray-700';
+}
+
+const METHOD_TONE_CLASSES: Record<string, string> = {
+  app: 'text-blue-600 dark:text-blue-400',
+  mobile_app: 'text-blue-600 dark:text-blue-400',
+  mobile_key: 'text-blue-600 dark:text-blue-400',
+  remote: 'text-blue-600 dark:text-blue-400',
+  remote_gateway: 'text-[#147FD4] dark:text-sky-400',
+  admin_remote: 'text-[#147FD4] dark:text-sky-400',
+  keypad: 'text-slate-600 dark:text-slate-300',
+  card: 'text-purple-600 dark:text-purple-400',
+  rfid: 'text-purple-600 dark:text-purple-400',
+  physical_key: 'text-slate-600 dark:text-slate-300',
+  manual: 'text-orange-600 dark:text-orange-400',
+  automatic: 'text-green-600 dark:text-green-400',
+  local_device: 'text-green-600 dark:text-green-400',
+  route_pass: 'text-indigo-600 dark:text-indigo-400',
+  system: 'text-slate-600 dark:text-slate-300',
+  unknown: 'text-slate-500 dark:text-slate-400',
+  admin_override: 'text-red-600 dark:text-red-400',
+  emergency: 'text-red-600 dark:text-red-400',
+  scheduled: 'text-amber-700 dark:text-amber-300',
+  biometric: 'text-teal-600 dark:text-teal-400',
+  pin: 'text-slate-600 dark:text-slate-300',
+};
+
+/** Tailwind text color for the method column icon. */
+export function getAccessMethodToneClass(
+  log: Pick<AccessLog, 'action' | 'method' | 'success' | 'metadata'>,
+): string {
+  if (isManualLockEvent(log)) return 'text-red-600 dark:text-red-400';
+  if (isCorrelatedRemoteUnlock(log)) return 'text-green-600 dark:text-green-400';
+  return METHOD_TONE_CLASSES[log.method] || 'text-slate-500 dark:text-slate-400';
 }
 
 export function formatDenialReason(reason: string): string {

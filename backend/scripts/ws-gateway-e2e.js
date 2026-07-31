@@ -3418,7 +3418,10 @@ async function run() {
       ok('Device locked and ready for remote unlock history cycle');
     }
 
-    const historyCycleStartedAt = new Date().toISOString();
+    // Pad before the cycle so MySQL DATETIME second precision cannot exclude the
+    // outbound grant when date_from lands in the same second as occurred_at.
+    const historyCycleStartedAtMs = Date.now();
+    const historyCycleQueryFrom = new Date(historyCycleStartedAtMs - 5000).toISOString();
     step('Issue cloud remote unlock (expect outbound remote_access_granted)');
     const histUnlockRes = await axios.put(
       `${API_BASE}/devices/blulok/${deviceId}/lock`,
@@ -3500,7 +3503,7 @@ async function run() {
           params: {
             facility_id: facilityId,
             device_id: deviceId,
-            date_from: historyCycleStartedAt,
+            date_from: historyCycleQueryFrom,
             limit: 50,
           },
         });
@@ -3510,7 +3513,7 @@ async function run() {
         const logs = histRes.data?.logs || histRes.data?.data?.logs || [];
         inWindow = logs.filter((l) => {
           const t = l.occurred_at || l.created_at;
-          return t && new Date(t).getTime() >= new Date(historyCycleStartedAt).getTime() - 5000;
+          return t && new Date(t).getTime() >= historyCycleStartedAtMs - 5000;
         });
         grant = inWindow.find((l) => l.action === 'remote_access_granted');
         if (
@@ -11580,6 +11583,19 @@ async function run() {
         rotation_interval_hours: originalConfig?.rotation_interval_hours ?? 24,
         rotation_hour: originalConfig?.rotation_hour ?? 0,
         rotation_minute: originalConfig?.rotation_minute ?? 0,
+      },
+      { headers: { Authorization: `Bearer ${created.facilityAdminToken}` } },
+    );
+    // Disable the short-interval group rotation left on from the scheduler test so later
+    // schedule-scoped manual sets (esp. zone-linked keypad group) are not overwritten.
+    await axios.put(
+      `${API_BASE}/access-codes/groups/${accessCodeGroupId}/config`,
+      {
+        is_enabled: false,
+        digit_count: 6,
+        rotation_interval_hours: 24,
+        rotation_hour: 0,
+        rotation_minute: 0,
       },
       { headers: { Authorization: `Bearer ${created.facilityAdminToken}` } },
     );

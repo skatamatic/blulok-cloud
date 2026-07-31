@@ -17,6 +17,8 @@ import {
   formatAccessAction,
   formatAccessHistoryDeviceLabel,
   formatAccessHistoryUnitLabel,
+  formatOccupiedUnlockOverrideSubtitle,
+  getAccessActionIconTileClass,
   getAccessActionToneClass,
   getAccessFailureDetail,
   getAccessLocationDisplay,
@@ -125,13 +127,21 @@ export const AccessHistoryWidget: React.FC<AccessHistoryWidgetProps> = ({
 
   const getActionIcon = (log: AccessLog) => {
     const tone = getAccessActionToneClass(log);
-    if (!log.success || hasOccupiedUnlockOverride(log)) {
-      return <ExclamationTriangleIcon className={`h-4 w-4 ${tone}`} />;
+    const tile = getAccessActionIconTileClass(log);
+    const iconClass = `h-4 w-4 ${tone}`;
+
+    let Icon = LockOpenIcon;
+    if (!log.success) {
+      Icon = ExclamationTriangleIcon;
+    } else if (isManualLockEvent(log) || log.action === 'lock' || log.action === 'door_close' || log.action === 'gate_close') {
+      Icon = LockClosedIcon;
     }
-    if (isManualLockEvent(log) || log.action === 'lock' || log.action === 'door_close' || log.action === 'gate_close') {
-      return <LockClosedIcon className={`h-4 w-4 ${tone}`} />;
-    }
-    return <LockOpenIcon className={`h-4 w-4 ${tone}`} />;
+
+    return (
+      <span className={`inline-flex h-7 w-7 items-center justify-center rounded-md ${tile}`}>
+        <Icon className={iconClass} />
+      </span>
+    );
   };
 
   const getActionText = (log: AccessLog): string => {
@@ -247,8 +257,17 @@ export const AccessHistoryWidget: React.FC<AccessHistoryWidgetProps> = ({
               const entryTime = formatEntryTime(entry.occurred_at);
               const actionSummary = getActionSummary(entry);
               const failureDetail = !entry.success ? getAccessFailureDetail(entry) : null;
+              const isOverride = hasOccupiedUnlockOverride(entry);
+              const overrideSubtitle = formatOccupiedUnlockOverrideSubtitle(entry);
               return (
-              <div key={entry.id} className="flex items-center space-x-3 p-2 rounded-md bg-gray-50 dark:bg-gray-700">
+              <div
+                key={entry.id}
+                className={`flex items-center space-x-3 p-2 rounded-md ${
+                  isOverride
+                    ? 'border-l-4 border-amber-700 dark:border-amber-400 bg-amber-50/80 dark:bg-amber-950/30'
+                    : 'bg-gray-50 dark:bg-gray-700'
+                }`}
+              >
                 <div className="flex-shrink-0">
                   {getActionIcon(entry)}
                 </div>
@@ -263,7 +282,17 @@ export const AccessHistoryWidget: React.FC<AccessHistoryWidgetProps> = ({
                     >
                       {actionSummary.primary}
                     </span>
+                    {isOverride && (
+                      <span className="inline-flex shrink-0 items-center rounded-full bg-amber-200/90 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-900 dark:bg-amber-900/70 dark:text-amber-200">
+                        Override
+                      </span>
+                    )}
                   </div>
+                  {overrideSubtitle && (
+                    <div className="mt-0.5 text-xs font-medium text-amber-800 dark:text-amber-300/90 truncate">
+                      {overrideSubtitle}
+                    </div>
+                  )}
                   <div className="flex items-center gap-2 min-w-0 text-xs text-gray-500 dark:text-gray-400">
                     <UserIcon className="h-3 w-3 shrink-0" />
                     <span className="truncate" title={getUserDisplayName(entry)}>{getUserDisplayName(entry)}</span>

@@ -432,17 +432,17 @@ In-flight transitional states (`locking`, `unlocking`) are **not** included in a
 | Inbound | State sync unlock settles pending command | `unlock` | `local_device` + `metadata.correlated_remote` | Same initiator (`initiated_by`) |
 | Local re-lock | Later physical lock (no remote lock product) | `lock` | `local_device` | None (`—`) |
 
-UI labels: **Remote Access Granted**, **Unlocked at site**, **Manually Locked** (lock actions render red). Occupied-unit override sets `tenant_unlock_override` / `occupied_unit_override` and shows a warning indicator.
+UI labels: **Remote Access Granted**, **Unlocked at site**, **Manually Locked** (lock actions render red). Occupied-unit override sets `tenant_unlock_override` / `occupied_unit_override` and renders with an amber leading bar, Override pill, and reason subtitle (darker amber in light mode).
 
-Grant-like gateway `access-events` for a device with a **pending remote unlock** are skipped so history does not duplicate Mobile key “Access granted” rows.
+Grant-like gateway `access-events` for a device with a **pending remote unlock** (and briefly after settlement) are skipped so history does not duplicate Mobile key “Access granted” rows. Gateways should still avoid posting credential grants for cloud JWT unlocks — use `devices/state` only.
 
 ### Method taxonomy (read layer)
 
 | Method | Meaning |
 |--------|---------|
 | `app`, `mobile_key`, `keypad`, `route_pass` | Preserved from gateway access-event ingestion |
-| `remote_gateway` | Cloud-issued unlock authorization (tenant/app user) on `remote_access_granted` |
-| `admin_remote` | Cloud-issued unlock authorization by admin/facility admin |
+| `remote_gateway` | Cloud-issued unlock authorization (any role) — UI label **Cloud** |
+| `admin_remote` | Cloud-issued unlock authorization (admin/facility admin) — UI label **Cloud** |
 | `local_device` | Physical state change; may still carry `initiated_by` when `correlated_remote` |
 
 Legacy rows mapped as `automatic` are surfaced as `local_device`.

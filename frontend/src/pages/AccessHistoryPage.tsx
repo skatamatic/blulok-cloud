@@ -28,10 +28,13 @@ import { AccessLogExpandedDetails } from '@/components/AccessHistory/AccessLogEx
 import {
   formatAccessAction,
   formatAccessMethod,
+  formatOccupiedUnlockOverrideSubtitle,
+  getAccessActionIconTileClass,
   getAccessActionToneClass,
   getAccessLocationDisplay,
   getAccessLogMetadata,
   getAccessLogUserLink,
+  getAccessMethodToneClass,
   getAccessStatusDisplay,
   getAccessUserDisplay,
   hasOccupiedUnlockOverride,
@@ -65,6 +68,7 @@ import {
   LinkIcon,
   CpuChipIcon,
   HomeIcon,
+  CloudIcon,
 } from '@heroicons/react/24/outline';
 
 interface FilterState {
@@ -114,8 +118,8 @@ const methodIcons = {
   manual: KeyIcon,
   automatic: ComputerDesktopIcon,
   local_device: ComputerDesktopIcon,
-  remote_gateway: DevicePhoneMobileIcon,
-  admin_remote: KeyIcon,
+  remote_gateway: CloudIcon,
+  admin_remote: CloudIcon,
   route_pass: KeyIcon,
   system: ComputerDesktopIcon,
   unknown: KeyIcon,
@@ -125,7 +129,7 @@ const methodIcons = {
   biometric: FingerPrintIcon,
   rfid: CreditCardIcon,
   pin: KeyIcon,
-  remote: DevicePhoneMobileIcon,
+  remote: CloudIcon,
 };
 
 const actionColors = {
@@ -147,30 +151,6 @@ const actionColors = {
   schedule_violation: 'text-yellow-600 dark:text-yellow-400',
   unlock_attempt: 'text-red-600 dark:text-red-400',
   lock_attempt: 'text-red-600 dark:text-red-400',
-};
-
-const methodColors = {
-  app: 'text-blue-600 dark:text-blue-400',
-  mobile_app: 'text-blue-600 dark:text-blue-400',
-  keypad: 'text-gray-600 dark:text-gray-400',
-  card: 'text-purple-600 dark:text-purple-400',
-  physical_key: 'text-gray-600 dark:text-gray-400',
-  mobile_key: 'text-blue-600 dark:text-blue-400',
-  manual: 'text-orange-600 dark:text-orange-400',
-  automatic: 'text-green-600 dark:text-green-400',
-  local_device: 'text-green-600 dark:text-green-400',
-  remote_gateway: 'text-blue-600 dark:text-blue-400',
-  admin_remote: 'text-orange-600 dark:text-orange-400',
-  route_pass: 'text-indigo-600 dark:text-indigo-400',
-  system: 'text-gray-600 dark:text-gray-400',
-  unknown: 'text-gray-600 dark:text-gray-400',
-  admin_override: 'text-red-600 dark:text-red-400',
-  emergency: 'text-red-600 dark:text-red-400',
-  scheduled: 'text-indigo-600 dark:text-indigo-400',
-  biometric: 'text-pink-600 dark:text-pink-400',
-  rfid: 'text-purple-600 dark:text-purple-400',
-  pin: 'text-gray-600 dark:text-gray-400',
-  remote: 'text-blue-600 dark:text-blue-400',
 };
 
 type SortableColumn = 'occurred_at' | 'action' | 'user_name' | 'facility_name' | 'success' | 'method';
@@ -573,9 +553,8 @@ export default function AccessHistoryPage() {
   };
 
   const getActionIcon = (log: AccessLog) => {
-    if (hasOccupiedUnlockOverride(log)) return ExclamationTriangleIcon;
     if (isManualLockEvent(log)) return LockClosedIcon;
-    if (isCorrelatedRemoteUnlock(log)) return LockOpenIcon;
+    if (isCorrelatedRemoteUnlock(log) || hasOccupiedUnlockOverride(log)) return LockOpenIcon;
     if (log.action === 'remote_access_granted') return CheckCircleIcon;
     return actionIcons[log.action as keyof typeof actionIcons] || KeyIcon;
   };
@@ -583,6 +562,7 @@ export default function AccessHistoryPage() {
   const getMethodIcon = (log: AccessLog) => {
     if (isManualLockEvent(log)) return LockClosedIcon;
     if (isCorrelatedRemoteUnlock(log)) return LockOpenIcon;
+    if (log.method === 'admin_remote' || log.method === 'remote_gateway') return CloudIcon;
     return methodIcons[log.method as keyof typeof methodIcons] || KeyIcon;
   };
 
@@ -746,11 +726,11 @@ export default function AccessHistoryPage() {
               { key: 'card', label: 'Card' },
               { key: 'physical_key', label: 'Physical Key' },
               { key: 'manual', label: 'Manual Override' },
-              { key: 'remote_gateway', label: 'Remote via Gateway' },
-              { key: 'admin_remote', label: 'Remote (Admin)' },
+              { key: 'cloud', label: 'Cloud' },
               { key: 'local_device', label: 'Local Device' },
               { key: 'route_pass', label: 'Route Pass' },
               { key: 'automatic', label: 'Local Device (legacy)' },
+              { key: 'mobile_key', label: 'Mobile Key' },
             ],
             selected: filters.method || '',
             onSelect: (value: string) => handleFilterChange('method', value || undefined),
@@ -934,6 +914,7 @@ export default function AccessHistoryPage() {
                     || (log.success ? 'text-gray-900 dark:text-white' : 'text-red-600 dark:text-red-400');
                   const showsDenialInLabel = /\b(denied|failed)\b/i.test(actionLabel);
                   const showOverrideBadge = hasOccupiedUnlockOverride(log);
+                  const overrideSubtitle = formatOccupiedUnlockOverrideSubtitle(log);
                   
                   return (
                     <Fragment key={log.id}>
@@ -941,30 +922,43 @@ export default function AccessHistoryPage() {
                         id={generateHighlightId('access-log', log.id)}
                         className={`group cursor-pointer transition-colors duration-200 hover:bg-blue-50/70 dark:hover:bg-blue-900/10 ${
                           isExpanded ? 'bg-blue-50/60 dark:bg-blue-900/15' : ''
+                        } ${
+                          showOverrideBadge
+                            ? 'border-l-4 border-amber-700 dark:border-amber-400 bg-amber-50/70 dark:bg-amber-950/25 hover:bg-amber-50 dark:hover:bg-amber-950/35'
+                            : ''
                         }`}
                         onClick={() => toggleRowExpansion(log.id)}
                         aria-expanded={isExpanded}
                       >
                         <td className="px-4 py-3 align-middle">
                           <div className="flex items-center gap-2.5 min-w-0">
-                            <div className="relative flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-gray-100 dark:bg-gray-700">
+                            <div
+                              className={`relative flex h-8 w-8 shrink-0 items-center justify-center rounded-lg ${getAccessActionIconTileClass(log)}`}
+                            >
                               <ActionIcon className={`h-4 w-4 ${actionToneClass}`} />
-                              {showOverrideBadge && ActionIcon !== ExclamationTriangleIcon && (
-                                <span title="Occupied unit override" className="absolute -right-1 -top-1">
-                                  <ExclamationTriangleIcon
-                                    className="h-3.5 w-3.5 text-amber-500 dark:text-amber-400"
-                                    aria-hidden
-                                  />
-                                </span>
-                              )}
                             </div>
                             <div className="min-w-0 flex-1">
-                              <div
-                                className={`truncate text-sm font-medium ${actionToneClass}`}
-                                title={actionLabel}
-                              >
-                                {actionLabel}
+                              <div className="flex min-w-0 items-center gap-1.5">
+                                <div
+                                  className={`truncate text-sm font-medium ${actionToneClass}`}
+                                  title={actionLabel}
+                                >
+                                  {actionLabel}
+                                </div>
+                                {showOverrideBadge && (
+                                  <span
+                                    className="inline-flex shrink-0 items-center rounded-full bg-amber-200/90 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-900 dark:bg-amber-900/70 dark:text-amber-200"
+                                    title="Occupied unit override"
+                                  >
+                                    Override
+                                  </span>
+                                )}
                               </div>
+                              {overrideSubtitle && (
+                                <div className="mt-0.5 truncate text-[11px] font-medium text-amber-800 dark:text-amber-300/90">
+                                  {overrideSubtitle}
+                                </div>
+                              )}
                               {!log.success && !showsDenialInLabel && (
                                 <div className="mt-0.5 text-[11px] font-medium text-red-600 dark:text-red-400">
                                   Denied
@@ -1078,13 +1072,7 @@ export default function AccessHistoryPage() {
                         <td className="px-4 py-3 align-middle">
                           <div className="flex min-w-0 items-center gap-1.5">
                             <MethodIcon
-                              className={`h-4 w-4 shrink-0 ${
-                                isManualLockEvent(log)
-                                  ? 'text-red-600 dark:text-red-400'
-                                  : isCorrelatedRemoteUnlock(log)
-                                    ? 'text-green-600 dark:text-green-400'
-                                    : (methodColors[log.method as keyof typeof methodColors] || 'text-gray-400')
-                              }`}
+                              className={`h-4 w-4 shrink-0 ${getAccessMethodToneClass(log)}`}
                             />
                             <span
                               className="truncate text-sm text-gray-900 dark:text-white"

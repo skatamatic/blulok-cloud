@@ -11,10 +11,13 @@ jest.mock('@/models/device.model');
 jest.mock('@/models/unit.model');
 
 const mockPeekCommandAttribution = jest.fn().mockReturnValue(null);
+const mockHasRecentBluLokRemoteUnlockSettlement = jest.fn().mockReturnValue(false);
 jest.mock('@/services/lock-command.service', () => ({
   LockCommandService: {
     getInstance: jest.fn(() => ({
       peekCommandAttribution: (...args: unknown[]) => mockPeekCommandAttribution(...args),
+      hasRecentBluLokRemoteUnlockSettlement: (...args: unknown[]) =>
+        mockHasRecentBluLokRemoteUnlockSettlement(...args),
     })),
   },
 }));
@@ -52,6 +55,7 @@ describe('AccessEventIngestionService', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     mockPeekCommandAttribution.mockReturnValue(null);
+    mockHasRecentBluLokRemoteUnlockSettlement.mockReturnValue(false);
     logActivity = jest.fn().mockResolvedValue({ id: 'activity-1' });
     resolve = jest.fn();
     findBluLokDeviceById = jest.fn().mockResolvedValue({
@@ -277,5 +281,27 @@ describe('AccessEventIngestionService', () => {
     );
 
     expect(logActivity).toHaveBeenCalled();
+  });
+
+  it('skips grant-like access-events shortly after BluLok remote unlock settlement', async () => {
+    resolve.mockResolvedValue({
+      event: {
+        ...rawEvent(),
+        device_id: 'cloud-device-1',
+        actor: { user_id: 'user-1', role: 'tenant', name: 'Casey Jones' },
+      },
+      deviceType: 'blulok',
+    });
+    mockPeekCommandAttribution.mockReturnValue(null);
+    mockHasRecentBluLokRemoteUnlockSettlement.mockReturnValue(true);
+
+    const result = await service.ingestOne(rawEvent(), {
+      facilityId,
+      source: 'gateway_internal_api',
+    });
+
+    expect(result).toBeNull();
+    expect(logActivity).not.toHaveBeenCalled();
+    expect(mockHasRecentBluLokRemoteUnlockSettlement).toHaveBeenCalledWith('cloud-device-1');
   });
 });

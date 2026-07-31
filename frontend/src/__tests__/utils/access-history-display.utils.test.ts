@@ -8,11 +8,16 @@ import {
   formatAccessHistoryDeviceLabel,
   formatAccessHistoryUnitLabel,
   formatAccessMethod,
+  formatOccupiedUnlockOverrideSubtitle,
+  getAccessActionIconTileClass,
+  getAccessActionToneClass,
   getAccessFailureDetail,
   getAccessLocationDisplay,
   getAccessLogMetadata,
   getAccessLogUserLink,
+  getAccessMethodToneClass,
   getAccessUserDisplay,
+  getOccupiedUnlockOverrideReasonLabel,
   isNonUserAccessActor,
   partitionAccessLogDetailItems,
 } from '@/utils/access-history-display.utils';
@@ -241,7 +246,8 @@ describe('access-history-display.utils', () => {
       metadata: { failure_summary: 'Out of schedule window' },
     };
     expect(formatAccessAction('unlock_attempt')).toBe('Unlock attempt denied');
-    expect(formatAccessMethod('remote_gateway')).toBe('Remote via gateway');
+    expect(formatAccessMethod('remote_gateway')).toBe('Cloud');
+    expect(formatAccessMethod('admin_remote')).toBe('Cloud');
     expect(getAccessFailureDetail(denied)).toBe('Out of schedule window');
   });
 
@@ -411,5 +417,31 @@ describe('access-history-display.utils', () => {
     expect(partitioned.failure?.value).toBe('Device offline');
     expect(partitioned.notes?.value).toBe('Additional operator note');
     expect(partitioned.fields.some((item) => item.label === 'Failure reason')).toBe(false);
+  });
+
+  it('formats occupied-unit override subtitle and amber action tone', () => {
+    const overrideLog: AccessLog = {
+      ...baseLog,
+      action: 'unlock',
+      method: 'admin_remote',
+      metadata: {
+        occupied_unit_override: true,
+        tenant_unlock_override: {
+          reason: 'emergency',
+          reason_label: 'Emergency (Fire, flood, other)',
+        },
+      },
+    };
+
+    expect(getOccupiedUnlockOverrideReasonLabel(overrideLog)).toBe(
+      'Emergency (Fire, flood, other)',
+    );
+    expect(formatOccupiedUnlockOverrideSubtitle(overrideLog)).toBe(
+      'Occupied unit · Emergency (Fire, flood, other)',
+    );
+    expect(getAccessActionToneClass(overrideLog)).toContain('amber');
+    expect(getAccessActionIconTileClass(overrideLog)).toContain('amber');
+    expect(getAccessActionIconTileClass({ ...baseLog, action: 'unlock', success: true, metadata: {} })).toContain('green');
+    expect(getAccessMethodToneClass({ ...baseLog, method: 'admin_remote', metadata: {} })).toContain('147FD4');
   });
 });

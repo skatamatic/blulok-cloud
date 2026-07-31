@@ -238,14 +238,19 @@ export class AccessEventIngestionService {
     if (!grantLikeAction && !grantLikeMethod) return false;
 
     const { LockCommandService } = await import('@/services/lock-command.service');
-    const pending = LockCommandService.getInstance().peekCommandAttribution(event.device_id);
+    const lockCommands = LockCommandService.getInstance();
+    const pending = lockCommands.peekCommandAttribution(event.device_id);
     // Only BluLok remote unlock creates the duplicate Mobile key / Access granted noise.
     // Access-control OPEN pending must not swallow legitimate access-events.
-    return Boolean(
+    if (
       pending
       && pending.requestedStatus === 'unlocked'
-      && pending.deviceType === 'blulok',
-    );
+      && pending.deviceType === 'blulok'
+    ) {
+      return true;
+    }
+    // State sync may settle (and clear pending) before a late grant event arrives.
+    return lockCommands.hasRecentBluLokRemoteUnlockSettlement(event.device_id);
   }
 
   /**

@@ -190,7 +190,8 @@ describe('ActivityMonitorWidget', () => {
       );
       
       await waitFor(() => {
-        expect(screen.getByText(/Unlock attempt denied at C-303 for Unknown User/)).toBeInTheDocument();
+        // Placeholder "Unknown User" is omitted; denial reason is appended instead.
+        expect(screen.getByText(/Unlock attempt denied at C-303 — Invalid credential/)).toBeInTheDocument();
       });
     });
 

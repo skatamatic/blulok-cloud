@@ -3,7 +3,7 @@ import { GatewayService } from '@/services/gateway/gateway.service';
 import { logger } from '@/utils/logger';
 import { lockCommandTimeoutMs } from '@/utils/facility-lock-timeout.utils';
 import { resolveRemoteAccessMethod } from '@/utils/access-history-remote.utils';
-import { ONE_SHOT_ATTRIBUTION_TTL_SEC } from '@/constants/lock-command.constants';
+import { ONE_SHOT_ATTRIBUTION_TTL_SEC, REMOTE_UNLOCK_GRANT_SUPPRESSION_TTL_MS } from '@/constants/lock-command.constants';
 import { randomUUID } from 'crypto';
 
 type LockStatus =
@@ -73,6 +73,9 @@ export class LockCommandService {
   private readonly pendingCommands = new Map<string, PendingLockCommand>();
   /** Skips one lock-activity log row after timeout-driven status revert. */
   private readonly suppressRevertActivityLog = new Set<string>();
+  /** deviceId → expiresAt for post-settlement grant-event suppression (BluLok remote unlock). */
+  private readonly recentlySettledBluLokUnlocks = new Map<string, number>();
+  private readonly recentlySettledTimers = new Map<string, NodeJS.Timeout>();
 
   private constructor() {
     this.deviceModel = new DeviceModel();
@@ -592,6 +595,20 @@ export class LockCommandService {
   }
 
   /**
+   * True briefly after a BluLok remote unlock was success-consumed via state sync.
+   * Used to ignore late grant-like access-events (Mobile key / Access granted).
+   */
+  public hasRecentBluLokRemoteUnlockSettlement(deviceId: string): boolean {
+    const expiresAt = this.recentlySettledBluLokUnlocks.get(deviceId);
+    if (!expiresAt) return false;
+    if (Date.now() >= expiresAt) {
+      this.clearRecentBluLokUnlockSettlement(deviceId);
+      return false;
+    }
+    return true;
+  }
+
+  /**
    * Atomically consume pending attribution when settlement matches.
    * Returns null if commandId/status do not match (prevents TOCTOU mis-binding).
    */
@@ -610,7 +627,12 @@ export class LockCommandService {
       return null;
     }
     const attribution = this.peekCommandAttribution(deviceId);
+    const wasBluLokUnlock =
+      pending.deviceType === 'blulok' && pending.requestedStatus === 'unlocked';
     this.clearPending(deviceId);
+    if (wasBluLokUnlock) {
+      this.markRecentBluLokUnlockSettlement(deviceId);
+    }
     return attribution;
   }
 
@@ -972,6 +994,26 @@ export class LockCommandService {
         clearTimeout(pending.timeoutHandle);
       }
       this.pendingCommands.delete(deviceId);
+    }
+  }
+
+  private markRecentBluLokUnlockSettlement(deviceId: string): void {
+    this.clearRecentBluLokUnlockSettlement(deviceId);
+    const expiresAt = Date.now() + REMOTE_UNLOCK_GRANT_SUPPRESSION_TTL_MS;
+    this.recentlySettledBluLokUnlocks.set(deviceId, expiresAt);
+    const timer = setTimeout(() => {
+      this.clearRecentBluLokUnlockSettlement(deviceId);
+    }, REMOTE_UNLOCK_GRANT_SUPPRESSION_TTL_MS);
+    timer.unref?.();
+    this.recentlySettledTimers.set(deviceId, timer);
+  }
+
+  private clearRecentBluLokUnlockSettlement(deviceId: string): void {
+    this.recentlySettledBluLokUnlocks.delete(deviceId);
+    const timer = this.recentlySettledTimers.get(deviceId);
+    if (timer) {
+      clearTimeout(timer);
+      this.recentlySettledTimers.delete(deviceId);
     }
   }
 
