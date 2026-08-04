@@ -854,17 +854,20 @@ export class FMSService {
           user,
           facilityAssignmentCount,
         );
+        const needsReactivation = user.is_active === false;
 
         const hasInfoChanges =
           user.first_name !== fmsTenant.firstName ||
           user.last_name !== fmsTenant.lastName ||
           currentPhone !== fmsTenant.phone;
 
-        if (needsFmsRestore || hasInfoChanges) {
+        if (needsFmsRestore || hasInfoChanges || needsReactivation) {
           logger.debug(
             needsFmsRestore
               ? `[FMS] Tenant ${fmsTenant.email} restored in FMS`
-              : `[FMS] Tenant ${fmsTenant.email} has info changes`,
+              : needsReactivation && !hasInfoChanges
+                ? `[FMS] Tenant ${fmsTenant.email} is inactive and present in FMS`
+                : `[FMS] Tenant ${fmsTenant.email} has info changes`,
             { sync_log_id: syncLogId },
           );
           pendingInserts.push({
@@ -878,6 +881,8 @@ export class FMSService {
             required_actions: [FMSChangeAction.UPDATE_USER],
             impact_summary: needsFmsRestore && !hasInfoChanges
               ? `Tenant restored in FMS: ${formatFmsTenantContactLabel(fmsTenant)}`
+              : needsReactivation && !hasInfoChanges
+                ? `Reactivate tenant present in FMS: ${formatFmsTenantContactLabel(fmsTenant)}`
               : `Updated tenant info for: ${formatFmsTenantContactLabel(fmsTenant)}`,
             is_valid: isValid,
             validation_errors: validationErrors,
@@ -1388,7 +1393,7 @@ export class FMSService {
       mapping?: { id: string; metadata?: Record<string, unknown> | null } | null;
       performedBy: string;
       syncLogId: string;
-      /** When true, always restore inactive users / missing facility association (TENANT_ADDED). */
+      /** When true, always restore inactive users / missing facility association (tenant present in FMS). */
       force?: boolean;
     },
   ): Promise<boolean> {
@@ -1423,7 +1428,12 @@ export class FMSService {
 
     if (user && user.is_active === false) {
       await UserModel.activateUser(userId);
-      logger.info('[FMS] Reactivated tenant previously removed from FMS', {
+      void import('@/services/user-activation-side-effects.service')
+        .then(({ runUserActivationSideEffects }) => runUserActivationSideEffects(userId))
+        .catch((err) => {
+          logger.error('[FMS] Failed to run activation side effects after restore', err);
+        });
+      logger.info('[FMS] Reactivated tenant present in FMS', {
         fms_sync: true,
         sync_log_id: ctx.syncLogId,
         facility_id: facilityId,
@@ -1507,6 +1517,13 @@ export class FMSService {
       // Update phone_number if FMS has a normalized phone
       if (phoneE164 && existingUser.phone_number !== phoneE164) {
         updates.phone_number = phoneE164;
+      }
+
+      if (tenantData.firstName && existingUser.first_name !== tenantData.firstName) {
+        updates.first_name = tenantData.firstName;
+      }
+      if (tenantData.lastName && existingUser.last_name !== tenantData.lastName) {
+        updates.last_name = tenantData.lastName;
       }
 
       // Keep login_identifier aligned with our preferred identifier (email > phone)
@@ -1821,6 +1838,8 @@ export class FMSService {
       mapping,
       performedBy,
       syncLogId: change.sync_log_id,
+      // Tenant still present in FMS: restore facility link and reactivate if needed.
+      force: true,
     });
 
     // SECURITY: Validate user is associated with this facility (restored above if returning from FMS)
@@ -1909,6 +1928,7 @@ export class FMSService {
         mapping: tenantMapping,
         performedBy,
         syncLogId: change.sync_log_id,
+        force: true,
       });
       if (tenantMapping) {
         await this.entityMappingModel.updateMetadata(

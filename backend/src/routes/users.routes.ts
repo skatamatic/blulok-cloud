@@ -968,6 +968,19 @@ registerDelete(
     return;
   }
 
+  // Facility admins may only deactivate tenant / maintenance / technician accounts.
+  if (
+    AuthService.isFacilityAdmin(req.user!.role) &&
+    !FACILITY_ADMIN_CREATABLE_ROLES.includes(existingUser.role as UserRole)
+  ) {
+    res.status(403).json({
+      success: false,
+      message:
+        'Facility admins can only deactivate tenant, maintenance, or BluLok technician users',
+    });
+    return;
+  }
+
   // Only dev_admin can deactivate dev_admin users
   if (existingUser.role === UserRole.DEV_ADMIN && req.user!.role !== UserRole.DEV_ADMIN) {
     res.status(403).json({
@@ -1037,6 +1050,19 @@ registerPost(
     res.status(404).json({
       success: false,
       message: 'User not found'
+    });
+    return;
+  }
+
+  // Facility admins may only activate tenant / maintenance / technician accounts.
+  if (
+    AuthService.isFacilityAdmin(req.user!.role) &&
+    !FACILITY_ADMIN_CREATABLE_ROLES.includes(existingUser.role as UserRole)
+  ) {
+    res.status(403).json({
+      success: false,
+      message:
+        'Facility admins can only activate tenant, maintenance, or BluLok technician users',
     });
     return;
   }

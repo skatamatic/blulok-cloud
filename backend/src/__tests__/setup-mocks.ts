@@ -1489,9 +1489,13 @@ jest.mock('../models/user.model', () => {
         if (!user) {
           return Promise.resolve(undefined);
         }
+        // Match BaseModel.updateById: omit undefined/null so partial updates do not clear fields.
+        const cleanData = Object.fromEntries(
+          Object.entries(data || {}).filter(([, value]) => value !== undefined && value !== null),
+        );
         const updatedUser = {
           ...user,
-          ...data,
+          ...cleanData,
           id: user.id, // Preserve original ID
           email: user.email, // Preserve original email
           updated_at: new Date(),

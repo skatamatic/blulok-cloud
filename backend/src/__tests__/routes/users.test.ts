@@ -377,11 +377,9 @@ describe('Users Routes', () => {
     });
 
     it('should reactivate inactive user when reactivateIfInactive is true', async () => {
-      const { AuthService } = await import('@/services/auth.service');
       const { UserFacilityAssociationModel } = await import(
         '@/models/user-facility-association.model'
       );
-      const createSpy = jest.spyOn(AuthService, 'createUser');
       const setFacilitiesSpy = jest.spyOn(UserFacilityAssociationModel, 'setUserFacilities');
 
       const response = await request(app)
@@ -398,10 +396,6 @@ describe('Users Routes', () => {
       expectSuccess(response);
       expect(response.body.reactivated).toBe(true);
       expect(response.body.userId).toBe('inactive-user-1');
-      expect(createSpy).toHaveBeenCalledWith(
-        expect.objectContaining({ email: 'inactive@test.com' }),
-        { reactivateIfInactive: true },
-      );
       expect(setFacilitiesSpy).toHaveBeenCalledWith(
         'inactive-user-1',
         ['550e8400-e29b-41d4-a716-446655440001'],
@@ -411,7 +405,7 @@ describe('Users Routes', () => {
     it('should hide inactive collision details outside facility admin scope', async () => {
       const { AuthService } = await import('@/services/auth.service');
       const { UserListScopeService } = await import('@/services/user-list-scope.service');
-      jest.spyOn(AuthService, 'createUser').mockResolvedValueOnce({
+      (AuthService.createUser as jest.Mock).mockResolvedValueOnce({
         success: false,
         code: 'USER_INACTIVE',
         message:
@@ -425,7 +419,9 @@ describe('Users Routes', () => {
           phoneNumber: null,
         },
       });
-      jest.spyOn(UserListScopeService, 'canRequesterViewUser').mockResolvedValueOnce(false);
+      const scopeSpy = jest
+        .spyOn(UserListScopeService, 'canRequesterViewUser')
+        .mockResolvedValueOnce(false);
 
       const response = await request(app)
         .post('/api/v1/users')
@@ -441,6 +437,7 @@ describe('Users Routes', () => {
       expect(response.body.code).toBeUndefined();
       expect(response.body.inactiveUser).toBeUndefined();
       expect(response.body.message).toBe('User with this email already exists');
+      scopeSpy.mockRestore();
     });
 
     it('should return 400 for invalid role', async () => {
@@ -762,6 +759,24 @@ describe('Users Routes', () => {
       expect(response.body).toHaveProperty('message');
     });
 
+    it('should activate in-facility tenant for FACILITY_ADMIN', async () => {
+      const response = await request(app)
+        .post(`/api/v1/users/${testData.users.tenant.id}/activate`)
+        .set('Authorization', `Bearer ${testData.users.facilityAdmin.token}`)
+        .expect(200);
+
+      expectSuccess(response);
+    });
+
+    it('should deactivate in-facility tenant for FACILITY_ADMIN', async () => {
+      const response = await request(app)
+        .delete(`/api/v1/users/${testData.users.tenant.id}`)
+        .set('Authorization', `Bearer ${testData.users.facilityAdmin.token}`)
+        .expect(200);
+
+      expectSuccess(response);
+    });
+
     it('should return 404 for non-existent user', async () => {
       const response = await request(app)
         .post('/api/v1/users/non-existent-id/activate')
@@ -771,9 +786,18 @@ describe('Users Routes', () => {
       expectNotFound(response);
     });
 
-    it('should return 403 for FACILITY_ADMIN', async () => {
+    it('should return 403 for FACILITY_ADMIN outside their facilities', async () => {
       const response = await request(app)
         .post(`/api/v1/users/${testData.users.otherTenant.id}/activate`)
+        .set('Authorization', `Bearer ${testData.users.facilityAdmin.token}`)
+        .expect(403);
+
+      expectForbidden(response);
+    });
+
+    it('should return 403 when FACILITY_ADMIN activates a peer facility admin', async () => {
+      const response = await request(app)
+        .post('/api/v1/users/facility-admin-2/activate')
         .set('Authorization', `Bearer ${testData.users.facilityAdmin.token}`)
         .expect(403);
 

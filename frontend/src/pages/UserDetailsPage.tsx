@@ -137,6 +137,7 @@ export default function UserDetailsPage() {
   }>({ isOpen: false, device: null });
   const [deletingDevice, setDeletingDevice] = useState(false);
   const [deleteUserModal, setDeleteUserModal] = useState(false);
+  const [activateUserModal, setActivateUserModal] = useState(false);
   const [deletingUser, setDeletingUser] = useState(false);
   const [facilities, setFacilities] = useState<Array<{ id: string; name: string; description?: string }>>([]);
   const [selectedFacilityIds, setSelectedFacilityIds] = useState<string[]>([]);
@@ -428,7 +429,7 @@ export default function UserDetailsPage() {
         addToast({
           type: 'success',
           title: 'User deactivated',
-          message: 'Their access has been revoked. You can reactivate them later from Add User or Edit.',
+          message: 'Their access has been revoked. You can reactivate them later from this page or Add User.',
         });
         navigate('/users');
       } else {
@@ -448,6 +449,39 @@ export default function UserDetailsPage() {
     } finally {
       setDeletingUser(false);
       setDeleteUserModal(false);
+    }
+  };
+
+  const handleActivateUser = async () => {
+    if (!userDetails) return;
+
+    setDeletingUser(true);
+    try {
+      const response = await apiService.activateUser(userDetails.id);
+      if (response.success) {
+        addToast({
+          type: 'success',
+          title: 'User activated',
+          message: 'Their account is active again.',
+        });
+        await loadUserDetails();
+      } else {
+        addToast({
+          type: 'error',
+          title: 'Failed to activate user',
+          message: response.message || 'An unexpected error occurred',
+        });
+      }
+    } catch (error: any) {
+      console.error('Failed to activate user:', error);
+      addToast({
+        type: 'error',
+        title: 'Failed to activate user',
+        message: error?.response?.data?.message || 'An unexpected error occurred',
+      });
+    } finally {
+      setDeletingUser(false);
+      setActivateUserModal(false);
     }
   };
 
@@ -555,14 +589,24 @@ export default function UserDetailsPage() {
                 <PencilIcon className="h-4 w-4 mr-2" />
                 Edit
               </button>
-              <button
-                onClick={() => setDeleteUserModal(true)}
-                disabled={userDetails.id === authState.user?.id || !userDetails.isActive}
-                className="inline-flex items-center px-4 py-2 text-sm font-medium text-white bg-red-600 rounded-lg hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-              >
-                <NoSymbolIcon className="h-4 w-4 mr-2" />
-                Deactivate
-              </button>
+              {userDetails.isActive ? (
+                <button
+                  onClick={() => setDeleteUserModal(true)}
+                  disabled={userDetails.id === authState.user?.id}
+                  className="inline-flex items-center px-4 py-2 text-sm font-medium text-white bg-red-600 rounded-lg hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                >
+                  <NoSymbolIcon className="h-4 w-4 mr-2" />
+                  Deactivate
+                </button>
+              ) : (
+                <button
+                  onClick={() => setActivateUserModal(true)}
+                  className="inline-flex items-center px-4 py-2 text-sm font-medium text-white bg-primary-600 rounded-lg hover:bg-primary-700 transition-colors"
+                >
+                  <CheckCircleIcon className="h-4 w-4 mr-2" />
+                  Activate
+                </button>
+              )}
             </>
           ) : undefined
         }
@@ -1350,11 +1394,27 @@ export default function UserDetailsPage() {
           title="Deactivate User"
           message={
             userDetails
-              ? `Deactivate "${userDetails.firstName} ${userDetails.lastName}"? They will lose access immediately. You can reactivate them later (for example via Add User with the same email).`
+              ? `Deactivate "${userDetails.firstName} ${userDetails.lastName}"? They will lose access immediately. You can reactivate them later from this page or via Add User.`
               : ''
           }
           confirmText="Deactivate User"
           variant="danger"
+          isLoading={deletingUser}
+        />
+
+        {/* Activate User Confirmation Modal */}
+        <ConfirmModal
+          isOpen={activateUserModal}
+          onClose={() => setActivateUserModal(false)}
+          onConfirm={handleActivateUser}
+          title="Activate User"
+          message={
+            userDetails
+              ? `Activate "${userDetails.firstName} ${userDetails.lastName}"? They will be able to sign in and regain access according to their current assignments.`
+              : ''
+          }
+          confirmText="Activate User"
+          variant="info"
           isLoading={deletingUser}
         />
     </DetailsPageShell>

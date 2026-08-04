@@ -121,7 +121,17 @@ Creating a user whose email or phone matches an **inactive** account returns **4
 
 The Add User UI prompts the admin to confirm. Retrying the same payload with `reactivateIfInactive: true` reactivates the existing row, applies the submitted profile fields (name, role, password/invite semantics, optional phone), syncs facility associations when provided, and runs activation side effects (denylist removal, share restore). Active-user identity collisions remain hard **400** errors. Callers outside the inactive user’s facility scope receive a generic “already exists” **400** (no `inactiveUser` payload).
 
-Dedicated reactivation also remains available via `POST /api/v1/users/:id/activate` and `PUT /api/v1/users/:id` with `isActive: true`.
+Dedicated reactivation also remains available via `POST /api/v1/users/:id/activate` (and the Activate button on user details) and `PUT /api/v1/users/:id` with `isActive: true`.
+
+**RBAC for activate / deactivate**
+
+| Requester | Scope |
+|-----------|--------|
+| **dev_admin / admin** | Any user (only `dev_admin` may activate/deactivate other `dev_admin` accounts) |
+| **facility_admin** | Users in their facilities with roles tenant / maintenance / BluLok technician |
+| **Others** | Not allowed |
+
+FMS sync reactivates tenants that are still present in FMS (including manually deactivated accounts) and updates profile fields on apply.
 
 ### User Facility Associations Table
 
