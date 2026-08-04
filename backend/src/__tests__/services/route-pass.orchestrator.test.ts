@@ -79,7 +79,7 @@ describe('RoutePassOrchestrator', () => {
 
   it('issues a route pass using preferred device header', async () => {
     mockActiveUser('u1', UserRole.ADMIN);
-    audienceResolveSpy.mockResolvedValue(['lock:serial-1']);
+    audienceResolveSpy.mockResolvedValue([]);
     const lockRows = [{ device_serial: 'serial-1', facility_id: 'fac-x' }];
     const db: any = jest.fn((table: string) => {
       if (table === 'user_devices') {
@@ -110,7 +110,7 @@ describe('RoutePassOrchestrator', () => {
       expect.objectContaining({
         userId: 'u1',
         devicePublicKey: 'pubkey',
-        audiences: ['lock:serial-1'],
+        audiences: [],
         userRole: UserRole.ADMIN,
       }),
     );
@@ -253,7 +253,7 @@ describe('RoutePassOrchestrator', () => {
 
   it('loads facility admin facilityIds from DB even when JWT lists stale facilities', async () => {
     mockActiveUser('fa-1', UserRole.FACILITY_ADMIN);
-    audienceResolveSpy.mockResolvedValue(['access_control:ac-1']);
+    audienceResolveSpy.mockResolvedValue([]);
     const db: any = jest.fn((table: string) => {
       if (table === 'user_devices') {
         return {
@@ -281,6 +281,13 @@ describe('RoutePassOrchestrator', () => {
         userId: 'fa-1',
         userRole: UserRole.FACILITY_ADMIN,
         facilityIds: ['fac-current'],
+      }),
+    );
+    expect(issueRoutePassSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        audiences: [],
+        userRole: UserRole.FACILITY_ADMIN,
+        schedules: undefined,
       }),
     );
   });

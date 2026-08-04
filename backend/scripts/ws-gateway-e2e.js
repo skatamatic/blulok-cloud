@@ -1680,8 +1680,12 @@ async function registerUserDevice(userToken, appDeviceId, publicKeyB64) {
   if (!res.data?.success) throw new Error('Register device failed');
 }
 
-async function requestRoutePass(userToken, appDeviceId) {
-  const res = await axios.post(`${API_BASE}/passes/request`, {}, {
+async function requestRoutePass(userToken, appDeviceId, options = {}) {
+  const body = {};
+  if (options.facilityId) {
+    body.facility_id = options.facilityId;
+  }
+  const res = await axios.post(`${API_BASE}/passes/request`, body, {
     headers: {
       Authorization: `Bearer ${userToken}`,
       'X-App-Device-Id': appDeviceId
@@ -11041,7 +11045,7 @@ async function run() {
       ok('Facility-scoped route pass includes app-entry access_control audience and user_role');
     }
 
-    heading('Facility admin route pass uses DB facility associations');
+    heading('Facility admin route pass uses empty aud + DB facility scope');
     step('Creating second facility with app-entry access control for facility admin scope test');
     const faScopeFacilityId = await createTestFacility(token, `E2E-FA-Scope-${Date.now()}`);
     created.extraFacilityIds.push(faScopeFacilityId);
@@ -11066,34 +11070,69 @@ async function run() {
     const faScopeToken = faScopeLogin.data?.token;
     if (!faScopeToken) throw new Error('Facility admin re-login failed after multi-facility assignment');
 
-    step('Requesting facility admin route pass (must include app-entry only, no lock audiences)');
+    step('Requesting facility admin route pass (empty aud; authorize via user_role)');
     const faRouteDevId = `e2e-fa-rp-${Date.now()}`;
     const faRoutePub = Buffer.alloc(32, 7).toString('base64');
     await registerUserDevice(faScopeToken, faRouteDevId, faRoutePub);
     const faMultiPass = await requestRoutePass(faScopeToken, faRouteDevId);
     const faMultiClaims = decodeJwtClaims(faMultiPass);
     assertRoutePassUserRole(faMultiClaims, 'facility_admin');
-    if (!faMultiClaims?.aud?.some((aud) => aud === `access_control:${faScopeAcId}`)) {
-      throw new Error(`Expected route pass to include access_control:${faScopeAcId} for second facility`);
+    if (!Array.isArray(faMultiClaims?.aud) || faMultiClaims.aud.length !== 0) {
+      throw new Error(`Expected facility_admin route pass aud to be [], got ${JSON.stringify(faMultiClaims?.aud)}`);
     }
-    if ((faMultiClaims.aud || []).some((aud) => String(aud).startsWith('lock:'))) {
-      throw new Error('Facility admin route pass must not include lock:* audiences');
+    if (faMultiClaims.schedules !== undefined) {
+      throw new Error('Expected facility_admin route pass to omit schedules claim');
     }
-    ok('Facility admin route pass scoped to app-entry access_control audiences only');
+    ok('Facility admin route pass has empty aud and facility_admin user_role');
+
+    step('Confirming facility-scoped request succeeds while assigned to second facility');
+    const faScopedOk = await requestRoutePass(faScopeToken, faRouteDevId, { facilityId: faScopeFacilityId });
+    const faScopedOkClaims = decodeJwtClaims(faScopedOk);
+    assertRoutePassUserRole(faScopedOkClaims, 'facility_admin');
+    if (!Array.isArray(faScopedOkClaims?.aud) || faScopedOkClaims.aud.length !== 0) {
+      throw new Error(`Expected facility-scoped facility_admin aud to be [], got ${JSON.stringify(faScopedOkClaims?.aud)}`);
+    }
+    ok('Facility-scoped facility admin route pass succeeds with empty aud');
 
     step('Removing second facility while JWT still lists both facilities');
     await setUserFacilities(token, created.facilityAdminId, [created.facilityId]);
 
-    step('Requesting route pass with stale JWT — must exclude removed facility (DB wins over token)');
+    step('Requesting route pass for removed facility — must 403 (DB wins over token)');
+    try {
+      await requestRoutePass(faScopeToken, faRouteDevId, { facilityId: faScopeFacilityId });
+      throw new Error(`Expected 403 for facility_admin route pass after facility removal (${faScopeAcId})`);
+    } catch (err) {
+      const status = err?.response?.status;
+      if (status !== 403) {
+        throw new Error(`Expected 403 for removed-facility route pass, got ${status || err.message}`);
+      }
+    }
+    ok('Fresh facility admin route pass rejects removed facility via DB associations');
+
+    step('Unscoped facility admin route pass still succeeds after facility removal');
     const faPassAfterRemoval = await requestRoutePass(faScopeToken, faRouteDevId);
     const faClaimsAfterRemoval = decodeJwtClaims(faPassAfterRemoval);
-    if (faClaimsAfterRemoval?.aud?.some((aud) => aud === `access_control:${faScopeAcId}`)) {
-      throw new Error(`Route pass still includes access_control:${faScopeAcId} after facility was removed`);
+    assertRoutePassUserRole(faClaimsAfterRemoval, 'facility_admin');
+    if (!Array.isArray(faClaimsAfterRemoval?.aud) || faClaimsAfterRemoval.aud.length !== 0) {
+      throw new Error(`Expected empty aud after facility removal, got ${JSON.stringify(faClaimsAfterRemoval?.aud)}`);
     }
-    if ((faClaimsAfterRemoval.aud || []).some((aud) => String(aud).startsWith('lock:'))) {
-      throw new Error('Facility admin route pass must not include lock:* audiences after facility removal');
+    ok('Unscoped facility admin route pass remains empty-aud after facility removal');
+
+    heading('Admin / dev_admin route pass uses empty aud');
+    step('Requesting DEV_ADMIN route pass (empty aud; authorize via user_role)');
+    const adminRouteDevId = `e2e-admin-rp-${Date.now()}`;
+    const adminRoutePub = Buffer.alloc(32, 9).toString('base64');
+    await registerUserDevice(token, adminRouteDevId, adminRoutePub);
+    const adminPass = await requestRoutePass(token, adminRouteDevId);
+    const adminClaims = decodeJwtClaims(adminPass);
+    assertRoutePassUserRole(adminClaims, 'dev_admin');
+    if (!Array.isArray(adminClaims?.aud) || adminClaims.aud.length !== 0) {
+      throw new Error(`Expected dev_admin route pass aud to be [], got ${JSON.stringify(adminClaims?.aud)}`);
     }
-    ok('Fresh facility admin route pass excludes removed-facility app-entry audiences');
+    if (adminClaims.schedules !== undefined) {
+      throw new Error('Expected dev_admin route pass to omit schedules claim');
+    }
+    ok('DEV_ADMIN route pass has empty aud and dev_admin user_role');
 
     created.facilityAdminToken = faScopeToken;
 

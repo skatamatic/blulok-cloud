@@ -66,7 +66,8 @@ export class RoutePassOrchestrator {
 
     const roleNorm = normalizeRoutePassUserRole(role);
     let schedules: RoutePassFacilitySchedule[] | undefined;
-    if (roleNorm !== 'admin' && roleNorm !== 'dev_admin') {
+    // Privileged roles use empty aud + user_role on devices; do not embed schedules.
+    if (roleNorm !== 'admin' && roleNorm !== 'dev_admin' && roleNorm !== 'facility_admin') {
       const resolved = await resolveRoutePassSchedulesForAudiences(db, userId, audiences);
       if (resolved.length > 0) {
         schedules = resolved;

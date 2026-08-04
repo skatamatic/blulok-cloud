@@ -88,17 +88,16 @@ This document summarizes the new centralized trust model implemented in the back
 
 ### RBAC for Route Pass Issuance
 Route Passes are scoped by role to enforce least-privilege access:
-- **DEV_ADMIN/ADMIN**: Audience includes all locks across all facilities plus app-entry access_control devices.
-- **FACILITY_ADMIN**: Audience includes **app-entry access_control devices only** in assigned facilities (not unit lock unlock).
+- **DEV_ADMIN / ADMIN / FACILITY_ADMIN**: `aud` is **empty `[]`**. Devices authorize these roles via the **`user_role`** claim so the JWT does not enumerate every lock / access-control device (which becomes too large at scale). Optional `facility_id` on the request is still validated against DB entitlements for facility admins.
 - **TENANT**: Audience limited to locks for units assigned via FMS (`unit_assignments` table) plus app-entry access from **specific access groups** (shared lock membership) and the facility **default access group** (`is_default`).
 - **MAINTENANCE**: Audience limited to explicitly granted units (future: `maintenance_unit_access` table).
 
-Facility associations for route pass issuance are always read from the database for **FACILITY_ADMIN** (not from the login JWT), so admin updates to assignments take effect on the next `POST /passes/request` even if the user has not re-authenticated.
+Facility associations for route pass issuance are always read from the database for **FACILITY_ADMIN** (not from the login JWT), so admin updates to assignments take effect on the next `POST /passes/request` even if the user has not re-authenticated (e.g. a `facility_id` filter for a removed facility is rejected).
 
 Pass requests require authentication; device binding via `X-App-Device-Id` (preferred) or latest active device (fallback).
 
 ### Denylist Policy (when denylist applies)
-Denylist is for **revoking credentials that were actually issued** to users on specific devices they had access to — primarily **tenants/maintenance on unit locks** and **shared-key invitees**. It is **not** used for facility-admin facility assignment changes (they do not receive lock audiences).
+Denylist is for **revoking credentials that were actually issued** to users on specific devices they had access to — primarily **tenants/maintenance on unit locks** and **shared-key invitees**. It is **not** used for facility-admin facility assignment changes (privileged management roles do not receive lock audiences in `aud`).
 
 Denylist targets include **BluLok locks on the unit**, **app-enabled access_control devices in specific access groups** linked to those locks, and **global/default-group access_control devices** in the same facility **only when the user loses all remaining unit/key-share access in that facility** (partial unit unassignment does not denylist facility-wide gates while the user still holds another unit or active share there).
 - Owner deactivation:

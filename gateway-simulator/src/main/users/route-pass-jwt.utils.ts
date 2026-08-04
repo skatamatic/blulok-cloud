@@ -52,6 +52,14 @@ export function normalizeAudClaim(aud: RoutePassClaims['aud']): string[] {
   return Array.isArray(aud) ? aud.map(String) : [String(aud)];
 }
 
+/** Roles that receive empty `aud` and are authorized via `user_role` on devices. */
+export const ROUTE_PASS_ROLE_GRANTS_ALL = new Set(['admin', 'dev_admin', 'facility_admin']);
+
+export function routePassRoleGrantsAllDevices(userRole: unknown): boolean {
+  if (typeof userRole !== 'string') return false;
+  return ROUTE_PASS_ROLE_GRANTS_ALL.has(userRole.trim().toLowerCase());
+}
+
 export function audienceMatchesLock(audiences: string[], lockSerial: string): boolean {
   const target = `lock:${lockSerial}`;
   return audiences.some((entry) => entry === target);

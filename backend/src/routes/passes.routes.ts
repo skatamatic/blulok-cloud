@@ -6,10 +6,9 @@
  *   Honors `X-App-Device-Id` to bind to the correct device public key.
  *
  * RBAC Scoping (resolved from database at issuance — not from the session JWT):
- * - DEV_ADMIN/ADMIN: all locks (+ optional facility_id filter)
- * - FACILITY_ADMIN: app-entry access_control in assigned facilities
+ * - DEV_ADMIN / ADMIN / FACILITY_ADMIN: empty `aud` (devices authorize via `user_role`)
  * - MAINTENANCE: locks for explicitly granted units
- * - TENANT: locks for FMS-assigned units and active shares
+ * - TENANT: locks for FMS-assigned units and active shares (+ app-entry access_control)
  */
 import { Router, Response } from 'express';
 import Joi from 'joi';

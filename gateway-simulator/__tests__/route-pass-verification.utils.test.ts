@@ -68,6 +68,22 @@ describe('route-pass-verification.utils', () => {
     expect(result.granted).toBe(true);
   });
 
+  it('grants access for privileged role with empty aud', async () => {
+    const { jwt, opsPublicKeyB64Url } = await signTestRoutePass({
+      iss: 'BluCloud:Root',
+      sub: 'admin-1',
+      aud: [],
+      user_role: 'facility_admin',
+    });
+    const result = await evaluateRoutePassForDevice({
+      routePassJwt: jwt,
+      opsPublicKeyB64: opsPublicKeyB64Url,
+      lockSerial: 'LOCK-001',
+      deviceKind: 'lock',
+    });
+    expect(result.granted).toBe(true);
+  });
+
   it('denies wrong lock', async () => {
     const { jwt, opsPublicKeyB64Url } = await signTestRoutePass({
       sub: 'user-1',

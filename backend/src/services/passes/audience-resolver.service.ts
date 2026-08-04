@@ -12,6 +12,10 @@ import { AppEntryAccessService } from '@/services/passes/app-entry-access.servic
  * - Direct lock access: lock:{lockSerial}
  * - Shared access:      shared_key:{primaryTenantId}:{lockSerial}
  * - App entry access:   access_control:{deviceId}
+ *
+ * Privileged management roles (admin, dev_admin, facility_admin) receive an
+ * empty `aud` — devices authorize those roles via `user_role` so the claim
+ * does not explode with every lock / access-control device in scope.
  */
 export class AudienceResolver {
   public static async resolve(db: Knex, params: {
@@ -20,36 +24,19 @@ export class AudienceResolver {
     facilityIds?: string[];
     facilityId?: string;
   }): Promise<string[]> {
-    const { userId, userRole, facilityIds, facilityId } = params;
-    let audiences: string[] = [];
+    const { userId, userRole, facilityId } = params;
 
-    if (userRole === UserRole.DEV_ADMIN || userRole === UserRole.ADMIN) {
-      const rowsQb = db('blulok_devices as bd');
-      if (facilityId) {
-        rowsQb.join('units as u', 'bd.unit_id', 'u.id').where('u.facility_id', facilityId);
-      }
-      const rows = await rowsQb.select('bd.device_serial');
-      const lockSerials = rows.map((r: any) => r.device_serial as string);
-      audiences = lockSerials.map((serial: string) => `lock:${serial}`);
-      const appEntryDeviceIds = (await AppEntryAccessService.resolveDeviceIds(db, params)) || [];
-      audiences.push(...appEntryDeviceIds.map((id) => `access_control:${id}`));
-      return Array.from(new Set(audiences));
-    }
-
-    if (userRole === UserRole.FACILITY_ADMIN) {
-      const scopedFacilityIds = facilityId ? [facilityId] : facilityIds;
-      if (!scopedFacilityIds || scopedFacilityIds.length === 0) {
-        return [];
-      }
-      // Facility admins use route passes for app-entry access control only — not unit lock unlock.
-      const appEntryDeviceIds = (await AppEntryAccessService.resolveDeviceIds(db, {
-        ...params,
-        facilityIds: scopedFacilityIds,
-      })) || [];
-      return appEntryDeviceIds.map((id) => `access_control:${id}`);
+    if (
+      userRole === UserRole.DEV_ADMIN ||
+      userRole === UserRole.ADMIN ||
+      userRole === UserRole.FACILITY_ADMIN
+    ) {
+      return [];
     }
 
     if (userRole === UserRole.TENANT || userRole === UserRole.MAINTENANCE) {
+      let audiences: string[] = [];
+
       // Direct (assigned) locks
       const assignedQuery = db('blulok_devices as bd')
         .join('unit_assignments as ua', 'ua.unit_id', 'bd.unit_id')
@@ -91,14 +78,10 @@ export class AudienceResolver {
       const appEntryDeviceIds = (await AppEntryAccessService.resolveDeviceIds(db, params)) || [];
       audiences.push(...appEntryDeviceIds.map((id) => `access_control:${id}`));
 
-      // Deduplicate
-      audiences = Array.from(new Set(audiences));
-      return audiences;
+      return Array.from(new Set(audiences));
     }
 
     // Other roles: no access
     return [];
   }
 }
-
-

@@ -17,8 +17,8 @@ describe('AudienceResolver', () => {
       whereNull: jest.fn().mockReturnThis(),
       orWhere: jest.fn().mockReturnThis(),
       first: jest.fn(),
-      fn: { now: () => new Date() },
     };
+    db.fn = { now: () => new Date() };
     (db).mockImplementation(() => qb);
     return { db, qb };
   };
@@ -27,36 +27,36 @@ describe('AudienceResolver', () => {
     jest.resetAllMocks();
   });
 
-  it('returns lock:* for all locks when role is ADMIN', async () => {
-    const { db, qb } = makeKnex();
-    qb.select.mockResolvedValue([{ device_serial: 'ser-1' }, { device_serial: 'ser-2' }]);
-    (DatabaseService.getInstance as jest.Mock).mockReturnValue({ connection: db });
-    jest.spyOn(AppEntryAccessService, 'resolveDeviceIds').mockResolvedValue([]);
-
-    const aud = await AudienceResolver.resolve(db, { userId: 'u1', userRole: UserRole.ADMIN });
-    expect(aud).toEqual(['lock:ser-1', 'lock:ser-2']);
-  });
-
-  it('includes app-entry access_control:* audiences for ADMIN', async () => {
-    const { db, qb } = makeKnex();
-    qb.select.mockResolvedValue([{ device_serial: 'ser-1' }]);
-    (DatabaseService.getInstance as jest.Mock).mockReturnValue({ connection: db });
-    jest.spyOn(AppEntryAccessService, 'resolveDeviceIds').mockResolvedValue(['ac-1', 'ac-2']);
-
-    const aud = await AudienceResolver.resolve(db, { userId: 'u1', userRole: UserRole.ADMIN });
-    expect(aud).toEqual(expect.arrayContaining(['lock:ser-1', 'access_control:ac-1', 'access_control:ac-2']));
-  });
-
-  it('returns access_control only for FACILITY_ADMIN (no lock audiences)', async () => {
+  it('returns empty aud for ADMIN (devices authorize via user_role)', async () => {
     const { db } = makeKnex();
-    jest.spyOn(AppEntryAccessService, 'resolveDeviceIds').mockResolvedValue(['ac-fac-1']);
+    const appEntrySpy = jest.spyOn(AppEntryAccessService, 'resolveDeviceIds');
+
+    const aud = await AudienceResolver.resolve(db, { userId: 'u1', userRole: UserRole.ADMIN });
+    expect(aud).toEqual([]);
+    expect(appEntrySpy).not.toHaveBeenCalled();
+    expect(db).not.toHaveBeenCalled();
+  });
+
+  it('returns empty aud for DEV_ADMIN', async () => {
+    const { db } = makeKnex();
+
+    const aud = await AudienceResolver.resolve(db, { userId: 'u1', userRole: UserRole.DEV_ADMIN });
+    expect(aud).toEqual([]);
+  });
+
+  it('returns empty aud for FACILITY_ADMIN (even when assigned facilities have app-entry devices)', async () => {
+    const { db } = makeKnex();
+    const appEntrySpy = jest
+      .spyOn(AppEntryAccessService, 'resolveDeviceIds')
+      .mockResolvedValue(['ac-fac-1']);
 
     const aud = await AudienceResolver.resolve(db, {
       userId: 'fa-1',
       userRole: UserRole.FACILITY_ADMIN,
       facilityIds: ['fac-1'],
     });
-    expect(aud).toEqual(['access_control:ac-fac-1']);
+    expect(aud).toEqual([]);
+    expect(appEntrySpy).not.toHaveBeenCalled();
   });
 
   it('returns mixed audiences for TENANT (assigned + shared)', async () => {
@@ -78,5 +78,3 @@ describe('AudienceResolver', () => {
     expect(qb.where).toHaveBeenCalledWith(expect.any(Function));
   });
 });
-
-

@@ -6,6 +6,7 @@ import {
   audienceGrantsDevice,
   decodeJwtPayloadUnsafe,
   normalizeAudClaim,
+  routePassRoleGrantsAllDevices,
 } from './route-pass-jwt.utils';
 import { normalizeOpsPublicKeyB64 } from './user-device.utils';
 
@@ -77,13 +78,17 @@ export async function evaluateRoutePassForDevice(
     return { granted: false, reason: 'route_pass_expired', message: 'Route pass has expired' };
   }
 
+  // Privileged management roles issue empty aud; authorize via user_role.
+  const grantedByRole = routePassRoleGrantsAllDevices(claims.user_role);
   const audiences = normalizeAudClaim(claims.aud);
-  const granted = audienceGrantsDevice(audiences, {
-    deviceKind: input.deviceKind,
-    lockSerial: input.lockSerial,
-    accessControlCloudId: input.accessControlCloudId,
-    userId: claims.sub,
-  });
+  const granted =
+    grantedByRole ||
+    audienceGrantsDevice(audiences, {
+      deviceKind: input.deviceKind,
+      lockSerial: input.lockSerial,
+      accessControlCloudId: input.accessControlCloudId,
+      userId: claims.sub,
+    });
 
   if (!granted) {
     return {

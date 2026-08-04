@@ -82,13 +82,14 @@ Resolution logic (who gets which audiences) lives in [`backend/src/services/pass
 
 **Role summary:**
 
-| Role | `lock:` / `shared_key:` | `access_control:` |
-|------|-------------------------|-------------------|
-| `admin`, `dev_admin` | All locks (optional facility filter) | App-entry devices in scope |
-| `facility_admin` | **None** — managers do not unlock unit locks via route pass | App-entry devices in **currently assigned** facilities (from DB, not login JWT) |
-| `tenant`, `maintenance` | Assigned / shared unit locks only | Specific-group and default/global app-entry devices in assigned facilities |
+| Role | `aud` | Device authorization |
+|------|-------|----------------------|
+| `admin`, `dev_admin`, `facility_admin` | **Empty `[]`** | Devices authorize via **`user_role`** (listing every lock / access-control target would make the JWT too large) |
+| `tenant`, `maintenance` | Assigned / shared unit locks plus specific-group and default/global app-entry devices in assigned facilities | Match target against `lock:…` / `shared_key:…` / `access_control:…` entries |
 
-**Important:** `aud` can reference **multiple facilities** in one pass (e.g. a tenant with units in more than one site). Schedule data is **per facility** and must be evaluated against the facility of the lock or access point being used (see below).
+Facility associations for **`facility_admin`** still come from the DB (not the login JWT) and gate optional `facility_id` filters on issuance — they are **not** expanded into `aud`.
+
+**Important:** For tenant/maintenance, `aud` can reference **multiple facilities** in one pass (e.g. a tenant with units in more than one site). Schedule data is **per facility** and must be evaluated against the facility of the lock or access point being used (see below).
 
 ---
 
@@ -102,7 +103,7 @@ Source module: [`backend/src/services/passes/route-pass-schedules.ts`](../backen
 
 The claim is **absent** (not an empty array) when any of the following holds:
 
-1. **Global admin roles:** `user_role` is **`admin`** or **`dev_admin`** after normalization. These roles are not given embedded schedule policy in the token (they are not tenant-time-bound in this way).
+1. **Privileged management roles:** `user_role` is **`admin`**, **`dev_admin`**, or **`facility_admin`** after normalization. These roles receive empty `aud` and are not given embedded schedule policy in the token.
 2. **No enforceable windows:** For every facility implied by `aud`, the resolved user (or shared-key fallback) has **no** non-empty `schedule_time_windows` after filtering and normalization.
 
 If `schedules` is present, it is a **non-empty** array.
@@ -259,9 +260,10 @@ Different `(start, end)` pairs stay in **separate** bands even on the same day.
 
 1. Verify JWT with the **operations public key** (`EdDSA`, issuer expectations per product).
 2. Check **`exp`** and clock skew policy.
-3. Validate **`aud`** contains the target `lock:…`, `shared_key:…`, or `access_control:…` as appropriate.
-4. Confirm **`device_pubkey`** matches the expected app-device key agreement / challenge flow used by the product.
-5. If **`schedules`** is present, evaluate **facility `f`** and **bands `w`** as above; if absent, apply product rules for roles that do not embed schedules (e.g. global admin) or “no schedule” tenants.
+3. If **`user_role`** is `admin`, `dev_admin`, or `facility_admin`, treat **`aud` as intentionally empty** and authorize per product role policy (do not require audience match).
+4. Otherwise validate **`aud`** contains the target `lock:…`, `shared_key:…`, or `access_control:…` as appropriate.
+5. Confirm **`device_pubkey`** matches the expected app-device key agreement / challenge flow used by the product.
+6. If **`schedules`** is present, evaluate **facility `f`** and **bands `w`** as above; if absent, apply product rules for roles that do not embed schedules (privileged management roles) or “no schedule” tenants.
 
 ---
 
