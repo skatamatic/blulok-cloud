@@ -45,7 +45,7 @@ describe('FMSService.detectTenantChanges — phone-only tenants', () => {
       },
     ];
 
-    const changes = await svc.detectTenantChanges('fac-1', fmsTenants, 'sync-1', [], jest.fn());
+    const changes = await svc.detectTenantChanges('fac-1', fmsTenants, [], 'sync-1', [], jest.fn());
 
     expect(changes).toHaveLength(1);
     expect(changes[0].change_type).toBe(FMSChangeType.TENANT_ADDED);
@@ -102,7 +102,7 @@ describe('FMSService.detectTenantChanges — phone-only tenants', () => {
       },
     ];
 
-    const changes = await svc.detectTenantChanges('fac-1', fmsTenants, 'sync-1', [], jest.fn());
+    const changes = await svc.detectTenantChanges('fac-1', fmsTenants, [], 'sync-1', [], jest.fn());
 
     expect(changes.filter((c: { change_type: string }) => c.change_type === FMSChangeType.TENANT_ADDED)).toHaveLength(0);
   });

@@ -60,6 +60,17 @@ import { UserRole } from '@/types/auth.types';
 import { logger } from '@/utils/logger';
 import { shouldAutoAcceptChanges } from './fms-auto-accept.utils';
 import {
+  buildFmsOccupancyContext,
+  formatVacantUnitLedgerConflictNote,
+  isFmsUnitVacantStatus,
+  partitionTenantUnitIdsByOccupancy,
+  resolveLedgerAssignAgainstUnitStatus,
+  resolveLedgerUnassignAgainstUnitStatus,
+  resolveOccupiedUnitBlockers,
+  type FmsOccupancyContext,
+  type FmsOccupancyTenantInfo,
+} from './fms-unit-occupancy-validation.utils';
+import {
   isFmsChangeDismissible,
   isFmsChangePending,
   partitionChangesForAutoApply,
@@ -735,8 +746,15 @@ export class FMSService {
     );
     const sharedUnits = allUnitsResult.units || [];
 
-    // Detect tenant changes (60% -> 70%)
-    const tenantChanges = await this.detectTenantChanges(facilityId, fmsTenants, syncLogId, sharedUnits, (progress: number) => {
+    // Detect tenant changes (60% -> 70%) — pass FMS units so ledger assigns that contradict
+    // vacant unit status are blocked (unit status is SoT for occupancy).
+    const tenantChanges = await this.detectTenantChanges(
+      facilityId,
+      fmsTenants,
+      fmsUnits,
+      syncLogId,
+      sharedUnits,
+      (progress: number) => {
       if (onProgress) {
         const percent = 60 + (progress / 100) * 10;
         onProgress(Math.round(percent), `Analyzing ${fmsTenants.length} tenants`);
@@ -744,8 +762,24 @@ export class FMSService {
     });
     changes.push(...tenantChanges);
 
+    // Unit detection needs to know which tenants BluLok can end up holding, so occupied statuses
+    // that could never be applied are flagged rather than left to fail during apply.
+    const tenantMappings = await this.entityMappingModel.findByFacility(facilityId, 'user');
+    const occupancyContext = buildFmsOccupancyContext({
+      fmsTenants,
+      tenantChanges,
+      mappedTenantExternalIds: tenantMappings.map((m) => m.external_id),
+    });
+
     // Detect unit changes (70% -> 78%) — reuse the same unit list
-    const unitChanges = await this.detectUnitChanges(facilityId, fmsUnits, syncLogId, sharedUnits, (progress: number) => {
+    const unitChanges = await this.detectUnitChanges(
+      facilityId,
+      fmsUnits,
+      fmsTenants,
+      syncLogId,
+      sharedUnits,
+      occupancyContext,
+      (progress: number) => {
       if (onProgress) {
         const percent = 70 + (progress / 100) * 8;
         onProgress(Math.round(percent), `Analyzing ${fmsUnits.length} units`);
@@ -768,12 +802,15 @@ export class FMSService {
   private async detectTenantChanges(
     facilityId: string,
     fmsTenants: FMSTenant[],
+    fmsUnits: FMSUnit[],
     syncLogId: string,
     sharedUnits: any[],
     onProgress?: (percent: number) => void
   ): Promise<FMSChange[]> {
     const total = fmsTenants.length;
     let processed = 0;
+
+    const fmsUnitsByExternalId = new Map(fmsUnits.map((u) => [u.externalId, u]));
 
     // Get entity mappings for this facility
     const existingMappings = await this.entityMappingModel.findByFacility(facilityId, 'user');
@@ -813,7 +850,12 @@ export class FMSService {
     const unitMappingsByExternalId = new Map(unitMappings.map(m => [m.external_id, m]));
     const unitsById = new Map(sharedUnits.map((u: any) => [u.id, u]));
 
-    const unitChangeContext = { assignmentsByTenantId, unitMappingsByExternalId, unitsById };
+    const unitChangeContext = {
+      assignmentsByTenantId,
+      unitMappingsByExternalId,
+      unitsById,
+      fmsUnitsByExternalId,
+    };
 
     // Collect pending change rows in memory, then bulk-insert
     const pendingInserts: Parameters<typeof this.changeModel.bulkCreate>[0] = [];
@@ -844,17 +886,54 @@ export class FMSService {
       }
 
       if (!existingUser) {
+        const { occupiableUnitIds, vacantConflicts } = partitionTenantUnitIdsByOccupancy(
+          fmsTenant.unitIds,
+          fmsUnitsByExternalId,
+        );
+        const tenantForApply: FMSTenant = { ...fmsTenant, unitIds: occupiableUnitIds };
+        const vacantConflictUnitNumbers = vacantConflicts.map((c) => c.unitNumber);
+        const conflictNote =
+          vacantConflictUnitNumbers.length > 0
+            ? ` Skipped ledger assignment(s) to vacant FMS unit(s) ${vacantConflictUnitNumbers.join(', ')} — unit status is the source of truth; fix the ledger/status conflict in FMS.`
+            : '';
         pendingInserts.push({
           sync_log_id: syncLogId,
           change_type: FMSChangeType.TENANT_ADDED,
           entity_type: 'tenant',
           external_id: fmsTenant.externalId,
-          after_data: fmsTenant,
+          after_data: tenantForApply,
           required_actions: [FMSChangeAction.CREATE_USER, FMSChangeAction.ASSIGN_UNIT],
-          impact_summary: `New tenant: ${fmsTenant.firstName || 'Unknown'} ${fmsTenant.lastName || 'Unknown'} (${formatFmsTenantContactLabel(fmsTenant)}) - Will be added to ${fmsTenant.unitIds.length} unit(s)`,
+          impact_summary:
+            `New tenant: ${fmsTenant.firstName || 'Unknown'} ${fmsTenant.lastName || 'Unknown'} (${formatFmsTenantContactLabel(fmsTenant)}) - Will be added to ${occupiableUnitIds.length} unit(s)` +
+            conflictNote,
           is_valid: isValid,
           validation_errors: validationErrors,
         });
+
+        // Surface each vacant-ledger conflict as its own blocked row so operators can dismiss/review.
+        for (const conflict of vacantConflicts) {
+          const blockers = resolveLedgerAssignAgainstUnitStatus({
+            unitNumber: conflict.unitNumber,
+            fmsUnitStatus: conflict.status,
+            tenant: fmsTenant,
+          });
+          pendingInserts.push({
+            sync_log_id: syncLogId,
+            change_type: FMSChangeType.TENANT_UNIT_CHANGED,
+            entity_type: 'tenant',
+            external_id: fmsTenant.externalId,
+            after_data: {
+              action: 'assign_unit',
+              unitId: unitMappingsByExternalId.get(conflict.externalId)?.internal_id,
+              unitNumber: conflict.unitNumber,
+              externalUnitId: conflict.externalId,
+            },
+            required_actions: [FMSChangeAction.ASSIGN_UNIT, FMSChangeAction.ADD_ACCESS],
+            impact_summary: `Assign ${formatFmsTenantContactLabel(fmsTenant)} to unit ${conflict.unitNumber} — blocked (FMS unit is vacant)`,
+            is_valid: false,
+            validation_errors: blockers,
+          });
+        }
       } else {
         const user = existingUser;
 
@@ -995,6 +1074,7 @@ export class FMSService {
       assignmentsByTenantId: Map<string, any[]>;
       unitMappingsByExternalId: Map<string, any>;
       unitsById: Map<string, any>;
+      fmsUnitsByExternalId: Map<string, FMSUnit>;
     },
     pendingInserts: Parameters<typeof this.changeModel.bulkCreate>[0],
   ): void {
@@ -1013,6 +1093,13 @@ export class FMSService {
       if (mapping && !currentUnitIds.has(mapping.internal_id)) {
         const unit = context.unitsById.get(mapping.internal_id);
         if (!unit || unit.facility_id !== facilityId) continue;
+
+        const fmsUnit = context.fmsUnitsByExternalId.get(mapping.external_id);
+        const blockers = resolveLedgerAssignAgainstUnitStatus({
+          unitNumber: unit.unit_number,
+          fmsUnitStatus: fmsUnit?.status,
+          tenant: fmsTenant,
+        });
         
         pendingInserts.push({
           sync_log_id: syncLogId,
@@ -1022,15 +1109,35 @@ export class FMSService {
           internal_id: tenantId,
           after_data: { action: 'assign_unit', unitId: mapping.internal_id, unitNumber: unit.unit_number },
           required_actions: [FMSChangeAction.ASSIGN_UNIT, FMSChangeAction.ADD_ACCESS],
-          impact_summary: `Assign ${fmsTenant.email} to unit ${unit.unit_number} - Gateway access will be granted`,
-          is_valid: true,
+          impact_summary:
+            blockers.length > 0
+              ? `Assign ${fmsTenant.email} to unit ${unit.unit_number} — blocked (FMS unit is vacant)`
+              : `Assign ${fmsTenant.email} to unit ${unit.unit_number} - Gateway access will be granted`,
+          is_valid: blockers.length === 0,
+          validation_errors: blockers.length > 0 ? blockers : undefined,
         });
       }
     }
 
+    // External ids for BluLok units this tenant currently holds (for unassign conflict checks)
+    const externalIdByInternalUnitId = new Map(
+      [...context.unitMappingsByExternalId.values()].map((m) => [m.internal_id, m.external_id]),
+    );
+
     for (const assignment of currentAssignments) {
       if (!fmsInternalUnitIds.has(assignment.unit_id)) {
         const unit = context.unitsById.get(assignment.unit_id);
+        const externalUnitId = externalIdByInternalUnitId.get(assignment.unit_id);
+        const fmsUnit = externalUnitId
+          ? context.fmsUnitsByExternalId.get(externalUnitId)
+          : undefined;
+        const blockers = resolveLedgerUnassignAgainstUnitStatus({
+          unitNumber: unit?.unit_number || assignment.unit_id,
+          fmsUnitStatus: fmsUnit?.status,
+          fmsUnitTenantId: fmsUnit?.tenantId,
+          tenantExternalId: fmsTenant.externalId,
+          tenant: fmsTenant,
+        });
         pendingInserts.push({
           sync_log_id: syncLogId,
           change_type: FMSChangeType.TENANT_UNIT_CHANGED,
@@ -1040,8 +1147,12 @@ export class FMSService {
           before_data: { action: 'unassign_unit', unitId: assignment.unit_id, unitNumber: unit?.unit_number },
           after_data: null as any,
           required_actions: [FMSChangeAction.UNASSIGN_UNIT, FMSChangeAction.REMOVE_ACCESS],
-          impact_summary: `Remove ${fmsTenant.email} from unit ${unit?.unit_number || assignment.unit_id} - Gateway access will be revoked`,
-          is_valid: true,
+          impact_summary:
+            blockers.length > 0
+              ? `Remove ${fmsTenant.email} from unit ${unit?.unit_number || assignment.unit_id} — blocked (FMS unit still occupied)`
+              : `Remove ${fmsTenant.email} from unit ${unit?.unit_number || assignment.unit_id} - Gateway access will be revoked`,
+          is_valid: blockers.length === 0,
+          validation_errors: blockers.length > 0 ? blockers : undefined,
         });
       }
     }
@@ -1053,8 +1164,10 @@ export class FMSService {
   private async detectUnitChanges(
     facilityId: string,
     fmsUnits: FMSUnit[],
+    fmsTenants: FMSTenant[],
     syncLogId: string,
     sharedUnits: any[],
+    occupancyContext: FmsOccupancyContext,
     onProgress?: (percent: number) => void
   ): Promise<FMSChange[]> {
     const total = fmsUnits.length;
@@ -1066,6 +1179,19 @@ export class FMSService {
     const existingUnits = sharedUnits;
     const unitsByNumber = new Map(existingUnits.map((u: any) => [u.unit_number, u]));
     const unitsById = new Map(existingUnits.map((u: any) => [u.id, u]));
+
+    // Ledger claimants per unit (for vacant unit_updated conflict notes)
+    const ledgerTenantLabelsByUnitExternalId = new Map<string, string[]>();
+    for (const tenant of fmsTenants) {
+      const label = formatFmsTenantContactLabel(tenant);
+      const name = [tenant.firstName, tenant.lastName].filter(Boolean).join(' ').trim();
+      const display = name ? `${name} (${label})` : label;
+      for (const unitExtId of tenant.unitIds) {
+        const list = ledgerTenantLabelsByUnitExternalId.get(unitExtId) || [];
+        list.push(display);
+        ledgerTenantLabelsByUnitExternalId.set(unitExtId, list);
+      }
+    }
 
     const pendingInserts: Parameters<typeof this.changeModel.bulkCreate>[0] = [];
 
@@ -1164,6 +1290,28 @@ export class FMSService {
 
         if (hasChanges) {
           logger.debug(`[FMS] Unit ${fmsUnit.unitNumber} has data changes`, { sync_log_id: syncLogId });
+
+          // BluLok cannot store `occupied` without a tenant assignment. Flag the dead end now so the
+          // operator sees why, instead of this change failing on every apply until FMS is corrected.
+          const occupancyBlockers = resolveOccupiedUnitBlockers(fmsUnit, unit.status, occupancyContext);
+          if (occupancyBlockers.length > 0) {
+            logger.warn(`[FMS] Unit ${fmsUnit.unitNumber} cannot be marked occupied yet`, {
+              fms_sync: true, sync_log_id: syncLogId, facility_id: facilityId,
+              external_id: fmsUnit.externalId, reasons: occupancyBlockers,
+            });
+          }
+
+          let impactSummary = `Update unit ${fmsUnit.unitNumber}`;
+          if (isFmsUnitVacantStatus(fmsUnit.status) && occupancyBlockers.length === 0) {
+            const ledgerNote = formatVacantUnitLedgerConflictNote(
+              fmsUnit.unitNumber,
+              ledgerTenantLabelsByUnitExternalId.get(fmsUnit.externalId) || [],
+            );
+            if (ledgerNote) {
+              impactSummary = ledgerNote;
+            }
+          }
+
           pendingInserts.push({
             sync_log_id: syncLogId,
             change_type: FMSChangeType.UNIT_UPDATED,
@@ -1173,8 +1321,9 @@ export class FMSService {
             before_data: { status: unit.status, unitType: unit.unit_type },
             after_data: fmsUnit,
             required_actions: [],
-            impact_summary: `Update unit ${fmsUnit.unitNumber}`,
-            is_valid: true,
+            impact_summary: impactSummary,
+            is_valid: occupancyBlockers.length === 0,
+            validation_errors: occupancyBlockers.length > 0 ? occupancyBlockers : undefined,
           });
         }
       }
@@ -1291,6 +1440,7 @@ export class FMSService {
     });
 
     const appliedIds: string[] = [];
+    const failureReasons = new Map<string, string[]>();
 
     for (let index = 0; index < changes.length; index++) {
       const change = changes[index];
@@ -1316,6 +1466,7 @@ export class FMSService {
         const detail = buildFmsApplyErrorDetail(change, error);
         result.errorDetails.push(detail);
         result.errors.push(formatFmsApplyErrorFallback(detail));
+        failureReasons.set(change.id, [detail.message]);
       }
     }
 
@@ -1332,6 +1483,11 @@ export class FMSService {
 
     if (appliedIds.length > 0) {
       await this.changeModel.bulkMarkApplied(appliedIds);
+    }
+
+    // Keep the failure reason on the row so reopening the review queue still explains it.
+    if (result.failedChangeIds.length > 0) {
+      await this.changeModel.markApplyFailed(result.failedChangeIds, failureReasons);
     }
 
     await this.refreshSyncLogChangeCounts(syncLogId);
@@ -3161,6 +3317,14 @@ export class FMSService {
           ? await this.unitModel.findById(unitMapping.internal_id)
           : null;
 
+        // Prefer FMS unit status (SoT) over the ledger move-in event when they disagree.
+        const fetchedUnit = unitExternalId ? await provider.fetchUnit(unitExternalId) : null;
+        const assignBlockers = resolveLedgerAssignAgainstUnitStatus({
+          unitNumber: fetchedUnit?.unitNumber ?? unit?.unit_number ?? unitExternalId,
+          fmsUnitStatus: fetchedUnit?.status,
+          tenant: this.webhookTenantInfoFromInserts(inserts, tenantExternalId),
+        });
+
         inserts.push({
           sync_log_id: syncLogId,
           change_type: FMSChangeType.TENANT_UNIT_CHANGED,
@@ -3175,8 +3339,12 @@ export class FMSService {
             webhookOnly: true,
           },
           required_actions: [FMSChangeAction.ASSIGN_UNIT, FMSChangeAction.ADD_ACCESS],
-          impact_summary: `Move-in: assign tenant to unit ${unit?.unit_number ?? unitExternalId}`,
-          is_valid: true,
+          impact_summary:
+            assignBlockers.length > 0
+              ? `Move-in: assign tenant to unit ${unit?.unit_number ?? unitExternalId} — blocked (FMS unit is vacant)`
+              : `Move-in: assign tenant to unit ${unit?.unit_number ?? unitExternalId}`,
+          is_valid: assignBlockers.length === 0,
+          validation_errors: assignBlockers.length > 0 ? assignBlockers : undefined,
         });
 
         // Companion unit_updated so webhook occupancy matches full-sync self-heal
@@ -3186,6 +3354,7 @@ export class FMSService {
           provider,
           unitExternalId,
           unitInternalId: unitMapping?.internal_id,
+          prefetchedUnit: fetchedUnit ?? undefined,
         });
         break;
       }
@@ -3337,9 +3506,11 @@ export class FMSService {
       provider: BaseFMSProvider;
       unitExternalId: string;
       unitInternalId?: string;
+      /** When the caller already fetched the unit (e.g. move-in conflict check), reuse it. */
+      prefetchedUnit?: FMSUnit | null;
     },
   ): Promise<void> {
-    const { facilityId, syncLogId, provider, unitExternalId, unitInternalId } = options;
+    const { facilityId, syncLogId, provider, unitExternalId, unitInternalId, prefetchedUnit } = options;
     if (!unitInternalId || !unitExternalId) {
       return;
     }
@@ -3349,7 +3520,7 @@ export class FMSService {
       return;
     }
 
-    const fetched = await provider.fetchUnit(unitExternalId);
+    const fetched = prefetchedUnit ?? (await provider.fetchUnit(unitExternalId));
     if (!fetched) {
       logger.warn(`[FMS] Webhook occupancy: could not fetch unit ${unitExternalId} for companion unit_updated`, {
         fms_sync: true,
@@ -3366,6 +3537,27 @@ export class FMSService {
       return;
     }
 
+    const occupancyBlockers = resolveOccupiedUnitBlockers(
+      fetched,
+      blulokUnit.status,
+      await this.buildWebhookOccupancyContext(facilityId, inserts, fetched.tenantId),
+    );
+    if (occupancyBlockers.length > 0) {
+      logger.warn(`[FMS] Webhook occupancy: unit ${fetched.unitNumber} cannot be marked occupied yet`, {
+        fms_sync: true, sync_log_id: syncLogId, facility_id: facilityId, reasons: occupancyBlockers,
+      });
+    }
+
+    let impactSummary = `Update unit ${fetched.unitNumber} from webhook (occupancy sync)`;
+    if (isFmsUnitVacantStatus(fetched.status) && occupancyBlockers.length === 0) {
+      const tenantLabel = this.webhookBatchTenantLabel(inserts, fetched.tenantId);
+      const ledgerNote = formatVacantUnitLedgerConflictNote(
+        fetched.unitNumber,
+        tenantLabel ? [tenantLabel] : [],
+      );
+      if (ledgerNote) impactSummary = `${ledgerNote} (webhook)`;
+    }
+
     inserts.push({
       sync_log_id: syncLogId,
       change_type: FMSChangeType.UNIT_UPDATED,
@@ -3375,8 +3567,70 @@ export class FMSService {
       before_data: { status: blulokUnit.status, unitType: blulokUnit.unit_type },
       after_data: fetched,
       required_actions: [],
-      impact_summary: `Update unit ${fetched.unitNumber} from webhook (occupancy sync)`,
-      is_valid: true,
+      impact_summary: impactSummary,
+      is_valid: occupancyBlockers.length === 0,
+      validation_errors: occupancyBlockers.length > 0 ? occupancyBlockers : undefined,
+    });
+  }
+
+  private webhookBatchTenantLabel(
+    inserts: Parameters<FMSChangeModel['create']>[0][],
+    tenantExternalId?: string | null,
+  ): string | null {
+    if (!tenantExternalId) return null;
+    const row = inserts.find(
+      (r) =>
+        (r.change_type === FMSChangeType.TENANT_ADDED || r.change_type === FMSChangeType.TENANT_UNIT_CHANGED) &&
+        r.external_id === tenantExternalId,
+    );
+    if (!row) return tenantExternalId;
+    const payload = (row.after_data ?? row.before_data ?? {}) as FmsOccupancyTenantInfo;
+    const name = [payload.firstName, payload.lastName].filter(Boolean).join(' ').trim();
+    const contact = formatFmsTenantContactLabel(payload);
+    return name || contact || tenantExternalId;
+  }
+
+  private webhookTenantInfoFromInserts(
+    inserts: Parameters<FMSChangeModel['create']>[0][],
+    tenantExternalId: string,
+  ): FmsOccupancyTenantInfo | undefined {
+    const row = inserts.find(
+      (r) => r.change_type === FMSChangeType.TENANT_ADDED && r.external_id === tenantExternalId,
+    );
+    if (!row?.after_data || typeof row.after_data !== 'object') return undefined;
+    return row.after_data as FmsOccupancyTenantInfo;
+  }
+
+  /**
+   * Occupancy context for a single webhook batch. Unlike a full sync, the batch only knows about the
+   * tenants named in this event, so unknown tenants are not treated as blockers.
+   */
+  private async buildWebhookOccupancyContext(
+    facilityId: string,
+    inserts: Parameters<FMSChangeModel['create']>[0][],
+    unitTenantExternalId?: string,
+  ): Promise<FmsOccupancyContext> {
+    const tenantRows = inserts.filter((row) => row.change_type === FMSChangeType.TENANT_ADDED);
+    const batchTenants = tenantRows.map((row) => {
+      const payload = (row.after_data ?? {}) as FmsOccupancyTenantInfo;
+      return {
+        externalId: row.external_id,
+        firstName: payload.firstName ?? null,
+        lastName: payload.lastName ?? null,
+        email: payload.email ?? null,
+        phone: payload.phone,
+      };
+    });
+
+    const mapping = unitTenantExternalId
+      ? await this.entityMappingModel.findByExternalId(facilityId, 'user', unitTenantExternalId)
+      : null;
+
+    return buildFmsOccupancyContext({
+      fmsTenants: batchTenants,
+      tenantChanges: tenantRows,
+      mappedTenantExternalIds: mapping && unitTenantExternalId ? [unitTenantExternalId] : [],
+      treatUnknownTenantAsBlocker: false,
     });
   }
 

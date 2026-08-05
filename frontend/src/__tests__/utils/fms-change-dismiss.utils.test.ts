@@ -1,6 +1,7 @@
 import { FMSChangeType } from '@/types/fms.types';
 import {
   countDismissibleChanges,
+  didFmsChangeFailToApply,
   getDismissibleChangeIds,
   isFmsChangeDismissible,
 } from '@/utils/fms-change-dismiss.utils';
@@ -52,5 +53,33 @@ describe('fms-change-dismiss.utils', () => {
     ];
     expect(countDismissibleChanges(changes)).toBe(2);
     expect(getDismissibleChangeIds(changes)).toEqual(['invalid', 'failed']);
+  });
+
+  describe('didFmsChangeFailToApply', () => {
+    it('flags accepted changes that were marked invalid by a failed apply', () => {
+      expect(
+        didFmsChangeFailToApply(change({ is_valid: false, is_reviewed: true, is_accepted: true })),
+      ).toBe(true);
+    });
+
+    it('does not flag payloads that were invalid before any apply attempt', () => {
+      expect(didFmsChangeFailToApply(change({ is_valid: false, is_reviewed: false }))).toBe(false);
+    });
+
+    it('does not flag rejected or applied changes', () => {
+      expect(
+        didFmsChangeFailToApply(change({ is_valid: false, is_reviewed: true, is_accepted: false })),
+      ).toBe(false);
+      expect(
+        didFmsChangeFailToApply(
+          change({
+            is_valid: false,
+            is_reviewed: true,
+            is_accepted: true,
+            applied_at: new Date().toISOString(),
+          }),
+        ),
+      ).toBe(false);
+    });
   });
 });

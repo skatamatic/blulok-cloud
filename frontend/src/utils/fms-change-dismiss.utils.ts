@@ -8,6 +8,15 @@ export function isFmsChangeDismissible(change: FMSChange): boolean {
   return false;
 }
 
+/**
+ * The operator already accepted this change and the apply attempt failed, so the stored reason
+ * describes a failure rather than a payload that was invalid from the start.
+ */
+export function didFmsChangeFailToApply(change: FMSChange): boolean {
+  if (change.applied_at) return false;
+  return change.is_valid === false && Boolean(change.is_reviewed) && change.is_accepted === true;
+}
+
 export function countDismissibleChanges(changes: FMSChange[]): number {
   return changes.filter(isFmsChangeDismissible).length;
 }

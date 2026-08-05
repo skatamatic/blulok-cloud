@@ -39,6 +39,7 @@ import { formatDateTime } from '@/utils/datetime.utils';
 import { notifyPendingReviewChanged } from '@/utils/fms-pending-review.utils';
 import {
   countDismissibleChanges,
+  didFmsChangeFailToApply,
   getDismissibleChangeIds,
   isFmsChangeDismissible,
 } from '@/utils/fms-change-dismiss.utils';
@@ -737,6 +738,7 @@ export function FMSChangeReviewModal({
                         const isExpanded = expandedChanges.has(change.id);
                         const isSelected = selectedChanges.has(change.id);
                         const isInvalid = change.is_valid === false;
+                        const failedToApply = didFmsChangeFailToApply(change);
                         const canDismiss = isFmsChangeDismissible(change);
 
                         return (
@@ -783,7 +785,7 @@ export function FMSChangeReviewModal({
                                       <ExclamationTriangleIcon className="mt-0.5 h-4 w-4 shrink-0 text-amber-600 dark:text-amber-400" />
                                       <div>
                                         <p className="text-xs font-semibold text-amber-900 dark:text-amber-200">
-                                          Cannot apply this change
+                                          {failedToApply ? 'This change failed to apply' : 'Cannot apply this change'}
                                         </p>
                                         {change.validation_errors && change.validation_errors.length > 0 ? (
                                           <ul className="mt-1 space-y-0.5 text-xs text-amber-800 dark:text-amber-300">

@@ -35,6 +35,22 @@ const KNOWN_REASON_SHORTCUTS: Array<{ match: RegExp; label: string }> = [
     match: /tenant is not in blulok yet/i,
     label: "tenant isn't in BluLok yet — create the tenant first",
   },
+  {
+    match: /cannot be created in blulok/i,
+    label: "tenant can't be created in BluLok — fix their record in FMS",
+  },
+  {
+    match: /does not say which tenant holds it|missing from the fms tenant list/i,
+    label: 'need a tenant before marking occupied',
+  },
+  {
+    match: /unit status is the source of truth.*assignment was not applied|ledger still lists/i,
+    label: 'FMS ledger conflicts with vacant unit status — fix in FMS',
+  },
+  {
+    match: /unit status is the source of truth.*removal was not applied/i,
+    label: 'FMS ledger conflicts with occupied unit status — fix in FMS',
+  },
 ];
 
 const CHANGE_TYPE_NOUN: Record<FMSChangeType, { singular: string; plural: string }> = {
@@ -196,7 +212,10 @@ function buildReasonSummary(details: FMSApplyErrorDetail[]): string {
   const top = sorted.slice(0, MAX_REASON_GROUPS);
   const remainingGroups = sorted.length - top.length;
 
-  const parts = top.map(([reason, { count }]) => `${count} ${reason}`);
+  // A lone reason already covers every failure, and the surrounding clause states the count.
+  const parts = top.map(([reason, { count }]) =>
+    sorted.length === 1 ? reason : `${count} ${reason}`,
+  );
   let summary = parts.join('; ');
   if (remainingGroups > 0) {
     summary += `; and ${remainingGroups} other issue${remainingGroups !== 1 ? 's' : ''}`;

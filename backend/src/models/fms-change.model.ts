@@ -219,6 +219,28 @@ export class FMSChangeModel {
   }
 
   /**
+   * Record why an apply attempt failed so the review queue can explain it after a reload.
+   * The row stays pending and dismissible; a later sync re-detects the drift if it persists.
+   */
+  async markApplyFailed(ids: string[], reasonsByChangeId: Map<string, string[]>): Promise<number> {
+    if (ids.length === 0) return 0;
+
+    try {
+      let updated = 0;
+      for (const id of ids) {
+        const reasons = reasonsByChangeId.get(id) ?? ['Apply failed for an unknown reason'];
+        updated += await this.db('fms_changes')
+          .where({ id })
+          .update({ is_valid: false, validation_errors: JSON.stringify(reasons) });
+      }
+      return updated;
+    } catch (error) {
+      logger.error('Error recording FMS change apply failure:', error);
+      throw error;
+    }
+  }
+
+  /**
    * Mark change as reviewed and accepted/rejected
    */
   async reviewChange(id: string, accepted: boolean): Promise<FMSChange | null> {

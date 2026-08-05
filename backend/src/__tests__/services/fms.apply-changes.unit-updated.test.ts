@@ -26,6 +26,7 @@ describe('FMSService.applyChanges — UNIT_UPDATED accounting', () => {
         byType: {},
       }),
       bulkMarkApplied: jest.fn().mockResolvedValue(1),
+      markApplyFailed: jest.fn().mockResolvedValue(1),
     };
     svc.syncLogModel = {
       findById: jest.fn().mockResolvedValue({
@@ -153,6 +154,20 @@ describe('FMSService.applyChanges — UNIT_UPDATED accounting', () => {
     expect(svc.syncLogModel.update).toHaveBeenCalledWith(
       'sync-1',
       expect.objectContaining({ changes_applied: 0 }),
+    );
+  });
+
+  it('persists the failure reason so the review queue can explain it after a reload', async () => {
+    const svc: any = FMSService.getInstance();
+    wireMocks(svc);
+    svc.changeModel.findById.mockResolvedValue(unitUpdatedChange());
+    svc.unitsService.updateUnit.mockRejectedValue(new Error('unit update failed'));
+
+    await svc.applyChanges('sync-1', ['chg-1']);
+
+    expect(svc.changeModel.markApplyFailed).toHaveBeenCalledWith(
+      ['chg-1'],
+      new Map([['chg-1', ['unit update failed']]]),
     );
   });
 });

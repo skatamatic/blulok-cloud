@@ -613,6 +613,40 @@ describe('FMSChangeReviewModal', () => {
       expect(screen.queryByText('Cannot apply this change')).not.toBeInTheDocument();
       expect(screen.getByText('Invalid (0)')).toBeInTheDocument();
     });
+
+    it('distinguishes a failed apply attempt from a payload that was never applicable', () => {
+      const failedApply: FMSChange = {
+        id: 'unit-failed',
+        sync_log_id: 'sync-123',
+        change_type: FMSChangeType.UNIT_UPDATED,
+        entity_type: 'unit',
+        external_id: 'ext-908',
+        internal_id: 'unit-908',
+        before_data: { status: 'available' },
+        after_data: { unitNumber: '908', status: 'occupied' },
+        required_actions: [],
+        impact_summary: 'Update unit 908',
+        is_reviewed: true,
+        is_accepted: true,
+        is_valid: false,
+        validation_errors: ['Unit 908 is occupied by Lucien Robel in FMS, but that tenant cannot be created in BluLok.'],
+        created_at: '2025-01-01T00:00:00Z',
+      };
+
+      renderWithProviders(
+        <FMSChangeReviewModal
+          isOpen={true}
+          onClose={jest.fn()}
+          changes={[failedApply]}
+          onApply={jest.fn()}
+          syncResult={{ ...mockSyncResult, changesDetected: [failedApply] }}
+        />
+      );
+
+      expect(screen.getByText('This change failed to apply')).toBeInTheDocument();
+      expect(screen.queryByText('Cannot apply this change')).not.toBeInTheDocument();
+      expect(screen.getByText(/Lucien Robel/)).toBeInTheDocument();
+    });
   });
 
   describe('Button Interactions', () => {

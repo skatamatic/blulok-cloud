@@ -155,6 +155,51 @@ describe('formatFmsApplyFailureToast', () => {
     expect(toast.message).toContain("tenant isn't in BluLok yet — create the tenant first");
     expect(toast.message).toContain('Examples: 109, 908');
     expect(toast.message).not.toMatch(/f128132e|33e8bca0|tenant_added|mapped yet/i);
+    // The clause already counts the failures, so the reason must not repeat it ("2 tenant isn't…").
+    expect(toast.message).toContain("2 unit updates failed: tenant isn't in BluLok yet");
+  });
+
+  it('humanizes units blocked by a tenant that cannot be created', () => {
+    const toast = formatFmsApplyFailureToast(
+      baseResult({
+        changesApplied: 0,
+        changesFailed: 1,
+        errorDetails: [
+          unitDetail({
+            changeId: '1',
+            entityLabel: '908',
+            message:
+              'Unit 908 is occupied by Lucien Robel in FMS, but that tenant cannot be created in BluLok: Missing both email and phone number. Fix the tenant record in your FMS, then sync again.',
+          }),
+        ],
+      }),
+      1,
+    );
+
+    expect(toast.message).toContain("tenant can't be created in BluLok — fix their record in FMS");
+    expect(toast.message).toContain('Examples: 908');
+  });
+
+  it('humanizes ledger vs vacant unit status conflicts', () => {
+    const toast = formatFmsApplyFailureToast(
+      baseResult({
+        changesApplied: 0,
+        changesFailed: 1,
+        errorDetails: [
+          unitDetail({
+            changeId: '1',
+            changeType: FMSChangeType.TENANT_UNIT_CHANGED,
+            entityType: 'tenant',
+            entityLabel: 'june.mary@yopmail.com',
+            message:
+              'FMS marks unit 101 as vacant, but a ledger still lists June Marry (june.mary@yopmail.com) on it. Unit status is the source of truth for occupancy, so this assignment was not applied. Fix the ledger or unit status in your FMS so they agree, then sync again.',
+          }),
+        ],
+      }),
+      1,
+    );
+
+    expect(toast.message).toContain('FMS ledger conflicts with vacant unit status — fix in FMS');
   });
 
   it('does not leak UUID entity labels in examples', () => {
