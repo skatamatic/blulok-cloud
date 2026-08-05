@@ -288,7 +288,7 @@ describe('FMSService.applyUnitUpdated occupancy self-heal', () => {
         emptyApplyResult(),
         { facilityId: 'fac-1', performedBy: 'admin-1' },
       ),
-    ).rejects.toThrow(/not mapped yet \(apply tenant_added first\)/);
+    ).rejects.toThrow(/tenant is not in BluLok yet/i);
     expect(svc.unitsService.assignTenant).not.toHaveBeenCalled();
     expect(svc.unitsService.updateUnit).not.toHaveBeenCalled();
   });

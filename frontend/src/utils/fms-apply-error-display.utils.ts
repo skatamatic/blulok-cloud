@@ -23,6 +23,18 @@ const KNOWN_REASON_SHORTCUTS: Array<{ match: RegExp; label: string }> = [
     match: /cannot set unit to occupied without a tenant/i,
     label: 'need a tenant before marking occupied',
   },
+  {
+    match: /cannot mark (?:this unit )?occupied:.*no tenantid/i,
+    label: 'need a tenant before marking occupied',
+  },
+  {
+    match: /cannot mark (?:this unit )?occupied:.*not (?:mapped|in blulok) yet/i,
+    label: "tenant isn't in BluLok yet — create the tenant first",
+  },
+  {
+    match: /tenant is not in blulok yet/i,
+    label: "tenant isn't in BluLok yet — create the tenant first",
+  },
 ];
 
 const CHANGE_TYPE_NOUN: Record<FMSChangeType, { singular: string; plural: string }> = {

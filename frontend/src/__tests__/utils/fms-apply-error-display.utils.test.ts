@@ -127,6 +127,36 @@ describe('formatFmsApplyFailureToast', () => {
     expect(toast.message).toContain('Open the review list for details');
   });
 
+  it('humanizes unmapped-tenant occupied failures without leaking FMS ids', () => {
+    const toast = formatFmsApplyFailureToast(
+      baseResult({
+        changesApplied: 2,
+        changesFailed: 2,
+        errorDetails: [
+          unitDetail({
+            changeId: '1',
+            entityLabel: '109',
+            message:
+              'Cannot mark this unit occupied because the tenant is not in BluLok yet. Create the tenant first, then retry this unit update.',
+          }),
+          unitDetail({
+            changeId: '2',
+            entityLabel: '908',
+            message:
+              'Cannot mark occupied: FMS tenant f128132e-9c72-4fd7-a67d-d951a611e558 is not mapped yet (apply tenant_added first)',
+          }),
+        ],
+      }),
+      4,
+    );
+
+    expect(toast.title).toBe('Some Changes Failed');
+    expect(toast.message).toContain('Applied 2 of 4 changes');
+    expect(toast.message).toContain("tenant isn't in BluLok yet — create the tenant first");
+    expect(toast.message).toContain('Examples: 109, 908');
+    expect(toast.message).not.toMatch(/f128132e|33e8bca0|tenant_added|mapped yet/i);
+  });
+
   it('does not leak UUID entity labels in examples', () => {
     const toast = formatFmsApplyFailureToast(
       baseResult({

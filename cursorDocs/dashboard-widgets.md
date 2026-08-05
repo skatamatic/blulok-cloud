@@ -43,7 +43,7 @@
 - **Shared hook**: `useDashboardFacilityScope(facilityFilter)` — single facility → that ID; global admin + all facilities → no filter; scoped roles + all facilities → live facility list from `GlobalFacilityContext` (`GET /facilities`). Used by notifications widget and histogram.
 - **Notifications widget**: loads up to 100 rows per page from REST with **`includeExpired: true`** (historical + expired alerts); default tab is **All**; WebSocket merges live updates. Not the same data as Activity Monitor.
 - **Hooks**: `useUnitsData(facilityId)` forwards **`facility_id`** to `GET /units` and `GET /units/unlocked`, and refreshes on **`device_status` / `units`** via `useLockDeviceRealtime`.
-- **General stats**: `useGeneralStatsData` passes optional **`facility_id`** to **`GET /dashboard/general-stats`** when a single facility is selected. WebSocket **`general_stats`** updates apply only for “all facilities”; when facility-scoped, **`device_status` / `units`** trigger debounced REST refetch.
+- **General stats**: `useGeneralStatsData` passes optional **`facility_id`** to **`GET /dashboard/general-stats`** when a single facility is selected. WebSocket **`general_stats`** updates apply only for “all facilities”; when facility-scoped, **`device_status` / `units`** trigger debounced REST refetch. Occupancy-driving mutations (`UnitsService` assign / unassign / status update / overlock, including FMS sync) broadcast both **`units_update`** and **`general_stats_update`** so widgets refresh without a page reload.
 - **Histogram / activity widgets**: subscribe to **`activity`** (with `facility_id` when scoped) and debounce **`getActivityStats`** / access-history REST reloads. Histogram aggregates **access attempts and unlocks only** (lock events are excluded).
 
 ## Live WebSocket subscriptions (dashboard `/ws`)
@@ -130,6 +130,7 @@ Within each tier, highest **`priority`** wins. Assigned layouts are read-only fo
 
 - Dock-friendly grid view that scopes to the global facility selector (`facilityFilter`).
 - Source: **`GET /units?facility_id=<uuid>&limit=200`** via `apiService.getUnits`. Backend: `UnitModel.getUnitsListForUser` returns lock state, battery, signal, last activity, primary tenant (with email + phone), and BluLok device id.
+- **Live updates**: `useLockDeviceRealtime` merges **`device_status`** for lock telemetry and debounces a background list refetch on **`units_update`** (tenant assign/unassign, FMS occupancy sync, unit status) so occupancy/tenant columns stay fresh without a manual refresh.
 - **Grid columns** (dock / large+): sticky header — Unit (sortable, natural order) · Tenant (widest column) · Device (online/offline badge only) · Status (battery, signal, lock icons) · Last access (sortable).
 - **Quick filters** (toolbar, not persisted): **Occupied**, **Unoccupied**, **Unlocked**, and **Low batt** toggle like radio buttons — mutually exclusive, deselectable to show all. Occupied/unoccupied match unit `status` (`occupied` / `available`). Low batt includes low/critical levels (&lt;30%), `low_battery` device status, and unknown battery. Empty filter state shows a contextual message plus “Show all units”.
 - **Sort**: unit name (default, natural) or last access — click column headers to sort; click again to reverse.

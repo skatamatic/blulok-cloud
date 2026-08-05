@@ -165,7 +165,16 @@ export class UnitsService {
    */
   async updateUnit(unitId: string, updateData: any, userId: string, userRole: UserRole): Promise<any> {
     try {
-      return await this.unitModel.updateUnit(unitId, updateData, userId, userRole);
+      const unit = await this.unitModel.updateUnit(unitId, updateData, userId, userRole);
+      if (unit?.id && unit?.facility_id) {
+        this.notifyDashboardUnitChanged({ id: unit.id, facility_id: unit.facility_id });
+      } else {
+        const existing = await this.unitModel.findById(unitId);
+        if (existing) {
+          this.notifyDashboardUnitChanged(existing);
+        }
+      }
+      return unit;
     } catch (error) {
       logger.error('Error updating unit:', error);
       throw error;
@@ -197,6 +206,7 @@ export class UnitsService {
     }
 
     await this.unitModel.setOverlockStatus(unitId, isOverlocked);
+    this.notifyDashboardUnitChanged(unit);
     const result = await this.unitModel.getUnitDetailsForUser(unitId, userId, userRole);
     if (!result) {
       throw new Error('Failed to load unit after overlock update');
@@ -271,6 +281,7 @@ export class UnitsService {
             replacedPrimaryCount: primaryMutation.removedPrimaryAssignments.length,
           });
           await this.unitModel.syncUnitOccupancyStatusFromAssignments(unitId);
+          this.notifyDashboardUnitChanged(unit);
           return;
         }
 
@@ -300,6 +311,7 @@ export class UnitsService {
         ).catch(err => logger.error('Failed to log assignment side effects:', err));
 
         await this.unitModel.syncUnitOccupancyStatusFromAssignments(unitId);
+        this.notifyDashboardUnitChanged(unit);
         return;
       }
 
@@ -308,6 +320,7 @@ export class UnitsService {
       if (existing) {
         logger.warn(`Assignment already exists for tenant ${tenantId} to unit ${unitId}`);
         await this.unitModel.syncUnitOccupancyStatusFromAssignments(unitId);
+        this.notifyDashboardUnitChanged(unit);
         return;
       }
 
@@ -360,6 +373,7 @@ export class UnitsService {
         options.performedBy, options.source || 'api'
       ).catch(err => logger.error('Failed to log assignment side effects:', err));
 
+      this.notifyDashboardUnitChanged(unit);
     } catch (error) {
       logger.error('Error assigning tenant to unit:', error);
       throw error;
@@ -544,6 +558,7 @@ export class UnitsService {
         options.performedBy, options.source || 'api'
       ).catch(err => logger.error('Failed to log unassignment side effects:', err));
 
+      this.notifyDashboardUnitChanged(unit);
     } catch (error) {
       logger.error('Error unassigning tenant from unit:', error);
       throw error;
@@ -718,6 +733,28 @@ export class UnitsService {
       performedBy,
       performerName
     );
+  }
+
+  /**
+   * Push units + general-stats WebSocket updates so dashboard occupancy widgets refresh
+   * without a manual page reload (covers FMS sync, API assign/unassign, and status edits).
+   */
+  private notifyDashboardUnitChanged(unit: { id: string; facility_id: string }): void {
+    void import('@/services/websocket.service')
+      .then(async ({ WebSocketService }) => {
+        const ws = WebSocketService.getInstance();
+        await Promise.all([
+          ws.broadcastUnitsUpdate({ facilityId: unit.facility_id, unitId: unit.id }),
+          ws.broadcastGeneralStatsUpdate(),
+        ]);
+      })
+      .catch((err) => {
+        logger.warn('Failed to broadcast unit occupancy dashboard update', {
+          unitId: unit.id,
+          facilityId: unit.facility_id,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      });
   }
 
 }

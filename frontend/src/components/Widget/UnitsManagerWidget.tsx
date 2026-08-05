@@ -993,9 +993,9 @@ export const UnitsManagerWidget: React.FC<UnitsManagerWidgetProps> = ({
   useLockDeviceRealtime({
     facilityId: facilityFilter,
     onDeviceRows: applyUnitDeviceSnapshots,
-    // Telemetry also fans out units_update; merging device_status is enough for lock UI.
-    // Keep gateway_status → background HTTP for reachability coercion.
-    subscribeUnitsForRefresh: false,
+    // Occupancy/tenant changes arrive on units_update (FMS sync, assign/unassign).
+    // device_status merges lock telemetry without a full list refetch.
+    subscribeUnitsForRefresh: true,
     skipDebouncedRefreshWhenDeviceRowsApplied: true,
     debouncedRefresh: () => {
       void fetchUnitsRef.current({ background: true });

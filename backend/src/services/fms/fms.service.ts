@@ -2474,7 +2474,7 @@ export class FMSService {
         const externalTenantId = unitData.tenantId?.trim();
         if (!externalTenantId) {
           throw new Error(
-            'Cannot mark occupied: FMS unit has no tenantId and BluLok has no assignment (apply tenant_added / tenant_unit_changed first)',
+            'Cannot mark this unit occupied until a tenant is assigned. Create or assign the tenant first.',
           );
         }
 
@@ -2485,7 +2485,7 @@ export class FMSService {
         );
         if (!tenantMapping?.internal_id) {
           throw new Error(
-            `Cannot mark occupied: FMS tenant ${externalTenantId} is not mapped yet (apply tenant_added first)`,
+            'Cannot mark this unit occupied because the tenant is not in BluLok yet. Create the tenant first, then retry this unit update.',
           );
         }
 

@@ -149,7 +149,7 @@ describe('UnitsManagerWidget', () => {
     mockUpdateLockStatus.mockResolvedValue({ success: true });
   });
 
-  it('registers live device merge and skips units_update HTTP spam', async () => {
+  it('registers live device merge and refreshes on units_update for occupancy', async () => {
     const { useLockDeviceRealtime } = jest.requireMock('@/hooks/useLockDeviceRealtime') as {
       useLockDeviceRealtime: jest.Mock;
     };
@@ -161,7 +161,7 @@ describe('UnitsManagerWidget', () => {
     expect(useLockDeviceRealtime).toHaveBeenCalledWith(
       expect.objectContaining({
         onDeviceRows: expect.any(Function),
-        subscribeUnitsForRefresh: false,
+        subscribeUnitsForRefresh: true,
         skipDebouncedRefreshWhenDeviceRowsApplied: true,
         debouncedRefresh: expect.any(Function),
       }),

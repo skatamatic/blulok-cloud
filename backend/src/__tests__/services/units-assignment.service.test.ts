@@ -4,10 +4,20 @@
  * Tests for tenant assignment/unassignment functionality and event emission
  */
 
+jest.mock('@/services/websocket.service', () => ({
+  WebSocketService: {
+    getInstance: jest.fn(() => ({
+      broadcastUnitsUpdate: jest.fn().mockResolvedValue(undefined),
+      broadcastGeneralStatsUpdate: jest.fn().mockResolvedValue(undefined),
+    })),
+  },
+}));
+
 import { UnitsService } from '@/services/units.service';
 import { UnitModel } from '@/models/unit.model';
 import { UnitAssignmentModel } from '@/models/unit-assignment.model';
 import { UnitAssignmentEventsService } from '@/services/events/unit-assignment-events.service';
+import { WebSocketService } from '@/services/websocket.service';
 
 describe('UnitsService - Tenant Assignment', () => {
   let unitsService: UnitsService;
@@ -25,6 +35,11 @@ describe('UnitsService - Tenant Assignment', () => {
     mockAssignmentModel = (unitsService as any).unitAssignmentModel;
     mockEventService = (unitsService as any).eventService;
     mockUnitModel.syncUnitOccupancyStatusFromAssignments = jest.fn().mockResolvedValue(undefined);
+
+    (WebSocketService.getInstance as jest.Mock).mockReturnValue({
+      broadcastUnitsUpdate: jest.fn().mockResolvedValue(undefined),
+      broadcastGeneralStatsUpdate: jest.fn().mockResolvedValue(undefined),
+    });
   });
 
   describe('assignTenant', () => {
@@ -59,6 +74,12 @@ describe('UnitsService - Tenant Assignment', () => {
         expires_at: undefined,
         notes: undefined,
       });
+      await Promise.resolve();
+      expect(WebSocketService.getInstance().broadcastUnitsUpdate).toHaveBeenCalledWith({
+        facilityId,
+        unitId,
+      });
+      expect(WebSocketService.getInstance().broadcastGeneralStatsUpdate).toHaveBeenCalled();
     });
 
     it('should emit tenant assigned event', async () => {
