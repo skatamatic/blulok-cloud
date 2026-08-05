@@ -50,9 +50,11 @@ describe('FMSService.applyTenantRemoved', () => {
     const svc = FMSService.getInstance() as any;
 
     svc.unitAssignmentModel = {
-      findByTenantId: jest.fn().mockResolvedValue([
-        { unit_id: 'u-fac1', tenant_id: 'tenant-1', is_primary: true },
-      ]),
+      // First call: load all assignments for facility filter; after unassign, re-check remaining.
+      findByTenantId: jest
+        .fn()
+        .mockResolvedValueOnce([{ unit_id: 'u-fac1', tenant_id: 'tenant-1', is_primary: true }])
+        .mockResolvedValueOnce([]),
     };
     svc.unitModel = {
       findByIds: jest.fn().mockResolvedValue([{ id: 'u-fac1', facility_id: 'fac-1' }]),

@@ -3,10 +3,25 @@ import {
   FMS_MAPPING_REMOVED_AT_KEY,
   isFmsMappingMarkedRemoved,
   isFmsUserRemovedFromFacility,
+  isUserInactive,
   stampFmsMappingRemoved,
 } from '@/services/fms/fms-tenant-removal.utils';
 
 describe('fms-tenant-removal.utils', () => {
+  it('treats MySQL 0/1 is_active values as booleans', () => {
+    expect(isUserInactive({ is_active: 0 })).toBe(true);
+    expect(isUserInactive({ is_active: false })).toBe(true);
+    expect(isUserInactive({ is_active: 1 })).toBe(false);
+    expect(isUserInactive({ is_active: true })).toBe(false);
+    expect(isUserInactive({})).toBe(false);
+    expect(isUserInactive(null)).toBe(false);
+  });
+
+  it('detects legacy removals for MySQL 0 inactive flags', () => {
+    expect(isFmsUserRemovedFromFacility({ metadata: {} }, { is_active: 0 }, 0)).toBe(true);
+    expect(isFmsUserRemovedFromFacility({ metadata: {} }, { is_active: 0 }, 1)).toBe(false);
+  });
+
   it('detects removed tenants via mapping metadata', () => {
     expect(
       isFmsUserRemovedFromFacility(

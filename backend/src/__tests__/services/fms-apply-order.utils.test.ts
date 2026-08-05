@@ -6,6 +6,8 @@ import {
   isFmsChangePending,
   partitionChangesForAutoApply,
   resolveFmsAutoApplyOutcome,
+  resolveTenantUnitAction,
+  resolveTenantUnitActionData,
   sortChangesForApply,
 } from '@/services/fms/fms-apply-order.utils';
 import { FMSChange, FMSChangeType } from '@/types/fms.types';
@@ -72,6 +74,25 @@ describe('fms-apply-order.utils', () => {
     expect(sortChangesForApply([assign, unitAdd]).map((c) => c.id)).toEqual(['c-add', 'c-assign']);
   });
 
+  it('sorts occupied unit updates after assignments', () => {
+    const assign = change({
+      id: 'c-assign',
+      change_type: FMSChangeType.TENANT_UNIT_CHANGED,
+      entity_type: 'tenant',
+      after_data: { action: 'assign_unit', unitId: 'u1' },
+    });
+    const occupiedUpdate = change({
+      id: 'c-unit',
+      change_type: FMSChangeType.UNIT_UPDATED,
+      internal_id: 'u1',
+      before_data: { status: 'available' },
+      after_data: { status: 'occupied', externalId: 'ext-u1' },
+    });
+
+    const sorted = sortChangesForApply([occupiedUpdate, assign]);
+    expect(sorted.map((c) => c.id)).toEqual(['c-assign', 'c-unit']);
+  });
+
   it('detects tenant unit change actions', () => {
     const unassign = change({
       id: 'x',
@@ -88,6 +109,37 @@ describe('fms-apply-order.utils', () => {
         }),
       ),
     );
+  });
+
+  it('resolves unassign even when after_data is an empty object', () => {
+    const unassign = change({
+      id: 'x',
+      change_type: FMSChangeType.TENANT_UNIT_CHANGED,
+      entity_type: 'tenant',
+      before_data: { action: 'unassign_unit', unitId: 'u1' },
+      after_data: {},
+    });
+    expect(getTenantUnitChangeAction(unassign)).toBe('unassign_unit');
+    expect(resolveTenantUnitAction({}, { action: 'unassign_unit' })).toBe('unassign_unit');
+    expect(resolveTenantUnitAction(null, null)).toBeNull();
+
+    const unitUpdate = change({
+      id: 'u',
+      change_type: FMSChangeType.UNIT_UPDATED,
+      internal_id: 'u1',
+      before_data: { status: 'occupied' },
+      after_data: { status: 'available', externalId: 'ext-u1' },
+    });
+    expect(sortChangesForApply([unitUpdate, unassign]).map((c) => c.id)).toEqual(['x', 'u']);
+  });
+
+  it('picks the payload matching the resolved action', () => {
+    expect(
+      resolveTenantUnitActionData('unassign_unit', {}, { action: 'unassign_unit', unitId: 'u1' }),
+    ).toEqual({ action: 'unassign_unit', unitId: 'u1' });
+    expect(
+      resolveTenantUnitActionData('assign_unit', { action: 'assign_unit', unitId: 'u2' }, null),
+    ).toEqual({ action: 'assign_unit', unitId: 'u2' });
   });
 
   describe('isFmsChangePending', () => {

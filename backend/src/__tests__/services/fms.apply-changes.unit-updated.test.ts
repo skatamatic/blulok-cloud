@@ -62,6 +62,12 @@ describe('FMSService.applyChanges — UNIT_UPDATED accounting', () => {
     };
     svc.unitsService = {
       updateUnit: jest.fn().mockResolvedValue({ status: 'updated' }),
+      unassignTenant: jest.fn().mockResolvedValue(undefined),
+      assignTenant: jest.fn().mockResolvedValue(undefined),
+    };
+    svc.unitAssignmentModel = {
+      findByUnitId: jest.fn().mockResolvedValue([]),
+      findByTenantId: jest.fn().mockResolvedValue([]),
     };
   }
 
@@ -78,7 +84,7 @@ describe('FMSService.applyChanges — UNIT_UPDATED accounting', () => {
         externalId: 'ext-u',
         unitNumber: '101',
         unitType: 'storage',
-        status: 'occupied' as const,
+        status: 'maintenance' as const,
       },
       required_actions: [],
       impact_summary: 'update',

@@ -14,15 +14,43 @@ const APPLY_PHASE = {
   UNIT_REMOVE: 80,
 } as const;
 
-export function getTenantUnitChangeAction(
-  change: FMSChange,
-): 'assign_unit' | 'unassign_unit' | null {
-  if (change.change_type !== FMSChangeType.TENANT_UNIT_CHANGED) return null;
-  const data = (change.after_data ?? change.before_data) as { action?: string } | null | undefined;
-  if (data?.action === 'assign_unit' || data?.action === 'unassign_unit') {
-    return data.action;
+export type TenantUnitAction = 'assign_unit' | 'unassign_unit';
+
+/**
+ * Resolve assign/unassign intent from a tenant-unit change payload pair.
+ * Reads `action` from either side so an empty-object payload (`{}`) can never mask the
+ * intent recorded on the other side (webhook move-out previously sent `after_data: {}`).
+ */
+export function resolveTenantUnitAction(
+  afterData: unknown,
+  beforeData: unknown,
+): TenantUnitAction | null {
+  const after = afterData as { action?: string } | null | undefined;
+  const before = beforeData as { action?: string } | null | undefined;
+  const action = after?.action ?? before?.action;
+  if (action === 'assign_unit' || action === 'unassign_unit') {
+    return action;
   }
   return null;
+}
+
+/** Payload carrying the unit references for the resolved action. */
+export function resolveTenantUnitActionData<T>(
+  action: TenantUnitAction | null,
+  afterData: T,
+  beforeData: T,
+): T {
+  if (action === 'unassign_unit') {
+    return (beforeData ?? afterData) as T;
+  }
+  return (afterData ?? beforeData) as T;
+}
+
+export function getTenantUnitChangeAction(
+  change: FMSChange,
+): TenantUnitAction | null {
+  if (change.change_type !== FMSChangeType.TENANT_UNIT_CHANGED) return null;
+  return resolveTenantUnitAction(change.after_data, change.before_data);
 }
 
 function unitUpdatedPhase(change: FMSChange): number {

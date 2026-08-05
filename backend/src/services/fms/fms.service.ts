@@ -59,7 +59,15 @@ import { FMSWebhookAuthMode } from '@/types/fms.types';
 import { UserRole } from '@/types/auth.types';
 import { logger } from '@/utils/logger';
 import { shouldAutoAcceptChanges } from './fms-auto-accept.utils';
-import { isFmsChangeDismissible, isFmsChangePending, partitionChangesForAutoApply, resolveFmsAutoApplyOutcome, sortChangesForApply } from './fms-apply-order.utils';
+import {
+  isFmsChangeDismissible,
+  isFmsChangePending,
+  partitionChangesForAutoApply,
+  resolveFmsAutoApplyOutcome,
+  resolveTenantUnitAction,
+  resolveTenantUnitActionData,
+  sortChangesForApply,
+} from './fms-apply-order.utils';
 import {
   buildFmsApplyErrorDetail,
   formatFmsApplyErrorFallback,
@@ -68,6 +76,7 @@ import {
   clearFmsMappingRemoved,
   isFmsMappingMarkedRemoved,
   isFmsUserRemovedFromFacility,
+  isUserInactive,
   stampFmsMappingRemoved,
 } from './fms-tenant-removal.utils';
 import {
@@ -80,6 +89,30 @@ import {
 import {
   summarizeFmsWebhookPayload,
 } from './fms-webhook-summary.utils';
+
+/**
+ * Move-out can only unassign entities BluLok already knows about; unmapped ids go to
+ * manual review instead of failing during apply.
+ */
+function moveOutValidationErrors(
+  tenantExternalId: string,
+  unitExternalId: string,
+  tenantInternalId?: string,
+  unitInternalId?: string,
+): string[] | undefined {
+  const errors: string[] = [];
+  if (!tenantExternalId || !unitExternalId) {
+    errors.push('Move-out payload missing tenant_id or unit_id');
+    return errors;
+  }
+  if (!tenantInternalId) {
+    errors.push(`Tenant ${tenantExternalId} is not mapped in BluLok yet`);
+  }
+  if (!unitInternalId) {
+    errors.push(`Unit ${unitExternalId} is not mapped in BluLok yet`);
+  }
+  return errors.length > 0 ? errors : undefined;
+}
 
 /**
  * FMS Integration Service Class
@@ -854,7 +887,7 @@ export class FMSService {
           user,
           facilityAssignmentCount,
         );
-        const needsReactivation = user.is_active === false;
+        const needsReactivation = isUserInactive(user);
 
         const hasInfoChanges =
           user.first_name !== fmsTenant.firstName ||
@@ -1426,7 +1459,7 @@ export class FMSService {
       });
     }
 
-    if (user && user.is_active === false) {
+    if (user && isUserInactive(user)) {
       await UserModel.activateUser(userId);
       void import('@/services/user-activation-side-effects.service')
         .then(({ runUserActivationSideEffects }) => runUserActivationSideEffects(userId))
@@ -1750,28 +1783,10 @@ export class FMSService {
       });
     }
 
-    // Only deactivate user if they have no other assignments (in other facilities)
-    const remainingAssignments = allAssignments.length - assignments.length;
-
-    // NEW: Protect users who still have active shared keys
-    const keySharingModel = new KeySharingModel();
-    const sharedKeys = await keySharingModel.getUserSharedUnits(change.internal_id);
-    const hasSharedKeys = sharedKeys.length > 0;
-
-    if (remainingAssignments === 0 && !hasSharedKeys) {
-      await UserModel.deactivateUser(change.internal_id);
-      result.accessChanges.usersDeactivated.push(change.internal_id);
-      logger.info(`[FMS] Deactivated tenant user: ${change.internal_id}`, {
-        fms_sync: true,
-        sync_log_id: change.sync_log_id,
-        performed_by: performedBy,
-      });
-    } else {
-      logger.info(`[FMS] Tenant user ${change.internal_id} not deactivated (remainingAssignments=${remainingAssignments}, sharedKeys=${sharedKeys.length})`, {
-        fms_sync: true,
-        sync_log_id: change.sync_log_id,
-      });
-    }
+    await this.maybeDeactivateTenantAfterLastUnit(change.internal_id, result, {
+      syncLogId: change.sync_log_id,
+      performedBy,
+    });
 
     await UserFacilityAssociationModel.removeUserFromFacility(change.internal_id, facilityId);
 
@@ -1911,14 +1926,26 @@ export class FMSService {
     const facilityId = ctx.facilityId;
     const performedBy = ctx.performedBy;
     const tenantInternalId = await this.resolveTenantInternalId(facilityId, change);
-    const actionData = (change.after_data || change.before_data) as {
+    type TenantUnitActionData = {
       action?: string;
       unitId?: string;
       externalUnitId?: string;
       unitNumber?: string;
     };
+    const action = resolveTenantUnitAction(change.after_data, change.before_data);
+    const actionData = resolveTenantUnitActionData(
+      action,
+      change.after_data as TenantUnitActionData | null,
+      change.before_data as TenantUnitActionData | null,
+    ) ?? ({} as TenantUnitActionData);
 
-    if (change.after_data && actionData.action === 'assign_unit') {
+    if (!action) {
+      throw new Error(
+        'Tenant unit change is missing an assign_unit / unassign_unit action payload',
+      );
+    }
+
+    if (action === 'assign_unit') {
       const tenantMapping = await this.entityMappingModel.findByInternalId(
         facilityId,
         'user',
@@ -1989,7 +2016,7 @@ export class FMSService {
         unitId,
       });
 
-    } else if (change.before_data && actionData.action === 'unassign_unit') {
+    } else {
       const unitId = await this.resolveUnitInternalId(facilityId, {
         unitId: actionData.unitId,
         externalUnitId: actionData.externalUnitId,
@@ -2015,6 +2042,30 @@ export class FMSService {
         userId: tenantInternalId,
         unitId,
       });
+
+      await this.maybeDeactivateTenantAfterLastUnit(tenantInternalId, result, {
+        syncLogId: change.sync_log_id,
+        performedBy,
+      });
+
+      // Parity with vacant unit_updated: when the unit has no remaining assignees, revoke shares
+      const remainingOnUnit = await this.unitAssignmentModel.findByUnitId(unitId);
+      if (remainingOnUnit.length === 0) {
+        let userRole = UserRole.ADMIN;
+        if (performedBy && performedBy !== 'fms-system') {
+          const triggeringUser = await UserModel.findById(performedBy);
+          if (triggeringUser) {
+            userRole = (triggeringUser as any).role;
+          }
+        }
+        const { KeySharingService } = await import('@/services/key-sharing.service');
+        await KeySharingService.getInstance().revokeAllActiveSharesForUnit(
+          unitId,
+          performedBy,
+          userRole,
+          { bestEffortGatewayDenylist: true },
+        );
+      }
     }
   }
 
@@ -2232,11 +2283,51 @@ export class FMSService {
   }
 
   /**
-   * Apply unit updated change
+   * Deactivate a tenant when they have no remaining unit assignments and no active shared keys.
+   * Shared with tenant_removed, tenant_unit_changed unassign, and vacant unit_updated kick-out.
+   */
+  private async maybeDeactivateTenantAfterLastUnit(
+    tenantId: string,
+    result: FMSChangeApplicationResult,
+    ctx: { syncLogId: string; performedBy: string },
+  ): Promise<boolean> {
+    const remainingAssignments = await this.unitAssignmentModel.findByTenantId(tenantId);
+    if (remainingAssignments.length > 0) {
+      logger.info(`[FMS] Tenant user ${tenantId} not deactivated (remainingAssignments=${remainingAssignments.length})`, {
+        fms_sync: true,
+        sync_log_id: ctx.syncLogId,
+      });
+      return false;
+    }
+
+    const keySharingModel = new KeySharingModel();
+    const sharedKeys = await keySharingModel.getUserSharedUnits(tenantId);
+    if (sharedKeys.length > 0) {
+      logger.info(`[FMS] Tenant user ${tenantId} not deactivated (sharedKeys=${sharedKeys.length})`, {
+        fms_sync: true,
+        sync_log_id: ctx.syncLogId,
+      });
+      return false;
+    }
+
+    await UserModel.deactivateUser(tenantId);
+    result.accessChanges.usersDeactivated.push(tenantId);
+    logger.info(`[FMS] Deactivated tenant user: ${tenantId}`, {
+      fms_sync: true,
+      sync_log_id: ctx.syncLogId,
+      performed_by: ctx.performedBy,
+    });
+    return true;
+  }
+
+  /**
+   * Apply unit updated change.
+   * Self-heals occupancy vs assignments: vacant statuses kick out tenants (denylist/shares);
+   * occupied with no assignment assigns a mapped FMS tenant (after tenant_added / restore).
    */
   private async applyUnitUpdated(
     change: FMSChange,
-    _result: FMSChangeApplicationResult,
+    result: FMSChangeApplicationResult,
     ctx: FMSApplyContext,
   ): Promise<void> {
     if (!change.internal_id) {
@@ -2246,21 +2337,22 @@ export class FMSService {
     const unitData = change.after_data as FMSUnit;
     const facilityId = ctx.facilityId;
     const performedBy = ctx.performedBy;
+    const unitId = change.internal_id;
 
     // SECURITY: Validate unit belongs to this facility
-    const unit = await this.unitModel.findById(change.internal_id);
+    const unit = await this.unitModel.findById(unitId);
     if (!unit) {
-      throw new Error(`Unit ${change.internal_id} not found`);
+      throw new Error(`Unit ${unitId} not found`);
     }
-    
+
     if (unit.facility_id !== facilityId) {
       logger.error(`[FMS] Security violation: Attempted to update unit from different facility`, {
-        unit_id: change.internal_id,
+        unit_id: unitId,
         unit_facility_id: unit.facility_id,
         sync_facility_id: facilityId,
         sync_log_id: change.sync_log_id,
       });
-      throw new Error(`Security violation: Unit ${change.internal_id} does not belong to facility ${facilityId}`);
+      throw new Error(`Security violation: Unit ${unitId} does not belong to facility ${facilityId}`);
     }
 
     let userRole = UserRole.ADMIN;
@@ -2284,25 +2376,25 @@ export class FMSService {
     const mappingByInternalId = await this.entityMappingModel.findByInternalId(
       facilityId,
       'unit',
-      change.internal_id
+      unitId
     );
 
     // If mapping by external_id exists but points to wrong internal_id (stale), delete it
-    if (mappingByExternalId && mappingByExternalId.internal_id !== change.internal_id) {
+    if (mappingByExternalId && mappingByExternalId.internal_id !== unitId) {
       logger.info(`[FMS] Deleting stale mapping for external_id ${unitData.externalId}`, {
         fms_sync: true,
         sync_log_id: change.sync_log_id,
         facility_id: facilityId,
         old_internal_id: mappingByExternalId.internal_id,
-        new_internal_id: change.internal_id,
+        new_internal_id: unitId,
       });
-      
+
       await this.entityMappingModel.delete(mappingByExternalId.id);
     }
 
-    // If no correct mapping exists, create one
+    // If no correct mapping exists, create one — then fall through and apply the unit update
     if (!mappingByInternalId || mappingByInternalId.external_id !== unitData.externalId) {
-      logger.info(`[FMS] Creating/updating FMS entity mapping for unit ${change.internal_id}`, {
+      logger.info(`[FMS] Creating/updating FMS entity mapping for unit ${unitId}`, {
         fms_sync: true,
         sync_log_id: change.sync_log_id,
         facility_id: facilityId,
@@ -2310,7 +2402,6 @@ export class FMSService {
         is_update: !!mappingByInternalId,
       });
 
-      // Double-check mapping doesn't exist before creating (safety check)
       const finalCheckMapping = await this.entityMappingModel.findByExternalId(
         facilityId,
         'unit',
@@ -2318,51 +2409,128 @@ export class FMSService {
       );
 
       if (!finalCheckMapping) {
-      await this.entityMappingModel.create({
-        facility_id: facilityId,
-        entity_type: 'unit',
-        external_id: unitData.externalId,
-        internal_id: change.internal_id,
-        provider_type: config?.provider_type || 'generic_rest',
-        metadata: {
-          unitNumber: unitData.unitNumber,
-          unitType: unitData.unitType,
-        },
-      });
+        await this.entityMappingModel.create({
+          facility_id: facilityId,
+          entity_type: 'unit',
+          external_id: unitData.externalId,
+          internal_id: unitId,
+          provider_type: config?.provider_type || 'generic_rest',
+          metadata: {
+            unitNumber: unitData.unitNumber,
+            unitType: unitData.unitType,
+          },
+        });
       } else {
         logger.info(`[FMS] Unit entity mapping already exists during update for external_id ${unitData.externalId}`, {
           fms_sync: true,
           sync_log_id: change.sync_log_id,
           facility_id: facilityId,
           existing_internal_id: finalCheckMapping.internal_id,
-          expected_internal_id: change.internal_id,
+          expected_internal_id: unitId,
         });
       }
 
-      logger.info(`[FMS] Linked unit ${change.internal_id} to FMS external_id ${unitData.externalId}`, {
+      logger.info(`[FMS] Linked unit ${unitId} to FMS external_id ${unitData.externalId}`, {
         fms_sync: true,
         sync_log_id: change.sync_log_id,
         facility_id: facilityId,
       });
-      return;
     }
 
-    // Otherwise, this is a real update - modify the unit data
+    const targetStatus = unitData.status;
+    const assignments = await this.unitAssignmentModel.findByUnitId(unitId);
+
+    // Vacant FMS status: kick out tenants so assignment gate allows the status write
+    if (targetStatus !== 'occupied' && assignments.length > 0) {
+      for (const assignment of assignments) {
+        await this.unitsService.unassignTenant(unitId, assignment.tenant_id, {
+          performedBy,
+          source: 'fms_sync',
+          syncLogId: change.sync_log_id,
+        });
+        result.accessChanges.accessRevoked.push({
+          userId: assignment.tenant_id,
+          unitId,
+        });
+        await this.maybeDeactivateTenantAfterLastUnit(assignment.tenant_id, result, {
+          syncLogId: change.sync_log_id,
+          performedBy,
+        });
+      }
+
+      const { KeySharingService } = await import('@/services/key-sharing.service');
+      await KeySharingService.getInstance().revokeAllActiveSharesForUnit(
+        unitId,
+        performedBy,
+        userRole,
+        { bestEffortGatewayDenylist: true },
+      );
+    }
+
+    // Occupied with no assignments: assign mapped FMS tenant (must already exist via tenant_added)
+    if (targetStatus === 'occupied') {
+      const currentAssignments = await this.unitAssignmentModel.findByUnitId(unitId);
+      if (currentAssignments.length === 0) {
+        const externalTenantId = unitData.tenantId?.trim();
+        if (!externalTenantId) {
+          throw new Error(
+            'Cannot mark occupied: FMS unit has no tenantId and BluLok has no assignment (apply tenant_added / tenant_unit_changed first)',
+          );
+        }
+
+        const tenantMapping = await this.entityMappingModel.findByExternalId(
+          facilityId,
+          'user',
+          externalTenantId,
+        );
+        if (!tenantMapping?.internal_id) {
+          throw new Error(
+            `Cannot mark occupied: FMS tenant ${externalTenantId} is not mapped yet (apply tenant_added first)`,
+          );
+        }
+
+        await this.restoreFmsTenantAccess(tenantMapping.internal_id, facilityId, {
+          mapping: tenantMapping,
+          performedBy,
+          syncLogId: change.sync_log_id,
+          force: true,
+        });
+        if (tenantMapping) {
+          await this.entityMappingModel.updateMetadata(
+            tenantMapping.id,
+            clearFmsMappingRemoved(tenantMapping.metadata),
+          );
+        }
+
+        await this.unitsService.assignTenant(unitId, tenantMapping.internal_id, {
+          accessType: 'full',
+          isPrimary: true,
+          performedBy,
+          source: 'fms_sync',
+          syncLogId: change.sync_log_id,
+          notes: 'FMS sync: unit_updated occupied self-heal',
+        });
+        result.accessChanges.accessGranted.push({
+          userId: tenantMapping.internal_id,
+          unitId,
+        });
+      }
+    }
+
     // NOTE: We don't update size_sqft from FMS since FMS provides dimensional strings like "10x15"
     // but our database expects numeric square footage. Store dimensional size in metadata instead.
-
-    logger.info(`[FMS] Updating unit ${change.internal_id} status from DB to FMS value`, {
+    logger.info(`[FMS] Updating unit ${unitId} status from DB to FMS value`, {
       fms_sync: true,
       sync_log_id: change.sync_log_id,
       facility_id: facilityId,
-      unit_id: change.internal_id,
+      unit_id: unitId,
       before_status: change.before_data?.status || 'unknown',
       new_status: unitData.status,
       unit_number: unitData.unitNumber,
     });
 
     await this.unitsService.updateUnit(
-      change.internal_id,
+      unitId,
       {
         unit_type: unitData.unitType,
         status: unitData.status,
@@ -2379,7 +2547,7 @@ export class FMSService {
       userRole,
     );
 
-    logger.info(`[FMS] Updated unit ${change.internal_id} by ${performedBy}: status=${unitData.status}, type=${unitData.unitType}`, {
+    logger.info(`[FMS] Updated unit ${unitId} by ${performedBy}: status=${unitData.status}, type=${unitData.unitType}`, {
       fms_sync: true,
       sync_log_id: change.sync_log_id,
       facility_id: facilityId,
@@ -3010,6 +3178,15 @@ export class FMSService {
           impact_summary: `Move-in: assign tenant to unit ${unit?.unit_number ?? unitExternalId}`,
           is_valid: true,
         });
+
+        // Companion unit_updated so webhook occupancy matches full-sync self-heal
+        await this.maybeAppendWebhookUnitUpdated(inserts, {
+          facilityId,
+          syncLogId,
+          provider,
+          unitExternalId,
+          unitInternalId: unitMapping?.internal_id,
+        });
         break;
       }
       case 'ledger.moved-out': {
@@ -3034,14 +3211,26 @@ export class FMSService {
             unitNumber: unit?.unit_number ?? unitExternalId,
             webhookOnly: true,
           },
-          after_data: {},
+          // Must stay null (not {}) so apply/order resolve the unassign action from before_data.
+          after_data: null as never,
           required_actions: [FMSChangeAction.UNASSIGN_UNIT, FMSChangeAction.REMOVE_ACCESS],
           impact_summary: `Move-out: unassign tenant from unit ${unit?.unit_number ?? unitExternalId}`,
-          is_valid: Boolean(tenantExternalId && unitExternalId),
-          validation_errors:
-            tenantExternalId && unitExternalId
-              ? undefined
-              : ['Move-out payload missing tenant_id or unit_id'],
+          is_valid: Boolean(tenantMapping?.internal_id && unitMapping?.internal_id),
+          validation_errors: moveOutValidationErrors(
+            tenantExternalId,
+            unitExternalId,
+            tenantMapping?.internal_id,
+            unitMapping?.internal_id,
+          ),
+        });
+
+        // Companion unit_updated so vacant kick-out / status write matches full sync
+        await this.maybeAppendWebhookUnitUpdated(inserts, {
+          facilityId,
+          syncLogId,
+          provider,
+          unitExternalId,
+          unitInternalId: unitMapping?.internal_id,
         });
         break;
       }
@@ -3133,6 +3322,62 @@ export class FMSService {
       unitIds: [],
       status: 'active',
     };
+  }
+
+  /**
+   * After ledger move-in/out, fetch the unit from FMS and emit unit_updated when BluLok status/type
+   * differs — same occupancy self-heal path as full sync (vacant kick-out / occupied assign).
+   * Skipped when the unit is not mapped yet (e.g. unit_added in the same webhook batch).
+   */
+  private async maybeAppendWebhookUnitUpdated(
+    inserts: Parameters<FMSChangeModel['create']>[0][],
+    options: {
+      facilityId: string;
+      syncLogId: string;
+      provider: BaseFMSProvider;
+      unitExternalId: string;
+      unitInternalId?: string;
+    },
+  ): Promise<void> {
+    const { facilityId, syncLogId, provider, unitExternalId, unitInternalId } = options;
+    if (!unitInternalId || !unitExternalId) {
+      return;
+    }
+
+    const blulokUnit = await this.unitModel.findById(unitInternalId);
+    if (!blulokUnit || blulokUnit.facility_id !== facilityId) {
+      return;
+    }
+
+    const fetched = await provider.fetchUnit(unitExternalId);
+    if (!fetched) {
+      logger.warn(`[FMS] Webhook occupancy: could not fetch unit ${unitExternalId} for companion unit_updated`, {
+        fms_sync: true,
+        sync_log_id: syncLogId,
+        facility_id: facilityId,
+      });
+      return;
+    }
+
+    const hasChanges =
+      blulokUnit.status !== fetched.status ||
+      blulokUnit.unit_type !== fetched.unitType;
+    if (!hasChanges) {
+      return;
+    }
+
+    inserts.push({
+      sync_log_id: syncLogId,
+      change_type: FMSChangeType.UNIT_UPDATED,
+      entity_type: 'unit',
+      external_id: fetched.externalId,
+      internal_id: unitInternalId,
+      before_data: { status: blulokUnit.status, unitType: blulokUnit.unit_type },
+      after_data: fetched,
+      required_actions: [],
+      impact_summary: `Update unit ${fetched.unitNumber} from webhook (occupancy sync)`,
+      is_valid: true,
+    });
   }
 
   /**

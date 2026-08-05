@@ -10671,9 +10671,30 @@ async function run() {
 
     heading('Admin / dev_admin route pass uses empty aud');
     step('Requesting DEV_ADMIN route pass (empty aud; authorize via user_role)');
-    const adminRouteDevId = `e2e-admin-rp-${Date.now()}`;
-    const adminRoutePub = Buffer.alloc(32, 9).toString('base64');
-    await registerUserDevice(token, adminRouteDevId, adminRoutePub);
+    const adminDevicesRes = await axios.get(`${API_BASE}/user-devices/me`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    let adminRouteDevId = (adminDevicesRes.data?.devices || []).find((d) => d.app_device_id)?.app_device_id;
+    if (!adminRouteDevId) {
+      adminRouteDevId = `e2e-admin-rp-${Date.now()}`;
+      const adminRoutePub = Buffer.alloc(32, 9).toString('base64');
+      try {
+        await registerUserDevice(token, adminRouteDevId, adminRoutePub);
+      } catch (regErr) {
+        // At device limit from prior runs — revoke one registered device and retry
+        const stale = (adminDevicesRes.data?.devices || [])[0]
+          || (regErr?.response?.data?.devices || [])[0];
+        if (stale?.id) {
+          await axios.delete(`${API_BASE}/user-devices/me/${stale.id}`, {
+            headers: { Authorization: `Bearer ${token}` },
+            validateStatus: () => true,
+          });
+          await registerUserDevice(token, adminRouteDevId, adminRoutePub);
+        } else {
+          throw regErr;
+        }
+      }
+    }
     const adminPass = await requestRoutePass(token, adminRouteDevId);
     const adminClaims = decodeJwtClaims(adminPass);
     assertRoutePassUserRole(adminClaims, 'dev_admin');
@@ -12351,6 +12372,393 @@ async function run() {
       ok('Second bypass rejected after recovery already bypassed');
 
       try { swapWs.close(1000, 'e2e_swap_done'); } catch {}
+    }
+
+    // ---------------- FMS unit_updated occupancy self-heal ----------------
+    heading('FMS unit_updated occupancy self-heal');
+    const occTs = Date.now();
+    const occExtFac = `ext-occ-fac-${occTs}`;
+    const occExtUnit = `ext-occ-unit-${occTs}`;
+    const occExtTenant = `ext-occ-tenant-${occTs}`;
+    const occUnitNumber = `E2E-OCC-${occTs}`;
+    const occTenantEmail = `occ-tenant-${occTs}@test.com`;
+    const occDataset = {
+      tenants: [
+        {
+          id: occExtTenant,
+          email: occTenantEmail,
+          first_name: 'Occ',
+          last_name: 'SelfHeal',
+          phone_numbers: [{ number: '+15553000001', primary: true }],
+          active: true,
+        },
+      ],
+      units: [
+        {
+          id: occExtUnit,
+          name: occUnitNumber,
+          unit_type: { name: 'Small' },
+          size: '5x5',
+          status: 'occupied',
+          current_tenant_id: occExtTenant,
+          price: 90,
+        },
+      ],
+      ledgers: [{ tenant: { id: occExtTenant }, unit: { id: occExtUnit } }],
+    };
+    let occMockServer = null;
+    try {
+      step('Provision isolated facility + mock FMS for occupancy self-heal');
+      const occFacilityId = await createTestFacility(token, `E2E-FMS-Occupancy-${occTs}`);
+      created.extraFacilityIds.push(occFacilityId);
+      await createGateway(token, occFacilityId, 'E2E Occupancy GW').catch(() => null);
+      const { server: occServer, port: occPort } = await startMockFmsServer(occDataset);
+      occMockServer = occServer;
+      info(`Occupancy mock FMS at http://127.0.0.1:${occPort}`);
+      const occConfigId = await createFmsWebhookTestConfig(token, occFacilityId, {
+        mockPort: occPort,
+        extStoredgeFacId: occExtFac,
+        autoAccept: false,
+      });
+      const occTestConn = await axios.post(`${API_BASE}/fms/config/${occConfigId}/test`, {}, { headers: authHeaders(token) });
+      if (!occTestConn.data?.connected) throw new Error('Occupancy FMS connection test failed');
+
+      step('Initial sync: apply tenant + unit, then ensure assignment');
+      await fmsSyncApplyFilteredChanges(token, occFacilityId, () => true);
+      const occUnit = await findUnitByNumber(token, occFacilityId, occUnitNumber);
+      if (!occUnit?.id) throw new Error('Occupancy self-heal unit missing after initial sync');
+      await ensureTenantAssignedToUnit(token, occUnit.id, occTenantEmail);
+      // Second sync after mapping exists may also emit tenant_unit_changed; apply any assign rows.
+      try {
+        await fmsSyncApplyFilteredChanges(token, occFacilityId, (c) => c.change_type === 'tenant_unit_changed');
+      } catch (err) {
+        if (!String(err?.message || err).includes('No applicable FMS changes')) throw err;
+      }
+      const occUsersRes = await axios.get(`${API_BASE}/users`, {
+        headers: authHeaders(token),
+        params: { search: occTenantEmail, limit: 20 },
+      });
+      const occTenant = (occUsersRes.data?.users || []).find(
+        (u) => (u.email || '').toLowerCase() === occTenantEmail.toLowerCase(),
+      );
+      if (!occTenant?.id) throw new Error('Occupancy self-heal tenant missing after initial sync');
+      created.users.push(occTenant.id);
+
+      const occUnitBefore = await axios.get(`${API_BASE}/units/${occUnit.id}`, { headers: authHeaders(token) });
+      const beforeStatus = occUnitBefore.data?.unit?.status;
+      if (beforeStatus !== 'occupied') {
+        throw new Error(`Expected occupied unit before vacant self-heal, got ${beforeStatus}`);
+      }
+      const detailsBefore = await fetchUserDetails(token, occTenant.id);
+      const assignedBefore = (detailsBefore.facilities || []).some((f) =>
+        (f.units || []).some((u) => String(u.id) === String(occUnit.id)),
+      );
+      if (!assignedBefore) {
+        throw new Error('Expected tenant assigned to occupancy unit before vacant self-heal');
+      }
+      if (detailsBefore.isActive === false || detailsBefore.isActive === 0) {
+        throw new Error('Expected tenant active before vacant self-heal');
+      }
+      ok('Initial occupancy state: unit occupied with tenant assigned');
+
+      step('Vacate unit in FMS (keep tenant record; clear ledger) and sync');
+      occDataset.units[0].status = 'vacant';
+      occDataset.units[0].current_tenant_id = null;
+      occDataset.ledgers.length = 0;
+
+      const vacantSyncRes = await axios.post(`${API_BASE}/fms/sync/${occFacilityId}`, {}, { headers: authHeaders(token) });
+      const vacantSyncLogId = vacantSyncRes.data?.result?.syncLogId;
+      if (!vacantSyncLogId) throw new Error('Vacant occupancy sync missing syncLogId');
+      const vacantPending = await axios.get(`${API_BASE}/fms/changes/${vacantSyncLogId}/pending`, { headers: authHeaders(token) });
+      const vacantChanges = vacantPending.data?.changes || [];
+      const vacantUnitUpdated = vacantChanges.filter(
+        (c) => c.change_type === 'unit_updated' && (c.external_id === occExtUnit || c.after_data?.externalId === occExtUnit),
+      );
+      if (vacantUnitUpdated.length === 0) {
+        throw new Error(`Expected unit_updated for vacated unit; pending=${JSON.stringify(vacantChanges.map((c) => c.change_type))}`);
+      }
+
+      step('Apply ONLY unit_updated (self-heal kick-out without companion unassign)');
+      const vacantUnitChangeIds = vacantUnitUpdated.map((c) => c.id);
+      await axios.post(`${API_BASE}/fms/changes/review`, {
+        syncLogId: vacantSyncLogId,
+        changeIds: vacantUnitChangeIds,
+        accepted: true,
+      }, { headers: authHeaders(token) });
+      const vacantApply = await axios.post(`${API_BASE}/fms/changes/apply`, {
+        syncLogId: vacantSyncLogId,
+        changeIds: vacantUnitChangeIds,
+      }, { headers: authHeaders(token) });
+      if ((vacantApply.data?.result?.changesFailed || 0) > 0) {
+        throw new Error(`Vacant unit_updated self-heal apply failed: ${JSON.stringify(vacantApply.data?.result)}`);
+      }
+      if ((vacantApply.data?.result?.changesApplied || 0) < 1) {
+        throw new Error('Vacant unit_updated self-heal applied zero changes');
+      }
+
+      const occUnitAfterVacant = await axios.get(`${API_BASE}/units/${occUnit.id}`, { headers: authHeaders(token) });
+      const afterVacantStatus = occUnitAfterVacant.data?.unit?.status;
+      if (afterVacantStatus !== 'available') {
+        throw new Error(`Expected available after vacant self-heal, got ${afterVacantStatus}`);
+      }
+      const tenantAfterVacant = await fetchUserDetails(token, occTenant.id);
+      const stillAssigned = (tenantAfterVacant.facilities || []).some((f) =>
+        (f.units || []).some((u) => String(u.id) === String(occUnit.id)),
+      );
+      if (stillAssigned) {
+        throw new Error('Tenant still assigned to unit after vacant unit_updated self-heal');
+      }
+      const vacantActive = tenantAfterVacant.isActive === true || tenantAfterVacant.isActive === 1;
+      if (vacantActive) {
+        throw new Error(`Expected tenant deactivated after last-unit vacant self-heal, isActive=${tenantAfterVacant.isActive}`);
+      }
+      ok('Vacant unit_updated self-heal: unit available, tenant unassigned and deactivated');
+
+      step('Re-occupy unit in FMS for same tenant; apply ONLY unit_updated (reactivate + assign)');
+      occDataset.units[0].status = 'occupied';
+      occDataset.units[0].current_tenant_id = occExtTenant;
+      occDataset.ledgers.push({ tenant: { id: occExtTenant }, unit: { id: occExtUnit } });
+
+      const reoccSyncRes = await axios.post(`${API_BASE}/fms/sync/${occFacilityId}`, {}, { headers: authHeaders(token) });
+      const reoccSyncLogId = reoccSyncRes.data?.result?.syncLogId;
+      if (!reoccSyncLogId) throw new Error('Re-occupy sync missing syncLogId');
+      const reoccPending = await axios.get(`${API_BASE}/fms/changes/${reoccSyncLogId}/pending`, { headers: authHeaders(token) });
+      const reoccChanges = reoccPending.data?.changes || [];
+      const reoccUnitUpdated = reoccChanges.filter(
+        (c) => c.change_type === 'unit_updated' && (c.external_id === occExtUnit || c.after_data?.externalId === occExtUnit),
+      );
+      if (reoccUnitUpdated.length === 0) {
+        throw new Error(`Expected unit_updated for re-occupy; pending=${JSON.stringify(reoccChanges.map((c) => ({ type: c.change_type, ext: c.external_id })))}`);
+      }
+      const reoccUnitChangeIds = reoccUnitUpdated.map((c) => c.id);
+      await axios.post(`${API_BASE}/fms/changes/review`, {
+        syncLogId: reoccSyncLogId,
+        changeIds: reoccUnitChangeIds,
+        accepted: true,
+      }, { headers: authHeaders(token) });
+      const reoccApply = await axios.post(`${API_BASE}/fms/changes/apply`, {
+        syncLogId: reoccSyncLogId,
+        changeIds: reoccUnitChangeIds,
+      }, { headers: authHeaders(token) });
+      if ((reoccApply.data?.result?.changesFailed || 0) > 0) {
+        throw new Error(`Occupied unit_updated self-heal apply failed: ${JSON.stringify(reoccApply.data?.result)}`);
+      }
+
+      const occUnitAfterReocc = await axios.get(`${API_BASE}/units/${occUnit.id}`, { headers: authHeaders(token) });
+      const afterReoccStatus = occUnitAfterReocc.data?.unit?.status;
+      if (afterReoccStatus !== 'occupied') {
+        throw new Error(`Expected occupied after re-occupy self-heal, got ${afterReoccStatus}`);
+      }
+      const tenantAfterReocc = await fetchUserDetails(token, occTenant.id);
+      const reassigned = (tenantAfterReocc.facilities || []).some((f) =>
+        (f.units || []).some((u) => String(u.id) === String(occUnit.id)),
+      );
+      if (!reassigned) {
+        throw new Error('Tenant not reassigned after occupied unit_updated self-heal');
+      }
+      const reoccActive = tenantAfterReocc.isActive === true || tenantAfterReocc.isActive === 1;
+      if (!reoccActive) {
+        throw new Error(`Expected tenant reactivated after occupied unit_updated self-heal, isActive=${tenantAfterReocc.isActive}`);
+      }
+      ok('Occupied unit_updated self-heal: tenant reactivated and reassigned; unit occupied');
+
+      // Reject leftover companion changes from these syncs so facility cleanup stays clean
+      for (const syncId of [vacantSyncLogId, reoccSyncLogId]) {
+        const leftoverPending = await axios.get(`${API_BASE}/fms/changes/${syncId}/pending`, { headers: authHeaders(token) });
+        const leftoverIds = (leftoverPending.data?.changes || []).map((c) => c.id);
+        if (leftoverIds.length > 0) {
+          await axios.post(`${API_BASE}/fms/changes/dismiss`, {
+            syncLogId: syncId,
+            changeIds: leftoverIds,
+          }, { headers: authHeaders(token), validateStatus: () => true });
+        }
+      }
+
+      await deleteFmsConfigIfExists(token, occFacilityId);
+    } finally {
+      if (occMockServer) {
+        await new Promise((resolve) => occMockServer.close(resolve)).catch(() => {});
+      }
+    }
+
+    // ---------------- FMS webhook ledger occupancy self-heal ----------------
+    heading('FMS webhook ledger occupancy self-heal');
+    const whOccTs = Date.now();
+    const whOccSecret = `e2e-wh-occ-secret-${whOccTs}`;
+    const whOccExtFac = `ext-wh-occ-fac-${whOccTs}`;
+    const whOccExtUnit = `ext-wh-occ-unit-${whOccTs}`;
+    const whOccExtTenant = `ext-wh-occ-tenant-${whOccTs}`;
+    const whOccUnitNumber = `E2E-WH-OCC-${whOccTs}`;
+    const whOccTenantEmail = `wh-occ-tenant-${whOccTs}@test.com`;
+    const whOccDataset = {
+      tenants: [
+        {
+          id: whOccExtTenant,
+          email: whOccTenantEmail,
+          first_name: 'WhOcc',
+          last_name: 'SelfHeal',
+          phone_numbers: [{ number: '+15553000011', primary: true }],
+          active: true,
+        },
+      ],
+      units: [
+        {
+          id: whOccExtUnit,
+          name: whOccUnitNumber,
+          unit_type: { name: 'Small' },
+          size: '5x5',
+          status: 'occupied',
+          current_tenant_id: whOccExtTenant,
+          price: 90,
+        },
+      ],
+      ledgers: [{ tenant: { id: whOccExtTenant }, unit: { id: whOccExtUnit } }],
+    };
+    let whOccMockServer = null;
+    try {
+      step('Provision isolated facility + mock FMS for webhook occupancy self-heal');
+      const { server: whOccServer, port: whOccPort } = await startMockFmsServer(whOccDataset);
+      whOccMockServer = whOccServer;
+      info(`Webhook occupancy mock FMS at http://127.0.0.1:${whOccPort}`);
+      const whOccFac = await setupFmsWebhookFacility(token, {
+        label: 'WhOcc',
+        mockPort: whOccPort,
+        extStoredgeFacId: whOccExtFac,
+        extUnitId: whOccExtUnit,
+        extTenantId: whOccExtTenant,
+        unitNumber: whOccUnitNumber,
+        tenantEmail: whOccTenantEmail,
+        webhookSecret: whOccSecret,
+        autoAccept: false,
+        trackExtraFacilityIds: created.extraFacilityIds,
+      });
+      const whOccUsersRes = await axios.get(`${API_BASE}/users`, {
+        headers: authHeaders(token),
+        params: { search: whOccTenantEmail, limit: 20 },
+      });
+      const whOccTenant = (whOccUsersRes.data?.users || []).find(
+        (u) => (u.email || '').toLowerCase() === whOccTenantEmail.toLowerCase(),
+      );
+      if (!whOccTenant?.id) throw new Error('Webhook occupancy tenant missing after setup');
+      created.users.push(whOccTenant.id);
+      ok(`Webhook occupancy ready: facility=${whOccFac.facilityId} unit=${whOccFac.unitId}`);
+
+      const applyWebhookSyncLog = async (syncLogId, label) => {
+        if (!syncLogId) throw new Error(`${label}: missing syncLogId`);
+        const pending = await axios.get(`${API_BASE}/fms/changes/${syncLogId}/pending`, { headers: authHeaders(token) });
+        const changes = pending.data?.changes || [];
+        if (changes.length === 0) throw new Error(`${label}: expected pending changes, got none`);
+        const changeIds = changes.map((c) => c.id);
+        await axios.post(`${API_BASE}/fms/changes/review`, {
+          syncLogId,
+          changeIds,
+          accepted: true,
+        }, { headers: authHeaders(token) });
+        const applyRes = await axios.post(`${API_BASE}/fms/changes/apply`, {
+          syncLogId,
+          changeIds,
+        }, { headers: authHeaders(token) });
+        if ((applyRes.data?.result?.changesFailed || 0) > 0) {
+          throw new Error(`${label} apply failed: ${JSON.stringify(applyRes.data?.result)}`);
+        }
+        return changes;
+      };
+
+      step('ledger.moved-out webhook: vacate FMS + apply unassign + companion unit_updated');
+      whOccDataset.units[0].status = 'vacant';
+      whOccDataset.units[0].current_tenant_id = null;
+      whOccDataset.ledgers.length = 0;
+
+      const moveOutRes = await postFmsWebhook(
+        whOccFac.facilityId,
+        {
+          id: `evt-wh-occ-move-out-${whOccTs}`,
+          type: 'com.storedge.ledger.moved-out.v1',
+          body: {
+            facility_id: whOccExtFac,
+            tenant_id: whOccExtTenant,
+            unit_id: whOccExtUnit,
+          },
+        },
+        whOccSecret,
+      );
+      if (moveOutRes.status < 200 || moveOutRes.status >= 300) {
+        throw new Error(`Move-out webhook failed: ${moveOutRes.status} ${JSON.stringify(moveOutRes.data)}`);
+      }
+      const moveOutChanges = await applyWebhookSyncLog(moveOutRes.data?.syncLogId, 'Move-out webhook');
+      const moveOutTypes = moveOutChanges.map((c) => c.change_type);
+      if (!moveOutTypes.includes('tenant_unit_changed') || !moveOutTypes.includes('unit_updated')) {
+        throw new Error(`Move-out expected tenant_unit_changed + unit_updated, got ${JSON.stringify(moveOutTypes)}`);
+      }
+
+      const unitAfterMoveOut = await axios.get(`${API_BASE}/units/${whOccFac.unitId}`, { headers: authHeaders(token) });
+      const afterMoveOutStatus = unitAfterMoveOut.data?.unit?.status;
+      if (afterMoveOutStatus !== 'available') {
+        throw new Error(`Expected available after move-out webhook, got ${afterMoveOutStatus}`);
+      }
+      const tenantAfterMoveOut = await fetchUserDetails(token, whOccTenant.id);
+      const stillAssignedWh = (tenantAfterMoveOut.facilities || []).some((f) =>
+        (f.units || []).some((u) => String(u.id) === String(whOccFac.unitId)),
+      );
+      if (stillAssignedWh) {
+        throw new Error('Tenant still assigned after ledger.moved-out webhook');
+      }
+      const moveOutActive = tenantAfterMoveOut.isActive === true || tenantAfterMoveOut.isActive === 1;
+      if (moveOutActive) {
+        throw new Error(`Expected tenant deactivated after move-out webhook, isActive=${tenantAfterMoveOut.isActive}`);
+      }
+      ok('Move-out webhook: unit available, tenant unassigned and deactivated');
+
+      step('ledger.moved-in webhook: re-occupy FMS + apply assign + companion unit_updated (reactivate)');
+      whOccDataset.units[0].status = 'occupied';
+      whOccDataset.units[0].current_tenant_id = whOccExtTenant;
+      whOccDataset.ledgers.push({ tenant: { id: whOccExtTenant }, unit: { id: whOccExtUnit } });
+
+      const moveInRes = await postFmsWebhook(
+        whOccFac.facilityId,
+        {
+          id: `evt-wh-occ-move-in-${whOccTs}`,
+          type: 'com.storedge.ledger.moved-in.v1',
+          body: {
+            facility_id: whOccExtFac,
+            tenant_id: whOccExtTenant,
+            unit_id: whOccExtUnit,
+          },
+        },
+        whOccSecret,
+      );
+      if (moveInRes.status < 200 || moveInRes.status >= 300) {
+        throw new Error(`Move-in webhook failed: ${moveInRes.status} ${JSON.stringify(moveInRes.data)}`);
+      }
+      const moveInChanges = await applyWebhookSyncLog(moveInRes.data?.syncLogId, 'Move-in webhook');
+      const moveInTypes = moveInChanges.map((c) => c.change_type);
+      if (!moveInTypes.includes('tenant_unit_changed') || !moveInTypes.includes('unit_updated')) {
+        throw new Error(`Move-in expected tenant_unit_changed + unit_updated, got ${JSON.stringify(moveInTypes)}`);
+      }
+
+      const unitAfterMoveIn = await axios.get(`${API_BASE}/units/${whOccFac.unitId}`, { headers: authHeaders(token) });
+      const afterMoveInStatus = unitAfterMoveIn.data?.unit?.status;
+      if (afterMoveInStatus !== 'occupied') {
+        throw new Error(`Expected occupied after move-in webhook, got ${afterMoveInStatus}`);
+      }
+      const tenantAfterMoveIn = await fetchUserDetails(token, whOccTenant.id);
+      const reassignedWh = (tenantAfterMoveIn.facilities || []).some((f) =>
+        (f.units || []).some((u) => String(u.id) === String(whOccFac.unitId)),
+      );
+      if (!reassignedWh) {
+        throw new Error('Tenant not reassigned after ledger.moved-in webhook');
+      }
+      const moveInActive = tenantAfterMoveIn.isActive === true || tenantAfterMoveIn.isActive === 1;
+      if (!moveInActive) {
+        throw new Error(`Expected tenant reactivated after move-in webhook, isActive=${tenantAfterMoveIn.isActive}`);
+      }
+      ok('Move-in webhook: tenant reactivated and reassigned; unit occupied');
+
+      await deleteFmsConfigIfExists(token, whOccFac.facilityId);
+    } finally {
+      if (whOccMockServer) {
+        await new Promise((resolve) => whOccMockServer.close(resolve)).catch(() => {});
+      }
     }
 
     // ---------------- FMS Webhooks E2E ----------------
