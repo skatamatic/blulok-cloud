@@ -449,7 +449,7 @@ Legacy rows mapped as `automatic` are surfaced as `local_device`.
 
 ### Remote command attribution
 
-Cloud BluLok unlock commands (`PUT /devices/blulok/:id/lock` → unlocked) **always** pass the initiating user into `LockCommandService` and write an outbound `remote_access_granted` activity immediately. Tenant override is additional metadata when a **non-occupant** unlocks an occupied unit. Occupants and key-share recipients unlock without override.
+Cloud BluLok unlock commands (`PUT /devices/blulok/:id/lock` → unlocked) **always** pass the initiating user into `LockCommandService` and write an outbound `remote_access_granted` activity immediately via `RemoteLockActivityLogger` (`backend/src/services/access/remote-lock-activity-logger.service.ts`). Shared BluLok/AC preflight guards (`rejectIfRemoteLockDisabled`, `rejectIfRecoveryBlocking`) live on `LockCommandService`. HTTP lock routes live in `devices-lock-commands.routes.ts`. Tenant override is additional metadata when a **non-occupant** unlocks an occupied unit (`tenant-unlock-override.service.ts`). Occupants and key-share recipients unlock without override.
 
 When gateway state sync confirms unlock via a **real status transition** matching the pending command:
 
@@ -457,7 +457,9 @@ When gateway state sync confirms unlock via a **real status transition** matchin
 - `actor_type: user`, initiator name/id via `initiated_by`
 - Optional `tenant_unlock_override` / `occupied_unit_override` when a staff occupied-unit reason was supplied
 
-Pending attribution is held in-process until settlement or TTL (facility hardware-ack timeout, or **60s** one-shot attribution TTL). Same-state telemetry re-reports do **not** success-consume pending attribution. Failed remote commands (gateway reject, send error, timeout, settlement mismatch, superseded by a newer command) write `access_attempt` rows with `unlock_attempt` / `lock_attempt`, `success: false`, and a human-readable `reason` (outbound grant may already exist).
+Pending attribution is held in-process until settlement or TTL (facility hardware-ack timeout, or **60s** one-shot attribution TTL). Same-state telemetry re-reports do **not** success-consume pending attribution. Failed remote commands (gateway reject, send error, timeout, settlement mismatch, superseded by a newer command) write `access_attempt` rows with `unlock_attempt` / `lock_attempt`, `success: false`, and a human-readable `reason` (outbound grant may already exist). Settled success / mismatch / local-device rows are written by `SettledLockActivityLogger` (`backend/src/services/access/settled-lock-activity-logger.service.ts`) from `DeviceEventService` lock-status listeners.
+
+Frontend Access History vocabulary (`ACTION_LABELS` / `METHOD_LABELS` / denial labels / filter options) lives in `frontend/src/constants/accessHistory.constants.ts` (denial labels sync-tested against backend). Live WS prepend for Access History page, Access History widget, and Activity Monitor uses `useAccessHistoryLiveUpdates` (Cloud filter matches `admin_remote` | `remote_gateway`). Action icons are shared via `getAccessHistoryActionIcon` / `getAccessHistoryMethodIcon`.
 
 On-ground staff unlocks use a separate short-lived intent (`POST …/occupied-unit-override`); see [`app-occupied-unit-override.md`](./app-occupied-unit-override.md).
 
@@ -569,7 +571,7 @@ The following integrations are wired up automatically — no manual calls needed
 | Gateway offline/online | `GatewayEventsService` → `InAppNotificationDispatcher` | Facility operators notified |
 | Device low battery (≤20%) | `DeviceModel` → `InAppNotificationDispatcher` | Facility operators notified (deduped 24h) |
 
-**Facility scoping:** REST and WebSocket notification subscriptions filter by `facilityId` (single facility) or the user's assigned `facilityIds` (all-facilities mode). Activity histogram uses the same `activity_logs` types as Activity Monitor (`access_attempt`, `lock`, `unlock`, `locking`, `unlocking`), resolves facility via unit when `facility_id` is null, and global admins in all-facilities mode are not limited to JWT `facilityIds`.
+**Facility scoping:** REST and WebSocket notification subscriptions filter by `facilityId` (single facility) or the user's assigned `facilityIds` (all-facilities mode). Activity Monitor / access-history live feeds use terminal types (`access_attempt`, `lock`, `unlock`); the dashboard histogram aggregates `access_attempt` + `unlock` only. Facility is resolved via unit when `facility_id` is null, and global admins in all-facilities mode are not limited to JWT `facilityIds`.
 
 **Extensibility:** Add new operational alerts in `InAppNotificationDispatcher` (`backend/src/services/notifications/in-app-notification-dispatcher.service.ts`) and register types in `IN_APP_NOTIFICATION_TYPES`.
 

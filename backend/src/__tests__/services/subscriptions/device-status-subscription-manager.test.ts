@@ -76,6 +76,8 @@ describe('DeviceStatusSubscriptionManager', () => {
       createLivenessCache: jest.fn().mockResolvedValue(new Map()),
       enrichBluLokRow: jest.fn(passthroughEnrich),
       enrichAccessControlRow: jest.fn(passthroughEnrich),
+      enrichBluLokList: jest.fn(async (rows: any[]) => Promise.all(rows.map(passthroughEnrich))),
+      enrichAccessControlList: jest.fn(async (rows: any[]) => Promise.all(rows.map(passthroughEnrich))),
     });
     
     manager = new DeviceStatusSubscriptionManager();
@@ -672,6 +674,327 @@ describe('DeviceStatusSubscriptionManager', () => {
       expect(mockWs.send).toHaveBeenCalledWith(
         expect.stringContaining('"type":"device_status_update"')
       );
+    });
+
+    it('auto-scopes single-facility users when no facility filter is set', async () => {
+      const mockWs = { send: jest.fn(), readyState: 1 } as any;
+      const client = {
+        userId: 'user-1',
+        userRole: UserRole.FACILITY_ADMIN,
+        subscriptions: new Map(),
+        facilityIds: ['facility-1'],
+      };
+
+      mockDeviceModel.findBluLokDevices.mockResolvedValue([mockDevice]);
+      mockDeviceModel.findAccessControlDevices.mockResolvedValue([]);
+
+      (manager as any).subscriptionFilters = new Map([['sub-1', {}]]);
+      await (manager as any).sendInitialData(mockWs, 'sub-1', client);
+
+      expect(mockDeviceModel.findBluLokDevices).toHaveBeenCalledWith(
+        expect.objectContaining({ facility_id: 'facility-1' }),
+      );
+    });
+  });
+
+  describe('handleUnsubscription', () => {
+    it('requires subscription ID', () => {
+      const mockWs = { send: jest.fn(), readyState: 1 } as any;
+      manager.handleUnsubscription(mockWs, { type: 'unsubscription' }, {
+        userId: 'user-1',
+        userRole: UserRole.ADMIN,
+        subscriptions: new Map(),
+      });
+      expect(mockWs.send).toHaveBeenCalledWith(expect.stringContaining('Subscription ID required'));
+    });
+
+    it('removes filters and watchers', async () => {
+      const mockWs = { send: jest.fn(), readyState: 1 } as any;
+      const client = {
+        userId: 'user-1',
+        userRole: UserRole.ADMIN,
+        subscriptions: new Map(),
+      };
+      mockDeviceModel.findBluLokDevices.mockResolvedValue([]);
+
+      await manager.handleSubscription(
+        mockWs,
+        { type: 'subscription', subscriptionType: 'device_status', subscriptionId: 'sub-u' },
+        client,
+      );
+      manager.handleUnsubscription(mockWs, { type: 'unsubscription', subscriptionId: 'sub-u' }, client);
+      expect((manager as any).subscriptionFilters.has('sub-u')).toBe(false);
+    });
+  });
+
+  describe('sendInitialData edge cases', () => {
+    it('returns empty devices when device_id matches neither table', async () => {
+      const mockWs = { send: jest.fn(), readyState: 1 } as any;
+      mockDeviceModel.findBluLokDeviceById.mockResolvedValue(null);
+      mockDeviceModel.findAccessControlDeviceWithGateway.mockResolvedValue(null);
+
+      (manager as any).subscriptionFilters = new Map([
+        ['sub-miss', { deviceId: 'missing' }],
+      ]);
+
+      await (manager as any).sendInitialData(mockWs, 'sub-miss', {
+        userId: 'user-1',
+        userRole: UserRole.ADMIN,
+        subscriptions: new Map(),
+      });
+
+      const payload = JSON.parse(mockWs.send.mock.calls[0][0]);
+      expect(payload.data.devices).toEqual([]);
+      expect(payload.data.count).toBe(0);
+    });
+
+    it('includes access-control devices in unfiltered list', async () => {
+      const mockWs = { send: jest.fn(), readyState: 1 } as any;
+      mockDeviceModel.findBluLokDevices.mockResolvedValue([]);
+      mockDeviceModel.findAccessControlDevices.mockResolvedValue([
+        {
+          id: 'ac-1',
+          name: 'Gate',
+          device_serial: 'KP-1',
+          facility_id: 'facility-1',
+          is_locked: false,
+          status: 'online',
+          supports_remote_lock: true,
+          updated_at: new Date(),
+        },
+      ]);
+
+      (manager as any).subscriptionFilters = new Map([['sub-ac-list', {}]]);
+      await (manager as any).sendInitialData(mockWs, 'sub-ac-list', {
+        userId: 'user-1',
+        userRole: UserRole.ADMIN,
+        subscriptions: new Map(),
+      });
+
+      const payload = JSON.parse(mockWs.send.mock.calls[0][0]);
+      expect(payload.data.devices[0].name).toBe('Gate');
+      expect(payload.data.devices[0].lock_status).toBe('unlocked');
+      expect(payload.data.devices[0].supports_remote_lock).toBe(true);
+    });
+
+    it('prefers display_name when displayName is absent', async () => {
+      const mockWs = { send: jest.fn(), readyState: 1 } as any;
+      mockDeviceModel.findBluLokDevices.mockResolvedValue([
+        {
+          ...mockDevice,
+          device_settings: { display_name: 'Snake Lock' },
+        },
+      ]);
+
+      (manager as any).subscriptionFilters = new Map([['sub-name', {}]]);
+      await (manager as any).sendInitialData(mockWs, 'sub-name', {
+        userId: 'user-1',
+        userRole: UserRole.ADMIN,
+        subscriptions: new Map(),
+      });
+
+      const payload = JSON.parse(mockWs.send.mock.calls[0][0]);
+      expect(payload.data.devices[0].name).toBe('Snake Lock');
+    });
+  });
+
+  describe('broadcastDeviceUpdate facility filters', () => {
+    it('skips subscriptions filtered to a different facility', async () => {
+      const mockWs = { send: jest.fn(), readyState: 1 };
+      (manager as any).watchers = new Map([['sub-1', new Set([mockWs])]]);
+      (manager as any).clientContext = new Map([
+        ['sub-1', { userId: 'u', userRole: UserRole.ADMIN, subscriptions: new Map() }],
+      ]);
+      (manager as any).subscriptionFilters = new Map([
+        ['sub-1', { facilityId: 'facility-2' }],
+      ]);
+      mockDeviceModel.findBluLokDeviceById.mockResolvedValue(mockDevice);
+
+      await manager.broadcastDeviceUpdate('device-1', 'facility-1');
+      expect(mockWs.send).not.toHaveBeenCalled();
+    });
+
+    it('skips non-admin clients without facility access', async () => {
+      const mockWs = { send: jest.fn(), readyState: 1 };
+      (manager as any).watchers = new Map([['sub-1', new Set([mockWs])]]);
+      (manager as any).clientContext = new Map([
+        [
+          'sub-1',
+          {
+            userId: 'u',
+            userRole: UserRole.FACILITY_ADMIN,
+            subscriptions: new Map(),
+            facilityIds: ['facility-2'],
+          },
+        ],
+      ]);
+      (manager as any).subscriptionFilters = new Map([['sub-1', {}]]);
+      mockDeviceModel.findBluLokDeviceById.mockResolvedValue(mockDevice);
+
+      await manager.broadcastDeviceUpdate('device-1', 'facility-1');
+      expect(mockWs.send).not.toHaveBeenCalled();
+    });
+
+    it('returns early when there are no watchers', async () => {
+      await expect(manager.broadcastDeviceUpdate('device-1')).resolves.toBeUndefined();
+      expect(mockDeviceModel.findBluLokDeviceById).not.toHaveBeenCalled();
+    });
+
+    it('handles top-level broadcast errors', async () => {
+      (manager as any).watchers = new Map([['sub-1', new Set([{ send: jest.fn(), readyState: 1 }])]]);
+      (DeviceReachabilityEnrichmentService.getInstance as jest.Mock).mockReturnValue({
+        createLivenessCache: jest.fn().mockRejectedValue(new Error('cache fail')),
+        enrichBluLokRow: jest.fn(),
+        enrichAccessControlRow: jest.fn(),
+        enrichBluLokList: jest.fn(),
+        enrichAccessControlList: jest.fn(),
+      });
+      // Recreate manager to pick up failing enricher
+      manager = new DeviceStatusSubscriptionManager();
+      (manager as any).watchers = new Map([['sub-1', new Set([{ send: jest.fn(), readyState: 1 }])]]);
+
+      await expect(manager.broadcastDeviceUpdate('device-1')).resolves.toBeUndefined();
+    });
+  });
+
+  describe('broadcastFacilityReachabilityRefresh', () => {
+    it('returns early with no watchers', async () => {
+      await manager.broadcastFacilityReachabilityRefresh('facility-1');
+      expect(mockDeviceModel.findBluLokDevices).not.toHaveBeenCalled();
+    });
+
+    it('broadcasts enriched facility devices with source marker', async () => {
+      const mockWs = { send: jest.fn(), readyState: 1 };
+      (manager as any).watchers = new Map([['sub-1', new Set([mockWs])]]);
+      (manager as any).clientContext = new Map([
+        ['sub-1', { userId: 'u', userRole: UserRole.ADMIN, subscriptions: new Map() }],
+      ]);
+      (manager as any).subscriptionFilters = new Map([['sub-1', { facilityId: 'facility-1' }]]);
+
+      mockDeviceModel.findBluLokDevices.mockResolvedValue([mockDevice]);
+      mockDeviceModel.findAccessControlDevices.mockResolvedValue([]);
+
+      await manager.broadcastFacilityReachabilityRefresh('facility-1');
+
+      const payload = JSON.parse(mockWs.send.mock.calls[0][0]);
+      expect(payload.data.source).toBe('gateway_reachability_refresh');
+      expect(payload.data.facilityId).toBe('facility-1');
+      expect(payload.data.devices).toHaveLength(1);
+    });
+
+    it('skips clients without facility access and mismatched filters', async () => {
+      const deniedWs = { send: jest.fn(), readyState: 1 };
+      const mismatchWs = { send: jest.fn(), readyState: 1 };
+      (manager as any).watchers = new Map([
+        ['sub-denied', new Set([deniedWs])],
+        ['sub-mismatch', new Set([mismatchWs])],
+      ]);
+      (manager as any).clientContext = new Map([
+        [
+          'sub-denied',
+          {
+            userId: 'u',
+            userRole: UserRole.FACILITY_ADMIN,
+            subscriptions: new Map(),
+            facilityIds: ['facility-2'],
+          },
+        ],
+        [
+          'sub-mismatch',
+          { userId: 'u', userRole: UserRole.ADMIN, subscriptions: new Map() },
+        ],
+      ]);
+      (manager as any).subscriptionFilters = new Map([
+        ['sub-denied', {}],
+        ['sub-mismatch', { facilityId: 'facility-2' }],
+      ]);
+
+      mockDeviceModel.findBluLokDevices.mockResolvedValue([mockDevice]);
+      mockDeviceModel.findAccessControlDevices.mockResolvedValue([]);
+
+      await manager.broadcastFacilityReachabilityRefresh('facility-1');
+      expect(deniedWs.send).not.toHaveBeenCalled();
+      expect(mismatchWs.send).not.toHaveBeenCalled();
+    });
+
+    it('filters to device_id when subscription is device-scoped', async () => {
+      const mockWs = { send: jest.fn(), readyState: 1 };
+      (manager as any).watchers = new Map([['sub-dev', new Set([mockWs])]]);
+      (manager as any).clientContext = new Map([
+        ['sub-dev', { userId: 'u', userRole: UserRole.ADMIN, subscriptions: new Map() }],
+      ]);
+      (manager as any).subscriptionFilters = new Map([
+        ['sub-dev', { deviceId: 'device-1' }],
+      ]);
+
+      mockDeviceModel.findBluLokDevices.mockResolvedValue([
+        mockDevice,
+        { ...mockDevice, id: 'device-2' },
+      ]);
+      mockDeviceModel.findAccessControlDevices.mockResolvedValue([]);
+
+      await manager.broadcastFacilityReachabilityRefresh('facility-1');
+      const payload = JSON.parse(mockWs.send.mock.calls[0][0]);
+      expect(payload.data.devices).toHaveLength(1);
+      expect(payload.data.devices[0].id).toBe('device-1');
+    });
+
+    it('removes closed sockets and swallows send errors', async () => {
+      const closed = { send: jest.fn(), readyState: 3 };
+      const bad = {
+        send: jest.fn(() => {
+          throw new Error('boom');
+        }),
+        readyState: 1,
+      };
+      (manager as any).watchers = new Map([['sub-1', new Set([closed, bad])]]);
+      (manager as any).clientContext = new Map([
+        ['sub-1', { userId: 'u', userRole: UserRole.ADMIN, subscriptions: new Map() }],
+      ]);
+      (manager as any).subscriptionFilters = new Map([['sub-1', {}]]);
+      mockDeviceModel.findBluLokDevices.mockResolvedValue([mockDevice]);
+      mockDeviceModel.findAccessControlDevices.mockResolvedValue([]);
+
+      await expect(manager.broadcastFacilityReachabilityRefresh('facility-1')).resolves.toBeUndefined();
+      expect(closed.send).not.toHaveBeenCalled();
+    });
+
+    it('handles top-level refresh errors', async () => {
+      (manager as any).watchers = new Map([['sub-1', new Set([{ send: jest.fn(), readyState: 1 }])]]);
+      mockDeviceModel.findBluLokDevices.mockRejectedValue(new Error('db'));
+      await expect(manager.broadcastFacilityReachabilityRefresh('facility-1')).resolves.toBeUndefined();
+    });
+  });
+
+  describe('broadcastUpdate', () => {
+    it('returns early with no watchers', async () => {
+      await manager.broadcastUpdate();
+      expect(mockDeviceModel.findBluLokDevices).not.toHaveBeenCalled();
+    });
+
+    it('re-sends initial data to open watchers', async () => {
+      const mockWs = { send: jest.fn(), readyState: 1 };
+      const closed = { send: jest.fn(), readyState: 3 };
+      (manager as any).watchers = new Map([['sub-1', new Set([mockWs, closed])]]);
+      (manager as any).clientContext = new Map([
+        ['sub-1', { userId: 'u', userRole: UserRole.ADMIN, subscriptions: new Map() }],
+      ]);
+      (manager as any).subscriptionFilters = new Map([['sub-1', {}]]);
+      mockDeviceModel.findBluLokDevices.mockResolvedValue([mockDevice]);
+      mockDeviceModel.findAccessControlDevices.mockResolvedValue([]);
+
+      await manager.broadcastUpdate();
+      expect(mockWs.send).toHaveBeenCalled();
+      expect(closed.send).not.toHaveBeenCalled();
+    });
+
+    it('handles top-level broadcastUpdate errors', async () => {
+      (manager as any).watchers = {
+        keys: () => {
+          throw new Error('map broken');
+        },
+      };
+      await expect(manager.broadcastUpdate()).resolves.toBeUndefined();
     });
   });
 });

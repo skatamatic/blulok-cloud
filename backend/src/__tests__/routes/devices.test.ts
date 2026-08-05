@@ -3,6 +3,9 @@ import { createApp } from '@/app';
 import { createMockTestData, MockTestData, expectUnauthorized, expectForbidden, expectSuccess, expectBadRequest } from '@/__tests__/utils/mock-test-helpers';
 import { DatabaseService } from '@/services/database.service';
 import { DevicesService } from '@/services/devices.service';
+import { AuthService } from '@/services/auth.service';
+import { ConflictError, NotFoundError } from '@/middleware/error.middleware';
+import { UserRole } from '@/types/auth.types';
 
 /**
  * Matches knex chains used by devices.routes (join + select + where + first).
@@ -50,6 +53,16 @@ function mockKnexChainForFirstRow(
 // Mock DevicesService
 jest.mock('@/services/devices.service');
 
+const mockListNetworkInfraDevices = jest.fn().mockResolvedValue({ devices: [], total: 0 });
+
+jest.mock('@/services/gateway-inventory-device-sync.service', () => ({
+  GatewayInventoryDeviceSyncService: {
+    getInstance: jest.fn(() => ({
+      listNetworkInfraDevices: (...args: unknown[]) => mockListNetworkInfraDevices(...args),
+    })),
+  },
+}));
+
 const mockAssignAccessControlToDefaultGroup = jest.fn().mockResolvedValue(undefined);
 const mockAssignBluLokToDefaultGroup = jest.fn().mockResolvedValue(undefined);
 
@@ -82,6 +95,16 @@ jest.mock('@/services/device-metadata.service', () => ({
       updateAccessControlMetadata: mockUpdateAccessControlMetadata,
     })),
   },
+}));
+
+const mockFindByDevice = jest.fn().mockResolvedValue([
+  { id: 'de-1', user_id: 'user-1', device_id: 'device-1', reason: 'revoked' },
+]);
+
+jest.mock('@/models/denylist-entry.model', () => ({
+  DenylistEntryModel: jest.fn().mockImplementation(() => ({
+    findByDevice: (...args: unknown[]) => mockFindByDevice(...args),
+  })),
 }));
 
 // Mock DatabaseService
@@ -159,6 +182,8 @@ describe('Devices Routes', () => {
     testData = createMockTestData();
     mockAssignAccessControlToDefaultGroup.mockClear();
     mockAssignBluLokToDefaultGroup.mockClear();
+    mockListNetworkInfraDevices.mockReset();
+    mockListNetworkInfraDevices.mockResolvedValue({ devices: [], total: 0 });
     
     // Create mock knex connection (vacant tenant tables by default)
     const createMockKnex = (returnValue?: any) => {
@@ -1113,6 +1138,156 @@ describe('Devices Routes', () => {
             },
           },
         );
+      });
+    });
+
+    describe('POST /api/v1/devices/blulok/:id/occupied-unit-override', () => {
+      const { OccupiedUnlockIntentService } = require('@/services/occupied-unlock-intent.service');
+      const path = '/api/v1/devices/blulok/device-1/occupied-unit-override';
+      const deviceRow = {
+        unit_id: 'unit-1',
+        facility_id: 'facility-1',
+        gateway_id: 'gw-1',
+      };
+
+      beforeEach(() => {
+        OccupiedUnlockIntentService.resetForTests();
+        deviceRow.unit_id = testData.units.unit1.id;
+        deviceRow.facility_id = testData.facilities.facility1.id;
+      });
+
+      it('returns 404 when device is missing', async () => {
+        mockDeviceModel.db.connection = jest.fn(() => ({
+          join: jest.fn().mockReturnThis(),
+          select: jest.fn().mockReturnThis(),
+          where: jest.fn().mockReturnThis(),
+          first: jest.fn().mockResolvedValue(null),
+        }));
+
+        const response = await request(app)
+          .post(path)
+          .set('Authorization', `Bearer ${testData.users.facilityAdmin.token}`)
+          .send({ reason: 'emergency' })
+          .expect(404);
+
+        expect(response.body.success).toBe(false);
+        expect(response.body.message).toMatch(/not found/i);
+      });
+
+      it('returns 400 when device has no unit', async () => {
+        mockDeviceModel.db.connection = mockKnexChainForFirstRow({
+          unit_id: null,
+          facility_id: deviceRow.facility_id,
+          gateway_id: 'gw-1',
+        });
+
+        const response = await request(app)
+          .post(path)
+          .set('Authorization', `Bearer ${testData.users.facilityAdmin.token}`)
+          .send({ reason: 'emergency' })
+          .expect(400);
+
+        expect(response.body.code).toBe('TENANT_UNLOCK_OVERRIDE_NOT_REQUIRED');
+      });
+
+      it('returns 403 when caller lacks unit access', async () => {
+        mockDeviceModel.db.connection = mockKnexChainForFirstRow(deviceRow, { hasTenant: true });
+        mockUnitsService.hasUserAccessToUnit.mockResolvedValueOnce(false);
+
+        const response = await request(app)
+          .post(path)
+          .set('Authorization', `Bearer ${testData.users.facilityAdmin.token}`)
+          .send({ reason: 'emergency' })
+          .expect(403);
+
+        expect(response.body.success).toBe(false);
+      });
+
+      it('returns 400 when unit is vacant', async () => {
+        mockDeviceModel.db.connection = mockKnexChainForFirstRow(deviceRow, { hasTenant: false });
+        mockUnitsService.hasUserAccessToUnit.mockResolvedValueOnce(true);
+
+        const response = await request(app)
+          .post(path)
+          .set('Authorization', `Bearer ${testData.users.facilityAdmin.token}`)
+          .send({ reason: 'emergency' })
+          .expect(400);
+
+        expect(response.body.code).toBe('TENANT_UNLOCK_OVERRIDE_NOT_REQUIRED');
+      });
+
+      it('returns 400 when caller is the unit occupant', async () => {
+        mockDeviceModel.db.connection = mockKnexChainForFirstRow(deviceRow, {
+          hasTenant: true,
+          isOccupant: true,
+        });
+        mockUnitsService.hasUserAccessToUnit.mockResolvedValueOnce(true);
+
+        const response = await request(app)
+          .post(path)
+          .set('Authorization', `Bearer ${testData.users.tenant.token}`)
+          .send({ reason: 'emergency' })
+          .expect(400);
+
+        expect(response.body.code).toBe('TENANT_UNLOCK_OVERRIDE_NOT_APPLICABLE');
+      });
+
+      it('returns 400 for invalid override reason (schema)', async () => {
+        mockDeviceModel.db.connection = mockKnexChainForFirstRow(deviceRow, { hasTenant: true });
+        mockUnitsService.hasUserAccessToUnit.mockResolvedValueOnce(true);
+
+        const response = await request(app)
+          .post(path)
+          .set('Authorization', `Bearer ${testData.users.facilityAdmin.token}`)
+          .send({ reason: 'not-a-valid-reason' })
+          .expect(400);
+
+        expect(response.body.success).toBe(false);
+      });
+
+      it('creates intent for facility admin on occupied unit', async () => {
+        mockDeviceModel.db.connection = mockKnexChainForFirstRow(deviceRow, { hasTenant: true });
+        mockUnitsService.hasUserAccessToUnit.mockResolvedValueOnce(true);
+
+        const response = await request(app)
+          .post(path)
+          .set('Authorization', `Bearer ${testData.users.facilityAdmin.token}`)
+          .send({ reason: 'emergency', notes: 'Flood under door' })
+          .expect(200);
+
+        expect(response.body.success).toBe(true);
+        expect(response.body.data).toEqual(
+          expect.objectContaining({
+            intent_id: expect.any(String),
+            expires_at: expect.any(String),
+            device_id: 'device-1',
+            unit_id: deviceRow.unit_id,
+          }),
+        );
+      });
+
+      it('returns 409 when another user already has a pending intent', async () => {
+        mockDeviceModel.db.connection = mockKnexChainForFirstRow(deviceRow, { hasTenant: true });
+        mockUnitsService.hasUserAccessToUnit.mockResolvedValue(true);
+
+        OccupiedUnlockIntentService.getInstance().createIntent({
+          userId: 'other-user',
+          userName: 'Other Staff',
+          role: 'facility_admin',
+          deviceId: 'device-1',
+          unitId: deviceRow.unit_id,
+          facilityId: deviceRow.facility_id,
+          gatewayId: 'gw-1',
+          override: { reason: 'emergency', reasonLabel: 'Emergency (Fire, flood, other)' },
+        });
+
+        const response = await request(app)
+          .post(path)
+          .set('Authorization', `Bearer ${testData.users.facilityAdmin.token}`)
+          .send({ reason: 'testing_maintenance' })
+          .expect(409);
+
+        expect(response.body.code).toBe('OCCUPIED_UNLOCK_INTENT_IN_USE');
       });
     });
 
@@ -2381,6 +2556,139 @@ describe('Devices Routes', () => {
       });
     });
 
+    describe('DELETE /api/v1/devices/network-infra/:deviceId - Remove network infra from cloud inventory', () => {
+      let mockDevicesService: {
+        removeNetworkInfraDeviceFromCloudInventory: jest.Mock;
+        hasUserAccessToNetworkInfraDevice: jest.Mock;
+      };
+
+      beforeEach(() => {
+        mockDevicesService = {
+          removeNetworkInfraDeviceFromCloudInventory: jest.fn().mockResolvedValue({
+            gatewayId: 'gateway-1',
+            facilityId: 'facility-1',
+            deviceKind: 'bridge',
+            deviceSerial: 'BR-001',
+          }),
+          hasUserAccessToNetworkInfraDevice: jest.fn().mockResolvedValue(true),
+        };
+        (DevicesService.getInstance as jest.Mock).mockReturnValue(mockDevicesService);
+      });
+
+      it('should require authentication', async () => {
+        const response = await request(app).delete('/api/v1/devices/network-infra/ni-1');
+        expectUnauthorized(response);
+      });
+
+      it('should allow ADMIN to remove network infra device', async () => {
+        const response = await request(app)
+          .delete('/api/v1/devices/network-infra/ni-1')
+          .set('Authorization', `Bearer ${testData.users.admin.token}`)
+          .expect(200);
+
+        expectSuccess(response);
+        expect(mockDevicesService.removeNetworkInfraDeviceFromCloudInventory).toHaveBeenCalledWith(
+          'ni-1',
+          expect.objectContaining({ performedBy: expect.any(String) }),
+        );
+      });
+
+      it('should forbid FACILITY_ADMIN without device access', async () => {
+        mockDevicesService.hasUserAccessToNetworkInfraDevice.mockResolvedValueOnce(false);
+
+        const response = await request(app)
+          .delete('/api/v1/devices/network-infra/ni-1')
+          .set('Authorization', `Bearer ${testData.users.facilityAdmin.token}`)
+          .expect(403);
+
+        expectForbidden(response);
+      });
+
+      it('should return 404 when device not found', async () => {
+        mockDevicesService.removeNetworkInfraDeviceFromCloudInventory.mockRejectedValueOnce(
+          new Error('Network infra device not found'),
+        );
+
+        const response = await request(app)
+          .delete('/api/v1/devices/network-infra/missing')
+          .set('Authorization', `Bearer ${testData.users.admin.token}`)
+          .expect(404);
+
+        expect(response.body.success).toBe(false);
+      });
+
+      it('should return 403 for TENANT', async () => {
+        const response = await request(app)
+          .delete('/api/v1/devices/network-infra/ni-1')
+          .set('Authorization', `Bearer ${testData.users.tenant.token}`)
+          .expect(403);
+
+        expectForbidden(response);
+      });
+    });
+
+    describe('GET /api/v1/devices/blulok/:id/denylist', () => {
+      beforeEach(() => {
+        mockFindByDevice.mockResolvedValue([
+          { id: 'de-1', user_id: 'user-1', device_id: 'device-1', reason: 'revoked' },
+        ]);
+        (DatabaseService.getInstance as jest.Mock).mockReturnValue({
+          connection: mockKnexChainForFirstRow({
+            id: 'user-1',
+            email: 'u@test.com',
+            first_name: 'U',
+            last_name: 'Ser',
+            facility_id: testData.facilities.facility1.id,
+          }),
+        });
+      });
+
+      it('should require authentication', async () => {
+        const response = await request(app)
+          .get('/api/v1/devices/blulok/device-1/denylist')
+          .expect(401);
+
+        expectUnauthorized(response);
+      });
+
+      it('should return denylist entries for admin', async () => {
+        const response = await request(app)
+          .get('/api/v1/devices/blulok/device-1/denylist')
+          .set('Authorization', `Bearer ${testData.users.admin.token}`)
+          .expect(200);
+
+        expectSuccess(response);
+        expect(response.body.entries).toHaveLength(1);
+        expect(response.body.entries[0].user).toMatchObject({ email: 'u@test.com' });
+        expect(mockFindByDevice).toHaveBeenCalledWith('device-1');
+      });
+
+      it('should return 403 for facility_admin without facility access', async () => {
+        (DatabaseService.getInstance as jest.Mock).mockReturnValue({
+          connection: mockKnexChainForFirstRow({
+            facility_id: testData.facilities.facility2.id,
+          }),
+        });
+
+        const response = await request(app)
+          .get('/api/v1/devices/blulok/device-1/denylist')
+          .set('Authorization', `Bearer ${testData.users.facilityAdmin.token}`)
+          .expect(403);
+
+        expectForbidden(response);
+      });
+
+      it('should allow facility_admin with facility access', async () => {
+        const response = await request(app)
+          .get('/api/v1/devices/blulok/device-1/denylist')
+          .set('Authorization', `Bearer ${testData.users.facilityAdmin.token}`)
+          .expect(200);
+
+        expectSuccess(response);
+        expect(response.body.entries).toHaveLength(1);
+      });
+    });
+
     describe('Device Assignment - Change Device Flow', () => {
       let mockDevicesService: any;
 
@@ -2512,6 +2820,611 @@ describe('Devices Routes', () => {
           .expect(403);
 
         expectForbidden(response);
+      });
+
+      it('returns 404 when BluLok device is missing', async () => {
+        mockDeviceModel.findBluLokDeviceById = jest.fn().mockResolvedValue(null);
+
+        const response = await request(app)
+          .put('/api/v1/devices/blulok/missing/metadata')
+          .set('Authorization', `Bearer ${testData.users.admin.token}`)
+          .send({ device_serial: 'X' })
+          .expect(404);
+
+        expect(response.body.success).toBe(false);
+      });
+
+      it('returns 404 when access-control device is missing', async () => {
+        mockDeviceModel.findAccessControlDeviceWithGateway = jest.fn().mockResolvedValue(null);
+
+        const response = await request(app)
+          .put('/api/v1/devices/access-control/missing/metadata')
+          .set('Authorization', `Bearer ${testData.users.admin.token}`)
+          .send({ name: 'Gone' })
+          .expect(404);
+
+        expect(response.body.success).toBe(false);
+      });
+
+      it('maps ConflictError from BluLok metadata service to 409', async () => {
+        mockDeviceModel.findBluLokDeviceById = jest.fn().mockResolvedValue({
+          id: 'device-1',
+          gateway_facility_id: testData.facilities.facility1.id,
+        });
+        mockUpdateBluLokMetadata.mockRejectedValueOnce(new ConflictError('Serial already in use'));
+
+        const response = await request(app)
+          .put('/api/v1/devices/blulok/device-1/metadata')
+          .set('Authorization', `Bearer ${testData.users.admin.token}`)
+          .send({ device_serial: 'DUP' })
+          .expect(409);
+
+        expect(response.body.message).toMatch(/already in use/i);
+      });
+
+      it('maps NotFoundError from access-control metadata service to 404', async () => {
+        mockDeviceModel.findAccessControlDeviceWithGateway = jest.fn().mockResolvedValue({
+          id: 'ac-1',
+          facility_id: testData.facilities.facility1.id,
+        });
+        mockUpdateAccessControlMetadata.mockRejectedValueOnce(new NotFoundError('Device'));
+
+        const response = await request(app)
+          .put('/api/v1/devices/access-control/ac-1/metadata')
+          .set('Authorization', `Bearer ${testData.users.admin.token}`)
+          .send({ name: 'Missing' })
+          .expect(404);
+
+        expect(response.body.success).toBe(false);
+      });
+    });
+
+    describe('GET /api/v1/devices/blulok/:id - Get single BluLok', () => {
+      it('returns enriched device for ADMIN', async () => {
+        mockDeviceModel.findBluLokDeviceById = jest.fn().mockResolvedValue({
+          id: 'device-1',
+          device_serial: 'BL-001',
+          device_status: 'online',
+          facility_id: testData.facilities.facility1.id,
+        });
+
+        const response = await request(app)
+          .get('/api/v1/devices/blulok/device-1')
+          .set('Authorization', `Bearer ${testData.users.admin.token}`)
+          .expect(200);
+
+        expectSuccess(response);
+        expect(response.body.device).toMatchObject({ id: 'device-1', device_serial: 'BL-001' });
+      });
+
+      it('returns 404 when BluLok is missing', async () => {
+        mockDeviceModel.findBluLokDeviceById = jest.fn().mockResolvedValue(null);
+
+        const response = await request(app)
+          .get('/api/v1/devices/blulok/missing')
+          .set('Authorization', `Bearer ${testData.users.admin.token}`)
+          .expect(404);
+
+        expect(response.body.message).toMatch(/not found/i);
+      });
+
+      it('returns 403 when facility_admin lacks gateway facility access', async () => {
+        (DatabaseService.getInstance as jest.Mock).mockReturnValue({
+          connection: mockKnexChainForFirstRow({
+            facility_id: testData.facilities.facility2.id,
+          }),
+        });
+
+        const response = await request(app)
+          .get('/api/v1/devices/blulok/device-1')
+          .set('Authorization', `Bearer ${testData.users.facilityAdmin.token}`)
+          .expect(403);
+
+        expectForbidden(response);
+      });
+
+      it('allows facility_admin when gateway facility is in scope', async () => {
+        (DatabaseService.getInstance as jest.Mock).mockReturnValue({
+          connection: mockKnexChainForFirstRow({
+            facility_id: testData.facilities.facility1.id,
+          }),
+        });
+        mockDeviceModel.findBluLokDeviceById = jest.fn().mockResolvedValue({
+          id: 'device-1',
+          device_serial: 'BL-001',
+          device_status: 'online',
+          facility_id: testData.facilities.facility1.id,
+        });
+
+        const response = await request(app)
+          .get('/api/v1/devices/blulok/device-1')
+          .set('Authorization', `Bearer ${testData.users.facilityAdmin.token}`)
+          .expect(200);
+
+        expectSuccess(response);
+        expect(response.body.device.id).toBe('device-1');
+      });
+    });
+
+    describe('GET /api/v1/devices/access-control/:id - Get single access control', () => {
+      it('returns enriched device with facility name for ADMIN', async () => {
+        mockDeviceModel.findAccessControlDeviceWithGateway = jest.fn().mockResolvedValue({
+          id: 'ac-device-1',
+          name: 'Main Gate',
+          facility_id: testData.facilities.facility1.id,
+          status: 'online',
+        });
+        (DatabaseService.getInstance as jest.Mock).mockReturnValue({
+          connection: mockKnexChainForFirstRow({ name: 'Test Facility 1' }),
+        });
+
+        const response = await request(app)
+          .get('/api/v1/devices/access-control/ac-device-1')
+          .set('Authorization', `Bearer ${testData.users.admin.token}`)
+          .expect(200);
+
+        expectSuccess(response);
+        expect(response.body.device).toMatchObject({
+          id: 'ac-device-1',
+          facility_name: 'Test Facility 1',
+        });
+      });
+
+      it('returns 404 when access-control device is missing', async () => {
+        mockDeviceModel.findAccessControlDeviceWithGateway = jest.fn().mockResolvedValue(null);
+
+        const response = await request(app)
+          .get('/api/v1/devices/access-control/missing')
+          .set('Authorization', `Bearer ${testData.users.admin.token}`)
+          .expect(404);
+
+        expect(response.body.message).toMatch(/not found/i);
+      });
+
+      it('returns 403 when facility_admin is out of scope', async () => {
+        mockDeviceModel.findAccessControlDeviceWithGateway = jest.fn().mockResolvedValue({
+          id: 'ac-device-1',
+          facility_id: testData.facilities.facility2.id,
+          status: 'online',
+        });
+
+        const response = await request(app)
+          .get('/api/v1/devices/access-control/ac-device-1')
+          .set('Authorization', `Bearer ${testData.users.facilityAdmin.token}`)
+          .expect(403);
+
+        expectForbidden(response);
+      });
+    });
+
+    describe('PUT /api/v1/devices/access-control/:id - Update access control settings', () => {
+      beforeEach(() => {
+        mockUpdateAccessControlMetadata.mockReset();
+        mockDeviceModel.updateAccessControlDevice = jest.fn().mockResolvedValue({
+          id: 'ac-1',
+          name: 'Updated',
+          status: 'online',
+        });
+      });
+
+      it('updates status-only via device model for ADMIN', async () => {
+        mockDeviceModel.findAccessControlDeviceWithGateway = jest.fn().mockResolvedValue({
+          id: 'ac-1',
+          facility_id: testData.facilities.facility1.id,
+        });
+
+        const response = await request(app)
+          .put('/api/v1/devices/access-control/ac-1')
+          .set('Authorization', `Bearer ${testData.users.admin.token}`)
+          .send({ status: 'offline' })
+          .expect(200);
+
+        expectSuccess(response);
+        expect(mockDeviceModel.updateAccessControlDevice).toHaveBeenCalledWith(
+          'ac-1',
+          expect.objectContaining({ status: 'offline' }),
+        );
+        expect(mockUpdateAccessControlMetadata).not.toHaveBeenCalled();
+      });
+
+      it('updates metadata fields via DeviceMetadataService', async () => {
+        mockDeviceModel.findAccessControlDeviceWithGateway = jest.fn().mockResolvedValue({
+          id: 'ac-1',
+          facility_id: testData.facilities.facility1.id,
+        });
+        mockUpdateAccessControlMetadata.mockResolvedValue({
+          device: { id: 'ac-1', name: 'Sanitized Gate' },
+          sideEffects: { identityChanged: false, accessCodesPushed: false },
+        });
+
+        const response = await request(app)
+          .put('/api/v1/devices/access-control/ac-1')
+          .set('Authorization', `Bearer ${testData.users.admin.token}`)
+          .send({ name: '<b>Gate</b>', status: 'online' })
+          .expect(200);
+
+        expectSuccess(response);
+        expect(mockUpdateAccessControlMetadata).toHaveBeenCalledWith(
+          'ac-1',
+          expect.objectContaining({ name: '&lt;b&gt;Gate&lt;&#x2F;b&gt;' }),
+          expect.any(Object),
+        );
+        expect(mockDeviceModel.updateAccessControlDevice).toHaveBeenCalled();
+        expect(response.body.sideEffects).toBeDefined();
+      });
+
+      it('returns 404 when device is missing', async () => {
+        mockDeviceModel.findAccessControlDeviceWithGateway = jest.fn().mockResolvedValue(null);
+
+        const response = await request(app)
+          .put('/api/v1/devices/access-control/missing')
+          .set('Authorization', `Bearer ${testData.users.admin.token}`)
+          .send({ status: 'online' })
+          .expect(404);
+
+        expect(response.body.success).toBe(false);
+      });
+
+      it('returns 403 for facility_admin out of scope', async () => {
+        mockDeviceModel.findAccessControlDeviceWithGateway = jest.fn().mockResolvedValue({
+          id: 'ac-1',
+          facility_id: testData.facilities.facility2.id,
+        });
+
+        const response = await request(app)
+          .put('/api/v1/devices/access-control/ac-1')
+          .set('Authorization', `Bearer ${testData.users.facilityAdmin.token}`)
+          .send({ name: 'Nope' })
+          .expect(403);
+
+        expectForbidden(response);
+      });
+
+      it('returns 403 for TENANT', async () => {
+        const response = await request(app)
+          .put('/api/v1/devices/access-control/ac-1')
+          .set('Authorization', `Bearer ${testData.users.tenant.token}`)
+          .send({ status: 'online' })
+          .expect(403);
+
+        expectForbidden(response);
+      });
+
+      it('maps ConflictError from metadata update to 409', async () => {
+        mockDeviceModel.findAccessControlDeviceWithGateway = jest.fn().mockResolvedValue({
+          id: 'ac-1',
+          facility_id: testData.facilities.facility1.id,
+        });
+        mockUpdateAccessControlMetadata.mockRejectedValueOnce(
+          new ConflictError('Relay channel already in use'),
+        );
+
+        const response = await request(app)
+          .put('/api/v1/devices/access-control/ac-1')
+          .set('Authorization', `Bearer ${testData.users.admin.token}`)
+          .send({ relay_channel: 2 })
+          .expect(409);
+
+        expect(response.body.message).toMatch(/already in use/i);
+      });
+
+      it('returns 400 for empty body', async () => {
+        const response = await request(app)
+          .put('/api/v1/devices/access-control/ac-1')
+          .set('Authorization', `Bearer ${testData.users.admin.token}`)
+          .send({})
+          .expect(400);
+
+        expectBadRequest(response);
+      });
+    });
+
+    describe('GET /api/v1/devices list branches - network_infra, all, DB path', () => {
+      it('lists network_infra devices via GatewayInventoryDeviceSyncService', async () => {
+        mockListNetworkInfraDevices.mockResolvedValueOnce({
+          devices: [
+            {
+              id: 'ni-1',
+              device_category: 'network_infra',
+              device_kind: 'bridge',
+              name: 'Bridge A',
+              facility_id: testData.facilities.facility1.id,
+              status: 'online',
+            },
+          ],
+          total: 1,
+        });
+
+        const response = await request(app)
+          .get('/api/v1/devices?device_scope=network_infra&limit=10')
+          .set('Authorization', `Bearer ${testData.users.admin.token}`)
+          .expect(200);
+
+        expectSuccess(response);
+        expect(response.body.devices).toHaveLength(1);
+        expect(response.body.devices[0]).toMatchObject({
+          id: 'ni-1',
+          device_category: 'network_infra',
+        });
+        expect(mockListNetworkInfraDevices).toHaveBeenCalled();
+      });
+
+      it('returns id projection for network_infra without enrichment', async () => {
+        mockListNetworkInfraDevices.mockResolvedValueOnce({
+          devices: [
+            {
+              id: 'ni-2',
+              device_category: 'network_infra',
+              device_kind: 'reader',
+              name: 'Reader',
+            },
+          ],
+          total: 1,
+        });
+
+        const response = await request(app)
+          .get('/api/v1/devices?device_scope=network_infra&projection=id')
+          .set('Authorization', `Bearer ${testData.users.admin.token}`)
+          .expect(200);
+
+        expect(response.body.devices[0]).toEqual({
+          id: 'ni-2',
+          device_category: 'network_infra',
+        });
+      });
+
+      it('filters network_infra by effective status and paginates', async () => {
+        mockListNetworkInfraDevices.mockResolvedValueOnce({
+          devices: [
+            {
+              id: 'ni-on',
+              device_category: 'network_infra',
+              // gateway kind preserves reported status (no liveness coerce)
+              device_kind: 'gateway',
+              name: 'On',
+              facility_id: testData.facilities.facility1.id,
+              status: 'online',
+            },
+            {
+              id: 'ni-off',
+              device_category: 'network_infra',
+              device_kind: 'gateway',
+              name: 'Off',
+              facility_id: testData.facilities.facility1.id,
+              status: 'offline',
+            },
+          ],
+          total: 2,
+        });
+
+        const response = await request(app)
+          .get('/api/v1/devices?device_scope=network_infra&status=online&limit=10')
+          .set('Authorization', `Bearer ${testData.users.admin.token}`)
+          .expect(200);
+
+        expect(response.body.devices).toHaveLength(1);
+        expect(response.body.devices[0].id).toBe('ni-on');
+        expect(response.body.total).toBe(1);
+      });
+
+      it('merges network_infra when device_scope=all', async () => {
+        mockDeviceModel.findAccessControlDevices.mockResolvedValueOnce([]);
+        mockDeviceModel.findBluLokDevices.mockResolvedValueOnce([
+          { id: 'bl-1', device_serial: 'S1', device_status: 'online' },
+        ]);
+        mockListNetworkInfraDevices.mockResolvedValueOnce({
+          devices: [
+            {
+              id: 'ni-1',
+              device_category: 'network_infra',
+              device_kind: 'gateway',
+              name: 'GW',
+              status: 'online',
+              facility_id: testData.facilities.facility1.id,
+            },
+          ],
+          total: 1,
+        });
+
+        const response = await request(app)
+          .get('/api/v1/devices?device_scope=all&device_type=all&limit=50')
+          .set('Authorization', `Bearer ${testData.users.admin.token}`)
+          .expect(200);
+
+        const ids = response.body.devices.map((d: { id: string }) => d.id);
+        expect(ids).toEqual(expect.arrayContaining(['bl-1', 'ni-1']));
+        expect(mockListNetworkInfraDevices).toHaveBeenCalled();
+      });
+
+      it('uses DB pagination path for blulok sorted by created_at', async () => {
+        mockDeviceModel.findBluLokDevices.mockResolvedValueOnce([
+          { id: 'bl-db-1', device_serial: 'DB1', device_status: 'online', created_at: new Date() },
+        ]);
+        mockDeviceModel.countBluLokDevices.mockResolvedValueOnce(1);
+
+        const response = await request(app)
+          .get('/api/v1/devices?device_type=blulok&sort_by=created_at&limit=5&offset=0')
+          .set('Authorization', `Bearer ${testData.users.admin.token}`)
+          .expect(200);
+
+        expectSuccess(response);
+        expect(mockDeviceModel.findBluLokDevices).toHaveBeenCalledWith(
+          expect.objectContaining({
+            sortBy: 'created_at',
+            limit: 5,
+            offset: 0,
+          }),
+        );
+        expect(mockDeviceModel.countBluLokDevices).toHaveBeenCalled();
+      });
+
+      it('uses DB pagination path for access_control sorted by created_at', async () => {
+        mockDeviceModel.findAccessControlDevices.mockResolvedValueOnce([
+          { id: 'ac-db-1', name: 'Gate', status: 'online', created_at: new Date() },
+        ]);
+        mockDeviceModel.countAccessControlDevices.mockResolvedValueOnce(1);
+
+        const response = await request(app)
+          .get('/api/v1/devices?device_type=access_control&sort_by=created_at&limit=5')
+          .set('Authorization', `Bearer ${testData.users.admin.token}`)
+          .expect(200);
+
+        expectSuccess(response);
+        expect(mockDeviceModel.findAccessControlDevices).toHaveBeenCalledWith(
+          expect.objectContaining({ sortBy: 'created_at', limit: 5 }),
+        );
+        expect(mockDeviceModel.countAccessControlDevices).toHaveBeenCalled();
+      });
+
+      it('returns empty list when facility-scoped user has no facilities', async () => {
+        const orphanToken = AuthService.generateToken(
+          {
+            id: 'orphan-fa',
+            email: 'orphan@test.com',
+            first_name: 'Orphan',
+            last_name: 'Admin',
+            role: UserRole.FACILITY_ADMIN,
+          } as any,
+          [],
+        );
+
+        const response = await request(app)
+          .get('/api/v1/devices')
+          .set('Authorization', `Bearer ${orphanToken}`)
+          .expect(200);
+
+        expect(response.body).toMatchObject({ devices: [], total: 0 });
+      });
+    });
+
+    describe('Additional create / inventory / unassigned edge cases', () => {
+      it('returns 409 when access-control serial+relay conflicts', async () => {
+        mockDeviceModel.findAccessControlIdentityConflict = jest.fn().mockResolvedValue({
+          type: 'serial_relay',
+        });
+
+        const response = await request(app)
+          .post('/api/v1/devices/access-control')
+          .set('Authorization', `Bearer ${testData.users.admin.token}`)
+          .send({
+            gateway_id: 'gateway-1',
+            name: 'Dup Gate',
+            device_type: 'gate',
+            location_description: 'Entrance',
+            relay_channel: 1,
+            device_serial: 'AC-DUP',
+          })
+          .expect(409);
+
+        expect(response.body.message).toMatch(/already in use/i);
+      });
+
+      it('returns 404 when removing missing access-control inventory', async () => {
+        (DevicesService.getInstance as jest.Mock).mockReturnValue({
+          hasUserAccessToAccessControlDevice: jest.fn().mockResolvedValue(true),
+          removeAccessControlDeviceFromCloudInventory: jest
+            .fn()
+            .mockRejectedValue(new Error('Access control device not found')),
+        });
+
+        const response = await request(app)
+          .delete('/api/v1/devices/access-control/missing-ac')
+          .set('Authorization', `Bearer ${testData.users.admin.token}`)
+          .expect(404);
+
+        expect(response.body.success).toBe(false);
+      });
+
+      it('returns 500 when device status update throws', async () => {
+        mockDeviceModel.updateDeviceStatus = jest
+          .fn()
+          .mockRejectedValueOnce(new Error('db down'));
+
+        const response = await request(app)
+          .put('/api/v1/devices/blulok/device-1/status')
+          .set('Authorization', `Bearer ${testData.users.admin.token}`)
+          .send({ status: 'online' })
+          .expect(500);
+
+        expect(response.body.success).toBe(false);
+      });
+
+      it('applies effective status filter for unassigned devices', async () => {
+        const findUnassigned = jest.fn().mockResolvedValue([
+          {
+            id: 'u1',
+            device_serial: 'U1',
+            device_status: 'online',
+            facility_id: testData.facilities.facility1.id,
+          },
+          {
+            id: 'u2',
+            device_serial: 'U2',
+            device_status: 'offline',
+            facility_id: testData.facilities.facility1.id,
+          },
+        ]);
+        mockDeviceModel.findUnassignedDevices = findUnassigned;
+
+        const response = await request(app)
+          .get('/api/v1/devices/unassigned?status=offline&limit=10')
+          .set('Authorization', `Bearer ${testData.users.admin.token}`)
+          .expect(200);
+
+        expectSuccess(response);
+        // Status filter loads full set (no DB limit) then filters after enrichment
+        expect(findUnassigned).toHaveBeenCalledWith(
+          expect.not.objectContaining({ limit: expect.any(Number) }),
+        );
+        expect(response.body.devices.length).toBeGreaterThanOrEqual(1);
+        expect(
+          response.body.devices.every((d: { device_status: string }) => d.device_status === 'offline'),
+        ).toBe(true);
+      });
+
+      it('returns empty unassigned list when facility-scoped user has no facilities', async () => {
+        const orphanToken = AuthService.generateToken(
+          {
+            id: 'orphan-fa-2',
+            email: 'orphan2@test.com',
+            first_name: 'Orphan',
+            last_name: 'Admin',
+            role: UserRole.FACILITY_ADMIN,
+          } as any,
+          [],
+        );
+
+        const response = await request(app)
+          .get('/api/v1/devices/unassigned')
+          .set('Authorization', `Bearer ${orphanToken}`)
+          .expect(200);
+
+        expect(response.body).toMatchObject({ success: true, devices: [], total: 0 });
+      });
+
+      it('rolls back access-control create when default group assignment fails', async () => {
+        mockDeviceModel.createAccessControlDevice = jest.fn().mockResolvedValue({
+          id: 'ac-new',
+          name: 'Gate',
+        });
+        mockDeviceModel.deleteAccessControlDevice = jest.fn().mockResolvedValue(undefined);
+        mockDeviceModel.findAccessControlIdentityConflict = jest.fn().mockResolvedValue(null);
+        mockAssignAccessControlToDefaultGroup.mockRejectedValueOnce(new Error('group boom'));
+
+        const response = await request(app)
+          .post('/api/v1/devices/access-control')
+          .set('Authorization', `Bearer ${testData.users.admin.token}`)
+          .send({
+            gateway_id: 'gateway-1',
+            name: 'Gate',
+            device_type: 'gate',
+            location_description: 'Entrance',
+            relay_channel: 3,
+            device_serial: 'AC-ROLLBACK',
+          });
+
+        expect(response.status).toBeGreaterThanOrEqual(400);
+        expect(mockDeviceModel.deleteAccessControlDevice).toHaveBeenCalledWith('ac-new');
       });
     });
   });

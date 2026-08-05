@@ -183,7 +183,7 @@ function makeKnexForAccess(opts: {
   device: { id: string; gateway_id: string } | null;
   gateway: { facility_id: string } | null;
   association: unknown | null;
-  deviceTable?: 'blulok_devices' | 'access_control_devices';
+  deviceTable?: 'blulok_devices' | 'access_control_devices' | 'gateway_inventory_devices';
 }) {
   const deviceTable = opts.deviceTable ?? 'blulok_devices';
   return jest.fn((table: string) => {
@@ -209,6 +209,49 @@ function makeKnexForAccess(opts: {
     });
     chain.first = jest.fn().mockResolvedValue(null);
     return chain;
+  });
+}
+
+function makeKnexForRemoveNetworkInfra(opts: {
+  device: {
+    id: string;
+    gateway_id: string;
+    device_kind: string;
+    device_serial: string;
+  } | null;
+  gateway: { id: string; facility_id: string | null } | null;
+  deleteRows?: number;
+}) {
+  const makeTrxTable = (table: string) => {
+    const chain: { where: jest.Mock; first: jest.Mock; del: jest.Mock } = {
+      where: jest.fn(),
+      first: jest.fn(),
+      del: jest.fn().mockResolvedValue(0),
+    };
+
+    chain.where.mockImplementation((col: string) => {
+      if (table === 'gateway_inventory_devices' && col === 'id') {
+        chain.first = jest.fn().mockResolvedValue(opts.device);
+        chain.del = jest.fn().mockResolvedValue(opts.deleteRows ?? (opts.device ? 1 : 0));
+      }
+      if (table === 'gateways' && col === 'id') {
+        chain.first = jest.fn().mockResolvedValue(opts.gateway);
+      }
+      return chain;
+    });
+
+    chain.first = jest.fn().mockResolvedValue(null);
+    return chain;
+  };
+
+  const trx = jest.fn((table: string) => makeTrxTable(table)) as jest.Mock & {
+    transaction: jest.Mock;
+  };
+
+  return Object.assign(trx, {
+    transaction: jest.fn().mockImplementation(async (callback: (t: typeof trx) => Promise<unknown>) =>
+      callback(trx),
+    ),
   });
 }
 
@@ -383,6 +426,82 @@ describe('DevicesService (unit)', () => {
           facilityId: 'fac-1',
           metadata: expect.objectContaining({ source: 'api', performedBy: 'admin-1' }),
         })
+      );
+    });
+
+    it('throws when gateway row is missing for the device', async () => {
+      const knex = makeKnexForAssign({
+        deviceRow: { id: 'dev-1', gateway_id: 'gw-missing', unit_id: null },
+        gatewayRow: null,
+        existingOnUnit: null,
+      });
+      mockDatabaseService.getInstance.mockReturnValue({
+        connection: knex as never,
+        healthCheck: jest.fn().mockResolvedValue(true),
+      });
+      mockUnitFindById.mockResolvedValue({ id: 'unit-1', facility_id: 'fac-1' });
+
+      const svc = DevicesService.getInstance();
+      await expect(
+        svc.assignDeviceToUnit('dev-1', 'unit-1', { performedBy: 'u1' }),
+      ).rejects.toThrow('Gateway not found for device');
+    });
+
+    it('no-ops when device is already assigned to the target unit', async () => {
+      const knex = makeKnexForAssign({
+        deviceRow: { id: 'dev-1', gateway_id: 'gw-1', unit_id: 'unit-1' },
+        gatewayRow: { id: 'gw-1', facility_id: 'fac-1' },
+        existingOnUnit: { id: 'dev-1' },
+      });
+      mockDatabaseService.getInstance.mockReturnValue({
+        connection: knex as never,
+        healthCheck: jest.fn().mockResolvedValue(true),
+      });
+      mockUnitFindById.mockResolvedValue({ id: 'unit-1', facility_id: 'fac-1' });
+
+      const svc = DevicesService.getInstance();
+      await svc.assignDeviceToUnit('dev-1', 'unit-1', { performedBy: 'u1' });
+
+      expect(mockAssignDeviceToUnit).not.toHaveBeenCalled();
+      expect(mockEmitAssigned).not.toHaveBeenCalled();
+    });
+
+    it('unassigns existing unit device then assigns when target unit already has another lock', async () => {
+      mockEmitUnassigned.mockClear();
+      const knex = makeKnexForAssign({
+        deviceRow: { id: 'dev-new', gateway_id: 'gw-1', unit_id: null },
+        gatewayRow: { id: 'gw-1', facility_id: 'fac-1' },
+        existingOnUnit: { id: 'dev-old' },
+      });
+      mockDatabaseService.getInstance.mockReturnValue({
+        connection: knex as never,
+        healthCheck: jest.fn().mockResolvedValue(true),
+      });
+      mockUnitFindById.mockResolvedValue({ id: 'unit-1', facility_id: 'fac-1' });
+
+      const svc = DevicesService.getInstance();
+      await svc.assignDeviceToUnit('dev-new', 'unit-1', {
+        performedBy: 'admin-1',
+        source: 'manual',
+      });
+
+      expect(mockUnassignDeviceFromUnit).toHaveBeenCalledWith('dev-old');
+      expect(mockSyncUnitLinkedMembers).toHaveBeenCalledWith('unit-1', 'dev-old');
+      expect(mockEmitUnassigned).toHaveBeenCalledWith(
+        expect.objectContaining({
+          deviceId: 'dev-old',
+          unitId: 'unit-1',
+          facilityId: 'fac-1',
+          metadata: expect.objectContaining({
+            reason: 'reassigned',
+            source: 'manual',
+            performedBy: 'admin-1',
+          }),
+        }),
+      );
+      expect(mockAssignDeviceToUnit).toHaveBeenCalledWith('dev-new', 'unit-1');
+      expect(mockEmitAssigned).toHaveBeenCalledWith(
+        expect.objectContaining({ deviceId: 'dev-new', unitId: 'unit-1' }),
       );
     });
   });
@@ -753,6 +872,151 @@ describe('DevicesService (unit)', () => {
 
       const svc = DevicesService.getInstance();
       const ok = await svc.hasUserAccessToAccessControlDevice('ac-1', 'fa-1', UserRole.FACILITY_ADMIN);
+      expect(ok).toBe(false);
+    });
+  });
+
+  describe('deleteNetworkInfraFromInventory', () => {
+    beforeEach(() => {
+      mockEnqueueDeletion.mockClear();
+    });
+
+    it('deletes inventory and enqueues DEVICE_DELETED tombstone for admin_api', async () => {
+      const connection = makeKnexForRemoveNetworkInfra({
+        device: {
+          id: 'ni-1',
+          gateway_id: 'gw-1',
+          device_kind: 'bridge',
+          device_serial: 'BR-1',
+        },
+        gateway: { id: 'gw-1', facility_id: 'fac-1' },
+        deleteRows: 1,
+      });
+      mockDatabaseService.getInstance.mockReturnValue({
+        connection: connection as never,
+        healthCheck: jest.fn().mockResolvedValue(true),
+      });
+
+      const svc = DevicesService.getInstance();
+      const result = await svc.deleteNetworkInfraFromInventory('ni-1', {
+        performedBy: 'admin-1',
+        source: 'admin_api',
+      });
+
+      expect(result).toEqual({
+        gatewayId: 'gw-1',
+        facilityId: 'fac-1',
+        deviceKind: 'bridge',
+        deviceSerial: 'BR-1',
+      });
+      expect(mockEnqueueDeletion).toHaveBeenCalledWith({
+        facilityId: 'fac-1',
+        gatewayId: 'gw-1',
+        deviceKind: 'bridge',
+        deviceSerial: 'BR-1',
+      });
+    });
+
+    it('skips tombstone enqueue when source is gateway_sync', async () => {
+      const connection = makeKnexForRemoveNetworkInfra({
+        device: {
+          id: 'ni-2',
+          gateway_id: 'gw-1',
+          device_kind: 'friend_node',
+          device_serial: 'FN-1',
+        },
+        gateway: { id: 'gw-1', facility_id: 'fac-1' },
+        deleteRows: 1,
+      });
+      mockDatabaseService.getInstance.mockReturnValue({
+        connection: connection as never,
+        healthCheck: jest.fn().mockResolvedValue(true),
+      });
+
+      const svc = DevicesService.getInstance();
+      await svc.deleteNetworkInfraFromInventory('ni-2', { source: 'gateway_sync' });
+
+      expect(mockEnqueueDeletion).not.toHaveBeenCalled();
+    });
+
+    it('throws when network infra device is missing', async () => {
+      const connection = makeKnexForRemoveNetworkInfra({
+        device: null,
+        gateway: null,
+        deleteRows: 0,
+      });
+      mockDatabaseService.getInstance.mockReturnValue({
+        connection: connection as never,
+        healthCheck: jest.fn().mockResolvedValue(true),
+      });
+
+      const svc = DevicesService.getInstance();
+      await expect(
+        svc.deleteNetworkInfraFromInventory('missing', {
+          performedBy: 'admin-1',
+          source: 'admin_api',
+        }),
+      ).rejects.toThrow('Device not found');
+    });
+  });
+
+  describe('hasUserAccessToNetworkInfraDevice', () => {
+    it('returns true for ADMIN without facility lookup', async () => {
+      const svc = DevicesService.getInstance();
+      const ok = await svc.hasUserAccessToNetworkInfraDevice('any', 'user-1', UserRole.ADMIN);
+      expect(ok).toBe(true);
+    });
+
+    it('returns true for FACILITY_ADMIN with association', async () => {
+      const knex = makeKnexForAccess({
+        device: { id: 'ni-1', gateway_id: 'gw-1' },
+        gateway: { facility_id: 'fac-1' },
+        association: { user_id: 'fa-1', facility_id: 'fac-1' },
+        deviceTable: 'gateway_inventory_devices',
+      });
+      mockDatabaseService.getInstance.mockReturnValue({
+        connection: knex as never,
+        healthCheck: jest.fn().mockResolvedValue(true),
+      });
+
+      const svc = DevicesService.getInstance();
+      const ok = await svc.hasUserAccessToNetworkInfraDevice('ni-1', 'fa-1', UserRole.FACILITY_ADMIN);
+      expect(ok).toBe(true);
+    });
+
+    it('returns false when network infra device is missing', async () => {
+      const knex = makeKnexForAccess({
+        device: null,
+        gateway: { facility_id: 'fac-1' },
+        association: { user_id: 'fa-1', facility_id: 'fac-1' },
+        deviceTable: 'gateway_inventory_devices',
+      });
+      mockDatabaseService.getInstance.mockReturnValue({
+        connection: knex as never,
+        healthCheck: jest.fn().mockResolvedValue(true),
+      });
+
+      const svc = DevicesService.getInstance();
+      const ok = await svc.hasUserAccessToNetworkInfraDevice('missing', 'fa-1', UserRole.FACILITY_ADMIN);
+      expect(ok).toBe(false);
+    });
+
+    it('returns false for TENANT role', async () => {
+      const svc = DevicesService.getInstance();
+      const ok = await svc.hasUserAccessToNetworkInfraDevice('ni-1', 't-1', UserRole.TENANT);
+      expect(ok).toBe(false);
+    });
+
+    it('returns false when knex throws', async () => {
+      mockDatabaseService.getInstance.mockReturnValue({
+        connection: jest.fn(() => {
+          throw new Error('db down');
+        }) as never,
+        healthCheck: jest.fn().mockResolvedValue(true),
+      });
+
+      const svc = DevicesService.getInstance();
+      const ok = await svc.hasUserAccessToNetworkInfraDevice('ni-1', 'fa-1', UserRole.FACILITY_ADMIN);
       expect(ok).toBe(false);
     });
   });

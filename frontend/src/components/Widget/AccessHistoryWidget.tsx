@@ -1,18 +1,13 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { Widget } from './Widget';
 import { WidgetSize } from './WidgetSizeDropdown';
-import { ClockIcon, UserIcon, LockClosedIcon, LockOpenIcon, ExclamationTriangleIcon } from '@heroicons/react/24/outline';
+import { ClockIcon, UserIcon, ExclamationTriangleIcon } from '@heroicons/react/24/outline';
 import { apiService } from '@/services/api.service';
 import { AccessLog } from '@/types/access-history.types';
 import { useAuth } from '@/contexts/AuthContext';
-import { useWebSocketSubscription } from '@/hooks/useWebSocketSubscription';
+import { useAccessHistoryLiveUpdates } from '@/hooks/useAccessHistoryLiveUpdates';
 import { getWidgetLayoutProfile, WIDGET_LIST_SCROLL_CLASS } from '@/utils/widget-layout.utils';
-import {
-  accessLogFromActivityWsData,
-  matchesAccessHistoryLiveFilters,
-  parseActivityWsEnvelope,
-  prependUniqueAccessLog,
-} from '@/utils/access-history-live.utils';
+import { getAccessHistoryActionIcon } from '@/components/AccessHistory/accessHistoryIcons';
 import {
   formatAccessAction,
   formatAccessHistoryDeviceLabel,
@@ -25,7 +20,6 @@ import {
   getAccessLogMetadata,
   getAccessUserDisplay,
   hasOccupiedUnlockOverride,
-  isManualLockEvent,
 } from '@/utils/access-history-display.utils';
 import { formatRelativeWithExact } from '@/utils/datetime.utils';
 
@@ -93,31 +87,14 @@ export const AccessHistoryWidget: React.FC<AccessHistoryWidgetProps> = ({
     [facilityFilter],
   );
 
-  const handleActivityWs = useCallback(
-    (data: unknown) => {
-      const { eventType, payload } = parseActivityWsEnvelope(data);
-      if (eventType === 'activity_update') {
-        return;
-      }
-
-      const incoming = accessLogFromActivityWsData(payload);
-      if (!incoming) {
-        void fetchAccessHistoryRef.current({ background: true });
-        return;
-      }
-
-      if (!matchesAccessHistoryLiveFilters(incoming, liveAccessFilters)) {
-        return;
-      }
-
-      setAccessHistory((prev) => prependUniqueAccessLog(prev, incoming, 20));
-    },
-    [liveAccessFilters],
-  );
-
-  useWebSocketSubscription('activity', handleActivityWs, {
-    filters: activityWsFilters,
+  useAccessHistoryLiveUpdates({
     enabled: Boolean(authState.user),
+    subscriptionFilters: activityWsFilters,
+    liveFilters: liveAccessFilters,
+    maxRows: 20,
+    canPrepend: true,
+    onPrepend: setAccessHistory,
+    onFallbackRefresh: (options) => fetchAccessHistoryRef.current(options),
   });
 
   const layout = getWidgetLayoutProfile(currentSize);
@@ -128,40 +105,23 @@ export const AccessHistoryWidget: React.FC<AccessHistoryWidgetProps> = ({
   const getActionIcon = (log: AccessLog) => {
     const tone = getAccessActionToneClass(log);
     const tile = getAccessActionIconTileClass(log);
-    const iconClass = `h-4 w-4 ${tone}`;
-
-    let Icon = LockOpenIcon;
-    if (!log.success) {
-      Icon = ExclamationTriangleIcon;
-    } else if (isManualLockEvent(log) || log.action === 'lock' || log.action === 'door_close' || log.action === 'gate_close') {
-      Icon = LockClosedIcon;
-    }
+    const Icon = getAccessHistoryActionIcon(log);
 
     return (
       <span className={`inline-flex h-7 w-7 items-center justify-center rounded-md ${tile}`}>
-        <Icon className={iconClass} />
+        <Icon className={`h-4 w-4 ${tone}`} />
       </span>
     );
   };
 
-  const getActionText = (log: AccessLog): string => {
-    const label = formatAccessAction(log);
+  const getActionSummary = (log: AccessLog): { primary: string; title: string } => {
+    const primary = formatAccessAction(log);
     if (!log.success) {
       const failure = getAccessFailureDetail(log);
-      return failure ? `${label} — ${failure}` : label;
+      return { primary, title: failure ? `${primary} — ${failure}` : primary };
     }
-    return label;
+    return { primary, title: primary };
   };
-
-  const getActionSummary = (log: AccessLog): { primary: string; title: string } => {
-    const title = getActionText(log);
-    const primary = formatAccessAction(log);
-    return { primary, title };
-  };
-
-  const getActionColor = (log: AccessLog): string => getAccessActionToneClass(log);
-
-  const getUserDisplayName = (log: AccessLog): string => getAccessUserDisplay(log).primary;
 
   const getUnitDisplayName = (log: AccessLog): string => {
     const meta = getAccessLogMetadata(log);
@@ -259,6 +219,7 @@ export const AccessHistoryWidget: React.FC<AccessHistoryWidgetProps> = ({
               const failureDetail = !entry.success ? getAccessFailureDetail(entry) : null;
               const isOverride = hasOccupiedUnlockOverride(entry);
               const overrideSubtitle = formatOccupiedUnlockOverrideSubtitle(entry);
+              const userDisplay = getAccessUserDisplay(entry).primary;
               return (
               <div
                 key={entry.id}
@@ -277,7 +238,7 @@ export const AccessHistoryWidget: React.FC<AccessHistoryWidgetProps> = ({
                       {getUnitDisplayName(entry)}
                     </span>
                     <span
-                      className={`text-sm font-medium truncate ${getActionColor(entry)}`}
+                      className={`text-sm font-medium truncate ${getAccessActionToneClass(entry)}`}
                       title={actionSummary.title}
                     >
                       {actionSummary.primary}
@@ -295,7 +256,7 @@ export const AccessHistoryWidget: React.FC<AccessHistoryWidgetProps> = ({
                   )}
                   <div className="flex items-center gap-2 min-w-0 text-xs text-gray-500 dark:text-gray-400">
                     <UserIcon className="h-3 w-3 shrink-0" />
-                    <span className="truncate" title={getUserDisplayName(entry)}>{getUserDisplayName(entry)}</span>
+                    <span className="truncate" title={userDisplay}>{userDisplay}</span>
                     <ClockIcon className="h-3 w-3 shrink-0 ml-1" />
                     <span className="truncate" title={entryTime.title}>
                       {entryTime.display}

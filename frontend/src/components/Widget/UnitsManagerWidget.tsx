@@ -35,12 +35,7 @@ import { useGlobalFacility } from '@/contexts/GlobalFacilityContext';
 import { useAuth } from '@/contexts/AuthContext';
 import { resolveLockTimeoutMsForUnit } from '@/utils/facilityLockTimeout.utils';
 import { useLockDeviceRealtime } from '@/hooks/useLockDeviceRealtime';
-import {
-  formatAccessAction,
-  formatAccessMethod,
-  getAccessUserDisplay,
-} from '@/utils/access-history-display.utils';
-import type { AccessLog } from '@/types/access-history.types';
+import { AccessHistoryCompactRow, type AccessHistoryCompactRowLog } from '@/components/AccessHistory/AccessHistoryCompactRow';
 import { formatRelativeWithExact, RELATIVE_UNITS_ACTIVITY_OPTS } from '@/utils/datetime.utils';
 import {
   mergeUnitRowsFromDeviceSnapshots,
@@ -84,16 +79,7 @@ interface UnitRow {
   tenant_phone?: string | null;
 }
 
-interface AccessLogEntry {
-  id?: string;
-  occurred_at?: string;
-  created_at?: string;
-  action?: string;
-  method?: string;
-  result?: string;
-  user_id?: string;
-  user_name?: string | null;
-}
+type AccessLogEntry = AccessHistoryCompactRowLog;
 
 export interface UnitsManagerWidgetProps {
   id: string;
@@ -258,39 +244,6 @@ const ExpandSectionHeader: React.FC<{
     {action}
   </div>
 );
-
-const AccessLogRow: React.FC<{
-  log: AccessLogEntry;
-  index: number;
-}> = ({ log, index }) => {
-  const ts = log.occurred_at ?? log.created_at ?? '';
-  const accessLog = log as AccessLog;
-  const succeeded = accessLog.success ?? (log.result ?? '').toLowerCase() === 'success';
-  const userLabel = getAccessUserDisplay(accessLog).primary;
-  const relativeTs = formatRelativeWithExact(ts, RELATIVE_UNITS_ACTIVITY_OPTS);
-
-  return (
-    <motion.li
-      initial={{ opacity: 0, x: -6 }}
-      animate={{ opacity: 1, x: 0 }}
-      transition={{ delay: index * 0.04 }}
-      className={`flex items-center justify-between gap-3 rounded-md bg-gray-50/90 px-2 py-1.5 ${TYPE.meta} dark:bg-gray-900/45`}
-    >
-      <span className="flex min-w-0 items-center gap-2">
-        <span
-          className={`inline-block h-1.5 w-1.5 shrink-0 rounded-full ${
-            succeeded ? 'bg-emerald-500' : 'bg-rose-500'
-          }`}
-        />
-        <span className="text-gray-800 dark:text-gray-200">{formatAccessAction(accessLog)}</span>
-        <span className="truncate">{userLabel !== '—' ? userLabel : formatAccessMethod(accessLog.method ?? '')}</span>
-      </span>
-      <span className="shrink-0 tabular-nums" title={relativeTs.title}>
-        {relativeTs.display}
-      </span>
-    </motion.li>
-  );
-};
 
 const unitStatusMeta: Record<string, { label: string; className: string }> = {
   occupied: {
@@ -813,7 +766,7 @@ const ExpandedDetails: React.FC<{
             ) : logs && logs.length > 0 ? (
               <ul className="space-y-1.5">
                 {logs.slice(0, 5).map((log, i) => (
-                  <AccessLogRow
+                  <AccessHistoryCompactRow
                     key={log.id ?? `${log.occurred_at ?? log.created_at}-${i}`}
                     log={log}
                     index={i}

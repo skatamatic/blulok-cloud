@@ -1,4 +1,5 @@
 import { AccessLog } from '@/types/access-history.types';
+import { accessHistoryMethodMatchesFilter } from '@/constants/accessHistory.constants';
 import { queryDateFromMs, queryDateToMs } from '@/utils/datetime.utils';
 
 export type ActivityWsEvent = {
@@ -36,6 +37,7 @@ const KNOWN_DENIAL_REASONS = new Set<NonNullable<AccessLog['denial_reason']>>([
   'unknown_error',
   'other',
   'timeout',
+  'settlement_mismatch',
 ]);
 
 function parseDenialReason(raw: string | undefined): AccessLog['denial_reason'] | undefined {
@@ -217,9 +219,7 @@ export function matchesAccessHistoryLiveFilters(
     if (log.action !== normalizedFilter) return false;
   }
   if (filters.method) {
-    const normalized = filters.method === 'automatic' ? 'local_device' : filters.method;
-    const logMethod = log.method === 'automatic' ? 'local_device' : log.method;
-    if (logMethod !== normalized) return false;
+    if (!accessHistoryMethodMatchesFilter(log.method, filters.method)) return false;
   }
   if (filters.denial_reason && log.denial_reason !== filters.denial_reason) return false;
   if (filters.success !== undefined && log.success !== filters.success) return false;

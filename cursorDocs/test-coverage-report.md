@@ -29,40 +29,35 @@ Jest’s **global line %** = `covered lines ÷ all lines in collectCoverageFrom`
 
 ## Latest weighted line % (after policy)
 
-Run: `npm run test:coverage:areas` in `backend/` and `frontend/`.
+Run: `npm run test:coverage:areas` in `backend/` and `frontend/` (prefer `--maxWorkers=2` on constrained machines).
 
-**Last measured:** 2026-03-20 (`jest --coverage`, `collectCoverageFrom` per `frontend/jest.config.js` / `backend` config).
+**Last measured:** 2026-08-04 (post hang-fix remasure; `jest --coverage --maxWorkers=2 --forceExit`).
 
 ### Backend (from `coverage/coverage-summary.json` total)
 
 | Metric | Coverage |
 |--------|------------|
-| **Lines** | **71.8%** (8345 / 11622) |
-| Statements | 70.86% |
-| Functions | 68.32% |
-| Branches | 56.66% |
+| **Lines** | **82.3%** (17727 / 21538) |
+| Statements | 80.95% |
+| Functions | 81.34% |
+| Branches | 66.32% |
 
-**Target:** **>80%** global lines — not yet met; largest lift still comes from **`routes`** (~70.7% weighted) and the **`services/gateway`** tree (~55.3% weighted; many protocol/connection files).
+**Target:** **>80%** global lines — **MET** (was 74.59% earlier the same day; ~+7.7 pts).
 
-**Improved buckets (weighted line %, this pass):** `services/notifications` ~**72.8%**, `services/auth.service.ts` ~**94.2%** (merged coverage tests into `auth.service.test.ts`), `services/schedules.service.ts` ~**73.3%**.
+**Strong buckets:** `services/gateway` ~81%, `routes` ~81%, `services/subscriptions` ~78%, `utils` ~82%, `access-code.service.ts` ~87%.
 
-**Still below ~80% (examples):** `services/gateway` (~55%), `services/events` (~54%), `websocket.service.ts` (~62%), `services/subscriptions` (~64%), `routes` aggregate (~71%).
+**Still below ~80% (examples):** `app-websocket.service.ts` (~68%), `units.service.ts` (~70%), `middleware` (~73%), `firmware` (~77%), `subscriptions` (~78%), `events` (~79%).
 
-### Frontend (from `coverage/coverage-summary.json` total)
+### Frontend (from prior remasure same day)
 
 | Metric | Coverage |
 |--------|------------|
-| **Lines** | **60.99%** (5944 / 9745) |
-| Statements | 59.41% |
-| Functions | 48.05% |
-| Branches | 46.49% |
+| **Lines** | **72.21%** (13165 / 18230) |
+| Statements | 70.04% |
+| Functions | 61.04% |
+| Branches | 56.56% |
 
-**Target:** **70%** lines — **not yet met** (~**+9 pts** needed). The **`pages`** bucket (~2.9k LOC @ ~49% weighted) dominates remaining gap.
-
-- **Weighted TOTAL lines:** **60.99%**.
-- **Notable area buckets:** `pages` ~48.8%, `services` ~57.5%, `components/Common` ~64.6%, `components/Schedules` ~45.9%, `components/Widget` ~69.1%, `hooks` ~94%, `utils` ~96%.
-- **Largest remaining gaps:** `pages/*`, then any large uncovered components; `services/api.service.ts` coverage rises as tests are added (many methods still optional to cover).
-
+**Target:** **70%** lines — **MET**.
 ### Backend testing note: `AuthService` in `setup-mocks.ts`
 
 `src/__tests__/setup-mocks.ts` replaces **`AuthService`** with a lightweight stub for most suites (so route tests don’t exercise the real implementation). **`auth.service.test.ts`** and the `login-key-generation` / `login-app-device` suites opt into the real implementation via `jest.mock('@/services/auth.service', () => jest.requireActual(...))` or `jest.unmock(...)`.
@@ -73,6 +68,10 @@ Run: `npm run test:coverage:areas` in `backend/` and `frontend/`.
 
 | Area | File |
 |------|------|
+| **Activity + notification event bus** (routing, scoped emits, handler isolation) | `backend/src/__tests__/services/events/activity-and-notification-events.test.ts` |
+| **AppRealtimeHub fanout** (device/gateway/key-sharing RBAC emits) | extended `backend/src/__tests__/services/app-realtime.hub.test.ts` |
+| **API client lock/schedule/401 interceptor** | extended `frontend/src/__tests__/services/api.service.test.ts` |
+| **UserSchedulesTab** (RBAC, load/filter/assign workflows) | `frontend/src/__tests__/components/Schedules/UserSchedulesTab.test.tsx` |
 | **ProtectedRoute** (100% of component file) | `frontend/src/__tests__/components/ProtectedRoute.test.tsx` |
 | **useBackNavigation** | `frontend/src/__tests__/hooks/useBackNavigation.test.ts` |
 | **BluDesign API client** | `frontend/src/__tests__/api/bludesign.client.test.ts` |
@@ -109,6 +108,12 @@ Run: `npm run test:coverage:areas` in `backend/` and `frontend/`.
 | **GatewayService** (lifecycle + commands) | `backend/src/__tests__/services/gateway/gateway-service.test.ts` |
 | **api.service** (auth, users, widgets, system settings, facilities, gateways, commands) | `frontend/src/__tests__/services/api.service.test.ts` |
 | **UserFilter** | `frontend/src/__tests__/components/Common/UserFilter.test.tsx` |
+| **DevicesService** (unit reassignment, network-infra delete/tombstone, infra RBAC) | extended `backend/src/__tests__/services/devices.service.unit.test.ts` |
+| **AccessCodeService** (rotation_hour/minute, empty keypad rotate, outbox offline skip, schedule null vs omitted) | extended `backend/src/__tests__/services/access-code.service.test.ts` |
+| **buildSyncSummaryFromChanges** (exported FMS summary helper) | `frontend/src/__tests__/contexts/buildSyncSummaryFromChanges.test.ts` |
+| **useDashboardState** (max widgets per page) | extended `frontend/src/__tests__/hooks/useDashboardState.test.tsx` |
+| **DeviceAccessPropagationService** (assign/unassign → denylist add/remove, optimization skips) | `backend/src/__tests__/services/device-access-propagation.service.test.ts` |
+| **widget-content.utils + facility-scope placeholder** | `frontend/src/__tests__/components/Widget/widget-content.utils.test.tsx` |
 
 ---
 

@@ -117,6 +117,49 @@ describe('useDashboardState', () => {
     ).toBe(true);
   });
 
+  it('addWidget refuses when the page already has the max widget count', async () => {
+    const widgets = Array.from({ length: 12 }, (_, i) => ({
+      widgetId: `widget_${i}`,
+      widgetType: 'histogram',
+      layoutConfig: {
+        position: { x: (i % 2) * 6, y: Math.floor(i / 2) * 4, w: 6, h: 4 },
+        size: 'medium' as const,
+      },
+      config: {},
+    }));
+    mockGetWidgetLayouts.mockResolvedValueOnce({
+      ...defaultApiResponse,
+      pages: [
+        {
+          ...defaultApiResponse.pages![0],
+          widgets,
+        },
+      ],
+    });
+
+    const { result } = renderHook(
+      () =>
+        useDashboardState({
+          isAuthenticated: true,
+          isTenant: false,
+        }),
+      { wrapper }
+    );
+
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+    expect(result.current.activePage.widgetInstances.length).toBe(12);
+    expect(result.current.maxWidgetsPerPage).toBe(12);
+
+    await act(async () => {
+      await result.current.addWidget('notifications');
+    });
+
+    expect(result.current.activePage.widgetInstances.length).toBe(12);
+    expect(
+      result.current.activePage.widgetInstances.some((w) => w.type === 'notifications')
+    ).toBe(false);
+  });
+
   it('updateWidgetConfig merges config for a widget when layout is editable', async () => {
     mockGetWidgetLayouts.mockResolvedValueOnce({
       ...defaultApiResponse,
@@ -342,5 +385,61 @@ describe('useDashboardState', () => {
     });
 
     expect(mockSaveDashboard).toHaveBeenCalled();
+  });
+
+  it('addPage appends a page when multi-page is allowed', async () => {
+    mockGetWidgetLayouts.mockResolvedValueOnce({
+      ...defaultApiResponse,
+      allowMultiplePages: true,
+    });
+
+    const { result } = renderHook(
+      () =>
+        useDashboardState({
+          isAuthenticated: true,
+          isTenant: false,
+        }),
+      { wrapper }
+    );
+
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+    expect(result.current.pages).toHaveLength(1);
+
+    let newIndex: number | null = null;
+    await act(async () => {
+      newIndex = await result.current.addPage();
+    });
+
+    expect(newIndex).toBe(1);
+    expect(result.current.pages).toHaveLength(2);
+    expect(mockSaveDashboard).toHaveBeenCalled();
+  });
+
+  it('addPage is a no-op when multiple pages are disallowed', async () => {
+    mockGetWidgetLayouts.mockResolvedValueOnce({
+      ...defaultApiResponse,
+      canEditLayout: false,
+      allowMultiplePages: false,
+    });
+
+    const { result } = renderHook(
+      () =>
+        useDashboardState({
+          isAuthenticated: true,
+          isTenant: false,
+        }),
+      { wrapper }
+    );
+
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+    expect(result.current.allowMultiplePages).toBe(false);
+
+    let newIndex: number | null = -1;
+    await act(async () => {
+      newIndex = await result.current.addPage();
+    });
+
+    expect(newIndex).toBeNull();
+    expect(result.current.pages).toHaveLength(1);
   });
 });

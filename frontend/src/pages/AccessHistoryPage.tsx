@@ -1,4 +1,4 @@
-import { Fragment, useState, useEffect, useRef, useMemo, useCallback } from 'react';
+import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { useNavigate, useSearchParams, useLocation } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { apiService } from '@/services/api.service';
@@ -6,164 +6,23 @@ import { AccessLog } from '@/types/access-history.types';
 import { generateHighlightId, navigateAndHighlightWithAutoPagination } from '@/utils/navigation.utils';
 import { withReturnPath } from '@/hooks/useBackNavigation';
 import { useHighlight } from '@/hooks/useHighlight';
-import { UnitFilter } from '@/components/Common/UnitFilter';
-import { ExpandableFilters } from '@/components/Common/ExpandableFilters';
 import { ListPageHeader } from '@/components/Common/DetailsPageLayout';
-import {
-  filterDateFieldLabelClass,
-  filterDateRangeGridClass,
-  filterSelectClass,
-} from '@/components/Common/list-filters.styles';
 import { SortableTableTh } from '@/components/Common/SortableTableTh';
 import { useToast } from '@/contexts/ToastContext';
 import { useGlobalFacility, ALL_FACILITIES_ID } from '@/contexts/GlobalFacilityContext';
-import { useWebSocketSubscription } from '@/hooks/useWebSocketSubscription';
+import { useAccessHistoryLiveUpdates } from '@/hooks/useAccessHistoryLiveUpdates';
 import {
-  accessLogFromActivityWsData,
-  matchesAccessHistoryLiveFilters,
-  parseActivityWsEnvelope,
-  prependUniqueAccessLog,
-} from '@/utils/access-history-live.utils';
-import { AccessLogExpandedDetails } from '@/components/AccessHistory/AccessLogExpandedDetails';
-import {
-  formatAccessAction,
-  formatAccessMethod,
-  formatOccupiedUnlockOverrideSubtitle,
-  getAccessActionIconTileClass,
-  getAccessActionToneClass,
-  getAccessLocationDisplay,
-  getAccessLogMetadata,
-  getAccessLogUserLink,
-  getAccessMethodToneClass,
-  getAccessStatusDisplay,
-  getAccessUserDisplay,
-  hasOccupiedUnlockOverride,
-  isCorrelatedRemoteUnlock,
-  isManualLockEvent,
-} from '@/utils/access-history-display.utils';
-import {
-  buildLocalDateRangeQuery,
-  formatDateTime,
-  toLocalDateInputValue,
-} from '@/utils/datetime.utils';
-import {
-  ArrowDownTrayIcon,
-  ClockIcon,
-  CheckCircleIcon,
-  XCircleIcon,
-  ExclamationTriangleIcon,
-  LockClosedIcon,
-  LockOpenIcon,
-  KeyIcon,
-  DevicePhoneMobileIcon,
-  CreditCardIcon,
-  FingerPrintIcon,
-  CalendarIcon,
-  UserIcon,
-  BuildingStorefrontIcon,
-  ComputerDesktopIcon,
-  ChevronDownIcon,
-  ChevronUpIcon,
-  ChevronRightIcon,
-  LinkIcon,
-  CpuChipIcon,
-  HomeIcon,
-  CloudIcon,
-} from '@heroicons/react/24/outline';
+  AccessHistoryFilters,
+  AccessHistoryFilterState,
+  defaultAccessHistoryDateFilters,
+} from '@/components/AccessHistory/AccessHistoryFilters';
+import { AccessHistoryExportMenu } from '@/components/AccessHistory/AccessHistoryExportMenu';
+import { AccessHistoryTableRow } from '@/components/AccessHistory/AccessHistoryTableRow';
+import { buildLocalDateRangeQuery } from '@/utils/datetime.utils';
+import { toLocalDateInputValue } from '@/utils/datetime.utils';
+import { ClockIcon } from '@heroicons/react/24/outline';
 
-interface FilterState {
-  facility_id?: string;
-  unit_id?: string;
-  user_id?: string;
-  action?: string;
-  method?: string;
-  success?: boolean;
-  denial_reason?: string;
-  credential_type?: string;
-  date_from?: string;
-  date_to?: string;
-  search?: string;
-  limit?: number;
-  offset?: number;
-}
-
-const actionIcons = {
-  unlock: LockOpenIcon,
-  lock: LockClosedIcon,
-  access_granted: CheckCircleIcon,
-  remote_access_granted: CheckCircleIcon,
-  access_denied: XCircleIcon,
-  door_open: LockOpenIcon,
-  door_close: LockClosedIcon,
-  gate_open: LockOpenIcon,
-  gate_close: LockClosedIcon,
-  elevator_call: ComputerDesktopIcon,
-  elevator_access: ComputerDesktopIcon,
-  manual_override: KeyIcon,
-  system_error: ExclamationTriangleIcon,
-  timeout: ClockIcon,
-  invalid_credential: XCircleIcon,
-  schedule_violation: ClockIcon,
-  unlock_attempt: XCircleIcon,
-  lock_attempt: XCircleIcon,
-};
-
-const methodIcons = {
-  app: DevicePhoneMobileIcon,
-  mobile_app: DevicePhoneMobileIcon,
-  keypad: KeyIcon,
-  card: CreditCardIcon,
-  physical_key: KeyIcon,
-  mobile_key: DevicePhoneMobileIcon,
-  manual: KeyIcon,
-  automatic: ComputerDesktopIcon,
-  local_device: ComputerDesktopIcon,
-  remote_gateway: CloudIcon,
-  admin_remote: CloudIcon,
-  route_pass: KeyIcon,
-  system: ComputerDesktopIcon,
-  unknown: KeyIcon,
-  admin_override: KeyIcon,
-  emergency: ExclamationTriangleIcon,
-  scheduled: CalendarIcon,
-  biometric: FingerPrintIcon,
-  rfid: CreditCardIcon,
-  pin: KeyIcon,
-  remote: CloudIcon,
-};
-
-const actionColors = {
-  unlock: 'text-green-600 dark:text-green-400',
-  lock: 'text-red-600 dark:text-red-400',
-  access_granted: 'text-green-600 dark:text-green-400',
-  remote_access_granted: 'text-green-600 dark:text-green-400',
-  access_denied: 'text-red-600 dark:text-red-400',
-  door_open: 'text-green-600 dark:text-green-400',
-  door_close: 'text-red-600 dark:text-red-400',
-  gate_open: 'text-green-600 dark:text-green-400',
-  gate_close: 'text-red-600 dark:text-red-400',
-  elevator_call: 'text-purple-600 dark:text-purple-400',
-  elevator_access: 'text-purple-600 dark:text-purple-400',
-  manual_override: 'text-orange-600 dark:text-orange-400',
-  system_error: 'text-red-600 dark:text-red-400',
-  timeout: 'text-yellow-600 dark:text-yellow-400',
-  invalid_credential: 'text-red-600 dark:text-red-400',
-  schedule_violation: 'text-yellow-600 dark:text-yellow-400',
-  unlock_attempt: 'text-red-600 dark:text-red-400',
-  lock_attempt: 'text-red-600 dark:text-red-400',
-};
-
-type SortableColumn = 'occurred_at' | 'action' | 'user_name' | 'facility_name' | 'success' | 'method';
-
-const defaultAccessHistoryDateFilters = (): Pick<FilterState, 'date_from' | 'date_to' | 'limit'> => {
-  const today = toLocalDateInputValue();
-  const weekAgo = toLocalDateInputValue(new Date(Date.now() - 7 * 24 * 60 * 60 * 1000));
-  return {
-    date_from: weekAgo,
-    date_to: today,
-    limit: 50,
-  };
-};
+type SortableColumn = 'occurred_at' | 'action' | 'user_name' | 'success' | 'method';
 
 export default function AccessHistoryPage() {
   const { authState } = useAuth();
@@ -188,7 +47,7 @@ export default function AccessHistoryPage() {
   const [isCustomDateRange, setIsCustomDateRange] = useState(false);
   const exportDropdownRef = useRef<HTMLDivElement>(null);
 
-  const [filters, setFilters] = useState<FilterState>(() => {
+  const [filters, setFilters] = useState<AccessHistoryFilterState>(() => {
     const unitId = searchParams.get('unit_id') ?? undefined;
     const facilityId = searchParams.get('facility_id') ?? undefined;
     return {
@@ -233,7 +92,6 @@ export default function AccessHistoryPage() {
       action: filters.action,
       method: filters.method,
       success: filters.success,
-      denial_reason: filters.denial_reason,
       search: filters.search,
       date_from: filters.date_from,
       date_to: filters.date_to,
@@ -268,7 +126,7 @@ export default function AccessHistoryPage() {
 
       let response;
       const { date_from, date_to, ...restFilters } = filters;
-      const queryFilters: Omit<FilterState, 'date_from' | 'date_to'> & {
+      const queryFilters: Omit<AccessHistoryFilterState, 'date_from' | 'date_to'> & {
         date_from?: string;
         date_to?: string;
         offset: number;
@@ -326,7 +184,6 @@ export default function AccessHistoryPage() {
     }
   }, [
     authState.user?.facilityIds,
-    authState.user?.id,
     currentPage,
     filters,
     isFacilityAdmin,
@@ -343,41 +200,15 @@ export default function AccessHistoryPage() {
     void loadAccessHistory();
   }, [loadAccessHistory]);
 
-  const handleActivityWs = useCallback(
-    (data: unknown) => {
-      const { eventType, payload } = parseActivityWsEnvelope(data);
-      if (eventType === 'activity_update') {
-        return;
-      }
-
-      const incoming = accessLogFromActivityWsData(payload);
-      if (!incoming) {
-        void loadAccessHistoryRef.current({ background: true });
-        return;
-      }
-
-      if (!matchesAccessHistoryLiveFilters(incoming, liveAccessFilters)) {
-        return;
-      }
-
-      if (canPrependLiveRows) {
-        setLogs((prev) => {
-          const next = prependUniqueAccessLog(prev, incoming, filters.limit || 50);
-          if (next === prev) return prev;
-          setTotal((totalPrev) => totalPrev + 1);
-          return next;
-        });
-        return;
-      }
-
-      void loadAccessHistoryRef.current({ background: true });
-    },
-    [canPrependLiveRows, filters.limit, liveAccessFilters],
-  );
-
-  useWebSocketSubscription('activity', handleActivityWs, {
-    filters: activityWsFilters,
+  useAccessHistoryLiveUpdates({
     enabled: Boolean(authState.user),
+    subscriptionFilters: activityWsFilters,
+    liveFilters: liveAccessFilters,
+    maxRows: filters.limit || 50,
+    canPrepend: canPrependLiveRows,
+    onPrepend: setLogs,
+    onPrepended: () => setTotal((prev) => prev + 1),
+    onFallbackRefresh: (options) => loadAccessHistoryRef.current(options),
   });
 
   // Handle highlighting when page loads
@@ -400,7 +231,7 @@ export default function AccessHistoryPage() {
     };
   }, [showExportDropdown]);
 
-  const handleFilterChange = (key: keyof FilterState, value: any) => {
+  const handleFilterChange = (key: keyof AccessHistoryFilterState, value: any) => {
     setFilters(prev => ({
       ...prev,
       [key]: value,
@@ -414,38 +245,6 @@ export default function AccessHistoryPage() {
     setUserFilterLabel(undefined);
     setIsCustomDateRange(false);
     setCurrentPage(1);
-  };
-
-  // Check if any filters are active
-  const hasActiveFilters = () => {
-    return !!(
-      filters.search?.trim() ||
-      filters.action ||
-      filters.success !== undefined ||
-      filters.user_id ||
-      filters.unit_id ||
-      filters.method ||
-      (filters.date_from && filters.date_to && getCurrentDateRangeSelection() === 'custom')
-    );
-  };
-
-  // Function to determine current date range selection
-  const getCurrentDateRangeSelection = () => {
-    // If custom date range is explicitly selected, return 'custom'
-    if (isCustomDateRange) return 'custom';
-    
-    if (!filters.date_from || !filters.date_to) return '';
-    
-    const now = new Date();
-    const today = toLocalDateInputValue(now);
-    const weekAgo = toLocalDateInputValue(new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000));
-    const monthAgo = toLocalDateInputValue(new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000));
-    
-    if (filters.date_from === today && filters.date_to === today) return 'today';
-    if (filters.date_from === weekAgo && filters.date_to === today) return 'week';
-    if (filters.date_from === monthAgo && filters.date_to === today) return 'month';
-    
-    return 'custom';
   };
 
   const handleSort = (column: SortableColumn) => {
@@ -498,8 +297,6 @@ export default function AccessHistoryPage() {
         action: filters.action,
         method: filters.method,
         success: filters.success,
-        denial_reason: filters.denial_reason,
-        credential_type: filters.credential_type,
         ...buildLocalDateRangeQuery(filters.date_from, filters.date_to),
         limit: 10000,
       };
@@ -535,37 +332,6 @@ export default function AccessHistoryPage() {
     }
   };
 
-  const formatOccurredAt = (dateString: string) => formatDateTime(dateString);
-
-  const formatDuration = (seconds?: number) => {
-    if (!seconds) return 'N/A';
-    const hours = Math.floor(seconds / 3600);
-    const minutes = Math.floor((seconds % 3600) / 60);
-    const secs = seconds % 60;
-    
-    if (hours > 0) {
-      return `${hours}h ${minutes}m ${secs}s`;
-    } else if (minutes > 0) {
-      return `${minutes}m ${secs}s`;
-    } else {
-      return `${secs}s`;
-    }
-  };
-
-  const getActionIcon = (log: AccessLog) => {
-    if (isManualLockEvent(log)) return LockClosedIcon;
-    if (isCorrelatedRemoteUnlock(log) || hasOccupiedUnlockOverride(log)) return LockOpenIcon;
-    if (log.action === 'remote_access_granted') return CheckCircleIcon;
-    return actionIcons[log.action as keyof typeof actionIcons] || KeyIcon;
-  };
-
-  const getMethodIcon = (log: AccessLog) => {
-    if (isManualLockEvent(log)) return LockClosedIcon;
-    if (isCorrelatedRemoteUnlock(log)) return LockOpenIcon;
-    if (log.method === 'admin_remote' || log.method === 'remote_gateway') return CloudIcon;
-    return methodIcons[log.method as keyof typeof methodIcons] || KeyIcon;
-  };
-
   const totalPages = Math.ceil(total / (filters.limit || 50));
 
   return (
@@ -574,241 +340,34 @@ export default function AccessHistoryPage() {
         title="Access History"
         subtitle="Monitor and track all access events across your facilities"
         actions={
-          <div className="relative" ref={exportDropdownRef}>
-            <button
-              onClick={() => setShowExportDropdown(!showExportDropdown)}
-              disabled={loading}
-              className="inline-flex items-center rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 shadow-sm transition-colors hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700"
-            >
-              {loading ? (
-                <div className="mr-2 h-4 w-4 animate-spin rounded-full border-b-2 border-gray-600 dark:border-gray-300" />
-              ) : (
-                <ArrowDownTrayIcon className="mr-2 h-4 w-4" />
-              )}
-              {loading ? 'Exporting...' : 'Export'}
-              <ChevronDownIcon className="ml-2 h-4 w-4" />
-            </button>
-
-            {showExportDropdown && (
-              <div className="absolute right-0 z-10 mt-2 w-48 rounded-md border border-gray-200 bg-white shadow-lg dark:border-gray-700 dark:bg-gray-800">
-                <div className="py-1">
-                  <button
-                    onClick={() => exportData('filtered')}
-                    className="block w-full px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-700"
-                  >
-                    Export Current Filter
-                  </button>
-                  <button
-                    onClick={() => exportData('all')}
-                    className="block w-full px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-700"
-                  >
-                    Export All Data
-                  </button>
-                </div>
-              </div>
-            )}
-          </div>
+          <AccessHistoryExportMenu
+            loading={loading}
+            open={showExportDropdown}
+            onOpenChange={setShowExportDropdown}
+            onExport={exportData}
+            dropdownRef={exportDropdownRef}
+          />
         }
       />
 
       {/* Filters */}
-      <ExpandableFilters
-        searchValue={filters.search || ''}
-        onSearchChange={(value) => handleFilterChange('search', value || undefined)}
-        searchPlaceholder="Search by user, facility, action, or IP..."
-        isExpanded={filtersExpanded}
+      <AccessHistoryFilters
+        filters={filters}
+        filtersExpanded={filtersExpanded}
+        isCustomDateRange={isCustomDateRange}
+        unitFilterLabel={unitFilterLabel}
+        userFilterLabel={userFilterLabel}
+        selectedFacilityId={
+          selectedFacilityId && selectedFacilityId !== ALL_FACILITIES_ID
+            ? selectedFacilityId
+            : undefined
+        }
+        onFilterChange={handleFilterChange}
         onToggleExpanded={() => setFiltersExpanded(!filtersExpanded)}
-        hasActiveFilters={hasActiveFilters()}
         onClearFilters={clearFilters}
-        sections={[
-          {
-            title: 'Status',
-            icon: <CheckCircleIcon className="h-4 w-4" />,
-            type: 'buttons',
-            span: 'full',
-            options: [
-              { key: 'all', label: 'All', color: 'primary' },
-              { key: 'success', label: 'Success', color: 'green' },
-              { key: 'failed', label: 'Failed', color: 'red' },
-            ],
-            selected:
-              filters.success === undefined
-                ? 'all'
-                : filters.success === true
-                  ? 'success'
-                  : 'failed',
-            onSelect: (value) => {
-              if (value === 'all') {
-                handleFilterChange('success', undefined);
-              } else if (value === 'success') {
-                handleFilterChange('success', true);
-              } else {
-                handleFilterChange('success', false);
-              }
-            },
-          },
-          {
-            title: 'Date Range',
-            icon: <CalendarIcon className="h-4 w-4" />,
-            type: 'buttons',
-            span: 'full',
-            options: [
-              { key: '', label: 'All Time', color: 'primary' },
-              { key: 'today', label: 'Today', color: 'gray' },
-              { key: 'week', label: 'This Week', color: 'gray' },
-              { key: 'month', label: 'This Month', color: 'gray' },
-              { key: 'custom', label: 'Custom', color: 'gray' },
-            ],
-            selected: getCurrentDateRangeSelection(),
-            onSelect: (value) => {
-              if (value === 'custom') {
-                setIsCustomDateRange(true);
-              } else if (value === '') {
-                setIsCustomDateRange(false);
-                handleFilterChange('date_from', undefined);
-                handleFilterChange('date_to', undefined);
-              } else {
-                setIsCustomDateRange(false);
-                const now = new Date();
-                let dateFrom = '';
-                const dateTo = toLocalDateInputValue(now);
-
-                switch (value) {
-                  case 'today': {
-                    dateFrom = toLocalDateInputValue(now);
-                    break;
-                  }
-                  case 'week': {
-                    dateFrom = toLocalDateInputValue(
-                      new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000),
-                    );
-                    break;
-                  }
-                  case 'month': {
-                    dateFrom = toLocalDateInputValue(
-                      new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000),
-                    );
-                    break;
-                  }
-                }
-
-                handleFilterChange('date_from', dateFrom);
-                handleFilterChange('date_to', dateTo);
-              }
-            },
-          },
-          {
-            title: 'Action',
-            icon: <KeyIcon className="h-4 w-4" />,
-            type: 'select',
-            options: [
-              { key: '', label: 'All Actions' },
-              { key: 'unlock', label: 'Unlock' },
-              { key: 'lock', label: 'Lock' },
-              { key: 'access_granted', label: 'Access Granted' },
-              { key: 'unlock_attempt', label: 'Unlock Attempt Denied' },
-              { key: 'lock_attempt', label: 'Lock Attempt Failed' },
-              { key: 'remote_access_granted', label: 'Remote Access Granted' },
-              { key: 'manual_override', label: 'Manual Override' },
-              { key: 'schedule_violation', label: 'Schedule Violation' },
-            ],
-            selected: filters.action || '',
-            onSelect: (value: string) => handleFilterChange('action', value || undefined),
-          },
-          {
-            title: 'Method',
-            icon: <DevicePhoneMobileIcon className="h-4 w-4" />,
-            type: 'select',
-            options: [
-              { key: '', label: 'All Methods' },
-              { key: 'app', label: 'Mobile App' },
-              { key: 'keypad', label: 'Keypad' },
-              { key: 'card', label: 'Card' },
-              { key: 'physical_key', label: 'Physical Key' },
-              { key: 'manual', label: 'Manual Override' },
-              { key: 'cloud', label: 'Cloud' },
-              { key: 'local_device', label: 'Local Device' },
-              { key: 'route_pass', label: 'Route Pass' },
-              { key: 'automatic', label: 'Local Device (legacy)' },
-              { key: 'mobile_key', label: 'Mobile Key' },
-            ],
-            selected: filters.method || '',
-            onSelect: (value: string) => handleFilterChange('method', value || undefined),
-          },
-          {
-            title: 'User',
-            icon: <UserIcon className="h-4 w-4" />,
-            type: 'user',
-            options: [],
-            selected: filters.user_id || '',
-            selectedLabel: userFilterLabel,
-            onDisplayLabelChange: setUserFilterLabel,
-            onSelect: (value: string) => handleFilterChange('user_id', value || undefined),
-            placeholder: 'Search users...',
-          },
-          {
-            title: 'Unit',
-            icon: <HomeIcon className="h-4 w-4" />,
-            type: 'custom',
-            options: [],
-            selected: filters.unit_id || '',
-            selectedLabel: unitFilterLabel,
-            onSelect: () => {},
-            customContent: (
-              <UnitFilter
-                value={filters.unit_id || ''}
-                onChange={(unitId) => handleFilterChange('unit_id', unitId || undefined)}
-                onDisplayLabelChange={setUnitFilterLabel}
-                placeholder="Search units..."
-                facilityId={
-                  selectedFacilityId && selectedFacilityId !== ALL_FACILITIES_ID
-                    ? selectedFacilityId
-                    : undefined
-                }
-                className="w-full min-w-0"
-              />
-            ),
-          },
-          ...(getCurrentDateRangeSelection() === 'custom'
-            ? [
-                {
-                  title: 'Custom Date Range',
-                  icon: <CalendarIcon className="h-4 w-4" />,
-                  type: 'custom' as const,
-                  span: 'full' as const,
-                  options: [],
-                  selected: '',
-                  onSelect: () => {},
-                  customContent: (
-                    <div className={filterDateRangeGridClass}>
-                      <div>
-                        <label className={filterDateFieldLabelClass}>From Date</label>
-                        <input
-                          type="date"
-                          value={filters.date_from || ''}
-                          onChange={(e) =>
-                            handleFilterChange('date_from', e.target.value || undefined)
-                          }
-                          className={filterSelectClass}
-                        />
-                      </div>
-                      <div>
-                        <label className={filterDateFieldLabelClass}>To Date</label>
-                        <input
-                          type="date"
-                          value={filters.date_to || ''}
-                          onChange={(e) =>
-                            handleFilterChange('date_to', e.target.value || undefined)
-                          }
-                          className={filterSelectClass}
-                        />
-                      </div>
-                    </div>
-                  ),
-                },
-              ]
-            : []),
-        ]}
+        onSetCustomDateRange={setIsCustomDateRange}
+        onSetUnitFilterLabel={setUnitFilterLabel}
+        onSetUserFilterLabel={setUserFilterLabel}
       />
 
 
@@ -899,240 +458,16 @@ export default function AccessHistoryPage() {
                 </tr>
               </thead>
               <tbody className="bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700">
-                {logs.map((log) => {
-                  const ActionIcon = getActionIcon(log);
-                  const MethodIcon = getMethodIcon(log);
-                  const isExpanded = expandedRow === log.id;
-                  const metadata = getAccessLogMetadata(log);
-                  const userDisplay = getAccessUserDisplay(log);
-                  const userLink = getAccessLogUserLink(log);
-                  const locationDisplay = getAccessLocationDisplay(log, { hideFacility: isFacilityScoped });
-                  const statusDisplay = getAccessStatusDisplay(log);
-                  const actionLabel = formatAccessAction(log);
-                  const actionToneClass = getAccessActionToneClass(log)
-                    || actionColors[log.action as keyof typeof actionColors]
-                    || (log.success ? 'text-gray-900 dark:text-white' : 'text-red-600 dark:text-red-400');
-                  const showsDenialInLabel = /\b(denied|failed)\b/i.test(actionLabel);
-                  const showOverrideBadge = hasOccupiedUnlockOverride(log);
-                  const overrideSubtitle = formatOccupiedUnlockOverrideSubtitle(log);
-                  
-                  return (
-                    <Fragment key={log.id}>
-                      <tr 
-                        id={generateHighlightId('access-log', log.id)}
-                        className={`group cursor-pointer transition-colors duration-200 hover:bg-blue-50/70 dark:hover:bg-blue-900/10 ${
-                          isExpanded ? 'bg-blue-50/60 dark:bg-blue-900/15' : ''
-                        } ${
-                          showOverrideBadge
-                            ? 'border-l-4 border-amber-700 dark:border-amber-400 bg-amber-50/70 dark:bg-amber-950/25 hover:bg-amber-50 dark:hover:bg-amber-950/35'
-                            : ''
-                        }`}
-                        onClick={() => toggleRowExpansion(log.id)}
-                        aria-expanded={isExpanded}
-                      >
-                        <td className="px-4 py-3 align-middle">
-                          <div className="flex items-center gap-2.5 min-w-0">
-                            <div
-                              className={`relative flex h-8 w-8 shrink-0 items-center justify-center rounded-lg ${getAccessActionIconTileClass(log)}`}
-                            >
-                              <ActionIcon className={`h-4 w-4 ${actionToneClass}`} />
-                            </div>
-                            <div className="min-w-0 flex-1">
-                              <div className="flex min-w-0 items-center gap-1.5">
-                                <div
-                                  className={`truncate text-sm font-medium ${actionToneClass}`}
-                                  title={actionLabel}
-                                >
-                                  {actionLabel}
-                                </div>
-                                {showOverrideBadge && (
-                                  <span
-                                    className="inline-flex shrink-0 items-center rounded-full bg-amber-200/90 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-900 dark:bg-amber-900/70 dark:text-amber-200"
-                                    title="Occupied unit override"
-                                  >
-                                    Override
-                                  </span>
-                                )}
-                              </div>
-                              {overrideSubtitle && (
-                                <div className="mt-0.5 truncate text-[11px] font-medium text-amber-800 dark:text-amber-300/90">
-                                  {overrideSubtitle}
-                                </div>
-                              )}
-                              {!log.success && !showsDenialInLabel && (
-                                <div className="mt-0.5 text-[11px] font-medium text-red-600 dark:text-red-400">
-                                  Denied
-                                </div>
-                              )}
-                            </div>
-                          </div>
-                        </td>
-                        <td className="px-4 py-3 align-middle">
-                          <div className="flex items-center min-w-0 gap-2">
-                            <UserIcon className="h-4 w-4 shrink-0 text-gray-400" />
-                            <div className="min-w-0 flex-1">
-                              {userLink ? (
-                                <button
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    handleNavigation(userLink.href, userLink.id, 'user');
-                                  }}
-                                  className="block max-w-full truncate text-left text-sm font-medium text-primary-600 dark:text-primary-400 hover:text-primary-700 dark:hover:text-primary-300 transition-colors duration-200"
-                                  title={userLink.label}
-                                >
-                                  <span className="inline-flex max-w-full items-center">
-                                    <span className="truncate">{userLink.label}</span>
-                                    <LinkIcon className="ml-1 h-3 w-3 shrink-0" />
-                                  </span>
-                                </button>
-                              ) : (
-                                <div
-                                  className="truncate text-sm font-medium text-gray-900 dark:text-white"
-                                  title={userDisplay.primary}
-                                >
-                                  {userDisplay.primary}
-                                </div>
-                              )}
-                              {userDisplay.secondary && (
-                                <div
-                                  className="truncate text-xs text-gray-500 dark:text-gray-400"
-                                  title={userDisplay.secondary}
-                                >
-                                  {userDisplay.secondary}
-                                </div>
-                              )}
-                            </div>
-                          </div>
-                        </td>
-                        <td className="px-4 py-3 align-middle">
-                          <div className="flex items-center min-w-0 gap-2">
-                            {log.device_type === 'blulok' ? (
-                              <BuildingStorefrontIcon className="h-4 w-4 shrink-0 text-gray-400" />
-                            ) : (
-                              <CpuChipIcon className="h-4 w-4 shrink-0 text-gray-400" />
-                            )}
-                            <div className="min-w-0 flex-1">
-                              {!isFacilityScoped && metadata.facility ? (
-                                <button
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    handleNavigation(metadata.facility!.navigation_url, metadata.facility!.id, 'facility');
-                                  }}
-                                  className="block max-w-full truncate text-left text-sm font-medium text-primary-600 dark:text-primary-400 hover:text-primary-700 dark:hover:text-primary-300 transition-colors duration-200"
-                                  title={locationDisplay.primary}
-                                >
-                                  <span className="inline-flex max-w-full items-center">
-                                    <span className="truncate">{locationDisplay.primary}</span>
-                                    <LinkIcon className="ml-1 h-3 w-3 shrink-0" />
-                                  </span>
-                                </button>
-                              ) : (
-                                <div
-                                  className="truncate text-sm font-medium text-gray-900 dark:text-white"
-                                  title={locationDisplay.primary}
-                                >
-                                  {metadata.unit ? (
-                                    <button
-                                      onClick={(e) => {
-                                        e.stopPropagation();
-                                        handleNavigation(metadata.unit!.navigation_url, metadata.unit!.id, 'unit');
-                                      }}
-                                      className="inline-flex max-w-full items-center truncate text-primary-600 dark:text-primary-400 hover:text-primary-700 dark:hover:text-primary-300 transition-colors duration-200"
-                                    >
-                                      <span className="truncate">{locationDisplay.primary}</span>
-                                      <LinkIcon className="ml-1 h-3 w-3 shrink-0" />
-                                    </button>
-                                  ) : metadata.device ? (
-                                    <button
-                                      onClick={(e) => {
-                                        e.stopPropagation();
-                                        handleNavigation(metadata.device!.navigation_url, metadata.device!.id, 'device');
-                                      }}
-                                      className="inline-flex max-w-full items-center truncate text-primary-600 dark:text-primary-400 hover:text-primary-700 dark:hover:text-primary-300 transition-colors duration-200"
-                                    >
-                                      <span className="truncate">{locationDisplay.primary}</span>
-                                      <LinkIcon className="ml-1 h-3 w-3 shrink-0" />
-                                    </button>
-                                  ) : (
-                                    locationDisplay.primary
-                                  )}
-                                </div>
-                              )}
-                              {locationDisplay.secondary && (
-                                <div
-                                  className="truncate text-xs text-gray-500 dark:text-gray-400"
-                                  title={locationDisplay.secondary}
-                                >
-                                  {locationDisplay.secondary}
-                                </div>
-                              )}
-                            </div>
-                          </div>
-                        </td>
-                        <td className="px-4 py-3 align-middle">
-                          <div className="flex min-w-0 items-center gap-1.5">
-                            <MethodIcon
-                              className={`h-4 w-4 shrink-0 ${getAccessMethodToneClass(log)}`}
-                            />
-                            <span
-                              className="truncate text-sm text-gray-900 dark:text-white"
-                              title={formatAccessMethod(log)}
-                            >
-                              {formatAccessMethod(log)}
-                            </span>
-                          </div>
-                        </td>
-                        <td className="px-4 py-3 align-middle whitespace-nowrap">
-                          <span className={`inline-flex max-w-full items-center truncate rounded-full px-2.5 py-1 text-xs font-medium ${
-                            statusDisplay.tone === 'success'
-                              ? 'bg-green-100 text-green-800 dark:bg-green-900/20 dark:text-green-400'
-                              : statusDisplay.tone === 'pending'
-                                ? 'bg-amber-100 text-amber-800 dark:bg-amber-900/20 dark:text-amber-400'
-                                : 'bg-red-100 text-red-800 dark:bg-red-900/20 dark:text-red-400'
-                          }`}>
-                            {statusDisplay.tone === 'success' ? (
-                              <CheckCircleIcon className="mr-1 h-3.5 w-3.5 shrink-0" />
-                            ) : statusDisplay.tone === 'pending' ? (
-                              <ClockIcon className="mr-1 h-3.5 w-3.5 shrink-0" />
-                            ) : (
-                              <XCircleIcon className="mr-1 h-3.5 w-3.5 shrink-0" />
-                            )}
-                            <span className="truncate">{statusDisplay.label}</span>
-                          </span>
-                        </td>
-                        <td className="px-4 py-3 align-middle whitespace-nowrap">
-                          <div className="text-sm text-gray-900 dark:text-white">
-                            {formatOccurredAt(log.occurred_at)}
-                          </div>
-                          {log.duration_seconds ? (
-                            <div className="truncate text-xs text-gray-500 dark:text-gray-400">
-                              Duration: {formatDuration(log.duration_seconds)}
-                            </div>
-                          ) : null}
-                        </td>
-                        <td className="px-2 py-3 align-middle text-center whitespace-nowrap">
-                          {isExpanded ? (
-                            <ChevronUpIcon className="mx-auto h-4 w-4 text-gray-400" />
-                          ) : (
-                            <ChevronRightIcon className="mx-auto h-4 w-4 text-gray-400" />
-                          )}
-                        </td>
-                      </tr>
-                      
-                      {isExpanded && (
-                        <tr className="bg-gray-50/50 dark:bg-gray-900/30">
-                          <td colSpan={7} className="px-4 py-3">
-                            <AccessLogExpandedDetails
-                              log={log}
-                              hideFacility={isFacilityScoped}
-                              onNavigate={handleNavigation}
-                            />
-                          </td>
-                        </tr>
-                      )}
-                    </Fragment>
-                  );
-                })}
+                {logs.map((log) => (
+                  <AccessHistoryTableRow
+                    key={log.id}
+                    log={log}
+                    isExpanded={expandedRow === log.id}
+                    hideFacility={isFacilityScoped}
+                    onToggle={toggleRowExpansion}
+                    onNavigate={handleNavigation}
+                  />
+                ))}
               </tbody>
             </table>
           </div>

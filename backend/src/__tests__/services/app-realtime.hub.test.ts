@@ -289,4 +289,111 @@ describe('AppRealtimeHub', () => {
     await hub.emitUnitsUpdate({ deviceId: 'dev-own' });
     expect(mockWs.send).toHaveBeenCalledTimes(1);
   });
+
+  it('emitDeviceStatusUpdate fans out only to tenants for their unit devices', async () => {
+    (FacilityAccessService.hasAccessToFacility as jest.Mock).mockResolvedValue(true);
+    await hub.subscribe(mockWs, tenantClient(), 'facility-1', 'sub-1');
+    (mockWs.send as jest.Mock).mockClear();
+
+    const deviceModel = (hub as any).deviceModel;
+    deviceModel.findBluLokDeviceById = jest.fn().mockResolvedValue({
+      id: 'dev-own',
+      unit_id: 'unit-a',
+      facility_id: 'facility-1',
+      lock_status: 'unlocked',
+      device_status: 'online',
+    });
+
+    await hub.emitDeviceStatusUpdate('dev-own');
+    expect(mockWs.send).toHaveBeenCalledTimes(1);
+    const payload = JSON.parse((mockWs.send as jest.Mock).mock.calls[0][0]);
+    expect(payload.event).toBe('device_status_update');
+    expect(payload.data.updatedDeviceId).toBe('dev-own');
+    expect(payload.data.devices[0].unit_id).toBe('unit-a');
+
+    (mockWs.send as jest.Mock).mockClear();
+    deviceModel.findBluLokDeviceById = jest.fn().mockResolvedValue({
+      id: 'dev-other',
+      unit_id: 'unit-b',
+      facility_id: 'facility-1',
+      lock_status: 'locked',
+      device_status: 'online',
+    });
+    await hub.emitDeviceStatusUpdate('dev-other');
+    expect(mockWs.send).not.toHaveBeenCalled();
+  });
+
+  it('emitDeviceStatusUpdate delivers facility-level access-control devices to facility admins', async () => {
+    (FacilityAccessService.hasAccessToFacility as jest.Mock).mockResolvedValue(true);
+    const faClient: AppRealtimeClient = {
+      userId: 'fa-1',
+      userRole: UserRole.FACILITY_ADMIN,
+      facilityIds: ['facility-1'],
+      lastClientHeartbeat: new Date(),
+      heartbeatCount: 0,
+    };
+    await hub.subscribe(mockWs, faClient, 'facility-1', 'sub-fa');
+    (mockWs.send as jest.Mock).mockClear();
+
+    const deviceModel = (hub as any).deviceModel;
+    deviceModel.findBluLokDeviceById = jest.fn().mockResolvedValue(null);
+    deviceModel.findAccessControlDeviceById = jest.fn().mockResolvedValue({
+      id: 'ac-1',
+      facility_id: 'facility-1',
+      name: 'Gate',
+      is_locked: true,
+      status: 'online',
+    });
+
+    await hub.emitDeviceStatusUpdate('ac-1');
+    expect(mockWs.send).toHaveBeenCalledTimes(1);
+    const payload = JSON.parse((mockWs.send as jest.Mock).mock.calls[0][0]);
+    expect(payload.event).toBe('device_status_update');
+    expect(payload.data.devices[0].id).toBe('ac-1');
+    expect(payload.data.devices[0].unit_id).toBeNull();
+  });
+
+  it('emitGatewayStatusUpdate ignores subscribers on other facilities', async () => {
+    (FacilityAccessService.hasAccessToFacility as jest.Mock).mockResolvedValue(true);
+    await hub.subscribe(mockWs, tenantClient(), 'facility-1', 'sub-1');
+    (mockWs.send as jest.Mock).mockClear();
+
+    await hub.emitGatewayStatusUpdate('facility-2');
+    expect(mockWs.send).not.toHaveBeenCalled();
+
+    await hub.emitGatewayStatusUpdate('facility-1');
+    expect(mockWs.send).toHaveBeenCalledTimes(1);
+    const payload = JSON.parse((mockWs.send as jest.Mock).mock.calls[0][0]);
+    expect(payload.event).toBe('gateway_status_update');
+    expect(payload.data.gateways[0].id).toBe('gw-1');
+  });
+
+  it('emitKeySharingUpdate uses shared_with_user_id for maintenance clients', async () => {
+    (FacilityAccessService.hasAccessToFacility as jest.Mock).mockResolvedValue(true);
+    const maintClient: AppRealtimeClient = {
+      userId: 'maint-1',
+      userRole: UserRole.MAINTENANCE,
+      facilityIds: ['facility-1'],
+      lastClientHeartbeat: new Date(),
+      heartbeatCount: 0,
+    };
+    await hub.subscribe(mockWs, maintClient, 'facility-1', 'sub-m');
+    (mockWs.send as jest.Mock).mockClear();
+
+    const keySharingModel = (hub as any).keySharingModel;
+    keySharingModel.findAll = jest.fn().mockResolvedValue({ sharings: [{ id: 'share-1' }], total: 1 });
+
+    await hub.emitKeySharingUpdate('facility-1');
+    expect(keySharingModel.findAll).toHaveBeenCalledWith(
+      expect.objectContaining({
+        is_active: true,
+        facility_ids: ['facility-1'],
+        shared_with_user_id: 'maint-1',
+      }),
+    );
+    expect(mockWs.send).toHaveBeenCalledTimes(1);
+    const payload = JSON.parse((mockWs.send as jest.Mock).mock.calls[0][0]);
+    expect(payload.event).toBe('key_sharing_update');
+    expect(payload.data.total).toBe(1);
+  });
 });

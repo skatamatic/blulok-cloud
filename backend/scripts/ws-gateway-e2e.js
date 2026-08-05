@@ -32,6 +32,32 @@ const {
   connectGatewayWsZtp,
 } = require('./ws-gateway-e2e-auth');
 
+const { C, delay, heading, ok, warn, info, step } = require('./ws-gateway-e2e/logging');
+const { authHeaders } = require('./ws-gateway-e2e/auth-headers');
+const {
+  gwLockDevice,
+  gwAccessDevice,
+  gwBridgeDevice,
+  gwFriendNodeDevice,
+  gwGatewayInventoryUpdate,
+} = require('./ws-gateway-e2e/device-payloads');
+const {
+  waitForProxyResponse,
+  waitForDeviceStatusLockStatus,
+  waitForDeviceStatusRow,
+  waitForWsEvent,
+  waitForAppEvent,
+} = require('./ws-gateway-e2e/ws-waiters');
+const {
+  base64UrlDecode,
+  decodeJwtClaims,
+  assertRoutePassUserRole,
+  assertLockCommandExpiresAt,
+  assertLockCommandOpenUntil,
+  assertLockCommandOmitsOpenUntil,
+} = require('./ws-gateway-e2e/jwt-assertions');
+const { createWsConnect } = require('./ws-gateway-e2e/ws-connect');
+
 /** Keep aligned with backend/src/constants/firmware-chunk.constants.ts */
 const FIRMWARE_CHUNK_SIZE_BYTES = 2356320;
 const FIRMWARE_BULK_E2E_SIZE_BYTES = 50 * 1024 * 1024;
@@ -102,27 +128,6 @@ function resolveE2eEndpoints() {
 const { API_BASE, WS_URL, UI_WS_URL, port: E2E_RESOLVED_PORT, portSource: E2E_PORT_SOURCE } = resolveE2eEndpoints();
 const APP_WS_URL = process.env.APP_WS_URL?.trim() || UI_WS_URL.replace(/\/ws\/?$/, '/ws/app');
 
-/** Gateway PROXY inventory/state payloads require explicit kind. */
-function gwLockDevice(fields) {
-  return { kind: 'lock', ...fields };
-}
-
-function gwAccessDevice(fields) {
-  return { kind: 'access_control', ...fields };
-}
-
-function gwBridgeDevice(fields) {
-  return { kind: 'bridge', ...fields };
-}
-
-function gwFriendNodeDevice(fields) {
-  return { kind: 'friend_node', ...fields };
-}
-
-function gwGatewayInventoryUpdate(fields) {
-  return { kind: 'gateway', ...fields };
-}
-
 async function findNetworkInfraBySerial(token, facilityId, serial, deviceKind) {
   const res = await axios.get(`${API_BASE}/devices`, {
     headers: { Authorization: `Bearer ${token}` },
@@ -150,39 +155,6 @@ const VERBOSE = process.env.E2E_VERBOSE === '1' || process.env.VERBOSE === '1' |
 
 axios.defaults.timeout = Number(process.env.HTTP_TIMEOUT_MS) || 15000;
 
-function delay(ms) { return new Promise((res) => setTimeout(res, ms)); }
-
-/**
- * Poll `device_status_update` payloads (same channel/filters as the dashboard: subscriptionType
- * `device_status`, `data: { device_id }`) until the row for `deviceId` has `lock_status`.
- * `expected` may be a single status or a list (e.g. `['locking','locked']` after HTTP CLOSE — API uses transitional states).
- */
-async function waitForDeviceStatusLockStatus(events, deviceId, expected, startLen, timeoutMs) {
-  const wanted = Array.isArray(expected) ? expected : [expected];
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    for (let i = startLen; i < events.length; i++) {
-      const d = events[i]?.data?.devices?.find((x) => x.id === deviceId);
-      if (d && wanted.includes(d.lock_status)) return d;
-    }
-    await delay(200);
-  }
-  return null;
-}
-
-/** Poll device_status_update until a row for `deviceId` satisfies `predicate`. */
-async function waitForDeviceStatusRow(events, deviceId, predicate, startLen, timeoutMs) {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    for (let i = startLen; i < events.length; i++) {
-      const d = events[i]?.data?.devices?.find((x) => x.id === deviceId);
-      if (d && predicate(d)) return d;
-    }
-    await delay(200);
-  }
-  return null;
-}
-
 function readBluLokDisplayName(device) {
   const settings = device?.device_settings;
   if (settings && typeof settings === 'object') {
@@ -192,193 +164,7 @@ function readBluLokDisplayName(device) {
   return '';
 }
 
-async function connectDeviceStatusWatcher(token) {
-  const events = [];
-  const wsUrl = `${UI_WS_URL}?token=${token}`;
-  const ws = new WebSocket(wsUrl);
-  await new Promise((res, rej) => {
-    ws.once('open', res);
-    ws.once('error', rej);
-  });
-  ws.on('message', (data) => {
-    try {
-      const msg = JSON.parse(data.toString());
-      if (VERBOSE) console.log('[WS-DEV-STATUS <-]', data.toString());
-      if (msg.type === 'device_status_update' && msg.data) {
-        events.push(msg);
-      }
-    } catch {
-      /* ignore */
-    }
-  });
-  return { ws, events };
-}
-
-async function subscribeDeviceStatusAndWaitInitial(ws, events, deviceId, timeoutMs = 8000) {
-  ws.send(JSON.stringify({
-    type: 'subscription',
-    subscriptionType: 'device_status',
-    data: { device_id: deviceId },
-  }));
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    if (events.some((e) => e.data?.devices?.some((d) => d.id === deviceId))) {
-      return events.find((e) => e.data?.devices?.some((d) => d.id === deviceId));
-    }
-    await delay(200);
-  }
-  return null;
-}
-
-function closeDeviceStatusWatcher(ws) {
-  if (ws && ws.readyState === WebSocket.OPEN) {
-    ws.close();
-  }
-}
-
-async function waitForWsEvent(events, predicate, startLen = 0, timeoutMs = 8000) {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    for (let i = startLen; i < events.length; i++) {
-      if (predicate(events[i])) return events[i];
-    }
-    await delay(200);
-  }
-  return null;
-}
-
-async function connectUiWsMessageCollector(token, messageFilter) {
-  const events = [];
-  const ws = new WebSocket(`${UI_WS_URL}?token=${token}`);
-  await new Promise((resolve, reject) => {
-    const timeout = setTimeout(() => reject(new Error('UI WS open timeout')), 5000);
-    ws.once('open', () => {
-      clearTimeout(timeout);
-      resolve(null);
-    });
-    ws.once('error', (err) => {
-      clearTimeout(timeout);
-      reject(err);
-    });
-  });
-  ws.on('message', (data) => {
-    try {
-      const msg = JSON.parse(data.toString());
-      if (VERBOSE) console.log('[WS-UI <-]', data.toString());
-      if (messageFilter(msg)) events.push(msg);
-    } catch {
-      /* ignore */
-    }
-  });
-  return { ws, events };
-}
-
-async function waitForWsControlMessage(ws, predicate, timeoutMs = 8000) {
-  return new Promise((resolve, reject) => {
-    const timeout = setTimeout(() => reject(new Error('Timed out waiting for WS control message')), timeoutMs);
-    const onMessage = (data) => {
-      try {
-        const msg = JSON.parse(data.toString());
-        if (predicate(msg)) {
-          ws.off('message', onMessage);
-          clearTimeout(timeout);
-          resolve(msg);
-        }
-      } catch {
-        /* ignore */
-      }
-    };
-    ws.on('message', onMessage);
-  });
-}
-
-async function connectAppWs(token) {
-  const events = [];
-  const control = [];
-  const ws = new WebSocket(`${APP_WS_URL}?token=${encodeURIComponent(token)}`);
-  await new Promise((resolve, reject) => {
-    const timeout = setTimeout(() => reject(new Error('App WS open timeout')), 5000);
-    ws.once('open', () => {
-      clearTimeout(timeout);
-      resolve(null);
-    });
-    ws.once('error', (err) => {
-      clearTimeout(timeout);
-      reject(err);
-    });
-  });
-  ws.on('message', (data) => {
-    try {
-      const msg = JSON.parse(data.toString());
-      if (VERBOSE) console.log('[WS-APP <-]', data.toString());
-      if (msg.type === 'app_event') events.push(msg);
-      else control.push(msg);
-    } catch {
-      /* ignore */
-    }
-  });
-  return { ws, events, control };
-}
-
-async function subscribeAppFacility(ws, facilityId, timeoutMs = 8000) {
-  return new Promise((resolve, reject) => {
-    const timeout = setTimeout(() => reject(new Error('App subscribe timeout')), timeoutMs);
-    const onMessage = (data) => {
-      try {
-        const msg = JSON.parse(data.toString());
-        if (msg.type === 'subscription' && msg.subscriptionType === 'app') {
-          cleanup();
-          resolve(msg);
-        } else if (msg.type === 'error') {
-          cleanup();
-          reject(new Error(msg.error || 'App subscribe error'));
-        }
-      } catch {
-        /* ignore */
-      }
-    };
-    const cleanup = () => {
-      clearTimeout(timeout);
-      ws.off('message', onMessage);
-    };
-    ws.on('message', onMessage);
-    ws.send(JSON.stringify({
-      type: 'subscription',
-      subscriptionType: 'app',
-      data: { facility_id: facilityId },
-    }));
-  });
-}
-
-async function waitForAppEvent(events, eventName, startLen = 0, timeoutMs = 8000) {
-  return waitForWsEvent(
-    events,
-    (msg) => msg.type === 'app_event' && msg.event === eventName,
-    startLen,
-    timeoutMs,
-  );
-}
-
-function closeAppWs(ws) {
-  if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) {
-    try { ws.close(); } catch { /* ignore */ }
-  }
-}
-
 // Minimal ANSI color helpers (no external deps)
-const C = {
-  reset: '\x1b[0m',
-  bold: (s) => `\x1b[1m${s}\x1b[0m`,
-  dim: (s) => `\x1b[2m${s}\x1b[0m`,
-  red: (s) => `\x1b[31m${s}\x1b[0m`,
-  green: (s) => `\x1b[32m${s}\x1b[0m`,
-  yellow: (s) => `\x1b[33m${s}\x1b[0m`,
-  blue: (s) => `\x1b[34m${s}\x1b[0m`,
-  magenta: (s) => `\x1b[35m${s}\x1b[0m`,
-  cyan: (s) => `\x1b[36m${s}\x1b[0m`,
-  gray: (s) => `\x1b[90m${s}\x1b[0m`,
-};
-
 const TEST_FACILITY_NAME = 'E2E-Test-Facility';
 const STALE_USER_EMAIL_PREFIXES = [
   'fac-admin-',
@@ -390,10 +176,6 @@ const STALE_USER_EMAIL_PREFIXES = [
 ];
 let accessCodeAckMode = 'accept'; // accept | reject | ignore
 let deviceDeletionAckMode = 'accept'; // accept | hold | reject
-
-function authHeaders(token) {
-  return { Authorization: `Bearer ${token}` };
-}
 
 /** Chaos soak coalesces pushes; wait until no delivery is in flight before failure-path tests. */
 async function waitForAccessCodePushIdle(token, facilityId, timeoutMs = 15000) {
@@ -577,25 +359,24 @@ async function setNotificationsTestMode(token, enabled) {
 
 // Track overall E2E success so we can print a clean result after cleanup
 let success = false;
-let notificationsWs = null;
+const notificationsWsRef = { current: null };
 const notificationEvents = [];
 const gatewayWsEvents = [];
-
-function heading(text) {
-  console.log(C.bold(C.cyan(`\n▸ ${text}`)));
-}
-function ok(text) {
-  console.log(C.green(`  ✔ ${text}`));
-}
-function warn(text) {
-  console.log(C.yellow(`  ⚠ ${text}`));
-}
-function info(text) {
-  console.log(C.blue(`  • ${text}`));
-}
-function step(text) {
-  console.log(C.magenta(`→ ${text}`));
-}
+// Populated after normalizeCmd is defined (see createWsConnect wire-up below).
+let connectDeviceStatusWatcher;
+let subscribeDeviceStatusAndWaitInitial;
+let closeDeviceStatusWatcher;
+let connectUiWsMessageCollector;
+let waitForWsControlMessage;
+let connectAppWs;
+let subscribeAppFacility;
+let closeAppWs;
+let proxyWs;
+let connectGatewayWsAndAuth;
+let connectNotificationsWs;
+let ensureNotificationsWs;
+let waitForNotification;
+let waitForGatewayEvent;
 
 // -------------------------
 // Local mock FMS server (generic_rest)
@@ -793,254 +574,6 @@ async function setupFmsWebhookFacility(token, {
     await ensureTenantAssignedToUnit(token, unit.id, tenantEmail);
   }
   return { facilityId, configId, unitId: unit.id, extStoredgeFacId, extUnitId, extTenantId, unitNumber };
-}
-
-// -------------------------
-// Helper utilities (pure)
-// -------------------------
-function base64UrlDecode(str) {
-  try {
-    const pad = (s) => s + '==='.slice((s.length + 3) % 4);
-    const b64 = pad(str).replace(/-/g, '+').replace(/_/g, '/');
-    const buf = Buffer.from(b64, 'base64');
-    return buf.toString('utf8');
-  } catch {
-    return '';
-  }
-}
-
-function decodeJwtClaims(jwt) {
-  const parts = (jwt || '').split('.');
-  if (parts.length < 2) return null;
-  try {
-    const payloadJson = base64UrlDecode(parts[1]);
-    const claims = JSON.parse(payloadJson);
-    return claims;
-  } catch {
-    return null;
-  }
-}
-
-/**
- * Route pass JWTs must include `user_role`: lowercase, underscore-separated (matches cloud UserRole).
- * @param {object|null} claims
- * @param {string} expectedLowerSnake e.g. 'tenant', 'facility_admin'
- */
-function assertRoutePassUserRole(claims, expectedLowerSnake) {
-  if (!claims || typeof claims.user_role !== 'string' || claims.user_role.length === 0) {
-    throw new Error('Route pass JWT must include non-empty user_role claim');
-  }
-  if (claims.user_role !== expectedLowerSnake) {
-    throw new Error(`Route pass user_role expected "${expectedLowerSnake}", got "${claims.user_role}"`);
-  }
-}
-
-/**
- * LOCK/UNLOCK command JWTs include expires_at (unix seconds): now + facility lock_command_timeout_sec.
- * timeoutSec 0 → expires_at 0 (no expiry on device).
- */
-function assertLockCommandExpiresAt(cmd, expectedTimeoutSec, slackSec = 15) {
-  if (!cmd || (cmd.cmd_type !== 'UNLOCK' && cmd.cmd_type !== 'LOCK')) {
-    throw new Error(`Expected LOCK/UNLOCK command, got ${JSON.stringify(cmd)}`);
-  }
-  if (typeof cmd.expires_at !== 'number') {
-    throw new Error(`Lock command missing numeric expires_at: ${JSON.stringify(cmd)}`);
-  }
-  if (expectedTimeoutSec === 0) {
-    if (cmd.expires_at !== 0) {
-      throw new Error(`Expected expires_at=0 for one-shot timeout, got ${cmd.expires_at}`);
-    }
-    return;
-  }
-  const now = Math.floor(Date.now() / 1000);
-  const expected = now + expectedTimeoutSec;
-  if (cmd.expires_at < now - 2) {
-    throw new Error(`expires_at ${cmd.expires_at} is before now (${now})`);
-  }
-  if (Math.abs(cmd.expires_at - expected) > slackSec) {
-    throw new Error(
-      `expires_at ${cmd.expires_at} not within ${slackSec}s of expected ${expected} (timeout ${expectedTimeoutSec}s)`,
-    );
-  }
-}
-
-/** UNLOCK with timed open must include open_until (unix UTC seconds) within slack of expected. */
-function assertLockCommandOpenUntil(cmd, expectedOpenUntil, slackSec = 15) {
-  if (!cmd || cmd.cmd_type !== 'UNLOCK') {
-    throw new Error(`Expected UNLOCK command, got ${JSON.stringify(cmd)}`);
-  }
-  if (typeof cmd.open_until !== 'number') {
-    throw new Error(`Timed UNLOCK missing numeric open_until: ${JSON.stringify(cmd)}`);
-  }
-  if (Math.abs(cmd.open_until - expectedOpenUntil) > slackSec) {
-    throw new Error(
-      `open_until ${cmd.open_until} not within ${slackSec}s of expected ${expectedOpenUntil}`,
-    );
-  }
-}
-
-/** One-shot UNLOCK must omit open_until. */
-function assertLockCommandOmitsOpenUntil(cmd) {
-  if (!cmd || cmd.cmd_type !== 'UNLOCK') {
-    throw new Error(`Expected UNLOCK command, got ${JSON.stringify(cmd)}`);
-  }
-  if (cmd.open_until != null) {
-    throw new Error(`Expected no open_until on one-shot UNLOCK, got ${cmd.open_until}`);
-  }
-}
-
-// -------------------------
-// HTTP and WS helpers
-// -------------------------
-async function proxyWs(ws, id, method, path, { query, body } = {}) {
-  ws.send(JSON.stringify({ type: 'PROXY_REQUEST', id, method, path, query, body }));
-  return await waitForProxyResponse(ws, id);
-}
-
-async function connectGatewayWsAndAuth(wsUrl, token, facilityId, gatewayId, authExtras = {}) {
-  if (!gatewayId) throw new Error('gatewayId required for gateway WS AUTH');
-
-  const attachHandlers = (ws) => {
-    ws.on('message', (data) => {
-      try {
-        if (VERBOSE) console.log('[WS <-]', data.toString());
-        const msg = JSON.parse(data.toString());
-        gatewayWsEvents.push(msg);
-        if (msg?.type === 'PING') ws.send(JSON.stringify({ type: 'PONG' }));
-        const cmd = normalizeCmd(msg);
-        if (cmd?.cmd_type === 'ACCESS_CODE_UPDATE' && cmd?.nonce) {
-          if (accessCodeAckMode === 'accept') {
-            ws.send(JSON.stringify({
-              type: 'ACCESS_CODE_UPDATE_ACK',
-              nonce: cmd.nonce,
-              accepted: true,
-            }));
-          } else if (accessCodeAckMode === 'reject') {
-            ws.send(JSON.stringify({
-              type: 'ACCESS_CODE_UPDATE_ACK',
-              nonce: cmd.nonce,
-              accepted: false,
-              message: 'e2e-forced-reject',
-            }));
-          }
-        }
-        if (cmd?.cmd_type === 'DEVICE_DELETED' && cmd?.nonce) {
-          if (deviceDeletionAckMode === 'accept') {
-            ws.send(JSON.stringify({
-              type: 'DEVICE_DELETED_ACK',
-              nonce: cmd.nonce,
-              success: true,
-            }));
-          } else if (deviceDeletionAckMode === 'reject') {
-            ws.send(JSON.stringify({
-              type: 'DEVICE_DELETED_ACK',
-              nonce: cmd.nonce,
-              success: false,
-              error: 'e2e-forced-reject',
-            }));
-          }
-        }
-      } catch {}
-    });
-  };
-
-  if (E2E_GATEWAY_AUTH === 'ztp') {
-    const fixture = getZtpFixture();
-    // Only the primary ZTP-claimed gateway uses ECDSA; swap/bulk JWT sections stay on legacy AUTH
-    if (fixture?.privateKeyPem && fixture.deviceId === gatewayId) {
-      const { ws, authOk } = await connectGatewayWsZtp(wsUrl, {
-        privateKeyPem: fixture.privateKeyPem,
-        gatewayId,
-        facilityId,
-        firmware_version: authExtras.firmware_version,
-        onMessageSetup: attachHandlers,
-      });
-      ws._authOkData = authOk;
-      return ws;
-    }
-  }
-
-  const ws = new WebSocket(wsUrl);
-  await new Promise((res, rej) => { ws.once('open', res); ws.once('error', rej); });
-  attachHandlers(ws);
-  const authMsg = { type: 'AUTH', token, facilityId, gatewayId };
-  if (authExtras.firmware_version) authMsg.firmware_version = authExtras.firmware_version;
-  if (VERBOSE) console.log('[WS ->]', JSON.stringify(authMsg));
-  ws.send(JSON.stringify(authMsg));
-  let authOkData = null;
-  await new Promise((res, rej) => {
-    const timer = setTimeout(() => rej(new Error('AUTH timeout')), 4000);
-    ws.once('message', (data) => {
-      try {
-        if (VERBOSE) console.log('[WS <-]', data.toString());
-        const m = JSON.parse(data.toString());
-        if (m?.type === 'AUTH_OK' && m.facilityId === facilityId) { authOkData = m; clearTimeout(timer); res(null); }
-        else { clearTimeout(timer); rej(new Error('AUTH not ok')); }
-      } catch (e) { clearTimeout(timer); rej(e); }
-    });
-  });
-  ws._authOkData = authOkData;
-  return ws;
-}
-
-async function connectNotificationsWs(token) {
-  const url = `${UI_WS_URL}?token=${token}`;
-  const ws = new WebSocket(url);
-  await new Promise((res, rej) => { ws.once('open', res); ws.once('error', rej); });
-  ws.on('message', (data) => {
-    try {
-      const msg = JSON.parse(data.toString());
-      if (VERBOSE) console.log('[WS-DEV <-]', data.toString());
-      if (msg.type === 'dev_notifications_update' && msg.data) {
-        notificationEvents.push(msg.data);
-      }
-    } catch {}
-  });
-  ws.send(JSON.stringify({
-    type: 'subscription',
-    subscriptionType: 'dev_notifications',
-  }));
-  return ws;
-}
-
-/** Re-open dev_notifications watcher if flood/churn or idle timeout dropped it. */
-async function ensureNotificationsWs(token) {
-  if (notificationsWs && notificationsWs.readyState === WebSocket.OPEN) {
-    return notificationsWs;
-  }
-  try {
-    notificationsWs?.terminate();
-  } catch {
-    /* ignore */
-  }
-  notificationEvents.length = 0;
-  notificationsWs = await connectNotificationsWs(token);
-  await delay(300);
-  return notificationsWs;
-}
-
-async function waitForNotification(predicate, timeoutMs = 15000) {
-  const started = Date.now();
-  while (Date.now() - started < timeoutMs) {
-    const idx = notificationEvents.findIndex(predicate);
-    if (idx >= 0) {
-      return notificationEvents.splice(idx, 1)[0];
-    }
-    await delay(200);
-  }
-  throw new Error('Timed out waiting for DEV_NOTIFICATION event');
-}
-
-async function waitForGatewayEvent(predicate, timeoutMs = 5000) {
-  const started = Date.now();
-  while (Date.now() - started < timeoutMs) {
-    const idx = gatewayWsEvents.findIndex(predicate);
-    if (idx >= 0) {
-      return gatewayWsEvents.splice(idx, 1)[0];
-    }
-    await delay(100);
-  }
-  throw new Error('Timed out waiting for gateway WS event');
 }
 
 function inventorySync(ws, facilityId, devices, id, extra = {}) {
@@ -1915,6 +1448,40 @@ function normalizeCmd(msg) {
   return null;
 }
 
+
+const _wsConnect = createWsConnect({
+  WebSocket,
+  get UI_WS_URL() { return UI_WS_URL; },
+  get APP_WS_URL() { return APP_WS_URL; },
+  get VERBOSE() { return VERBOSE; },
+  get E2E_GATEWAY_AUTH() { return E2E_GATEWAY_AUTH; },
+  getZtpFixture,
+  connectGatewayWsZtp,
+  gatewayWsEvents,
+  notificationEvents,
+  notificationsWsRef,
+  getAccessCodeAckMode: () => accessCodeAckMode,
+  getDeviceDeletionAckMode: () => deviceDeletionAckMode,
+  normalizeCmd,
+});
+({
+  connectDeviceStatusWatcher,
+  subscribeDeviceStatusAndWaitInitial,
+  closeDeviceStatusWatcher,
+  connectUiWsMessageCollector,
+  waitForWsControlMessage,
+  connectAppWs,
+  subscribeAppFacility,
+  closeAppWs,
+  proxyWs,
+  connectGatewayWsAndAuth,
+  connectNotificationsWs,
+  ensureNotificationsWs,
+  waitForNotification,
+  waitForGatewayEvent,
+} = _wsConnect);
+
+
 function waitForCommand(ws, predicate, timeoutMs = 15000) {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => {
@@ -2435,22 +2002,6 @@ function handleResumedFirmwareDelivery(ws, opsKeyB64, timeoutMs = 90000) {
   });
 }
 
-function waitForProxyResponse(ws, id, timeoutMs = 10000) {
-  return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => { cleanup(); reject(new Error(`Timed out waiting for PROXY_RESPONSE id=${id}`)); }, timeoutMs);
-    const onMsg = (data) => {
-      try {
-        const m = JSON.parse(data.toString());
-        if (m && m.type === 'PROXY_RESPONSE' && m.id === id) { cleanup(); resolve(m); }
-      } catch {}
-    };
-    const onErr = (err) => { cleanup(); reject(err); };
-    const cleanup = () => { clearTimeout(timer); ws.removeListener('message', onMsg); ws.removeListener('error', onErr); };
-    ws.on('message', onMsg);
-    ws.on('error', onErr);
-  });
-}
-
 async function waitForTelemetryLogWsEvent(events, predicate, timeoutMs = 8000) {
   const started = Date.now();
   while (Date.now() - started < timeoutMs) {
@@ -2649,7 +2200,7 @@ async function run() {
   ok('Firmware storage configured to local test path');
 
   // Connect dev-notifications WebSocket for observing invites/OTPs
-  notificationsWs = await connectNotificationsWs(token);
+  notificationsWsRef.current = await connectNotificationsWs(token);
 
   // Connect gateway WS
   let ws = await connectGatewayWsAndAuth(WS_URL, token, facilityId, gatewayId);
@@ -13445,7 +12996,7 @@ async function run() {
       console.error(C.red(`Cleanup encountered errors: ${e?.response?.data || e?.message || e}`));
     } finally {
       try { ws.close(1000, 'e2e_cleanup'); } catch {}
-      try { if (notificationsWs) notificationsWs.close(1000, 'e2e_cleanup'); } catch {}
+      try { if (notificationsWsRef.current) notificationsWsRef.current.close(1000, 'e2e_cleanup'); } catch {}
       if (rateLimitBypassEnabled) {
         await setRateLimitBypass(token, false);
         rateLimitBypassEnabled = false;

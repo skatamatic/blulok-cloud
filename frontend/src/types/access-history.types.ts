@@ -49,27 +49,6 @@ export interface AccessLog {
   actor_type?: string;
 }
 
-export interface AccessHistoryFilters {
-  user_id?: string;
-  facility_id?: string;
-  unit_id?: string;
-  action?: string;
-  method?: string;
-  denial_reason?: string;
-  credential_type?: string;
-  date_from?: string;
-  date_to?: string;
-  limit?: number;
-  offset?: number;
-}
-
-export interface AccessHistoryResponse {
-  logs: AccessLog[];
-  total: number;
-  limit: number;
-  offset: number;
-}
-
 export interface KeySharing {
   id: string;
   unit_id: string;

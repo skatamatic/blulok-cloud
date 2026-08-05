@@ -14,6 +14,17 @@ jest.mock('@/services/api.service', () => ({
   },
 }));
 
+jest.mock('@/contexts/AuthContext', () => {
+  const authState = { user: { id: 'user-1' } };
+  return {
+    useAuth: () => ({ authState }),
+  };
+});
+
+jest.mock('@/hooks/useWebSocketSubscription', () => ({
+  useWebSocketSubscription: jest.fn(),
+}));
+
 jest.mock('@/contexts/WebSocketContext', () => ({
   useWebSocket: () => ({
     subscribe: jest.fn(() => 'activity-subscription'),

@@ -6,7 +6,6 @@ import { AccessLogFilters, AccessLogModel } from '@/models/access-log.model';
 import {
   ACCESS_HISTORY_ACTIVITY_TYPES,
   buildAccessFailureSummary,
-  DASHBOARD_ACTIVITY_TYPES,
   isGatewaySyncActivityDescription,
   MAX_ACCESS_HISTORY_EXPORT,
 } from '@/constants/access-history.constants';
@@ -64,7 +63,6 @@ export class AccessHistoryReadService {
   private readonly scopeService = new AccessEventScopeService();
   private readonly legacyAccessLogModel = new AccessLogModel();
 
-  static readonly DASHBOARD_ACTIVITY_TYPES = DASHBOARD_ACTIVITY_TYPES;
   static readonly ACCESS_HISTORY_ACTIVITY_TYPES = ACCESS_HISTORY_ACTIVITY_TYPES;
 
   /** Load a single access history row with presentation fields (for live WS updates). */
@@ -115,7 +113,7 @@ export class AccessHistoryReadService {
         date_to: filters.date_to ? parseQueryDateTo(filters.date_to) : undefined,
         limit: Math.min(filters.limit || 50, 100),
         offset: Math.max(filters.offset || 0, 0),
-        sort_by: filters.sort_by === 'created_at' ? 'occurred_at' : 'occurred_at',
+        sort_by: 'occurred_at',
         sort_order: filters.sort_order === 'asc' ? 'asc' : 'desc',
       };
       if (role === UserRole.TENANT && scope.allowedUnitIds) {

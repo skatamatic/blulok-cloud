@@ -1,8 +1,7 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { useWidgetSizeState } from '@/hooks/useWidgetSizeState';
 import { 
   ClockIcon,
-  UserIcon,
   LockClosedIcon,
   LockOpenIcon,
   KeyIcon,
@@ -15,7 +14,8 @@ import { WidgetSize } from './WidgetSizeDropdown';
 import { motion } from 'framer-motion';
 import { apiService } from '@/services/api.service';
 import { AccessLog } from '@/types/access-history.types';
-import { useWebSocketSubscription } from '@/hooks/useWebSocketSubscription';
+import { useAuth } from '@/contexts/AuthContext';
+import { useAccessHistoryLiveUpdates } from '@/hooks/useAccessHistoryLiveUpdates';
 import {
   getWidgetLayoutProfile,
   isWideWidgetSize,
@@ -36,10 +36,8 @@ import { formatRelativeTime } from '@/utils/datetime.utils';
 interface ActivityLogEntry {
   id: string;
   timestamp: Date;
-  type: 'access' | 'lock' | 'unlock' | 'alert' | 'system' | 'user';
+  type: 'access' | 'lock' | 'unlock' | 'alert' | 'system';
   message: string;
-  user?: string;
-  unit?: string;
   facility?: string;
   severity: 'info' | 'warning' | 'error' | 'success';
 }
@@ -171,8 +169,6 @@ const transformAccessLogToActivity = (log: AccessLog): ActivityLogEntry => {
     timestamp: new Date(log.occurred_at),
     type,
     message,
-    user: userName !== '—' ? userName : log.primary_tenant_name,
-    unit: log.unit_number,
     facility: log.facility_name,
     severity
   };
@@ -191,19 +187,22 @@ export const ActivityMonitorWidget: React.FC<ActivityMonitorWidgetProps> = ({
   facilityFilter,
   maxEntries = 50
 }) => {
+  const { authState } = useAuth();
   const { size, handleSizeChange } = useWidgetSizeState(
     currentSize,
     initialSize,
     onSizeChange
   );
-  const [activities, setActivities] = useState<ActivityLogEntry[]>([]);
+  const [logs, setLogs] = useState<AccessLog[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [filter, setFilter] = useState<'all' | 'alerts' | 'access'>('all');
 
-  const loadActivities = useCallback(async () => {
-    setError(null);
-    
+  const loadActivities = useCallback(async (options?: { background?: boolean }) => {
+    if (!options?.background) {
+      setError(null);
+    }
+
     try {
       const response = await apiService.getAccessHistory({
         facility_id: facilityFilter,
@@ -212,17 +211,20 @@ export const ActivityMonitorWidget: React.FC<ActivityMonitorWidgetProps> = ({
       });
 
       if (response.success && response.logs) {
-        const transformedActivities = response.logs.map(transformAccessLogToActivity);
-        setActivities(transformedActivities);
+        setLogs(response.logs);
       } else {
-        setActivities([]);
+        setLogs([]);
       }
     } catch (err) {
       console.error('Failed to load access history:', err);
-      setError('Failed to load activity data');
-      setActivities([]);
+      if (!options?.background) {
+        setError('Failed to load activity data');
+        setLogs([]);
+      }
     } finally {
-      setIsLoading(false);
+      if (!options?.background) {
+        setIsLoading(false);
+      }
     }
   }, [facilityFilter, maxEntries]);
 
@@ -233,14 +235,24 @@ export const ActivityMonitorWidget: React.FC<ActivityMonitorWidgetProps> = ({
     void loadActivities();
   }, [loadActivities]);
 
-  useWebSocketSubscription(
-    'activity',
-    () => {
-      void loadActivitiesRef.current();
-    },
-    {
-      filters: facilityFilter ? { facility_id: facilityFilter } : undefined,
-    },
+  const liveFilters = useMemo(
+    () => (facilityFilter ? { facility_id: facilityFilter } : {}),
+    [facilityFilter],
+  );
+
+  useAccessHistoryLiveUpdates({
+    enabled: Boolean(authState.user),
+    subscriptionFilters: facilityFilter ? { facility_id: facilityFilter } : undefined,
+    liveFilters,
+    maxRows: maxEntries,
+    canPrepend: true,
+    onPrepend: setLogs,
+    onFallbackRefresh: (options) => loadActivitiesRef.current(options),
+  });
+
+  const activities = useMemo(
+    () => logs.map(transformAccessLogToActivity),
+    [logs],
   );
 
   const layout = getWidgetLayoutProfile(size);
@@ -253,8 +265,6 @@ export const ActivityMonitorWidget: React.FC<ActivityMonitorWidgetProps> = ({
         return <LockClosedIcon className="h-4 w-4" />;
       case 'unlock':
         return <LockOpenIcon className="h-4 w-4" />;
-      case 'user':
-        return <UserIcon className="h-4 w-4" />;
       case 'alert':
         return severity === 'error' ? 
           <XCircleIcon className="h-4 w-4" /> : 

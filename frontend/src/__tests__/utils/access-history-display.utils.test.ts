@@ -291,7 +291,7 @@ describe('access-history-display.utils', () => {
   it('hides facility in location primary when facility scoped', () => {
     const scoped = getAccessLocationDisplay(baseLog, { hideFacility: true });
     expect(scoped.primary).toBe('Unit A-101');
-    expect(scoped.showFacilityLink).toBe(false);
+    expect(scoped.primary).not.toContain('Petrolia');
   });
 
   it('builds expanded detail items with device link metadata', () => {

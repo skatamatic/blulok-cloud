@@ -1,4 +1,7 @@
-import { render, screen, waitFor } from '@testing-library/react';
+/**
+ * @jest-environment jsdom
+ */
+import { render, screen, waitFor, fireEvent } from '@testing-library/react';
 import { FacilitySchedulesTab } from '@/components/Schedules/FacilitySchedulesTab';
 import { apiService } from '@/services/api.service';
 import { useAuth } from '@/contexts/AuthContext';
@@ -70,6 +73,104 @@ describe('FacilitySchedulesTab', () => {
     await waitFor(() => {
       // The component renders a ScheduleVisualizer for read-only view, which shows day labels
       expect(screen.getByText('Mon')).toBeInTheDocument();
+    });
+  });
+
+  it('shows empty assignment message for tenants without a schedule', async () => {
+    (useAuth as jest.Mock).mockReturnValue({
+      authState: { user: { id: mockUserId, role: 'tenant' } },
+    });
+    (apiService.getFacilitySchedules as jest.Mock).mockResolvedValue({ schedules: [], total: 0 });
+    (apiService.getUserScheduleForFacility as jest.Mock).mockResolvedValue({ schedule: null });
+
+    render(<FacilitySchedulesTab facilityId={mockFacilityId} />);
+
+    expect(
+      await screen.findByText(/No schedule assigned. Please contact your facility administrator./i)
+    ).toBeInTheDocument();
+  });
+
+  it('toasts when facility schedules fail to load', async () => {
+    const addToast = jest.fn();
+    (useToast as jest.Mock).mockReturnValue({ addToast });
+    (apiService.getFacilitySchedules as jest.Mock).mockRejectedValue({
+      response: { data: { message: 'Schedules unavailable' } },
+    });
+
+    render(<FacilitySchedulesTab facilityId={mockFacilityId} />);
+
+    await waitFor(() => {
+      expect(addToast).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: 'error',
+          title: 'Failed to load schedules',
+          message: 'Schedules unavailable',
+        })
+      );
+    });
+  });
+
+  it('lists custom schedules and opens create form', async () => {
+    (apiService.getFacilitySchedules as jest.Mock).mockResolvedValue({
+      schedules: [
+        {
+          id: 'sched-1',
+          name: 'Weekend Access',
+          facility_id: mockFacilityId,
+          schedule_type: 'custom',
+          is_active: true,
+          created_by: mockUserId,
+          created_at: '2024-01-01T00:00:00Z',
+          updated_at: '2024-01-01T00:00:00Z',
+          time_windows: [],
+        },
+      ],
+      total: 1,
+    });
+
+    render(<FacilitySchedulesTab facilityId={mockFacilityId} />);
+
+    expect(await screen.findByText('Weekend Access')).toBeInTheDocument();
+    expect(screen.getByText('Custom Schedules')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: /Create Schedule/i }));
+    expect(screen.getByPlaceholderText('Enter schedule name')).toBeInTheDocument();
+  });
+
+  it('opens delete confirmation with usage details', async () => {
+    (apiService.getFacilitySchedules as jest.Mock).mockResolvedValue({
+      schedules: [
+        {
+          id: 'sched-1',
+          name: 'Weekend Access',
+          facility_id: mockFacilityId,
+          schedule_type: 'custom',
+          is_active: true,
+          created_by: mockUserId,
+          created_at: '2024-01-01T00:00:00Z',
+          updated_at: '2024-01-01T00:00:00Z',
+          time_windows: [],
+        },
+      ],
+      total: 1,
+    });
+    (apiService.getScheduleUsage as jest.Mock).mockResolvedValue({
+      usage: { tenantCount: 2, maintenanceCount: 1, totalCount: 3 },
+    });
+    (apiService.deleteSchedule as jest.Mock).mockResolvedValue({ success: true });
+
+    render(<FacilitySchedulesTab facilityId={mockFacilityId} />);
+    await screen.findByText('Weekend Access');
+
+    fireEvent.click(screen.getByTitle('Delete schedule'));
+
+    expect(await screen.findByText(/in use by 2 tenants and 1 maintenance user/i)).toBeInTheDocument();
+
+    const confirmButtons = screen.getAllByText('Delete Schedule');
+    fireEvent.click(confirmButtons[confirmButtons.length - 1]);
+
+    await waitFor(() => {
+      expect(apiService.deleteSchedule).toHaveBeenCalledWith(mockFacilityId, 'sched-1');
     });
   });
 });

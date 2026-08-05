@@ -1,6 +1,7 @@
 import { UserRole } from '@/types/auth.types';
 
 // Create mock axios instance before importing anything
+let responseErrorHandler: ((error: unknown) => unknown) | undefined;
 const mockAxios = {
   get: jest.fn(),
   post: jest.fn(),
@@ -9,7 +10,13 @@ const mockAxios = {
   delete: jest.fn(),
   interceptors: {
     request: { use: jest.fn((fn) => fn), eject: jest.fn() },
-    response: { use: jest.fn((fn) => fn), eject: jest.fn() },
+    response: {
+      use: jest.fn((success: unknown, error?: (err: unknown) => unknown) => {
+        responseErrorHandler = error;
+        return success;
+      }),
+      eject: jest.fn(),
+    },
   },
 };
 
@@ -1189,6 +1196,99 @@ describe('APIService', () => {
       mockAxios.post.mockResolvedValueOnce({ data: {} });
       await apiService.cancelCommand('c1');
       expect(mockAxios.post).toHaveBeenCalledWith('/commands/c1/cancel');
+    });
+  });
+
+  describe('device lock commands and schedules', () => {
+    it('updateLockStatus PUTs BluLok lock body with optional tenant override', async () => {
+      mockAxios.put.mockResolvedValueOnce({ data: { success: true } });
+      await apiService.updateLockStatus('dev-1', 'unlocked', {
+        reason: 'emergency',
+        notes: 'Flood',
+      });
+      expect(mockAxios.put).toHaveBeenCalledWith('/devices/blulok/dev-1/lock', {
+        lock_status: 'unlocked',
+        tenant_override_reason: 'emergency',
+        tenant_override_notes: 'Flood',
+      });
+    });
+
+    it('updateLockStatus omits override fields when not provided', async () => {
+      mockAxios.put.mockResolvedValueOnce({ data: { success: true } });
+      await apiService.updateLockStatus('dev-1', 'locked');
+      expect(mockAxios.put).toHaveBeenCalledWith('/devices/blulok/dev-1/lock', {
+        lock_status: 'locked',
+      });
+    });
+
+    it('updateAccessControlLockStatus forwards open_until when set', async () => {
+      mockAxios.put.mockResolvedValueOnce({ data: { success: true } });
+      await apiService.updateAccessControlLockStatus('ac-1', 'unlocked', {
+        open_until: 1710000000,
+      });
+      expect(mockAxios.put).toHaveBeenCalledWith('/devices/access-control/ac-1/lock', {
+        lock_status: 'unlocked',
+        open_until: 1710000000,
+      });
+    });
+
+    it('setUserScheduleForFacility PUTs scheduleId', async () => {
+      mockAxios.put.mockResolvedValueOnce({ data: { success: true } });
+      await apiService.setUserScheduleForFacility('user-1', 'fac-1', 'sched-9');
+      expect(mockAxios.put).toHaveBeenCalledWith(
+        '/users/user-1/facilities/fac-1/schedule',
+        { scheduleId: 'sched-9' },
+      );
+    });
+
+    it('getEffectiveAccessCodes passes schedule_id including explicit null', async () => {
+      mockAxios.get.mockResolvedValueOnce({ data: { success: true, data: [] } });
+      await apiService.getEffectiveAccessCodes('fac-1', 'sched-1');
+      expect(mockAxios.get).toHaveBeenCalledWith('/access-codes/effective', {
+        params: { facility_id: 'fac-1', schedule_id: 'sched-1' },
+      });
+
+      mockAxios.get.mockResolvedValueOnce({ data: { success: true, data: [] } });
+      await apiService.getEffectiveAccessCodes('fac-1', null);
+      expect(mockAxios.get).toHaveBeenCalledWith('/access-codes/effective', {
+        params: { facility_id: 'fac-1', schedule_id: null },
+      });
+    });
+  });
+
+  describe('auth response interceptor', () => {
+    it('clears stored auth and disconnects websocket on 401 responses', async () => {
+      expect(typeof responseErrorHandler).toBe('function');
+
+      localStorage.setItem('authToken', 'expired-token');
+      localStorage.setItem('authUser', JSON.stringify({ id: 'u1' }));
+
+      const locationMock = { href: '' };
+      Object.defineProperty(window, 'location', {
+        value: locationMock,
+        writable: true,
+        configurable: true,
+      });
+
+      await expect(
+        responseErrorHandler!({ response: { status: 401 } }),
+      ).rejects.toEqual({ response: { status: 401 } });
+
+      expect(localStorage.getItem('authToken')).toBeNull();
+      expect(localStorage.getItem('authUser')).toBeNull();
+      expect(websocketService.disconnect).toHaveBeenCalled();
+      expect(locationMock.href).toBe('/login');
+    });
+
+    it('does not clear auth for non-401 errors', async () => {
+      localStorage.setItem('authToken', 'still-valid');
+
+      await expect(
+        responseErrorHandler!({ response: { status: 500 } }),
+      ).rejects.toEqual({ response: { status: 500 } });
+
+      expect(localStorage.getItem('authToken')).toBe('still-valid');
+      expect(websocketService.disconnect).not.toHaveBeenCalled();
     });
   });
 });

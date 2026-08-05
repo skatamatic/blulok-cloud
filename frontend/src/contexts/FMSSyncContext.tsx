@@ -4,7 +4,7 @@ import { FMSChange, FMSSyncResult } from '@/types/fms.types';
 
 export type SyncStep = 'connecting' | 'fetching' | 'detecting' | 'preparing' | 'applying' | 'complete' | 'cancelled';
 
-function buildSyncSummaryFromChanges(changes: FMSChange[]): FMSSyncResult['summary'] {
+export function buildSyncSummaryFromChanges(changes: FMSChange[]): FMSSyncResult['summary'] {
   return changes.reduce(
     (acc, change) => {
       switch (change.change_type) {

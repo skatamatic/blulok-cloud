@@ -6,15 +6,6 @@ export const MAX_HISTOGRAM_FACILITIES = 50;
 /** Max rows returned from access history export. */
 export const MAX_ACCESS_HISTORY_EXPORT = 5000;
 
-/** Activity types shown in Activity Monitor, histogram, and live activity feeds. */
-export const DASHBOARD_ACTIVITY_TYPES: ActivityType[] = [
-  'access_attempt',
-  'lock',
-  'unlock',
-  'locking',
-  'unlocking',
-];
-
 /** Terminal activity types included in access history list/export (excludes in-flight states). */
 export const ACCESS_HISTORY_ACTIVITY_TYPES: ActivityType[] = [
   'access_attempt',
@@ -27,21 +18,6 @@ export const HISTOGRAM_ACTIVITY_TYPES: ActivityType[] = [
   'access_attempt',
   'unlock',
 ];
-
-/** Read-layer method values surfaced in access history API. */
-export const ACCESS_HISTORY_METHODS = [
-  'app',
-  'mobile_key',
-  'keypad',
-  'admin_remote',
-  'remote_gateway',
-  'local_device',
-  'route_pass',
-  'system',
-  'unknown',
-] as const;
-
-export type AccessHistoryMethod = (typeof ACCESS_HISTORY_METHODS)[number];
 
 /** Human-readable denial reason labels for access history presentation. */
 export const DENIAL_REASON_MESSAGES: Record<string, string> = {

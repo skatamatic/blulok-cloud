@@ -1,4 +1,9 @@
 import { AccessLog } from '@/types/access-history.types';
+import {
+  ACTION_LABELS,
+  DENIAL_REASON_LABELS,
+  METHOD_LABELS,
+} from '@/constants/accessHistory.constants';
 import { formatDateTime } from '@/utils/datetime.utils';
 import { formatBluLokUserFacingLabel } from '@/utils/blulokDeviceDisplay.utils';
 import { readDisplayName } from '@/utils/deviceMetadataForm.utils';
@@ -29,55 +34,9 @@ export type AccessLogPresentationMetadata = {
   occupied_unit_override?: boolean;
 };
 
-const ACTION_LABELS: Record<string, string> = {
-  unlock_attempt: 'Unlock attempt denied',
-  lock_attempt: 'Lock attempt failed',
-  access_denied: 'Unlock attempt denied',
-  access_granted: 'Access granted',
-  remote_access_granted: 'Remote Access Granted',
-  admin_remote_open: 'Admin remote open',
-  keypad_attempt: 'Keypad attempt',
-  unlock: 'Unlock',
-  lock: 'Lock',
-  timeout: 'Timed out',
-};
-
-const METHOD_LABELS: Record<string, string> = {
-  remote_gateway: 'Cloud',
-  admin_remote: 'Cloud',
-  local_device: 'Local device',
-  automatic: 'Local device',
-  app: 'Mobile app',
-  mobile_key: 'Mobile key',
-  keypad: 'Keypad',
-  route_pass: 'Route pass',
-  admin_override: 'Admin override',
-  system: 'System',
-  unknown: 'Unknown',
-};
-
-const DENIAL_REASON_LABELS: Record<string, string> = {
-  out_of_schedule: 'Out of schedule window',
-  route_pass_expired: 'Route pass expired',
-  route_pass_invalid_signature: 'Invalid route pass signature',
-  route_pass_wrong_lock: 'Route pass not valid for this lock',
-  internal_error: 'Internal processing error',
-  denylist_blocked: 'Actor or device on denylist',
-  insufficient_permissions: 'Insufficient permissions',
-  invalid_credential: 'Invalid credential',
-  unknown_error: 'Unknown error',
-  other: 'Access denied',
-  system_error: 'System error',
-  device_offline: 'Device offline',
-  expired_access: 'Expired access',
-  maintenance_mode: 'Maintenance mode',
-  timeout: 'Timed out waiting for gateway confirmation',
-  settlement_mismatch: 'Device did not reach the requested lock state',
-};
-
 const UUID_LIKE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
-export function looksLikeUuid(value: string | undefined | null): boolean {
+function looksLikeUuid(value: string | undefined | null): boolean {
   if (!value) return false;
   return UUID_LIKE.test(value.trim());
 }
@@ -153,7 +112,7 @@ export function getAccessLogMetadata(log: AccessLog): AccessLogPresentationMetad
 }
 
 /** User details route used by access history deep links. */
-export function getAccessLogUserDetailsPath(userId: string): string {
+function getAccessLogUserDetailsPath(userId: string): string {
   return `/users/${userId}/details`;
 }
 
@@ -321,7 +280,7 @@ export function getAccessMethodToneClass(
   return METHOD_TONE_CLASSES[log.method] || 'text-slate-500 dark:text-slate-400';
 }
 
-export function formatDenialReason(reason: string): string {
+function formatDenialReason(reason: string): string {
   return DENIAL_REASON_LABELS[reason] || formatAccessAction(reason);
 }
 
@@ -341,25 +300,7 @@ function trimPersonDisplayText(value: string | undefined | null): string | null 
   return trimmed;
 }
 
-function resolveLinkedUserEmail(
-  log: AccessLog,
-  meta: AccessLogPresentationMetadata,
-  linkedUserId: string,
-): string | null {
-  const candidates = [
-    meta.user?.email,
-    log.user_id === linkedUserId ? log.user_email : null,
-    log.user_id === linkedUserId ? log.primary_tenant_email : null,
-  ];
-  for (const candidate of candidates) {
-    const label = trimDisplayText(candidate);
-    if (label) return label;
-  }
-  return null;
-}
-
-/** Resolve a human-readable label for a linked user on an access log row. */
-export function resolveAccessLogUserLabel(
+function resolveAccessLogUserLabel(
   log: AccessLog,
   meta: AccessLogPresentationMetadata = getAccessLogMetadata(log),
 ): string | null {
@@ -390,7 +331,7 @@ export function resolveAccessLogUserLabel(
     if (label) return label;
   }
 
-  return resolveLinkedUserEmail(log, meta, linkedUserId);
+  return null;
 }
 
 export type AccessLogUserLink = {
@@ -511,7 +452,7 @@ export function getAccessStatusDisplay(log: AccessLog): {
 export function getAccessLocationDisplay(
   log: AccessLog,
   options: { hideFacility: boolean },
-): { primary: string; secondary: string | null; showFacilityLink: boolean } {
+): { primary: string; secondary: string | null } {
   const meta = getAccessLogMetadata(log);
 
   const unitLabel = formatAccessHistoryUnitLabel(log, meta);
@@ -526,7 +467,6 @@ export function getAccessLocationDisplay(
     return {
       primary: unitLabel || deviceLabel || '—',
       secondary: unitLabel ? (locationHint || deviceLabel) : locationHint,
-      showFacilityLink: false,
     };
   }
 
@@ -534,7 +474,6 @@ export function getAccessLocationDisplay(
   return {
     primary: facilityName,
     secondary: unitLabel || deviceLabel,
-    showFacilityLink: !!meta.facility?.id,
   };
 }
 

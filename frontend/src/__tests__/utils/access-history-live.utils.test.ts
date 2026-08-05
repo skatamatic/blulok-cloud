@@ -111,4 +111,43 @@ describe('access-history-live.utils', () => {
       matchesAccessHistoryLiveFilters(deniedLog, { action: 'access_denied' }),
     ).toBe(true);
   });
+
+  it('matches cloud filter to admin_remote and remote_gateway', () => {
+    expect(
+      matchesAccessHistoryLiveFilters(
+        { ...sampleLog, method: 'admin_remote' },
+        { method: 'cloud' },
+      ),
+    ).toBe(true);
+    expect(
+      matchesAccessHistoryLiveFilters(
+        { ...sampleLog, method: 'remote_gateway' },
+        { method: 'cloud' },
+      ),
+    ).toBe(true);
+    expect(
+      matchesAccessHistoryLiveFilters(
+        { ...sampleLog, method: 'app' },
+        { method: 'cloud' },
+      ),
+    ).toBe(false);
+  });
+
+  it('preserves settlement_mismatch denial reason from websocket payloads', () => {
+    expect(
+      accessLogFromActivityWsData({
+        accessLog: {
+          id: 'log-settle',
+          action: 'unlock_attempt',
+          method: 'admin_remote',
+          success: false,
+          denial_reason: 'settlement_mismatch',
+          occurred_at: '2026-06-16T18:00:00.000Z',
+          created_at: '2026-06-16T18:00:00.000Z',
+          updated_at: '2026-06-16T18:00:00.000Z',
+          device_id: 'dev-1',
+        },
+      }),
+    ).toMatchObject({ denial_reason: 'settlement_mismatch' });
+  });
 });

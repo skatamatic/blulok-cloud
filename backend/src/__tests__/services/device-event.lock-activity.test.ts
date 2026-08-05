@@ -5,7 +5,6 @@ const mockFindGatewayById = jest.fn();
 const mockFindBluLokDeviceById = jest.fn();
 const mockFindAccessControlDeviceWithGateway = jest.fn();
 const mockPeekCommandAttribution = jest.fn();
-const mockAcknowledgeCommandAttribution = jest.fn();
 const mockTryConsumeAttribution = jest.fn();
 const mockConsumeSuppressRevertActivityLog = jest.fn().mockReturnValue(false);
 const mockRecordRemoteCommandSettlementMismatch = jest.fn();
@@ -28,7 +27,6 @@ jest.mock('@/services/lock-command.service', () => ({
   LockCommandService: {
     getInstance: jest.fn(() => ({
       peekCommandAttribution: mockPeekCommandAttribution,
-      acknowledgeCommandAttribution: mockAcknowledgeCommandAttribution,
       tryConsumeAttribution: mockTryConsumeAttribution,
       consumeSuppressRevertActivityLog: mockConsumeSuppressRevertActivityLog,
       recordRemoteCommandSettlementMismatch: mockRecordRemoteCommandSettlementMismatch,
@@ -36,10 +34,12 @@ jest.mock('@/services/lock-command.service', () => ({
   },
 }));
 
+const mockTryConsumeForUnlockState = jest.fn().mockReturnValue(null);
+
 jest.mock('@/services/occupied-unlock-intent.service', () => ({
   OccupiedUnlockIntentService: {
     getInstance: jest.fn(() => ({
-      tryConsumeForUnlockState: jest.fn().mockReturnValue(null),
+      tryConsumeForUnlockState: mockTryConsumeForUnlockState,
     })),
   },
 }));
@@ -62,6 +62,7 @@ describe('DeviceEventService logLockActivity', () => {
     resetSingleton();
     jest.clearAllMocks();
     mockConsumeSuppressRevertActivityLog.mockReturnValue(false);
+    mockTryConsumeForUnlockState.mockReturnValue(null);
     mockFindGatewayById.mockResolvedValue({ facility_id: 'fac-1' });
     mockFindBluLokDeviceById.mockResolvedValue({ unit_id: 'unit-1' });
     mockFindAccessControlDeviceWithGateway.mockResolvedValue(null);
@@ -217,12 +218,69 @@ describe('DeviceEventService logLockActivity', () => {
     mockPeekCommandAttribution.mockReturnValue(null);
     await emitLockChanged('unlocked', 'locked');
 
-    expect(mockAcknowledgeCommandAttribution).not.toHaveBeenCalled();
     expect(mockLogActivity).toHaveBeenCalledWith(
       expect.objectContaining({
         activityType: 'unlock',
         description: expect.stringContaining('locally at the device'),
         metadata: expect.objectContaining({ method: 'local_device' }),
+      }),
+    );
+  });
+
+  it('skips activity when gateway cannot be resolved', async () => {
+    mockFindGatewayById.mockResolvedValueOnce(null);
+    mockPeekCommandAttribution.mockReturnValue(null);
+    await emitLockChanged('unlocked', 'locked');
+    expect(mockLogActivity).not.toHaveBeenCalled();
+  });
+
+  it('logs occupied-unit override unlock as app method with override metadata', async () => {
+    mockPeekCommandAttribution.mockReturnValue(null);
+    mockTryConsumeForUnlockState.mockReturnValueOnce({
+      userId: 'staff-1',
+      userName: 'On Site Staff',
+      role: 'facility_admin',
+      override: {
+        reason: 'emergency',
+        reasonLabel: 'Emergency',
+        notes: 'Tenant locked out',
+      },
+    });
+
+    await emitLockChanged('unlocked', 'locked');
+
+    expect(mockLogActivity).toHaveBeenCalledWith(
+      expect.objectContaining({
+        activityType: 'unlock',
+        actorType: 'user',
+        actorId: 'staff-1',
+        description: expect.stringContaining('via app by On Site Staff'),
+        metadata: expect.objectContaining({
+          method: 'app',
+          occupied_unit_override: true,
+          tenant_unlock_override: expect.objectContaining({
+            reason: 'emergency',
+            reason_label: 'Emergency',
+            notes: 'Tenant locked out',
+          }),
+        }),
+      }),
+    );
+  });
+
+  it('marks access_control device type when BluLok lookup misses', async () => {
+    mockFindBluLokDeviceById.mockResolvedValueOnce(null);
+    mockFindAccessControlDeviceWithGateway.mockResolvedValueOnce({ id: 'ac-1' });
+    mockPeekCommandAttribution.mockReturnValue(null);
+
+    await emitLockChanged('unlocked', 'locked');
+
+    expect(mockLogActivity).toHaveBeenCalledWith(
+      expect.objectContaining({
+        metadata: expect.objectContaining({
+          device_type: 'access_control',
+          method: 'local_device',
+        }),
       }),
     );
   });

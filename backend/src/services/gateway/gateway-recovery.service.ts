@@ -1381,6 +1381,11 @@ export function _testClearPendingTimers(): void {
 
   for (const waiter of productionInventorySeedWaiters.values()) {
     clearTimeout(waiter.timer);
+    try {
+      waiter.resolve();
+    } catch {
+      /* ignore */
+    }
   }
   productionInventorySeedWaiters.clear();
 
