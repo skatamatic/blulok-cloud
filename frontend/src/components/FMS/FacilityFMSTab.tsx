@@ -41,12 +41,15 @@ import {
   mergeWebhookFeed,
   reconcileWebhookFeedReview,
 } from '@/utils/fms-webhook-feed.utils';
+import { FacilityFMSSimplifiedView } from './FacilityFMSSimplifiedView';
 
 interface FacilityFMSTabProps {
   facilityId: string;
   facilityName?: string;
   isDevMode?: boolean;
   canEditFMS?: boolean;
+  /** Presentation-only simplified Cloud UI (hides technical FMS surfaces). */
+  simplifiedUi?: boolean;
 }
 
 const cardClass =
@@ -83,7 +86,28 @@ export function FacilityFMSTab({
   facilityName,
   isDevMode = false,
   canEditFMS = true,
+  simplifiedUi = false,
 }: FacilityFMSTabProps) {
+  if (simplifiedUi) {
+    return <FacilityFMSSimplifiedView facilityId={facilityId} facilityName={facilityName} />;
+  }
+
+  return (
+    <FacilityFMSTabAdvanced
+      facilityId={facilityId}
+      facilityName={facilityName}
+      isDevMode={isDevMode}
+      canEditFMS={canEditFMS}
+    />
+  );
+}
+
+function FacilityFMSTabAdvanced({
+  facilityId,
+  facilityName,
+  isDevMode = false,
+  canEditFMS = true,
+}: Omit<FacilityFMSTabProps, 'simplifiedUi'>) {
   const { addToast } = useToast();
   const { canStartNewSync, startSync, completeSync, showReview, cancelSync, hasCompletedSync, openPendingReview, syncState } = useFMSSync();
   const { subscribe, unsubscribe } = useWebSocket();

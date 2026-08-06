@@ -176,6 +176,7 @@ export class UserFacilityAssociationModel extends BaseModel {
         'users.last_name',
         'users.role',
         'users.is_active',
+        'users.simplified_ui',
         'users.last_login',
         'users.created_at',
         'users.updated_at',

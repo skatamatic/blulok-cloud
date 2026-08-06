@@ -71,6 +71,7 @@ import { canRequestRemoteUnlock } from '@/utils/unitLock.utils';
 import { useLockDeviceRealtime } from '@/hooks/useLockDeviceRealtime';
 import { useFacilityGatewayLiveStatus } from '@/hooks/useFacilityGatewayLiveStatus';
 import { gatewayOperationalStatusColors } from '@/utils/facility-gateway-live-status.utils';
+import { usesSimplifiedUi } from '@/utils/simplified-ui.utils';
 import { ViewModeToggle, type ListViewMode } from '@/components/Common/ViewModeToggle';
 import { SortableTableTh } from '@/components/Common/SortableTableTh';
 
@@ -258,6 +259,7 @@ const normalizeFacilityTab = (value: string | null): FacilityTab | null => {
   }, [facilityUnitsPageData, syncLockStatus]);
 
   const canManage = ['admin', 'dev_admin', 'facility_admin'].includes(authState.user?.role || '');
+  const simplifiedUi = usesSimplifiedUi(authState.user);
   const canEditFacilitySettings = (() => {
     if (!canManage || !id) return false;
     if (authState.user?.role === UserRole.FACILITY_ADMIN) {
@@ -266,7 +268,9 @@ const normalizeFacilityTab = (value: string | null): FacilityTab | null => {
     return true;
   })();
   const canEditFMS = ['admin', 'dev_admin'].includes(authState.user?.role || '');
-  const canManageGateway = ['admin', 'dev_admin', 'facility_admin'].includes(authState.user?.role || '');
+  const canManageGateway =
+    !simplifiedUi &&
+    ['admin', 'dev_admin', 'facility_admin'].includes(authState.user?.role || '');
   const isTenant = authState.user?.role === 'tenant';
   const facilityGatewayLiveStatus = useFacilityGatewayLiveStatus(facility?.id, {
     enabled:
@@ -523,11 +527,23 @@ const normalizeFacilityTab = (value: string | null): FacilityTab | null => {
 
   useEffect(() => {
     if (isTenant || !canManage || activeTab !== 'access-codes') return;
-    setActiveTab('device-groups');
+    // Simplified facility admins do not use Access Groups either
+    const fallbackTab = simplifiedUi ? 'facility' : 'device-groups';
+    setActiveTab(fallbackTab);
     replaceSearchParams(navigate, location, (params) => {
-      params.set('tab', 'device-groups');
+      params.set('tab', fallbackTab);
     });
-  }, [activeTab, canManage, isTenant, location, navigate]);
+  }, [activeTab, canManage, isTenant, location, navigate, simplifiedUi]);
+
+  useEffect(() => {
+    if (!simplifiedUi) return;
+    const hiddenTabs = new Set(['gateway', 'device-groups', 'access-codes']);
+    if (!hiddenTabs.has(activeTab)) return;
+    setActiveTab('facility');
+    replaceSearchParams(navigate, location, (params) => {
+      params.set('tab', 'facility');
+    });
+  }, [activeTab, simplifiedUi, location, navigate]);
 
   useEffect(() => {
     if (!facility?.id || !canManage) return;
@@ -931,9 +947,15 @@ const normalizeFacilityTab = (value: string | null): FacilityTab | null => {
     ...(!isTenant && canManage ? [{ key: 'devices', label: 'Devices', icon: ServerIcon }] : []),
     { key: 'units', label: 'Units', icon: HomeIcon },
     { key: 'schedules', label: 'Schedules', icon: ClockIcon },
-    ...(isTenant || !canManage ? [{ key: 'access-codes', label: 'Access Codes', icon: KeyIcon }] : []),
-    ...(!isTenant && canManage ? [{ key: 'device-groups', label: 'Access Groups', icon: RectangleGroupIcon }] : []),
-    ...(!isTenant && canManage ? [{ key: 'fms', label: 'FMS Integration', icon: CloudIcon }] : []),
+    ...(!simplifiedUi && (isTenant || !canManage)
+      ? [{ key: 'access-codes', label: 'Access Codes', icon: KeyIcon }]
+      : []),
+    ...(!simplifiedUi && !isTenant && canManage
+      ? [{ key: 'device-groups', label: 'Access Groups', icon: RectangleGroupIcon }]
+      : []),
+    ...(!isTenant && canManage
+      ? [{ key: 'fms', label: simplifiedUi ? 'FMS Sync' : 'FMS Integration', icon: CloudIcon }]
+      : []),
     ...(!isTenant && canManage ? [{ key: 'provisioning-data', label: 'Provisioning Data', icon: ArchiveBoxIcon }] : []),
     ...(!isTenant && canManageGateway ? [{ key: 'gateway', label: 'Gateway', icon: SignalIcon }] : []),
   ];
@@ -1023,7 +1045,7 @@ const normalizeFacilityTab = (value: string | null): FacilityTab | null => {
               />
             )}
 
-            {!isTenant && facilityGatewayLiveStatus.gateway && (
+            {!isTenant && !simplifiedUi && facilityGatewayLiveStatus.gateway && (
               <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-6">
                 <h3 className="text-lg font-medium text-gray-900 dark:text-white mb-4">Gateway status</h3>
                 <div className="flex items-center justify-between">
@@ -1240,7 +1262,9 @@ const normalizeFacilityTab = (value: string | null): FacilityTab | null => {
                           device={device as NetworkInfraDevice}
                           canManage={canManage}
                           onDelete={(d) => setShowDeleteInfraConfirm(d)}
-                          onManageGateway={() => setActiveTab('gateway')}
+                          onManageGateway={
+                            simplifiedUi ? undefined : () => setActiveTab('gateway')
+                          }
                         />
                       );
                     }
@@ -1806,6 +1830,7 @@ const normalizeFacilityTab = (value: string | null): FacilityTab | null => {
           facilityName={facility.name}
           isDevMode={localStorage.getItem('fms-simulated-enabled') === 'true'}
           canEditFMS={canEditFMS}
+          simplifiedUi={simplifiedUi}
         />
       )}
 

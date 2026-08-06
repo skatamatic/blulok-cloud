@@ -673,4 +673,103 @@ describe('UserDetailsPage', () => {
       expect(screen.getByText('No Devices Registered')).toBeInTheDocument();
     });
   });
+
+  describe('Simplified UI preference', () => {
+    it('should toggle Simplified UI instantly from Summary for admin', async () => {
+      mockApiService.getUserDetails.mockResolvedValue({
+        success: true,
+        user: {
+          ...mockUserDetails,
+          role: UserRole.FACILITY_ADMIN,
+          simplifiedUi: false,
+          devices: [],
+          facilities: [],
+        },
+      });
+      mockApiService.updateUser = jest.fn().mockResolvedValue({ success: true });
+
+      (useAuth as jest.MockedFunction<typeof useAuth>).mockReturnValue({
+        authState: {
+          ...mockAuthState,
+          user: { ...mockAuthState.user!, role: UserRole.ADMIN },
+        },
+        login: jest.fn(),
+        logout: jest.fn(),
+        isLoading: false,
+        hasRole: jest.fn(),
+        isAdmin: jest.fn().mockReturnValue(true),
+        canManageUsers: jest.fn().mockReturnValue(true),
+      });
+
+      render(
+        <MemoryRouter initialEntries={['/users/test-user-id/details']}>
+          <ToastProvider>
+            <Routes>
+              <Route path="/users/:userId/details" element={<UserDetailsPage />} />
+            </Routes>
+          </ToastProvider>
+        </MemoryRouter>
+      );
+
+      await waitFor(() => {
+        expect(screen.getByRole('switch', { name: 'Simplified UI' })).toBeInTheDocument();
+      });
+
+      expect(screen.getByText('Advanced UI')).toBeInTheDocument();
+      fireEvent.click(screen.getByRole('switch', { name: 'Simplified UI' }));
+
+      await waitFor(() => {
+        expect(mockApiService.updateUser).toHaveBeenCalledWith('test-user-id', {
+          simplifiedUi: true,
+        });
+      });
+    });
+
+    it('should not show Simplified UI controls for facility admin editors', async () => {
+      mockApiService.getUserDetails.mockResolvedValue({
+        success: true,
+        user: {
+          ...mockUserDetails,
+          role: UserRole.FACILITY_ADMIN,
+          simplifiedUi: true,
+          devices: [],
+          facilities: [],
+        },
+      });
+
+      (useAuth as jest.MockedFunction<typeof useAuth>).mockReturnValue({
+        authState: {
+          ...mockAuthState,
+          user: { ...mockAuthState.user!, role: UserRole.FACILITY_ADMIN },
+        },
+        login: jest.fn(),
+        logout: jest.fn(),
+        isLoading: false,
+        hasRole: jest.fn(),
+        isAdmin: jest.fn().mockReturnValue(false),
+        canManageUsers: jest.fn().mockReturnValue(true),
+      });
+
+      render(
+        <MemoryRouter initialEntries={['/users/test-user-id/details']}>
+          <ToastProvider>
+            <Routes>
+              <Route path="/users/:userId/details" element={<UserDetailsPage />} />
+            </Routes>
+          </ToastProvider>
+        </MemoryRouter>
+      );
+
+      await waitFor(() => {
+        expect(screen.getByText('Edit')).toBeInTheDocument();
+      });
+      expect(screen.queryByRole('switch', { name: 'Simplified UI' })).not.toBeInTheDocument();
+      fireEvent.click(screen.getByText('Edit'));
+
+      await waitFor(() => {
+        expect(screen.getByText('Edit User')).toBeInTheDocument();
+      });
+      expect(screen.queryByRole('switch', { name: 'Simplified UI' })).not.toBeInTheDocument();
+    });
+  });
 });

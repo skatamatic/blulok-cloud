@@ -35,6 +35,7 @@ CREATE TABLE users (
   last_name VARCHAR(100) NOT NULL,
   role ENUM('tenant', 'admin', 'facility_admin', 'maintenance', 'blulok_technician', 'dev_admin') NOT NULL DEFAULT 'tenant',
   is_active BOOLEAN NOT NULL DEFAULT true,
+  simplified_ui BOOLEAN NOT NULL DEFAULT false,
   last_login TIMESTAMP NULL,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -51,6 +52,7 @@ CREATE TABLE users (
 - Role-based access control
 - Soft delete capability
 - Login tracking
+- Optional presentation-only `simplified_ui` for facility admins (not an API permission boundary; see [auth.md](./auth.md))
 
 ### Facilities Table
 

@@ -165,7 +165,8 @@ export class AuthService {
             email: user.email,
             firstName: user.first_name,
             lastName: user.last_name,
-            role: user.role as UserRole
+            role: user.role as UserRole,
+            simplifiedUi: Boolean(user.simplified_ui),
           },
           token,
           ...(keyGenerationRequired ? { key_generation_required: true } : {})

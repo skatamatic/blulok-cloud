@@ -198,6 +198,7 @@ registerGet(
     lastName: user.last_name,
     role: user.role,
     isActive: user.is_active,
+    simplifiedUi: Boolean(user.simplified_ui),
     lastLogin: user.last_login,
     createdAt: user.created_at,
     updatedAt: user.updated_at,
@@ -267,6 +268,7 @@ registerGet(
       lastName: user.last_name,
       role: user.role,
       isActive: user.is_active,
+      simplifiedUi: Boolean(user.simplified_ui),
       lastLogin: user.last_login,
       createdAt: user.created_at,
       updatedAt: user.updated_at
@@ -536,6 +538,7 @@ registerGet(
       lastName: user.last_name,
       role: user.role,
       isActive: user.is_active,
+      simplifiedUi: Boolean(user.simplified_ui),
       lastLogin: user.last_login,
       createdAt: user.created_at,
       updatedAt: user.updated_at,
@@ -831,14 +834,36 @@ registerPut(
 
   // For self-updates, restrict what can be modified
   if (id === req.user!.userId) {
-    // Users can only update their own firstName and lastName, not role or isActive
-    if (updateData.role !== undefined || updateData.isActive !== undefined) {
+    // Users can only update their own firstName and lastName, not role, isActive, or simplifiedUi
+    if (
+      updateData.role !== undefined ||
+      updateData.isActive !== undefined ||
+      updateData.simplifiedUi !== undefined
+    ) {
       res.status(400).json({
         success: false,
-        message: 'You cannot modify your own role or active status'
+        message: 'You cannot modify your own role, active status, or simplified UI preference'
       });
       return;
     }
+  }
+
+  // simplifiedUi is presentation-only and may only be set by global admins
+  if (updateData.simplifiedUi !== undefined && !AuthService.isAdmin(req.user!.role)) {
+    res.status(403).json({
+      success: false,
+      message: 'Only admin or dev_admin can set simplified UI preference',
+    });
+    return;
+  }
+
+  const effectiveRole = (updateData.role ?? existingUser.role) as UserRole;
+  if (updateData.simplifiedUi === true && effectiveRole !== UserRole.FACILITY_ADMIN) {
+    res.status(400).json({
+      success: false,
+      message: 'Simplified UI preference applies only to facility admins',
+    });
+    return;
   }
 
   if (updateData.phoneNumber !== undefined) {
@@ -891,11 +916,22 @@ registerPut(
     }
   }
 
+  let simplifiedUiUpdate: boolean | undefined;
+  if (effectiveRole !== UserRole.FACILITY_ADMIN) {
+    // Flag only applies to facility admins; clear when role leaves that set
+    if (Boolean(existingUser.simplified_ui)) {
+      simplifiedUiUpdate = false;
+    }
+  } else if (updateData.simplifiedUi !== undefined) {
+    simplifiedUiUpdate = updateData.simplifiedUi;
+  }
+
   const updatedUser = await UserModel.updateById(id, {
     first_name: updateData.firstName,
     last_name: updateData.lastName,
     role: updateData.role,
-    is_active: updateData.isActive
+    is_active: updateData.isActive,
+    simplified_ui: simplifiedUiUpdate,
   }) as User;
 
   if (activating) {
@@ -916,6 +952,7 @@ registerPut(
       lastName: updatedUser.last_name,
       role: updatedUser.role,
       isActive: updatedUser.is_active,
+      simplifiedUi: Boolean(updatedUser.simplified_ui),
       lastLogin: updatedUser.last_login,
       createdAt: updatedUser.created_at,
       updatedAt: updatedUser.updated_at

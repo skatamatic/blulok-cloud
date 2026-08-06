@@ -34,6 +34,11 @@ export interface User {
   role: UserRole;
   /** Whether the user account is active and can authenticate */
   is_active: boolean;
+  /**
+   * Presentation-only: facility admins may use a simplified Cloud UI.
+   * Not an authorization boundary — APIs remain role-scoped.
+   */
+  simplified_ui: boolean;
   /** Whether the user must set a new password on next login */
   requires_password_reset?: boolean;
   /** Timestamp of user's last successful login */

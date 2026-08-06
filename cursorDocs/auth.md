@@ -78,6 +78,7 @@ CREATE TABLE users (
   last_name VARCHAR(100) NOT NULL,
   role ENUM('tenant', 'admin', 'facility_admin', 'maintenance', 'blulok_technician', 'dev_admin') NOT NULL DEFAULT 'tenant',
   is_active BOOLEAN NOT NULL DEFAULT true,
+  simplified_ui BOOLEAN NOT NULL DEFAULT false,
   last_login TIMESTAMP NULL,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -96,6 +97,7 @@ CREATE TABLE users (
 - **first_name/last_name**: User's display name
 - **role**: User's permission level (see roles above)
 - **is_active**: Soft-deactivation flag — inactive users cannot login. “Delete user” in the admin UI deactivates (`is_active = false`); the row and unique identifiers (`email`, `login_identifier`, `phone_number`) are retained.
+- **simplified_ui**: Presentation-only preference (API field `simplifiedUi`). Intended for `facility_admin` users who should see a simpler Cloud UI. **Not an authorization boundary** — REST/WS permissions remain those of `facility_admin`. Only `admin` / `dev_admin` may set it via `PUT /api/v1/users/:id`. Cleared automatically when the user’s role is no longer `facility_admin`. Returned on login and live on `GET /auth/profile` / verify-token / refresh-token. **Cloud UI gating (current):** Facility Setup hides Gateway and Access Groups / Access Codes tabs; FMS tab uses a sync-history–focused layout (test / sync / review, live WS updates in the history grid) without configuration/webhook technical surfaces. More surfaces may be gated over time.
 - **last_login**: Timestamp of most recent successful login
 - **created_at/updated_at**: Audit timestamps
 

@@ -36,6 +36,8 @@ interface UserDetails {
   lastName: string;
   role: UserRole;
   isActive: boolean;
+  /** Presentation-only; facility admins. Not an API authorization boundary. */
+  simplifiedUi?: boolean;
   lastLogin?: string;
   createdAt: string;
   updatedAt: string;
@@ -120,9 +122,10 @@ type TabType = 'summary' | 'facilities' | 'devices' | 'invites' | 'route-passes'
 export default function UserDetailsPage() {
   const { userId } = useParams<{ userId: string }>();
   const navigate = useNavigate();
-  const { authState, canManageUsers } = useAuth();
+  const { authState, canManageUsers, isAdmin } = useAuth();
   const { addToast } = useToast();
   const canManageUsersScope = canManageUsers();
+  const canSetSimplifiedUi = isAdmin();
   const location = useLocation();
   const backPath = canManageUsersScope ? '/users' : '/dashboard';
   const { goBack, showBack, backLabel } = useDetailsBackNavigation({ fallbackPath: backPath });
@@ -149,8 +152,10 @@ export default function UserDetailsPage() {
     lastName: '',
     phoneNumber: '',
     role: '' as UserRole | '',
-    isActive: true
+    isActive: true,
+    simplifiedUi: false,
   });
+  const [togglingSimplifiedUi, setTogglingSimplifiedUi] = useState(false);
 
   const canViewDevices = authState.user?.role === UserRole.DEV_ADMIN;
   const canDeleteDevices = authState.user?.role === UserRole.DEV_ADMIN;
@@ -383,17 +388,68 @@ export default function UserDetailsPage() {
     setSelectedFacilityIds(facilities.map((facility) => facility.id));
   };
 
+  const handleToggleSimplifiedUi = async (nextValue: boolean) => {
+    if (!userDetails || !canSetSimplifiedUi || userDetails.role !== UserRole.FACILITY_ADMIN) {
+      return;
+    }
+    if (Boolean(userDetails.simplifiedUi) === nextValue || togglingSimplifiedUi) {
+      return;
+    }
+
+    const previous = Boolean(userDetails.simplifiedUi);
+    setTogglingSimplifiedUi(true);
+    setUserDetails({ ...userDetails, simplifiedUi: nextValue });
+    setEditForm((prev) => ({ ...prev, simplifiedUi: nextValue }));
+
+    try {
+      const response = await apiService.updateUser(userDetails.id, { simplifiedUi: nextValue });
+      if (response.success) {
+        addToast({
+          type: 'success',
+          title: nextValue ? 'Simplified UI enabled' : 'Simplified UI disabled',
+          message: nextValue
+            ? 'This facility admin will see the simplified Cloud experience on next profile refresh.'
+            : 'This facility admin will see the full facility-admin Cloud UI on next profile refresh.',
+        });
+        await loadUserDetails();
+      } else {
+        setUserDetails({ ...userDetails, simplifiedUi: previous });
+        setEditForm((prev) => ({ ...prev, simplifiedUi: previous }));
+        addToast({
+          type: 'error',
+          title: 'Failed to update Simplified UI',
+          message: response.message || 'An unexpected error occurred',
+        });
+      }
+    } catch (error: any) {
+      setUserDetails({ ...userDetails, simplifiedUi: previous });
+      setEditForm((prev) => ({ ...prev, simplifiedUi: previous }));
+      addToast({
+        type: 'error',
+        title: 'Failed to update Simplified UI',
+        message: error?.response?.data?.message || 'An unexpected error occurred',
+      });
+    } finally {
+      setTogglingSimplifiedUi(false);
+    }
+  };
+
   const handleSaveEdit = async () => {
     if (!userDetails) return;
 
     try {
-      const response = await apiService.updateUser(userDetails.id, {
+      const payload: Record<string, unknown> = {
         firstName: editForm.firstName,
         lastName: editForm.lastName,
         phoneNumber: editForm.phoneNumber.trim() === '' ? '' : editForm.phoneNumber.trim(),
         role: editForm.role,
-        isActive: editForm.isActive
-      });
+        isActive: editForm.isActive,
+      };
+      if (canSetSimplifiedUi && editForm.role === UserRole.FACILITY_ADMIN) {
+        payload.simplifiedUi = editForm.simplifiedUi;
+      }
+
+      const response = await apiService.updateUser(userDetails.id, payload);
 
       if (response.success) {
         addToast({
@@ -567,6 +623,17 @@ export default function UserDetailsPage() {
             }`}>
               {userDetails.isActive ? 'Active' : 'Inactive'}
             </span>
+            {userDetails.role === UserRole.FACILITY_ADMIN && (
+              <span
+                className={`inline-flex rounded-full px-2 py-0.5 text-xs font-medium ${
+                  userDetails.simplifiedUi
+                    ? 'bg-primary-100 text-primary-800 dark:bg-primary-900/40 dark:text-primary-200'
+                    : 'bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-300'
+                }`}
+              >
+                {userDetails.simplifiedUi ? 'Simplified UI' : 'Advanced UI'}
+              </span>
+            )}
           </div>
         }
         actions={
@@ -580,7 +647,8 @@ export default function UserDetailsPage() {
                     lastName: userDetails.lastName,
                     phoneNumber: userDetails.phoneNumber || '',
                     role: userDetails.role,
-                    isActive: userDetails.isActive
+                    isActive: userDetails.isActive,
+                    simplifiedUi: Boolean(userDetails.simplifiedUi),
                   });
                   setActiveTab('edit');
                 }}
@@ -622,46 +690,89 @@ export default function UserDetailsPage() {
         <div className="space-y-6">
           {/* Summary Tab */}
           {activeTab === 'summary' && (
-            <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-6">
-              <h2 className="text-lg font-medium text-gray-900 dark:text-white mb-6">User Information</h2>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                <div>
-                  <h3 className="text-sm font-medium text-gray-500 dark:text-gray-400 mb-2">Basic Information</h3>
-                  <div className="space-y-3">
-                    <div>
-                      <label className="text-xs text-gray-500 dark:text-gray-400 uppercase tracking-wide">Full Name</label>
-                      <p className="text-sm text-gray-900 dark:text-white">{userDetails.firstName} {userDetails.lastName}</p>
-                    </div>
-                    <div>
-                      <label className="text-xs text-gray-500 dark:text-gray-400 uppercase tracking-wide">Email</label>
-                      <p className="text-sm text-gray-900 dark:text-white">{userDetails.email}</p>
-                    </div>
-                    <div>
-                      <label className="text-xs text-gray-500 dark:text-gray-400 uppercase tracking-wide">Role</label>
-                      <p className="text-sm text-gray-900 dark:text-white">{userDetails.role}</p>
-                    </div>
-                    <div>
-                      <label className="text-xs text-gray-500 dark:text-gray-400 uppercase tracking-wide">Status</label>
-                      <p className="text-sm text-gray-900 dark:text-white">{userDetails.isActive ? 'Active' : 'Inactive'}</p>
-                    </div>
-                  </div>
-                </div>
-                <div>
-                  <h3 className="text-sm font-medium text-gray-500 dark:text-gray-400 mb-2">Account Activity</h3>
-                  <div className="space-y-3">
-                    <div>
-                      <label className="text-xs text-gray-500 dark:text-gray-400 uppercase tracking-wide">Last Login</label>
-                      <p className="text-sm text-gray-900 dark:text-white">
-                        {userDetails.lastLogin ? formatDateTime(userDetails.lastLogin) : 'Never logged in'}
+            <div className="space-y-6">
+              {canSetSimplifiedUi && userDetails.role === UserRole.FACILITY_ADMIN && (
+                <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-6">
+                  <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+                    <div className="min-w-0">
+                      <h2 className="text-lg font-medium text-gray-900 dark:text-white">
+                        Simplified UI
+                      </h2>
+                      <p className="mt-1 text-sm text-gray-600 dark:text-gray-400 max-w-xl">
+                        Hide advanced Facility Setup surfaces (Gateway, Access Groups, FMS configuration).
+                        Does not change API permissions. Takes effect when this user refreshes their session.
                       </p>
                     </div>
-                    <div>
-                      <label className="text-xs text-gray-500 dark:text-gray-400 uppercase tracking-wide">Account Created</label>
-                      <p className="text-sm text-gray-900 dark:text-white">{formatDateTime(userDetails.createdAt)}</p>
+                    <button
+                      type="button"
+                      role="switch"
+                      aria-checked={Boolean(userDetails.simplifiedUi)}
+                      aria-label="Simplified UI"
+                      disabled={togglingSimplifiedUi}
+                      onClick={() => void handleToggleSimplifiedUi(!userDetails.simplifiedUi)}
+                      className={`relative inline-flex h-8 w-14 shrink-0 items-center rounded-full transition-colors duration-200 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 dark:focus:ring-offset-gray-800 disabled:opacity-60 ${
+                        userDetails.simplifiedUi
+                          ? 'bg-primary-600'
+                          : 'bg-gray-300 dark:bg-gray-600'
+                      }`}
+                    >
+                      <span
+                        className={`inline-block h-6 w-6 transform rounded-full bg-white shadow transition-transform duration-200 ${
+                          userDetails.simplifiedUi ? 'translate-x-7' : 'translate-x-1'
+                        }`}
+                      />
+                    </button>
+                  </div>
+                  <p className="mt-3 text-xs font-medium text-gray-500 dark:text-gray-400">
+                    Currently:{' '}
+                    <span className="text-gray-900 dark:text-white">
+                      {userDetails.simplifiedUi ? 'Simplified' : 'Advanced'}
+                    </span>
+                  </p>
+                </div>
+              )}
+
+              <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-6">
+                <h2 className="text-lg font-medium text-gray-900 dark:text-white mb-6">User Information</h2>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  <div>
+                    <h3 className="text-sm font-medium text-gray-500 dark:text-gray-400 mb-2">Basic Information</h3>
+                    <div className="space-y-3">
+                      <div>
+                        <label className="text-xs text-gray-500 dark:text-gray-400 uppercase tracking-wide">Full Name</label>
+                        <p className="text-sm text-gray-900 dark:text-white">{userDetails.firstName} {userDetails.lastName}</p>
+                      </div>
+                      <div>
+                        <label className="text-xs text-gray-500 dark:text-gray-400 uppercase tracking-wide">Email</label>
+                        <p className="text-sm text-gray-900 dark:text-white">{userDetails.email}</p>
+                      </div>
+                      <div>
+                        <label className="text-xs text-gray-500 dark:text-gray-400 uppercase tracking-wide">Role</label>
+                        <p className="text-sm text-gray-900 dark:text-white">{userDetails.role}</p>
+                      </div>
+                      <div>
+                        <label className="text-xs text-gray-500 dark:text-gray-400 uppercase tracking-wide">Status</label>
+                        <p className="text-sm text-gray-900 dark:text-white">{userDetails.isActive ? 'Active' : 'Inactive'}</p>
+                      </div>
                     </div>
-                    <div>
-                      <label className="text-xs text-gray-500 dark:text-gray-400 uppercase tracking-wide">Last Updated</label>
-                      <p className="text-sm text-gray-900 dark:text-white">{formatDateTime(userDetails.updatedAt)}</p>
+                  </div>
+                  <div>
+                    <h3 className="text-sm font-medium text-gray-500 dark:text-gray-400 mb-2">Account Activity</h3>
+                    <div className="space-y-3">
+                      <div>
+                        <label className="text-xs text-gray-500 dark:text-gray-400 uppercase tracking-wide">Last Login</label>
+                        <p className="text-sm text-gray-900 dark:text-white">
+                          {userDetails.lastLogin ? formatDateTime(userDetails.lastLogin) : 'Never logged in'}
+                        </p>
+                      </div>
+                      <div>
+                        <label className="text-xs text-gray-500 dark:text-gray-400 uppercase tracking-wide">Account Created</label>
+                        <p className="text-sm text-gray-900 dark:text-white">{formatDateTime(userDetails.createdAt)}</p>
+                      </div>
+                      <div>
+                        <label className="text-xs text-gray-500 dark:text-gray-400 uppercase tracking-wide">Last Updated</label>
+                        <p className="text-sm text-gray-900 dark:text-white">{formatDateTime(userDetails.updatedAt)}</p>
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -1010,7 +1121,14 @@ export default function UserDetailsPage() {
                   </label>
                   <select
                     value={editForm.role}
-                    onChange={(e) => setEditForm({ ...editForm, role: e.target.value as UserRole })}
+                    onChange={(e) => {
+                      const role = e.target.value as UserRole;
+                      setEditForm({
+                        ...editForm,
+                        role,
+                        simplifiedUi: role === UserRole.FACILITY_ADMIN ? editForm.simplifiedUi : false,
+                      });
+                    }}
                     className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
                   >
                     <option value={UserRole.TENANT}>Tenant</option>
@@ -1036,6 +1154,38 @@ export default function UserDetailsPage() {
                     <span className="text-sm font-medium text-gray-700 dark:text-gray-300">Active</span>
                   </label>
                 </div>
+                {canSetSimplifiedUi && editForm.role === UserRole.FACILITY_ADMIN && (
+                  <div className="rounded-lg border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900/30 p-4">
+                    <div className="flex items-center justify-between gap-4">
+                      <div className="min-w-0">
+                        <p className="text-sm font-medium text-gray-900 dark:text-white">Simplified UI</p>
+                        <p className="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
+                          Same as the Summary toggle — saved with this form or instantly from Summary.
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        role="switch"
+                        aria-checked={editForm.simplifiedUi}
+                        aria-label="Simplified UI"
+                        onClick={() =>
+                          setEditForm({ ...editForm, simplifiedUi: !editForm.simplifiedUi })
+                        }
+                        className={`relative inline-flex h-7 w-12 shrink-0 items-center rounded-full transition-colors duration-200 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 dark:focus:ring-offset-gray-800 ${
+                          editForm.simplifiedUi
+                            ? 'bg-primary-600'
+                            : 'bg-gray-300 dark:bg-gray-600'
+                        }`}
+                      >
+                        <span
+                          className={`inline-block h-5 w-5 transform rounded-full bg-white shadow transition-transform duration-200 ${
+                            editForm.simplifiedUi ? 'translate-x-6' : 'translate-x-1'
+                          }`}
+                        />
+                      </button>
+                    </div>
+                  </div>
+                )}
                 <div className="flex justify-end space-x-3 pt-4 border-t border-gray-200 dark:border-gray-700">
                   <button
                     onClick={() => {

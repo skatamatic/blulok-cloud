@@ -658,6 +658,37 @@ describe('Users Routes', () => {
 
       expectForbidden(response);
     });
+
+    it('should allow ADMIN to set simplifiedUi on a facility_admin', async () => {
+      const response = await request(app)
+        .put(`/api/v1/users/${testData.users.facilityAdmin.id}`)
+        .set('Authorization', `Bearer ${testData.users.admin.token}`)
+        .send({ simplifiedUi: true })
+        .expect(200);
+
+      expectSuccess(response);
+      expect(response.body.user.simplifiedUi).toBe(true);
+    });
+
+    it('should return 403 when FACILITY_ADMIN tries to set simplifiedUi', async () => {
+      const response = await request(app)
+        .put(`/api/v1/users/${testData.users.tenant.id}`)
+        .set('Authorization', `Bearer ${testData.users.facilityAdmin.token}`)
+        .send({ simplifiedUi: true })
+        .expect(403);
+
+      expectForbidden(response);
+    });
+
+    it('should return 400 when simplifiedUi is set on a non-facility_admin role', async () => {
+      const response = await request(app)
+        .put(`/api/v1/users/${testData.users.tenant.id}`)
+        .set('Authorization', `Bearer ${testData.users.admin.token}`)
+        .send({ simplifiedUi: true })
+        .expect(400);
+
+      expectBadRequest(response);
+    });
   });
 
   describe('DELETE /api/v1/users/:id - Delete User', () => {

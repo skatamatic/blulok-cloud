@@ -39,6 +39,8 @@ export const updateUserSchema = Joi.object({
   phoneNumber: Joi.string().trim().allow('', null).optional(),
   role: Joi.string().valid(...Object.values(UserRole)).optional(),
   isActive: Joi.boolean().optional(),
+  /** Presentation-only; only ADMIN/DEV_ADMIN may set (enforced in route) */
+  simplifiedUi: Joi.boolean().optional(),
 });
 
 export const userIdParamSchema = Joi.object({

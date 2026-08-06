@@ -82,7 +82,10 @@ const inviteVerifyLimiterRaw = rateLimit({
 
 const bypassSvc = RateLimitBypassService.getInstance();
 
-function profileUserPayload(req: AuthenticatedRequest) {
+function profileUserPayload(
+  req: AuthenticatedRequest,
+  extras?: { simplifiedUi?: boolean },
+) {
   const user = req.user!;
   const facilityIds = AuthService.canAccessAllFacilities(user.role)
     ? []
@@ -94,7 +97,17 @@ function profileUserPayload(req: AuthenticatedRequest) {
     lastName: user.lastName,
     role: user.role,
     facilityIds,
+    simplifiedUi: Boolean(extras?.simplifiedUi),
   };
+}
+
+async function loadSimplifiedUiFlag(userId: string): Promise<boolean> {
+  try {
+    const row = await UserModel.findById(userId) as User | undefined;
+    return Boolean(row?.simplified_ui);
+  } catch {
+    return false;
+  }
 }
 
 const inviteRequestLimiter: typeof inviteRequestLimiterRaw = ((req: Request, res: Response, next: any) => {
@@ -198,9 +211,10 @@ registerGet(
   },
   authenticateToken as any,
   asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+    const simplifiedUi = await loadSimplifiedUiFlag(req.user!.userId);
     res.json({
       success: true,
-      user: profileUserPayload(req),
+      user: profileUserPayload(req, { simplifiedUi }),
     });
   }),
 );
@@ -234,10 +248,11 @@ registerGet(
   },
   authenticateToken as any,
   asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+    const simplifiedUi = await loadSimplifiedUiFlag(req.user!.userId);
     res.json({
       success: true,
       message: 'Token is valid',
-      user: profileUserPayload(req),
+      user: profileUserPayload(req, { simplifiedUi }),
     });
   }),
 );
@@ -291,6 +306,7 @@ registerPost(
           lastName: user.last_name,
           role: user.role as UserRole,
           facilityIds,
+          simplifiedUi: Boolean(user.simplified_ui),
         },
       });
     } catch (error) {

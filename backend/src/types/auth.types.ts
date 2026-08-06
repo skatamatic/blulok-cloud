@@ -103,6 +103,8 @@ export interface LoginResponse {
     lastName: string;
     /** User's assigned role */
     role: UserRole;
+    /** Presentation-only simplified Cloud UI preference */
+    simplifiedUi?: boolean;
   };
   /** JWT token for authenticated requests (present on success) */
   token?: string;
@@ -186,6 +188,11 @@ export interface UpdateUserRequest {
   role?: UserRole;
   /** Account activation status */
   isActive?: boolean;
+  /**
+   * Presentation-only simplified Cloud UI (facility_admin).
+   * Only ADMIN / DEV_ADMIN may set this; not an API authorization boundary.
+   */
+  simplifiedUi?: boolean;
 }
 
 import { Request } from 'express';

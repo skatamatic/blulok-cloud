@@ -42,13 +42,19 @@ Facility
 
 **Purpose**: Comprehensive facility management with tabbed interface
 **Features**:
-- Tabbed interface (Overview, Devices, Units)
+- Tabbed interface (Overview, Devices, Units, Schedules, Access Groups / Access Codes, FMS, Provisioning Data, Gateway)
 - **Devices** and **Units** tabs: **Cards** vs **Table** toggle (shared `ViewModeToggle`); table columns are sortable and use the same list APIs as global Devices/Units pages (including pagination).
 - Gateway status monitoring
 - Device hierarchy visualization
 - Unit management interface
 - Real-time lock controls
 - Statistics dashboard
+
+**Simplified UI** (`users.simplified_ui` / `usesSimplifiedUi()` — facility_admin only, presentation-only):
+- **Hidden tabs:** Gateway, Access Groups, Access Codes (deep links redirect to Facility overview)
+- **Facility overview:** Gateway status card and “Manage gateway” device actions hidden
+- **FMS tab:** `FacilityFMSSimplifiedView` — no provider configuration / webhook feed / sync sidebar; Test Connection + Sync Now on the history card; Review actions on pending rows; `fms_sync_status` + `fms_sync_progress` refresh the history grid inline
+- See [auth.md](./auth.md) for the preference flag
 
 **Cross-linking**:
 - Device cards → Device details

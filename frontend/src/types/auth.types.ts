@@ -13,6 +13,11 @@ export interface User {
   firstName: string;
   lastName: string;
   role: UserRole;
+  /**
+   * Presentation-only simplified Cloud UI (facility_admin).
+   * Not an API authorization boundary.
+   */
+  simplifiedUi?: boolean;
   facilityNames?: string[];
   facilityIds?: string[];
 }
