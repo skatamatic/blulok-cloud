@@ -516,6 +516,26 @@ class ApiService {
     return response.data as { success: boolean; facilityId: string };
   }
 
+  /** DEV_ADMIN: correlate activity_logs into access_sessions (last N days). */
+  async backfillAccessSessions(params?: { days?: number; dryRun?: boolean }) {
+    const response = await this.api.post('/admin/access-sessions/backfill', {
+      days: params?.days,
+      dryRun: params?.dryRun === true,
+    });
+    return response.data as {
+      success: boolean;
+      message: string;
+      results?: {
+        days: number;
+        dryRun: boolean;
+        unlinkedActivityRows: number;
+        sessionsCreated: number;
+        activityLinks: number;
+      };
+      error?: string;
+    };
+  }
+
   // Internal Gateway endpoints
   async getSecureTimeSyncPacket() {
     const response = await this.api.get('/internal/gateway/time-sync');
@@ -967,7 +987,7 @@ class ApiService {
   }
 
 
-  // Access History endpoints
+  // Access History endpoints (raw event rows by default)
   async getAccessHistory(filters?: {
     user_id?: string;
     facility_id?: string;
@@ -980,8 +1000,60 @@ class ApiService {
     date_to?: string;
     limit?: number;
     offset?: number;
+    sort_by?: string;
+    sort_order?: 'asc' | 'desc';
+    success?: boolean;
+    search?: string;
+    view?: 'sessions' | 'raw';
+    state?: string;
   }) {
     const response = await this.api.get('/access-history', { params: filters });
+    return response.data;
+  }
+
+  /** Session-aggregated Access History (web UI + new app clients). */
+  async getAccessSessions(filters?: {
+    user_id?: string;
+    facility_id?: string;
+    unit_id?: string;
+    action?: string;
+    method?: string;
+    denial_reason?: string;
+    date_from?: string;
+    date_to?: string;
+    limit?: number;
+    offset?: number;
+    sort_by?: string;
+    sort_order?: 'asc' | 'desc';
+    success?: boolean;
+    state?: string;
+  }) {
+    const response = await this.api.get('/access-sessions', { params: filters });
+    return response.data;
+  }
+
+  async getAccessSessionById(id: string) {
+    const response = await this.api.get(`/access-sessions/${id}`);
+    return response.data;
+  }
+
+  async exportAccessSessions(filters?: {
+    user_id?: string;
+    facility_id?: string;
+    unit_id?: string;
+    action?: string;
+    method?: string;
+    denial_reason?: string;
+    date_from?: string;
+    date_to?: string;
+    limit?: number;
+    offset?: number;
+    state?: string;
+  }) {
+    const response = await this.api.get('/access-sessions/export', {
+      params: filters,
+      responseType: 'blob',
+    });
     return response.data;
   }
 
@@ -1062,6 +1134,12 @@ class ApiService {
     date_to?: string;
     limit?: number;
     offset?: number;
+    sort_by?: string;
+    sort_order?: 'asc' | 'desc';
+    success?: boolean;
+    search?: string;
+    view?: 'sessions' | 'raw';
+    state?: string;
   }) {
     const response = await this.api.get(`/access-history/facility/${facilityId}`, { params: filters });
     return response.data;
@@ -1077,6 +1155,12 @@ class ApiService {
     date_to?: string;
     limit?: number;
     offset?: number;
+    sort_by?: string;
+    sort_order?: 'asc' | 'desc';
+    success?: boolean;
+    search?: string;
+    view?: 'sessions' | 'raw';
+    state?: string;
   }) {
     const response = await this.api.get(`/access-history/unit/${unitId}`, { params: filters });
     return response.data;
@@ -1085,6 +1169,14 @@ class ApiService {
   async getAccessLogById(id: string) {
     const response = await this.api.get(`/access-history/${id}`);
     return response.data;
+  }
+
+  /** Session detail (session + events) via /access-sessions; raw log via /access-history. */
+  async getAccessHistoryById(id: string, options?: { view?: 'sessions' | 'raw' }) {
+    if (options?.view === 'raw') {
+      return this.getAccessLogById(id);
+    }
+    return this.getAccessSessionById(id);
   }
 
   async exportAccessHistory(filters?: {
@@ -1099,6 +1191,8 @@ class ApiService {
     date_to?: string;
     limit?: number;
     offset?: number;
+    view?: 'sessions' | 'raw';
+    state?: string;
   }) {
     const response = await this.api.get('/access-history/export', { 
       params: filters,

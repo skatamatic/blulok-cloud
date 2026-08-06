@@ -79,7 +79,8 @@
 | Endpoint | Notes |
 |----------|--------|
 | **`GET /units`**, **`GET /units/unlocked`** | `UnitsService.getUnits` applies role scope; **`facility_id`** query is honored when present and **`canAccessFacility`** prevents cross-facility reads for facility-limited roles. Unlocked route forwards **query** merged with `lock_status: 'unlocked'`. |
-| **`GET /access-history`** | Scoped via access services / tenant–unit rules (see `access-history.routes.ts` and read services). |
+| **`GET /access-sessions`** | Session-aggregated Access History (widget + page). Scoped via access services / tenant–unit rules. |
+| **`GET /access-history`** | Raw event rows by default (`view=raw`); transitional `view=sessions` bridge. |
 | **`GET /notifications`** | `NotificationService.getUserNotifications` enforces **own user** (except admins); optional **`facilityId`** requires **`canAccessFacility`**. |
 
 ## RBAC: Add Widget modal

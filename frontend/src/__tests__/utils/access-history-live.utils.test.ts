@@ -1,11 +1,13 @@
 import {
   accessLogFromActivityWsData,
+  accessSessionFromWsData,
   matchesAccessHistoryLiveFilters,
   parseActivityWsEnvelope,
-  prependUniqueAccessLog,
+  upsertAccessSession,
 } from '@/utils/access-history-live.utils';
 import { localDateInputToUtcEndIso, localDateInputToUtcStartIso } from '@/utils/datetime.utils';
 import { AccessLog } from '@/types/access-history.types';
+import { AccessSession } from '@/types/access-session.types';
 
 const sampleLog: AccessLog = {
   id: 'log-1',
@@ -149,5 +151,57 @@ describe('access-history-live.utils', () => {
         },
       }),
     ).toMatchObject({ denial_reason: 'settlement_mismatch' });
+  });
+
+  it('upserts access sessions by id and caps length', () => {
+    const a: AccessSession = {
+      id: 's1',
+      kind: 'access',
+      origin: 'cloud_remote',
+      method: 'admin_remote',
+      outcome: null,
+      state: 'pending',
+      device_id: 'd1',
+      device_type: 'blulok',
+      attempt_count: 1,
+      started_at: '2026-06-16T18:00:00.000Z',
+    };
+    const b: AccessSession = { ...a, id: 's2', state: 'open' };
+    const updated: AccessSession = {
+      ...a,
+      state: 'open',
+      opened_at: '2026-06-16T18:00:05.000Z',
+    };
+
+    expect(upsertAccessSession([], a, 2)).toEqual([a]);
+    expect(upsertAccessSession([a], updated, 2)).toEqual([updated]);
+    expect(upsertAccessSession([a], b, 2)).toEqual([b, a]);
+    const capped = upsertAccessSession([a, b], { ...a, id: 's3' }, 2);
+    expect(capped).toHaveLength(2);
+    expect(capped[0].id).toBe('s3');
+  });
+
+  it('parses access_session_upsert payload', () => {
+    const session = accessSessionFromWsData({
+      session: {
+        id: 'sess-1',
+        kind: 'access',
+        origin: 'on_site',
+        method: 'keypad',
+        outcome: 'granted',
+        state: 'closed',
+        device_id: 'dev-9',
+        device_type: 'blulok',
+        attempt_count: 2,
+        started_at: '2026-06-16T18:00:00.000Z',
+      },
+      changed: ['state'],
+    });
+    expect(session).toMatchObject({
+      id: 'sess-1',
+      method: 'keypad',
+      state: 'closed',
+      attempt_count: 2,
+    });
   });
 });

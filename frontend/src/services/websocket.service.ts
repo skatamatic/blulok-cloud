@@ -285,6 +285,9 @@ class WebSocketService implements IWebSocketService {
         case 'activity_new':
           this.handleActivityNew(message);
           break;
+        case 'access_session_upsert':
+          this.handleAccessSessionUpsert(message);
+          break;
         case 'access_codes_update':
           this.handleAccessCodesUpdate(message);
           break;
@@ -439,6 +442,14 @@ class WebSocketService implements IWebSocketService {
     const handlers = this.messageHandlers.get('activity');
     if (handlers) {
       const payload = { eventType: message.type, payload: message.data };
+      handlers.forEach(handler => handler(payload));
+    }
+  }
+
+  private handleAccessSessionUpsert(message: { type?: string; data?: unknown }): void {
+    const handlers = this.messageHandlers.get('activity');
+    if (handlers) {
+      const payload = { eventType: message.type ?? 'access_session_upsert', payload: message.data };
       handlers.forEach(handler => handler(payload));
     }
   }

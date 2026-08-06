@@ -326,7 +326,8 @@ Get activity logs for a specific device.
 ### Real-time Updates
 Subscribe to `activity` via WebSocket to receive:
 - `activity_update` - Initial activity data on subscription (`data.activities`, `data.count`, `data.lastUpdated`)
-- `activity_new` - New activity logged; includes both `data.activity` and enriched `data.accessLog` (same shape as `GET /access-history` rows) for live grid prepend in the Access History page/widget
+- `activity_new` - New activity logged; includes both `data.activity` and enriched `data.accessLog` (same shape as `GET /access-history?view=raw` rows) for live grid prepend in raw Access History / Activity Monitor
+- `access_session_upsert` - Access session created/updated; `data.session` is an `AccessSessionRecord` plus `data.changed` field names — used by sessions view and Access History widget
 
 **Regression:** `backend/npm run ws:e2e` — **Access Event Canonical Pipeline** section asserts `activity_update` snapshots, `activity_new` + `accessLog` envelopes after ingestion, role-scoped fanout, and tenant isolation.
 
@@ -424,17 +425,21 @@ Access history reads from `activity_logs` and exposes a unified API at `GET /api
 
 In-flight transitional states (`locking`, `unlocking`) are **not** included in access history list/export queries.
 
-### BluLok remote unlock (three Access History rows)
+### BluLok remote unlock (one session; three raw trail events)
 
-| Step | When | API `action` | Method | User |
-|------|------|--------------|--------|------|
+Operator **sessions** view shows a single row with lifecycle `pending → open → closed`. The immutable raw trail (`view=raw` / `activity_logs`) still records three linked events:
+
+| Step | When | API `action` (raw) | Method | User |
+|------|------|--------------------|--------|------|
 | Outbound | Cloud issues unlock JWT | `remote_access_granted` | `admin_remote` / `remote_gateway` | Initiator |
 | Inbound | State sync unlock settles pending command | `unlock` | `local_device` + `metadata.correlated_remote` | Same initiator (`initiated_by`) |
 | Local re-lock | Later physical lock (no remote lock product) | `lock` | `local_device` | None (`—`) |
 
-UI labels: **Remote Access Granted**, **Unlocked at site**, **Manually Locked** (lock actions render red). Occupied-unit override sets `tenant_unlock_override` / `occupied_unit_override` and renders with an amber leading bar, Override pill, and reason subtitle (darker amber in light mode).
+See [`access-sessions.md`](./access-sessions.md) for correlation rules, pending TTL, and WebSocket `access_session_upsert`.
 
-Grant-like gateway `access-events` for a device with a **pending remote unlock** (and briefly after settlement) are skipped so history does not duplicate Mobile key “Access granted” rows. Gateways should still avoid posting credential grants for cloud JWT unlocks — use `devices/state` only.
+UI session labels: Waiting for unlock → Open now → Closed · duration. Expanded timeline: remote = Requested → Opened → Locked (icons); keypad/app = Unlocked → Locked (no Requested/Granted/Opened split); timeouts Requested → Timed out; pending remotes show Waiting for device to unlock. Occupied-unit override sets `tenant_unlock_override` / `occupied_unit_override` and renders with an amber row wash, Override pill, and reason subtitle (no left accent bar).
+
+Grant-like gateway `access-events` for a device with a **pending remote unlock** attach to the session (`attempt_count`) instead of being discarded. Gateways should still prefer `devices/state` for cloud JWT unlock confirmation.
 
 ### Method taxonomy (read layer)
 
@@ -459,7 +464,7 @@ When gateway state sync confirms unlock via a **real status transition** matchin
 
 Pending attribution is held in-process until settlement or TTL (facility hardware-ack timeout, or **60s** one-shot attribution TTL). Same-state telemetry re-reports do **not** success-consume pending attribution. Failed remote commands (gateway reject, send error, timeout, settlement mismatch, superseded by a newer command) write `access_attempt` rows with `unlock_attempt` / `lock_attempt`, `success: false`, and a human-readable `reason` (outbound grant may already exist). Settled success / mismatch / local-device rows are written by `SettledLockActivityLogger` (`backend/src/services/access/settled-lock-activity-logger.service.ts`) from `DeviceEventService` lock-status listeners.
 
-Frontend Access History vocabulary (`ACTION_LABELS` / `METHOD_LABELS` / denial labels / filter options) lives in `frontend/src/constants/accessHistory.constants.ts` (denial labels sync-tested against backend). Live WS prepend for Access History page, Access History widget, and Activity Monitor uses `useAccessHistoryLiveUpdates` (Cloud filter matches `admin_remote` | `remote_gateway`). Action icons are shared via `getAccessHistoryActionIcon` / `getAccessHistoryMethodIcon`.
+Frontend Access History vocabulary (`ACTION_LABELS` / `METHOD_LABELS` / denial labels / filter options) lives in `frontend/src/constants/accessHistory.constants.ts` (denial labels sync-tested against backend). **Session list/detail/export** use `GET /api/v1/access-sessions` (web UI + new app clients). Legacy `GET /api/v1/access-history` defaults to **raw** event `logs[]`; transitional `view=sessions` remains. Session presentation helpers live in `frontend/src/utils/access-session-display.utils.ts`; rows/timeline in `AccessSessionRow` / `AccessSessionTimeline`. Live WS: `activity_new` prepends raw events; `access_session_upsert` upserts sessions (`useAccessHistoryLiveUpdates`). Activity Monitor and compact unit snippets request `/access-history?view=raw`. Action icons: `getAccessHistoryActionIcon` / `getAccessHistoryMethodIcon` (raw) and `getAccessSessionActionIcon` / `getAccessSessionMethodIcon` (sessions).
 
 On-ground staff unlocks use a separate short-lived intent (`POST …/occupied-unit-override`); see [`app-occupied-unit-override.md`](./app-occupied-unit-override.md).
 

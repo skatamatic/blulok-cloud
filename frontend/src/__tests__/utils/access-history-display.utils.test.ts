@@ -51,7 +51,7 @@ const baseLog: AccessLog = {
 describe('access-history-display.utils', () => {
   it('shows em dash for local device events without a user', () => {
     const user = getAccessUserDisplay(baseLog);
-    expect(user.primary).toBe('—');
+    expect(user.primary).toBe('Not identified');
     expect(user.secondary).toBeNull();
     expect(isNonUserAccessActor(baseLog)).toBe(true);
   });
@@ -143,7 +143,7 @@ describe('access-history-display.utils', () => {
     };
 
     expect(getAccessLogUserLink(uuidLog)).toBeNull();
-    expect(getAccessUserDisplay(uuidLog).primary).toBe('—');
+    expect(getAccessUserDisplay(uuidLog).primary).toBe('Not identified');
   });
 
   it('ignores Unknown User placeholders when a resolved user name exists', () => {
@@ -285,7 +285,7 @@ describe('access-history-display.utils', () => {
     expect(formatAccessAction(manualLock)).toBe('Manually Locked');
     expect(formatAccessMethod(manualLock)).toBe('Manual lock');
     expect(getAccessUserDisplay(siteUnlock).primary).toBe('Facility Manager');
-    expect(getAccessUserDisplay(manualLock).primary).toBe('—');
+    expect(getAccessUserDisplay(manualLock).primary).toBe('Not identified');
   });
 
   it('hides facility in location primary when facility scoped', () => {

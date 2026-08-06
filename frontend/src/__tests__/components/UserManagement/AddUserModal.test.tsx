@@ -76,6 +76,11 @@ describe('AddUserModal', () => {
     await user.type(screen.getByPlaceholderText(/enter first name/i), 'Ada');
     await user.type(screen.getByPlaceholderText(/enter last name/i), 'Test');
     await user.type(screen.getByPlaceholderText(/enter email address/i), 'ada@test.com');
+    expect(screen.getByPlaceholderText(/enter email address/i)).toHaveAttribute('autoComplete', 'off');
+    expect(screen.getByPlaceholderText(/^enter password$/i)).toHaveAttribute(
+      'autoComplete',
+      'new-password',
+    );
 
     await user.selectOptions(screen.getByRole('combobox'), UserRole.ADMIN);
 

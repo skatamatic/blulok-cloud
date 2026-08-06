@@ -9,11 +9,11 @@ import {
   terminalActivityMatchesRequestedStatus,
 } from '@/utils/access-history-remote.utils';
 import type { LockStatusChangedEvent } from '@/services/device-event.service';
+import { AccessSessionService } from '@/services/access/access-session.service';
 
 /**
  * Access History writers for gateway-settled lock/unlock transitions.
- * Attribution consume / mismatch handling stays coordinated with LockCommandService;
- * DeviceEventService owns event emit and WS broadcast.
+ * Opens/closes access sessions before writing activity_logs.
  */
 export class SettledLockActivityLogger {
   static async logSettledLockTransition(event: LockStatusChangedEvent): Promise<void> {
@@ -43,7 +43,9 @@ export class SettledLockActivityLogger {
       return;
     }
 
-    const attribution = lockCommandService.peekCommandAttribution(event.deviceId);
+    const attribution =
+      lockCommandService.peekCommandAttribution(event.deviceId)
+      ?? await lockCommandService.peekCommandAttributionDurable(event.deviceId);
     const remoteMethod = attribution
       ? resolveRemoteAccessMethod(attribution.initiator.role)
       : undefined;
@@ -73,8 +75,6 @@ export class SettledLockActivityLogger {
       return;
     }
 
-    // Same-state re-report: clear matching pending command so one-shot TTL does not
-    // false-fail, but never write a success activity (no physical transition).
     if (!isRealTransition) {
       if (attribution && remoteMethod && statusMatchesRequested) {
         lockCommandService.tryConsumeAttribution(event.deviceId, {
@@ -85,16 +85,20 @@ export class SettledLockActivityLogger {
       return;
     }
 
-    // Success attribution only on a real status transition.
-    let appliedRemoteAttribution = null as ReturnType<typeof lockCommandService.peekCommandAttribution>;
+    let appliedRemoteAttribution = null as Awaited<
+      ReturnType<typeof lockCommandService.peekCommandAttributionDurable>
+    >;
     if (attribution && remoteMethod && statusMatchesRequested) {
       appliedRemoteAttribution = lockCommandService.tryConsumeAttribution(event.deviceId, {
         commandId: attribution.commandId,
         requestedStatus: attribution.requestedStatus,
       });
+      // Cross-instance: pending lives only in access_sessions — still attribute the unlock.
+      if (!appliedRemoteAttribution) {
+        appliedRemoteAttribution = attribution;
+      }
     }
 
-    // On-ground occupied override: brief window after access-event consumed the intent.
     let occupiedStateAttr: {
       userId: string;
       userName: string;
@@ -151,6 +155,53 @@ export class SettledLockActivityLogger {
       ? 'Unlocked at Site'
       : lockActivityTitle(activityType);
 
+    const sessions = AccessSessionService.getInstance();
+    let accessSessionId: string | undefined;
+    if (activityType === 'unlock') {
+      const session = await sessions.onDeviceUnlocked({
+        facilityId: gateway.facility_id,
+        deviceId: event.deviceId,
+        unitId,
+        gatewayId: event.gatewayId,
+        deviceType,
+        remoteCommandId: appliedAttribution?.commandId,
+        method: isCorrelatedRemoteUnlock
+          ? 'local_device'
+          : occupiedStateAttr
+            ? 'app'
+            : appliedAttribution && remoteMethod
+              ? remoteMethod
+              : 'local_device',
+        actor: actorId
+          ? {
+              type: 'user',
+              id: actorId,
+              name: actorName,
+              role: appliedAttribution?.initiator.role ?? occupiedStateAttr?.role,
+            }
+          : undefined,
+        metadata: {
+          oldStatus: event.oldStatus,
+          newStatus: event.newStatus,
+          ...(isCorrelatedRemoteUnlock ? { correlated_remote: true } : {}),
+        },
+      });
+      accessSessionId = session.id;
+    } else {
+      const session = await sessions.onDeviceLocked({
+        facilityId: gateway.facility_id,
+        deviceId: event.deviceId,
+        unitId,
+        gatewayId: event.gatewayId,
+        deviceType,
+        metadata: {
+          oldStatus: event.oldStatus,
+          newStatus: event.newStatus,
+        },
+      });
+      accessSessionId = session.id;
+    }
+
     await ActivityService.getInstance().logActivity({
       entityType: 'device',
       entityId: event.deviceId,
@@ -164,6 +215,7 @@ export class SettledLockActivityLogger {
       facilityId: gateway.facility_id,
       unitId,
       deviceId: event.deviceId,
+      accessSessionId,
       metadata: {
         oldStatus: event.oldStatus,
         newStatus: event.newStatus,
@@ -171,7 +223,6 @@ export class SettledLockActivityLogger {
         device_type: deviceType,
         ...(isCorrelatedRemoteUnlock && appliedAttribution
           ? {
-            // Physical site unlock; outbound "Remote Access Granted" already recorded the remote method.
             method: 'local_device',
             correlated_remote: true,
             remote_command_id: appliedAttribution.commandId,

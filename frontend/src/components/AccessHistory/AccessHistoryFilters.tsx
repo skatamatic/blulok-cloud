@@ -17,6 +17,8 @@ import {
   DevicePhoneMobileIcon,
   UserIcon,
   HomeIcon,
+  QueueListIcon,
+  ExclamationTriangleIcon,
 } from '@heroicons/react/24/outline';
 
 export interface AccessHistoryFilterState {
@@ -31,6 +33,10 @@ export interface AccessHistoryFilterState {
   search?: string;
   limit?: number;
   offset?: number;
+  /** Default sessions; raw returns classic AccessLog event rows. */
+  view?: 'sessions' | 'raw';
+  /** Session state filter (e.g. open for currently-open chip). */
+  state?: string;
 }
 
 export const defaultAccessHistoryDateFilters = (): Pick<AccessHistoryFilterState, 'date_from' | 'date_to' | 'limit'> => {
@@ -50,7 +56,11 @@ interface AccessHistoryFiltersProps {
   unitFilterLabel?: string;
   userFilterLabel?: string;
   selectedFacilityId?: string;
+  currentlyOpenCount?: number;
+  /** DEV_ADMIN only — classic per-event rows. */
+  canViewRaw?: boolean;
   onFilterChange: (key: keyof AccessHistoryFilterState, value: any) => void;
+  onToggleNeedsAttention: () => void;
   onToggleExpanded: () => void;
   onClearFilters: () => void;
   onSetCustomDateRange: (value: boolean) => void;
@@ -65,13 +75,18 @@ export function AccessHistoryFilters({
   unitFilterLabel,
   userFilterLabel,
   selectedFacilityId,
+  currentlyOpenCount,
+  canViewRaw = false,
   onFilterChange,
+  onToggleNeedsAttention,
   onToggleExpanded,
   onClearFilters,
   onSetCustomDateRange,
   onSetUnitFilterLabel,
   onSetUserFilterLabel,
 }: AccessHistoryFiltersProps) {
+  const needsAttention = filters.state === 'open';
+  const openCount = typeof currentlyOpenCount === 'number' ? currentlyOpenCount : 0;
   const getCurrentDateRangeSelection = () => {
     if (isCustomDateRange) return 'custom';
     
@@ -97,6 +112,8 @@ export function AccessHistoryFilters({
       filters.user_id ||
       filters.unit_id ||
       filters.method ||
+      filters.state ||
+      filters.view === 'raw' ||
       (filters.date_from && filters.date_to && getCurrentDateRangeSelection() === 'custom')
     );
   };
@@ -139,6 +156,52 @@ export function AccessHistoryFilters({
   };
 
   return (
+    <div className="space-y-3">
+      <div className="flex flex-wrap items-center gap-2">
+        <button
+          type="button"
+          onClick={onToggleNeedsAttention}
+          aria-pressed={needsAttention}
+          className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-semibold transition-colors duration-200 ${
+            needsAttention
+              ? 'bg-rose-600 text-white ring-2 ring-rose-300 shadow-sm dark:bg-rose-500 dark:ring-rose-400/60'
+              : openCount > 0
+                ? 'bg-rose-100 text-rose-800 ring-1 ring-rose-300 hover:bg-rose-200 dark:bg-rose-900/40 dark:text-rose-200 dark:ring-rose-700 dark:hover:bg-rose-900/55'
+                : 'bg-gray-100 text-gray-700 hover:bg-gray-200 dark:bg-gray-700 dark:text-gray-200 dark:hover:bg-gray-600'
+          }`}
+        >
+          <ExclamationTriangleIcon className="h-3.5 w-3.5" />
+          Needs attention
+          <span
+            className={`ml-0.5 inline-flex min-w-[1.25rem] items-center justify-center rounded-full px-1.5 py-0.5 text-[10px] font-bold ${
+              needsAttention
+                ? 'bg-white/25 text-white'
+                : openCount > 0
+                  ? 'bg-rose-200/90 text-rose-900 dark:bg-rose-800 dark:text-rose-100'
+                  : 'bg-white/80 text-gray-800 dark:bg-gray-800 dark:text-gray-100'
+            }`}
+          >
+            {openCount}
+          </span>
+        </button>
+        {canViewRaw && (
+          <button
+            type="button"
+            onClick={() =>
+              onFilterChange('view', filters.view === 'raw' ? 'sessions' : 'raw')
+            }
+            className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium transition-colors duration-200 ${
+              filters.view === 'raw'
+                ? 'bg-[#147FD4]/15 text-[#147FD4] ring-1 ring-[#147FD4]/40 dark:bg-sky-900/40 dark:text-sky-300 dark:ring-sky-700'
+                : 'bg-gray-100 text-gray-700 hover:bg-gray-200 dark:bg-gray-700 dark:text-gray-200 dark:hover:bg-gray-600'
+            }`}
+          >
+            <QueueListIcon className="h-3.5 w-3.5" />
+            Raw events
+          </button>
+        )}
+      </div>
+
     <ExpandableFilters
       searchValue={filters.search || ''}
       onSearchChange={(value) => onFilterChange('search', value || undefined)}
@@ -276,5 +339,6 @@ export function AccessHistoryFilters({
           : []),
       ]}
     />
+    </div>
   );
 }

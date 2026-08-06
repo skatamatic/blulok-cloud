@@ -1,26 +1,21 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { Widget } from './Widget';
 import { WidgetSize } from './WidgetSizeDropdown';
-import { ClockIcon, UserIcon, ExclamationTriangleIcon } from '@heroicons/react/24/outline';
+import { ClockIcon, ExclamationTriangleIcon } from '@heroicons/react/24/outline';
 import { apiService } from '@/services/api.service';
-import { AccessLog } from '@/types/access-history.types';
+import { AccessSession } from '@/types/access-session.types';
 import { useAuth } from '@/contexts/AuthContext';
 import { useAccessHistoryLiveUpdates } from '@/hooks/useAccessHistoryLiveUpdates';
 import { getWidgetLayoutProfile, WIDGET_LIST_SCROLL_CLASS } from '@/utils/widget-layout.utils';
-import { getAccessHistoryActionIcon } from '@/components/AccessHistory/accessHistoryIcons';
+import { AccessHistoryWidgetSessionRow } from '@/components/Widget/AccessHistoryWidgetSessionRow';
+import { getAccessSessionActionIcon } from '@/components/AccessHistory/accessHistoryIcons';
 import {
-  formatAccessAction,
-  formatAccessHistoryDeviceLabel,
-  formatAccessHistoryUnitLabel,
-  formatOccupiedUnlockOverrideSubtitle,
-  getAccessActionIconTileClass,
-  getAccessActionToneClass,
-  getAccessFailureDetail,
-  getAccessLocationDisplay,
-  getAccessLogMetadata,
-  getAccessUserDisplay,
-  hasOccupiedUnlockOverride,
-} from '@/utils/access-history-display.utils';
+  getAccessSessionIconTileClass,
+  getAccessSessionOutcomeDisplay,
+  getAccessSessionOutcomePillClass,
+  getAccessSessionSubjectDisplay,
+  getAccessSessionTitleToneClass,
+} from '@/utils/access-session-display.utils';
 import { formatRelativeWithExact } from '@/utils/datetime.utils';
 
 interface AccessHistoryWidgetProps {
@@ -40,9 +35,10 @@ export const AccessHistoryWidget: React.FC<AccessHistoryWidgetProps> = ({
   facilityFilter,
 }) => {
   const { authState } = useAuth();
-  const [accessHistory, setAccessHistory] = useState<AccessLog[]>([]);
+  const [sessions, setSessions] = useState<AccessSession[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [expandedId, setExpandedId] = useState<string | null>(null);
   const availableSizes: WidgetSize[] = ['small', 'medium', 'large', 'medium-tall'];
 
   const fetchAccessHistory = useCallback(async (options?: { background?: boolean }) => {
@@ -52,12 +48,13 @@ export const AccessHistoryWidget: React.FC<AccessHistoryWidgetProps> = ({
         setError(null);
       }
 
-      const response = await apiService.getAccessHistory({
+      const response = await apiService.getAccessSessions({
         limit: 20,
         ...(facilityFilter ? { facility_id: facilityFilter } : {}),
       });
 
-      setAccessHistory(response.logs || []);
+      const next = (response.sessions || []) as AccessSession[];
+      setSessions(next);
     } catch (err) {
       console.error('Error fetching access history:', err);
       if (!options?.background) {
@@ -92,49 +89,19 @@ export const AccessHistoryWidget: React.FC<AccessHistoryWidgetProps> = ({
     subscriptionFilters: activityWsFilters,
     liveFilters: liveAccessFilters,
     maxRows: 20,
-    canPrepend: true,
-    onPrepend: setAccessHistory,
+    canUpsertSessions: true,
+    onSessionUpsert: setSessions,
     onFallbackRefresh: (options) => fetchAccessHistoryRef.current(options),
   });
 
   const layout = getWidgetLayoutProfile(currentSize);
-
-  const formatEntryTime = (dateString: string): { display: string; title: string } =>
-    formatRelativeWithExact(dateString, { absoluteAfterHours: 24, absoluteStyle: 'datetime' });
-
-  const getActionIcon = (log: AccessLog) => {
-    const tone = getAccessActionToneClass(log);
-    const tile = getAccessActionIconTileClass(log);
-    const Icon = getAccessHistoryActionIcon(log);
-
-    return (
-      <span className={`inline-flex h-7 w-7 items-center justify-center rounded-md ${tile}`}>
-        <Icon className={`h-4 w-4 ${tone}`} />
-      </span>
-    );
-  };
-
-  const getActionSummary = (log: AccessLog): { primary: string; title: string } => {
-    const primary = formatAccessAction(log);
-    if (!log.success) {
-      const failure = getAccessFailureDetail(log);
-      return { primary, title: failure ? `${primary} — ${failure}` : primary };
-    }
-    return { primary, title: primary };
-  };
-
-  const getUnitDisplayName = (log: AccessLog): string => {
-    const meta = getAccessLogMetadata(log);
-    const unit = formatAccessHistoryUnitLabel(log, meta);
-    if (unit) return unit;
-    const device = formatAccessHistoryDeviceLabel(log, meta);
-    if (device) return device;
-    const location = getAccessLocationDisplay(log, { hideFacility: Boolean(facilityFilter) });
-    return location.primary;
-  };
-
   const maxItems = layout.listCap;
-  const displayHistory = accessHistory.slice(0, maxItems);
+  const displayHistory = sessions.slice(0, maxItems);
+  const hideFacility = Boolean(facilityFilter);
+
+  const handleToggle = (sessionId: string) => {
+    setExpandedId((prev) => (prev === sessionId ? null : sessionId));
+  };
 
   if (loading) {
     return (
@@ -185,100 +152,68 @@ export const AccessHistoryWidget: React.FC<AccessHistoryWidgetProps> = ({
       onRemove={onRemove}
       readOnly={readOnly}
     >
-      <div className="space-y-2 h-full flex flex-col">
-        {accessHistory.length === 0 ? (
-          <div className="flex items-center justify-center h-full">
-            <div className="text-gray-500 dark:text-gray-400 text-center">
-              <ClockIcon className="h-8 w-8 mx-auto mb-2" />
+      <div className="flex h-full flex-col space-y-2">
+        {sessions.length === 0 ? (
+          <div className="flex h-full items-center justify-center">
+            <div className="text-center text-gray-500 dark:text-gray-400">
+              <ClockIcon className="mx-auto mb-2 h-8 w-8" />
               <div className="text-sm">No access history found</div>
             </div>
           </div>
         ) : currentSize === 'small' ? (
-          // Compact view for small size
-          <div className="space-y-1">
+          <div className="space-y-1.5">
             {displayHistory.map((entry) => {
-              const entryTime = formatEntryTime(entry.occurred_at);
+              const entryTime = formatRelativeWithExact(entry.started_at, {
+                absoluteAfterHours: 24,
+                absoluteStyle: 'datetime',
+              });
+              const outcome = getAccessSessionOutcomeDisplay(entry);
+              const subject = getAccessSessionSubjectDisplay(entry, { hideFacility });
+              const Icon = getAccessSessionActionIcon(entry);
+              const tone = getAccessSessionTitleToneClass(entry);
+              const tile = getAccessSessionIconTileClass(entry);
+              const liveStatus =
+                outcome.tone === 'open'
+                || outcome.tone === 'open_stale'
+                || outcome.tone === 'open_critical'
+                || outcome.tone === 'pending';
               return (
-              <div key={entry.id} className="flex items-center justify-between text-xs">
-                <div className="flex items-center space-x-1">
-                  {getActionIcon(entry)}
-                  <span className="truncate">{getUnitDisplayName(entry)}</span>
+                <div key={entry.id} className="flex items-center justify-between gap-2 text-xs">
+                  <div className="flex min-w-0 items-center gap-1.5">
+                    <span className={`inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md ${tile}`}>
+                      <Icon className={`h-3.5 w-3.5 ${tone}`} />
+                    </span>
+                    <span className="truncate font-medium text-gray-900 dark:text-gray-100">
+                      {subject.primary}
+                    </span>
+                  </div>
+                  <span
+                    className={`max-w-[45%] shrink-0 truncate rounded-full px-1.5 py-0.5 text-[10px] font-medium ${getAccessSessionOutcomePillClass(outcome.tone)}`}
+                    title={entryTime.title}
+                  >
+                    {liveStatus ? outcome.label : entryTime.display}
+                  </span>
                 </div>
-                <span className="text-gray-500" title={entryTime.title}>
-                  {entryTime.display}
-                </span>
-              </div>
-            );})}
+              );
+            })}
           </div>
         ) : (
-          // Full view for larger sizes
           <div className={`space-y-2 ${WIDGET_LIST_SCROLL_CLASS}`}>
-            {displayHistory.map((entry) => {
-              const entryTime = formatEntryTime(entry.occurred_at);
-              const actionSummary = getActionSummary(entry);
-              const failureDetail = !entry.success ? getAccessFailureDetail(entry) : null;
-              const isOverride = hasOccupiedUnlockOverride(entry);
-              const overrideSubtitle = formatOccupiedUnlockOverrideSubtitle(entry);
-              const userDisplay = getAccessUserDisplay(entry).primary;
-              return (
-              <div
+            {displayHistory.map((entry) => (
+              <AccessHistoryWidgetSessionRow
                 key={entry.id}
-                className={`flex items-center space-x-3 p-2 rounded-md ${
-                  isOverride
-                    ? 'border-l-4 border-amber-700 dark:border-amber-400 bg-amber-50/80 dark:bg-amber-950/30'
-                    : 'bg-gray-50 dark:bg-gray-700'
-                }`}
-              >
-                <div className="flex-shrink-0">
-                  {getActionIcon(entry)}
-                </div>
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2 min-w-0">
-                    <span className="font-medium text-sm text-gray-900 dark:text-gray-100 truncate" title={getUnitDisplayName(entry)}>
-                      {getUnitDisplayName(entry)}
-                    </span>
-                    <span
-                      className={`text-sm font-medium truncate ${getAccessActionToneClass(entry)}`}
-                      title={actionSummary.title}
-                    >
-                      {actionSummary.primary}
-                    </span>
-                    {isOverride && (
-                      <span className="inline-flex shrink-0 items-center rounded-full bg-amber-200/90 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-900 dark:bg-amber-900/70 dark:text-amber-200">
-                        Override
-                      </span>
-                    )}
-                  </div>
-                  {overrideSubtitle && (
-                    <div className="mt-0.5 text-xs font-medium text-amber-800 dark:text-amber-300/90 truncate">
-                      {overrideSubtitle}
-                    </div>
-                  )}
-                  <div className="flex items-center gap-2 min-w-0 text-xs text-gray-500 dark:text-gray-400">
-                    <UserIcon className="h-3 w-3 shrink-0" />
-                    <span className="truncate" title={userDisplay}>{userDisplay}</span>
-                    <ClockIcon className="h-3 w-3 shrink-0 ml-1" />
-                    <span className="truncate" title={entryTime.title}>
-                      {entryTime.display}
-                    </span>
-                  </div>
-                  {!entry.success && failureDetail && (
-                    <p
-                      className="mt-1 text-xs text-red-600 dark:text-red-400 line-clamp-2 break-words"
-                      title={failureDetail}
-                    >
-                      {failureDetail}
-                    </p>
-                  )}
-                </div>
-              </div>
-            );})}
+                session={entry}
+                hideFacility={hideFacility}
+                expanded={expandedId === entry.id}
+                onToggle={handleToggle}
+              />
+            ))}
           </div>
         )}
-        
-        {accessHistory.length > maxItems && (
-          <div className="text-xs text-gray-500 dark:text-gray-400 text-center pt-2 border-t border-gray-200 dark:border-gray-600">
-            Showing {maxItems} of {accessHistory.length} entries
+
+        {sessions.length > maxItems && (
+          <div className="border-t border-gray-200 pt-2 text-center text-xs text-gray-500 dark:border-white/10 dark:text-gray-400">
+            Showing {maxItems} of {sessions.length} entries
           </div>
         )}
       </div>

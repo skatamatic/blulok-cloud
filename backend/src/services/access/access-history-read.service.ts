@@ -72,6 +72,11 @@ export class AccessHistoryReadService {
     return this.mapToAccessHistoryRecord(rows[0]);
   }
 
+  /** Public mapper for session detail event trails and tests. */
+  public mapToAccessHistoryRecordPublic(row: ActivityLog | ActivityLogWithContext): AccessHistoryRecord {
+    return this.mapToAccessHistoryRecord(row);
+  }
+
   public async query(
     userId: string,
     role: UserRole,

@@ -16,6 +16,10 @@ export const accessHistoryQuerySchema = Joi.object({
   action_type: Joi.string().optional(),
   method: Joi.string().optional(),
   denial_reason: Joi.string().optional(),
+  state: Joi.string()
+    .valid('pending', 'open', 'closed', 'timed_out', 'denied', 'failed')
+    .optional(),
+  view: Joi.string().valid('raw', 'sessions').optional(),
   date_from: Joi.date().iso().optional(),
   date_to: Joi.date().iso().optional(),
   start_date: Joi.date().iso().optional(),

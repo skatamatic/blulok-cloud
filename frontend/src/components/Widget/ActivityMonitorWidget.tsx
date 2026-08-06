@@ -207,7 +207,8 @@ export const ActivityMonitorWidget: React.FC<ActivityMonitorWidgetProps> = ({
       const response = await apiService.getAccessHistory({
         facility_id: facilityFilter,
         limit: maxEntries,
-        offset: 0
+        offset: 0,
+        view: 'raw',
       });
 
       if (response.success && response.logs) {

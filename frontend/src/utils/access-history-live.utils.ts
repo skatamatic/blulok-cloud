@@ -1,4 +1,5 @@
 import { AccessLog } from '@/types/access-history.types';
+import { AccessSession, AccessSessionState } from '@/types/access-session.types';
 import { accessHistoryMethodMatchesFilter } from '@/constants/accessHistory.constants';
 import { queryDateFromMs, queryDateToMs } from '@/utils/datetime.utils';
 
@@ -18,6 +19,8 @@ export type AccessHistoryLiveFilters = {
   search?: string;
   date_from?: string;
   date_to?: string;
+  /** Session-view filter (e.g. currently open). */
+  state?: AccessSessionState;
 };
 
 const TERMINAL_ACTIVITY_TYPES = new Set(['access_attempt', 'lock', 'unlock']);
@@ -263,6 +266,183 @@ export function prependUniqueAccessLog(
     return existing;
   }
   return [incoming, ...existing].slice(0, maxRows);
+}
+
+const SESSION_STATES = new Set<AccessSessionState>([
+  'pending',
+  'open',
+  'closed',
+  'timed_out',
+  'denied',
+  'failed',
+]);
+
+function normalizeAccessSessionRow(raw: Record<string, unknown>): AccessSession | null {
+  const id = typeof raw.id === 'string' ? raw.id : null;
+  if (!id) return null;
+
+  const stateRaw = typeof raw.state === 'string' ? raw.state : '';
+  if (!SESSION_STATES.has(stateRaw as AccessSessionState)) return null;
+
+  const deviceId =
+    (typeof raw.device_id === 'string' && raw.device_id)
+    || (typeof raw.deviceId === 'string' && raw.deviceId)
+    || null;
+  if (!deviceId) return null;
+
+  const startedAt =
+    (typeof raw.started_at === 'string' && raw.started_at)
+    || (typeof raw.startedAt === 'string' && raw.startedAt)
+    || new Date().toISOString();
+
+  const optionalIso = (snake: string, camel: string): string | undefined => {
+    const a = raw[snake];
+    const b = raw[camel];
+    if (typeof a === 'string' && a) return a;
+    if (typeof b === 'string' && b) return b;
+    return undefined;
+  };
+
+  return {
+    id,
+    kind: typeof raw.kind === 'string' ? raw.kind : 'access',
+    origin: typeof raw.origin === 'string' ? raw.origin : 'system',
+    method: typeof raw.method === 'string' ? raw.method : 'unknown',
+    outcome: typeof raw.outcome === 'string' ? raw.outcome : null,
+    state: stateRaw as AccessSessionState,
+    device_id: deviceId,
+    device_type: raw.device_type === 'access_control' ? 'access_control' : 'blulok',
+    facility_id:
+      (typeof raw.facility_id === 'string' && raw.facility_id)
+      || (typeof raw.facilityId === 'string' ? raw.facilityId : undefined),
+    unit_id:
+      (typeof raw.unit_id === 'string' && raw.unit_id)
+      || (typeof raw.unitId === 'string' ? raw.unitId : undefined),
+    user_id:
+      (typeof raw.user_id === 'string' && raw.user_id)
+      || (typeof raw.actor_id === 'string' ? raw.actor_id : undefined),
+    actor_type: typeof raw.actor_type === 'string' ? raw.actor_type : undefined,
+    actor_role: typeof raw.actor_role === 'string' ? raw.actor_role : undefined,
+    denial_reason: typeof raw.denial_reason === 'string' ? raw.denial_reason : undefined,
+    reason:
+      (typeof raw.reason === 'string' && raw.reason)
+      || (typeof raw.reason_message === 'string' ? raw.reason_message : undefined),
+    attempt_count: typeof raw.attempt_count === 'number' ? raw.attempt_count : 1,
+    started_at: startedAt,
+    opened_at: optionalIso('opened_at', 'openedAt'),
+    closed_at: optionalIso('closed_at', 'closedAt'),
+    expires_at: optionalIso('expires_at', 'expiresAt'),
+    settled_at: optionalIso('settled_at', 'settledAt'),
+    open_duration_sec:
+      typeof raw.open_duration_sec === 'number'
+        ? raw.open_duration_sec
+        : undefined,
+    remote_command_id:
+      typeof raw.remote_command_id === 'string' ? raw.remote_command_id : undefined,
+    correlation_id:
+      typeof raw.correlation_id === 'string' ? raw.correlation_id : undefined,
+    metadata:
+      raw.metadata && typeof raw.metadata === 'object'
+        ? (raw.metadata as Record<string, unknown>)
+        : undefined,
+    facility_name:
+      (typeof raw.facility_name === 'string' && raw.facility_name)
+      || (typeof raw.facilityName === 'string' ? raw.facilityName : undefined),
+    unit_number:
+      (typeof raw.unit_number === 'string' && raw.unit_number)
+      || (typeof raw.unitNumber === 'string' ? raw.unitNumber : undefined),
+    user_name:
+      (typeof raw.user_name === 'string' && raw.user_name)
+      || (typeof raw.actor_name === 'string' ? raw.actor_name : undefined),
+    user_email:
+      (typeof raw.user_email === 'string' && raw.user_email)
+      || (typeof raw.actor_user_email === 'string' ? raw.actor_user_email : undefined),
+    device_name:
+      (typeof raw.device_name === 'string' && raw.device_name)
+      || (typeof raw.deviceName === 'string' ? raw.deviceName : undefined),
+    device_serial:
+      (typeof raw.device_serial === 'string' && raw.device_serial)
+      || (typeof raw.deviceSerial === 'string' ? raw.deviceSerial : undefined),
+  };
+}
+
+/** Parse `access_session_upsert` WS payload → AccessSession | null. */
+export function accessSessionFromWsData(data: unknown): AccessSession | null {
+  if (!data || typeof data !== 'object') return null;
+  const record = data as Record<string, unknown>;
+
+  if (record.session && typeof record.session === 'object') {
+    return normalizeAccessSessionRow(record.session as Record<string, unknown>);
+  }
+
+  return normalizeAccessSessionRow(record);
+}
+
+/**
+ * Replace by id when present; otherwise prepend. Cap list length.
+ */
+export function upsertAccessSession(
+  existing: AccessSession[],
+  incoming: AccessSession,
+  maxRows: number,
+): AccessSession[] {
+  const idx = existing.findIndex((row) => row.id === incoming.id);
+  if (idx >= 0) {
+    const next = existing.slice();
+    next[idx] = incoming;
+    return next;
+  }
+  return [incoming, ...existing].slice(0, maxRows);
+}
+
+export function matchesAccessSessionLiveFilters(
+  session: AccessSession,
+  filters: AccessHistoryLiveFilters,
+): boolean {
+  if (filters.facility_id && session.facility_id !== filters.facility_id) return false;
+  if (filters.unit_id && session.unit_id !== filters.unit_id) return false;
+  if (filters.user_id && session.user_id !== filters.user_id) return false;
+  if (filters.state && session.state !== filters.state) return false;
+  if (filters.method) {
+    if (!accessHistoryMethodMatchesFilter(session.method, filters.method)) return false;
+  }
+  if (filters.denial_reason && session.denial_reason !== filters.denial_reason) return false;
+  if (filters.success !== undefined) {
+    const ok =
+      session.outcome === 'granted'
+      && (session.state === 'open' || session.state === 'closed' || session.state === 'pending');
+    if (filters.success !== ok) return false;
+  }
+
+  const startedMs = new Date(session.started_at).getTime();
+  if (filters.date_from) {
+    const fromMs = queryDateFromMs(filters.date_from);
+    if (fromMs !== null && startedMs < fromMs) return false;
+  }
+  if (filters.date_to) {
+    const toMs = queryDateToMs(filters.date_to);
+    if (toMs !== null && startedMs > toMs) return false;
+  }
+
+  const search = filters.search?.trim().toLowerCase();
+  if (search) {
+    const haystack = [
+      session.user_name,
+      session.unit_number,
+      session.facility_name,
+      session.device_name,
+      session.method,
+      session.state,
+      session.reason,
+      session.denial_reason,
+    ]
+      .filter(Boolean)
+      .join(' ')
+      .toLowerCase();
+    if (!haystack.includes(search)) return false;
+  }
+
+  return true;
 }
 
 export function parseActivityWsEnvelope(data: unknown): ActivityWsEvent {

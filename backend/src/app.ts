@@ -22,6 +22,7 @@ import { gatewayRouter } from '@/routes/gateway.routes';
 import { devicesRouter } from '@/routes/devices.routes';
 import { unitsRouter } from '@/routes/units.routes';
 import accessHistoryRouter from '@/routes/access-history.routes';
+import accessSessionsRouter from '@/routes/access-sessions.routes';
 import keySharingRouter from '@/routes/key-sharing.routes';
 import { fmsRouter } from '@/routes/fms.routes';
 import { fmsWebhookRouter } from '@/routes/fms-webhook.routes';
@@ -129,6 +130,7 @@ export function createApp(): Application {
     app.use('/api/v1/units', unitsRouter);
     app.use('/api/v1/fms', fmsRouter);
     app.use('/api/v1/access-history', accessHistoryRouter);
+    app.use('/api/v1/access-sessions', accessSessionsRouter);
     app.use('/api/v1/key-sharing', keySharingRouter);
   app.use('/api/v1/passes', passesRouter);
     app.use('/api/v1/route-passes', routePassesRouter);

@@ -85,10 +85,64 @@ async function waitForAppEvent(events, eventName, startLen = 0, timeoutMs = 8000
   );
 }
 
+/**
+ * Poll until an access_session_upsert in `events` matches `predicate`.
+ * @param {Array} events
+ * @param {(session: object, evt: object) => boolean} predicate
+ * @param {number} [startLen]
+ * @param {number} [timeoutMs]
+ */
+async function waitForSessionUpsert(events, predicate, startLen = 0, timeoutMs = 10000) {
+  return waitForWsEvent(
+    events,
+    (msg) => {
+      if (msg?.type !== 'access_session_upsert') return false;
+      const session = msg?.data?.session;
+      if (!session) return false;
+      return predicate(session, msg);
+    },
+    startLen,
+    timeoutMs,
+  );
+}
+
+/**
+ * Poll GET /access-sessions until a session matches `predicate` (or timeout).
+ * @param {import('axios').AxiosStatic} axiosClient
+ * @param {string} apiBase
+ * @param {Record<string, string>} headers - e.g. authHeaders(token)
+ * @param {Record<string, unknown>} params
+ * @param {(session: object, currentlyOpen: number, data: object) => boolean} predicate
+ * @param {number} [timeoutMs]
+ */
+async function waitForAccessSession(axiosClient, apiBase, headers, params, predicate, timeoutMs = 10000) {
+  const deadline = Date.now() + timeoutMs;
+  let lastSessions = [];
+  let lastCurrentlyOpen = 0;
+  while (Date.now() < deadline) {
+    const res = await axiosClient.get(`${apiBase}/access-sessions`, {
+      headers,
+      params,
+    });
+    if (res.status === 200) {
+      lastSessions = res.data?.sessions || [];
+      lastCurrentlyOpen = Number(res.data?.currently_open || 0);
+      const hit = lastSessions.find((s) => predicate(s, lastCurrentlyOpen, res.data));
+      if (hit) {
+        return { session: hit, currently_open: lastCurrentlyOpen, data: res.data };
+      }
+    }
+    await delay(300);
+  }
+  return { session: null, currently_open: lastCurrentlyOpen, sessions: lastSessions };
+}
+
 module.exports = {
   waitForProxyResponse,
   waitForDeviceStatusLockStatus,
   waitForDeviceStatusRow,
   waitForWsEvent,
   waitForAppEvent,
+  waitForSessionUpsert,
+  waitForAccessSession,
 };

@@ -147,24 +147,26 @@ describe('ActivityMonitorWidget', () => {
           facility_id: undefined,
           limit: 50,
           offset: 0,
+          view: 'raw',
         });
       });
     });
 
     it('passes facility filter to API', async () => {
       renderWithProviders(
-        <ActivityMonitorWidget 
-          id="test-widget" 
-          title="Activity Monitor" 
+        <ActivityMonitorWidget
+          id="test-widget"
+          title="Activity Monitor"
           facilityFilter="facility-123"
         />
       );
-      
+
       await waitFor(() => {
         expect(mockGetAccessHistory).toHaveBeenCalledWith({
           facility_id: 'facility-123',
           limit: 50,
           offset: 0,
+          view: 'raw',
         });
       });
     });
@@ -511,6 +513,7 @@ describe('ActivityMonitorWidget', () => {
           facility_id: undefined,
           limit: 10,
           offset: 0,
+          view: 'raw',
         });
       });
     });

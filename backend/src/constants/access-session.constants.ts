@@ -1,0 +1,33 @@
+/** Short window for on-site grant → physical open correlation when no facility timeout applies. */
+export const ON_SITE_GRANT_TO_OPEN_TTL_SEC = 60;
+
+/** Default poll interval for pending session expiry sweeper. */
+export const ACCESS_SESSION_SWEEPER_INTERVAL_MS = 30_000;
+
+export const ACCESS_SESSION_STATES = [
+  'pending',
+  'open',
+  'closed',
+  'timed_out',
+  'denied',
+  'failed',
+] as const;
+
+export const ACCESS_SESSION_ORIGINS = [
+  'cloud_remote',
+  'on_site',
+  'local',
+  'system',
+] as const;
+
+export const ACCESS_SESSION_KINDS = ['access', 'lock_only'] as const;
+
+export const ACCESS_SESSION_OUTCOMES = ['granted', 'denied', 'failed'] as const;
+
+/** Methods that may coalesce into an open session (repeat grants while open). */
+export const COALESCEABLE_GRANT_METHODS = [
+  'app',
+  'mobile_key',
+  'keypad',
+  'route_pass',
+] as const;

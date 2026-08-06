@@ -15,6 +15,7 @@ import {
 import { DENIAL_REASON_MESSAGES } from '@/constants/access-history.constants';
 import { isOccupiedUnlockIntentAccessMethod } from '@/constants/occupied-unlock-intent.constants';
 import { coerceOptionalAccessId } from '@/utils/access-event-placeholder.utils';
+import { AccessSessionService } from '@/services/access/access-session.service';
 
 type IngestContext = {
   facilityId: string;
@@ -31,6 +32,10 @@ function denialReasonToResultMessage(reason: AccessEventDenialReason): string {
   return 'Access denied';
 }
 
+/**
+ * Ingests gateway access-events into activity_logs and access_sessions.
+ * Grant coalescing replaces the old "skip while pending remote unlock" suppression.
+ */
 export class AccessEventIngestionService {
   private readonly activityService = ActivityService.getInstance();
   private readonly unitModel = new UnitModel();
@@ -52,10 +57,6 @@ export class AccessEventIngestionService {
       context.facilityId,
     );
     await this.assertFacilityEntityConsistency(resolved, context.facilityId);
-
-    if (await this.shouldSkipDuplicateGrantDuringRemoteUnlock(resolved)) {
-      return null;
-    }
 
     const deviceType = await this.resolveStoredDeviceType(
       resolvedDeviceType,
@@ -138,6 +139,42 @@ export class AccessEventIngestionService {
       : resolved.reason_message
         || (resolved.denial_reason ? denialReasonToResultMessage(resolved.denial_reason) : 'Access denied');
 
+    const actor = {
+      type: actorType as 'user' | 'system' | 'device' | 'gateway',
+      id: resolved.actor?.user_id,
+      name: resolved.actor?.name,
+      role: actorRole,
+    };
+
+    const sessions = AccessSessionService.getInstance();
+    const session = resolved.success
+      ? await sessions.onGrantAccessEvent({
+          facilityId: context.facilityId,
+          deviceId: resolved.device_id,
+          unitId: resolved.unit_id,
+          gatewayId: resolved.gateway_id,
+          deviceType,
+          method: resolved.method,
+          actor,
+          correlationId: resolved.correlation_id,
+          metadata: sanitizedMetadata,
+          occurredAt,
+        })
+      : await sessions.onDenialAccessEvent({
+          facilityId: context.facilityId,
+          deviceId: resolved.device_id,
+          unitId: resolved.unit_id,
+          gatewayId: resolved.gateway_id,
+          deviceType,
+          method: resolved.method,
+          actor,
+          denialReason: resolved.denial_reason,
+          reasonMessage: resultMessage,
+          correlationId: resolved.correlation_id,
+          metadata: sanitizedMetadata,
+          occurredAt,
+        });
+
     return this.activityService.logActivity({
       entityType: 'device',
       entityId: resolved.device_id,
@@ -152,6 +189,7 @@ export class AccessEventIngestionService {
       facilityId: context.facilityId,
       unitId: resolved.unit_id,
       deviceId: resolved.device_id,
+      accessSessionId: session.id,
       occurredAt,
       metadata: {
         ...sanitizedMetadata,
@@ -218,44 +256,9 @@ export class AccessEventIngestionService {
       }
     } catch (err) {
       if (err instanceof ValidationError) throw err;
-      // Transient lookup failures should not block ingestion.
     }
   }
 
-  /**
-   * While a cloud remote unlock is pending, ignore grant-like access-events for that device
-   * so Access History does not get orphan "Access granted / Mobile key" rows.
-   */
-  private async shouldSkipDuplicateGrantDuringRemoteUnlock(
-    event: AccessEventPayload,
-  ): Promise<boolean> {
-    if (!event.success) return false;
-    const grantLikeAction =
-      event.action === 'access_granted' || event.action === 'admin_remote_open';
-    const grantLikeMethod = (
-      ['app', 'mobile_key', 'route_pass', 'admin_remote'] as const
-    ).includes(event.method as 'app' | 'mobile_key' | 'route_pass' | 'admin_remote');
-    if (!grantLikeAction && !grantLikeMethod) return false;
-
-    const { LockCommandService } = await import('@/services/lock-command.service');
-    const lockCommands = LockCommandService.getInstance();
-    const pending = lockCommands.peekCommandAttribution(event.device_id);
-    // Only BluLok remote unlock creates the duplicate Mobile key / Access granted noise.
-    // Access-control OPEN pending must not swallow legitimate access-events.
-    if (
-      pending
-      && pending.requestedStatus === 'unlocked'
-      && pending.deviceType === 'blulok'
-    ) {
-      return true;
-    }
-    // State sync may settle (and clear pending) before a late grant event arrives.
-    return lockCommands.hasRecentBluLokRemoteUnlockSettlement(event.device_id);
-  }
-
-  /**
-   * Precedence: DB-resolved type → payload device_type hint → blulok default.
-   */
   private async resolveStoredDeviceType(
     resolvedDeviceType: AccessEventDeviceType | undefined,
     payloadHint: AccessEventDeviceType | undefined,

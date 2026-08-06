@@ -417,7 +417,7 @@ export const ViewerUnitInfoSection: React.FC<ViewerUnitInfoSectionProps> = ({
     setLogsLoading(true);
     setLogsError(null);
     apiService
-      .getUnitAccessHistory(unit.id, { limit: 5 })
+      .getUnitAccessHistory(unit.id, { limit: 5, view: 'raw' })
       .then((res) => {
         if (cancelled) return;
         const arr = (res?.logs ?? res?.data ?? []) as AccessLogEntry[];

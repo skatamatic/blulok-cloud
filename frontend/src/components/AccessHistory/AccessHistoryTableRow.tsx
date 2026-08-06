@@ -16,6 +16,7 @@ import {
   getAccessUserDisplay,
   hasOccupiedUnlockOverride,
 } from '@/utils/access-history-display.utils';
+import { UNIDENTIFIED_USER_LABEL, UNIDENTIFIED_USER_TITLE } from '@/utils/access-session-display.utils';
 import { formatDateTime } from '@/utils/datetime.utils';
 import { getAccessHistoryActionIcon, getAccessHistoryMethodIcon } from './accessHistoryIcons';
 import {
@@ -81,7 +82,7 @@ export function AccessHistoryTableRow({
           isExpanded ? 'bg-blue-50/60 dark:bg-blue-900/15' : ''
         } ${
           showOverrideBadge
-            ? 'border-l-4 border-amber-700 dark:border-amber-400 bg-amber-50/70 dark:bg-amber-950/25 hover:bg-amber-50 dark:hover:bg-amber-950/35'
+            ? 'bg-amber-50/70 dark:bg-amber-950/25 hover:bg-amber-50 dark:hover:bg-amber-950/35'
             : ''
         }`}
         onClick={() => onToggle(log.id)}
@@ -126,7 +127,13 @@ export function AccessHistoryTableRow({
         </td>
         <td className="px-4 py-3 align-middle">
           <div className="flex items-center min-w-0 gap-2">
-            <UserIcon className="h-4 w-4 shrink-0 text-gray-400" />
+            <UserIcon
+              className={`h-4 w-4 shrink-0 ${
+                userDisplay.primary === UNIDENTIFIED_USER_LABEL
+                  ? 'text-gray-300 dark:text-gray-600'
+                  : 'text-gray-400'
+              }`}
+            />
             <div className="min-w-0 flex-1">
               {userLink ? (
                 <button
@@ -144,8 +151,16 @@ export function AccessHistoryTableRow({
                 </button>
               ) : (
                 <div
-                  className="truncate text-sm font-medium text-gray-900 dark:text-white"
-                  title={userDisplay.primary}
+                  className={
+                    userDisplay.primary === UNIDENTIFIED_USER_LABEL
+                      ? 'truncate text-sm text-gray-500 dark:text-gray-400'
+                      : 'truncate text-sm font-medium text-gray-900 dark:text-white'
+                  }
+                  title={
+                    userDisplay.primary === UNIDENTIFIED_USER_LABEL
+                      ? UNIDENTIFIED_USER_TITLE
+                      : userDisplay.primary
+                  }
                 >
                   {userDisplay.primary}
                 </div>

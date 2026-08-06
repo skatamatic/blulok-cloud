@@ -21,6 +21,11 @@ export async function teardownBackgroundTimers(): Promise<void> {
     DataPruningService.resetForTests();
   });
 
+  await safe('AccessSessionSweeperService', async () => {
+    const { AccessSessionSweeperService } = await import('../services/access/access-session-sweeper.service');
+    AccessSessionSweeperService.resetForTests();
+  });
+
   await safe('RoutePassPruningService', async () => {
     const { RoutePassPruningService } = await import('../services/route-pass-pruning.service');
     RoutePassPruningService.resetForTests();

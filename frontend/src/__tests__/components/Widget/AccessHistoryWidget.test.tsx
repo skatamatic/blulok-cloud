@@ -5,11 +5,11 @@ import React from 'react';
 import { render, screen, waitFor } from '@testing-library/react';
 import { AccessHistoryWidget } from '@/components/Widget/AccessHistoryWidget';
 
-const mockGetAccessHistory = jest.fn();
+const mockGetAccessSessions = jest.fn();
 
 jest.mock('@/services/api.service', () => ({
   apiService: {
-    getAccessHistory: (...args: unknown[]) => mockGetAccessHistory(...args),
+    getAccessSessions: (...args: unknown[]) => mockGetAccessSessions(...args),
   },
 }));
 
@@ -46,12 +46,12 @@ jest.mock('@/components/Widget/Widget', () => ({
 describe('AccessHistoryWidget', () => {
   beforeEach(() => {
     jest.clearAllMocks();
-    mockGetAccessHistory.mockReset();
-    mockGetAccessHistory.mockResolvedValue({ logs: [], total: 0 });
+    mockGetAccessSessions.mockReset();
+    mockGetAccessSessions.mockResolvedValue({ logs: [], total: 0 });
   });
 
   it('shows loading then empty state', async () => {
-    mockGetAccessHistory.mockResolvedValue({ logs: [], total: 0 });
+    mockGetAccessSessions.mockResolvedValue({ logs: [], total: 0 });
 
     render(
       <AccessHistoryWidget currentSize="medium" onSizeChange={jest.fn()} />
@@ -65,7 +65,7 @@ describe('AccessHistoryWidget', () => {
   });
 
   it('shows error when fetch fails', async () => {
-    mockGetAccessHistory.mockRejectedValue(new Error('network'));
+    mockGetAccessSessions.mockRejectedValue(new Error('network'));
 
     render(
       <AccessHistoryWidget currentSize="medium" onSizeChange={jest.fn()} />
@@ -77,24 +77,31 @@ describe('AccessHistoryWidget', () => {
   });
 
   it('renders access rows for medium size', async () => {
-    const occurred = new Date(Date.now() - 60 * 60 * 1000).toISOString();
-    mockGetAccessHistory.mockResolvedValue({
-      logs: [
+    const started = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+    mockGetAccessSessions.mockResolvedValue({
+      sessions: [
         {
-          id: 'l1',
+          id: 's1',
+          kind: 'access',
+          origin: 'on_site',
+          method: 'app',
+          outcome: 'granted',
+          state: 'closed',
           device_id: 'd1',
           device_type: 'blulok',
-          action: 'unlock',
-          method: 'app',
-          success: true,
-          occurred_at: occurred,
-          created_at: occurred,
-          updated_at: occurred,
+          attempt_count: 1,
+          started_at: started,
+          opened_at: started,
+          closed_at: started,
+          open_duration_sec: 30,
           unit_number: '101',
           user_name: 'Pat Smith',
         },
       ],
+      logs: [],
       total: 1,
+      currently_open: 0,
+      view: 'sessions',
     });
 
     render(
@@ -105,6 +112,6 @@ describe('AccessHistoryWidget', () => {
       expect(screen.getByText('Unit 101')).toBeInTheDocument();
     });
     expect(screen.getByText('Pat Smith')).toBeInTheDocument();
-    expect(screen.getByText('Unlock')).toBeInTheDocument();
+    expect(screen.getByText('Mobile key')).toBeInTheDocument();
   });
 });

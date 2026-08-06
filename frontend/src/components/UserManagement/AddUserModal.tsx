@@ -343,7 +343,7 @@ export const AddUserModal: React.FC<AddUserModalProps> = ({
           </p>
         </ModalHeader>
 
-        <form onSubmit={handleSubmit(onSubmit)}>
+        <form onSubmit={handleSubmit(onSubmit)} autoComplete="off">
           <ModalBody>
             {error && (
               <div className="rounded-md bg-red-50 dark:bg-red-900/20 p-4 mb-6">
@@ -360,6 +360,7 @@ export const AddUserModal: React.FC<AddUserModalProps> = ({
                 <input
                   {...register('firstName', { required: 'First name is required' })}
                   type="text"
+                  autoComplete="off"
                   className="input mt-1"
                   placeholder="Enter first name"
                 />
@@ -375,6 +376,7 @@ export const AddUserModal: React.FC<AddUserModalProps> = ({
                 <input
                   {...register('lastName', { required: 'Last name is required' })}
                   type="text"
+                  autoComplete="off"
                   className="input mt-1"
                   placeholder="Enter last name"
                 />
@@ -397,6 +399,7 @@ export const AddUserModal: React.FC<AddUserModalProps> = ({
                   },
                 })}
                 type="email"
+                autoComplete="off"
                 className="input mt-1"
                 placeholder="Enter email address"
               />
@@ -412,7 +415,7 @@ export const AddUserModal: React.FC<AddUserModalProps> = ({
                 <input
                   {...register('phoneNumber')}
                   type="tel"
-                  autoComplete="tel"
+                  autoComplete="off"
                   className="input mt-1"
                   placeholder="+1… or 10-digit (E.164 preferred)"
                 />
@@ -427,6 +430,7 @@ export const AddUserModal: React.FC<AddUserModalProps> = ({
                 </label>
               <select
                 {...register('role', { required: 'Role is required' })}
+                autoComplete="off"
                 className="input mt-1"
               >
                 <option value="">Select a role</option>
@@ -550,6 +554,7 @@ export const AddUserModal: React.FC<AddUserModalProps> = ({
                     },
                   })}
                   type="password"
+                  autoComplete="new-password"
                   className="input mt-1"
                   placeholder="Enter password"
                 />
@@ -568,6 +573,7 @@ export const AddUserModal: React.FC<AddUserModalProps> = ({
                     validate: value => value === password || 'Passwords do not match',
                   })}
                   type="password"
+                  autoComplete="new-password"
                   className="input mt-1"
                   placeholder="Confirm password"
                 />

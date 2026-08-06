@@ -143,13 +143,13 @@ Use this when the **physical lock state** changes. Do **not** send `access-event
 ### How remote-command attribution works
 
 1. `PUT /devices/blulok/:id/lock` and `PUT /devices/access-control/:id/lock` always pass the authenticated user into `LockCommandService` as the **initiator** (Occupied Unit Override metadata only when a non-occupant unlocks an occupied BluLok unit — see [`app-occupied-unit-override.md`](./app-occupied-unit-override.md)).
-2. For BluLok **unlock**, cloud immediately writes Access History **`remote_access_granted`** (`admin_remote` / `remote_gateway`) for the initiator, then keeps a **pending attribution** entry keyed by device id (`commandId`, initiator, requested status, optional override).
-3. When `devices/state` reports a **real transition** to terminal `unlocked` matching the request, cloud writes **`unlock`** with `method: local_device`, `correlated_remote: true`, and the same `initiated_by`. Opposite state → `access_attempt` failure. Same-state re-reports do not success-consume pending attribution.
-4. Later physical re-lock is a separate **`lock` / `local_device`** row (**Manually Locked** in the UI) with no user.
-5. While a remote unlock is pending, grant-like gateway `access-events` for that device are **skipped** (avoids duplicate Mobile key “Access granted” rows).
-6. Pending entries always have a TTL: facility `lock_command_timeout_sec`, or for one-shot (`0`) a fixed **60s** attribution TTL so stale pending cannot mis-attribute later local events.
+2. For BluLok **unlock**, cloud immediately creates an Access History **session** (`pending`, `origin: cloud_remote`) and writes a raw `remote_access_granted` activity linked by `access_session_id`. Command timers remain process-local; durable pending attribution lives in `access_sessions`.
+3. When `devices/state` reports a **real transition** to terminal `unlocked` matching the request, the session moves to `open` and a raw `unlock` activity is linked. Opposite state → session `failed`. Same-state re-reports do not success-consume pending attribution.
+4. Later physical re-lock **closes** the same session (`closed`, `open_duration_sec`) rather than creating an unrelated history row in the sessions view.
+5. While a remote unlock is pending, additional grant-like gateway `access-events` for that device **attach** to the session (`attempt_count`) instead of being discarded.
+6. Pending entries always have a TTL: facility `lock_command_timeout_sec`, or for one-shot (`0`) a fixed **60s** attribution TTL. A sweeper marks expired pending sessions `timed_out`.
 
-**Deployment note:** pending attribution is **process-local memory** (same class as inbound gateway WebSocket affinity). On multi-instance Cloud Run without sticky routing, command and state sync can land on different instances and attribution is lost → event may show as `local_device`. Prefer max-instances=1 or session affinity until a shared store exists.
+**Deployment note:** command timers are still process-local (same class as inbound gateway WebSocket affinity). Durable session attribution survives multi-instance Cloud Run; prefer sticky sessions for transitional `lock_status` UI until timers are shared.
 
 ### Transitional states
 
@@ -159,12 +159,12 @@ You may report in-flight states for live UI (`locking`, `unlocking` via repeated
 
 When the cloud sends BluLok `UNLOCK` JWTs:
 
-1. Cloud logs **Remote Access Granted** for the initiator.
+1. Cloud opens a **pending** access session and logs **Remote Access Granted** for the initiator.
 2. Gateway executes on hardware.
 3. Gateway reports **final** state through `devices/state`.
-4. Cloud logs **Unlocked at site** (`unlock` / `local_device` / `correlated_remote`) for the same initiator.
-5. If the final state **opposes** the requested command (e.g. unlock requested, lock observed), cloud logs an **`access_attempt` failure** (`unlock_attempt`) — **do not** send a compensating `access-events` row for that mismatch.
-6. Do **not** also POST `access-events` `access_granted` for the same cloud remote unlock (cloud suppresses those while pending anyway).
+4. Cloud moves the session to **open** and logs **Unlocked at site** on the raw trail for the same initiator.
+5. If the final state **opposes** the requested command (e.g. unlock requested, lock observed), cloud marks the session **failed** — **do not** send a compensating `access-events` row for that mismatch.
+6. Optional late `access-events` grants for the same unlock attach to the session rather than creating duplicate Access History rows.
 
 ### Access control state updates
 
@@ -378,7 +378,7 @@ Cloud resolves that serial to the facility device row and stores the cloud PK on
 }
 ```
 
-Each `activity_ids` entry is the persisted `activity_logs` row. Real-time subscribers receive `activity_new` on the **dashboard** WebSocket (`/ws`) with an enriched `accessLog` payload matching `GET /api/v1/access-history`.
+Each `activity_ids` entry is the persisted `activity_logs` row. Real-time subscribers receive `activity_new` on the **dashboard** WebSocket (`/ws`) with an enriched `accessLog` payload matching `GET /api/v1/access-history` (raw). Session UIs also receive `access_session_upsert` for `GET /api/v1/access-sessions` rows.
 
 ### Validation errors (`400`)
 
@@ -446,7 +446,7 @@ Then report physical unlock when the bolt moves:
 }
 ```
 
-Access History shows **two rows**: grant (`access_granted` / unlock attempt success path) and **Unlock** (`local_device`) — that is expected when both credential evaluation and physical state are reported.
+Access History **sessions** view shows **one row** for the grant + physical unlock (and later re-lock closes the same session with open duration). Raw `activity_logs` still retains both the access-event and the unlock state row, linked by `access_session_id`. See [`access-sessions.md`](./access-sessions.md).
 
 ### 2 — Route pass denied (bad signature)
 
@@ -544,7 +544,7 @@ User turns a thumbturn / motor completes lock — **only** state sync:
 }
 ```
 
-Access History shows **Manually Locked** / **Manual lock** / **Success** with no user column (red lock styling in the UI).
+Access History **sessions** view shows a **Locked** step on the unlock session timeline (never a standalone “Manually locked” row). Raw `view=raw` still shows the lock activity_logs event linked by `access_session_id`.
 
 ### 6 — Batch ingest
 
@@ -606,7 +606,7 @@ Presentation metadata includes facility, unit, device name (unit number when ass
 | HTTP validation (missing `denial_reason`) | `backend/src/__tests__/routes/internal-gateway.routes.test.ts` |
 | Ingestion → activity metadata | `backend/src/__tests__/services/access-history-read.service.test.ts` |
 | Lock activity from state sync | `backend/src/__tests__/services/device-event.lock-activity.test.ts` |
-| End-to-end PROXY + live `activity_new` | `backend/npm run ws:e2e` — **Access Event Canonical Pipeline** section |
+| End-to-end PROXY + live `activity_new` / `access_session_upsert` + `GET /access-sessions` | `backend/npm run ws:e2e` — **Access History — BluLok remote unlock** and **Access Event Canonical Pipeline** sections |
 
 Minimal curl-style test (facility admin token):
 

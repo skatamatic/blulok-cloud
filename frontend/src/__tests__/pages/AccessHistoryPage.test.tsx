@@ -17,14 +17,19 @@ function renderPage(ui: ReactNode, routerOptions?: { initialEntries?: string[] }
 }
 
 const mockGetAccessHistory = jest.fn();
+const mockGetAccessSessions = jest.fn();
 const mockExportAccessHistory = jest.fn();
+const mockExportAccessSessions = jest.fn();
 const mockUseAuth = jest.fn();
 
 jest.mock('@/services/api.service', () => ({
   apiService: {
     getAccessHistory: (...args: unknown[]) => mockGetAccessHistory(...args),
+    getAccessSessions: (...args: unknown[]) => mockGetAccessSessions(...args),
     getFacilityAccessHistory: jest.fn(),
     exportAccessHistory: (...args: unknown[]) => mockExportAccessHistory(...args),
+    exportAccessSessions: (...args: unknown[]) => mockExportAccessSessions(...args),
+    getAccessSessionById: jest.fn().mockResolvedValue({ session: null, events: [] }),
   },
 }));
 
@@ -80,34 +85,43 @@ describe('AccessHistoryPage', () => {
       selectedFacilityId: '__ALL_FACILITIES__',
     });
     mockUseAuth.mockReturnValue(adminAuth);
+    mockGetAccessSessions.mockResolvedValue({
+      sessions: [],
+      total: 0,
+      currently_open: 0,
+    });
     mockGetAccessHistory.mockResolvedValue({
       logs: [],
       total: 0,
+      view: 'raw',
     });
+    mockExportAccessSessions.mockResolvedValue(new Blob(['a,b'], { type: 'text/csv' }));
     mockExportAccessHistory.mockResolvedValue(new Blob(['a,b'], { type: 'text/csv' }));
   });
 
-  it('renders header and fetches access history', async () => {
+  it('renders header and fetches access sessions', async () => {
     renderPage(<AccessHistoryPage />);
 
     expect(screen.getByRole('heading', { name: /access history/i })).toBeInTheDocument();
     expect(
-      screen.getByText(/monitor and track all access events across your facilities/i)
+      screen.getByText(/monitor and track access sessions across your facilities/i)
     ).toBeInTheDocument();
 
     await waitFor(() => {
-      expect(mockGetAccessHistory).toHaveBeenCalled();
+      expect(mockGetAccessSessions).toHaveBeenCalled();
     });
 
-    const initialQuery = mockGetAccessHistory.mock.calls[0][0] as {
+    const initialQuery = mockGetAccessSessions.mock.calls[0][0] as {
       date_from?: string;
       date_to?: string;
+      view?: string;
     };
     expect(initialQuery.date_from).toMatch(/Z$/);
     expect(initialQuery.date_to).toMatch(/Z$/);
+    expect(initialQuery.view).toBeUndefined();
 
     await waitFor(() => {
-      expect(screen.getByText(/no access logs found/i)).toBeInTheDocument();
+      expect(screen.getByText(/no access sessions found/i)).toBeInTheDocument();
     });
   });
 
@@ -130,22 +144,22 @@ describe('AccessHistoryPage', () => {
       renderPage(<AccessHistoryPage />);
 
       await waitFor(() => {
-        expect(mockGetAccessHistory).toHaveBeenCalled();
+        expect(mockGetAccessSessions).toHaveBeenCalled();
       });
 
       // Page uses one `loading` flag for fetch + export — wait until list load finishes
       await waitFor(() => {
-        expect(screen.getByText(/no access logs found/i)).toBeInTheDocument();
+        expect(screen.getByText(/no access sessions found/i)).toBeInTheDocument();
       });
 
       await user.click(screen.getByRole('button', { name: /^export$/i }));
       await user.click(screen.getByRole('button', { name: /export current filter/i }));
 
       await waitFor(() => {
-        expect(mockExportAccessHistory).toHaveBeenCalled();
+        expect(mockExportAccessSessions).toHaveBeenCalled();
       });
 
-      expect(mockExportAccessHistory).toHaveBeenCalledWith(
+      expect(mockExportAccessSessions).toHaveBeenCalledWith(
         expect.objectContaining({
           limit: 10000,
           date_from: expect.any(String),
@@ -168,7 +182,7 @@ describe('AccessHistoryPage', () => {
     });
 
     await waitFor(() => {
-      expect(mockGetAccessHistory).toHaveBeenCalledWith(
+      expect(mockGetAccessSessions).toHaveBeenCalledWith(
         expect.objectContaining({
           unit_id: 'unit-42',
           facility_id: 'fac-1',
@@ -188,32 +202,37 @@ describe('AccessHistoryPage', () => {
     renderPage(<AccessHistoryPage />);
 
     await waitFor(() => {
-      expect(mockGetAccessHistory).toHaveBeenCalled();
+      expect(mockGetAccessSessions).toHaveBeenCalled();
     });
 
-    const initialQuery = mockGetAccessHistory.mock.calls[0][0] as { user_id?: string };
+    const initialQuery = mockGetAccessSessions.mock.calls[0][0] as { user_id?: string };
     expect(initialQuery.user_id).toBeUndefined();
   });
 
-  it('shows a log row when API returns data', async () => {
+  it('shows a session row when API returns data', async () => {
     const ts = new Date().toISOString();
-    mockGetAccessHistory.mockResolvedValue({
-      logs: [
+    mockGetAccessSessions.mockResolvedValue({
+      sessions: [
         {
-          id: 'log-1',
+          id: 'sess-1',
+          kind: 'access',
+          origin: 'on_site',
+          method: 'app',
+          outcome: 'granted',
+          state: 'closed',
           device_id: 'd1',
           device_type: 'blulok',
-          action: 'unlock',
-          method: 'app',
-          success: true,
-          occurred_at: ts,
-          created_at: ts,
-          updated_at: ts,
+          attempt_count: 1,
+          started_at: ts,
+          opened_at: ts,
+          closed_at: ts,
+          open_duration_sec: 45,
           user_name: 'Casey Jones',
           unit_number: '12',
         },
       ],
       total: 1,
+      currently_open: 0,
     });
 
     renderPage(<AccessHistoryPage />);
@@ -221,11 +240,20 @@ describe('AccessHistoryPage', () => {
     await waitFor(() => {
       expect(screen.getByText('Casey Jones')).toBeInTheDocument();
     });
-    expect(screen.getByText(/showing 1 out of 1 access items/i)).toBeInTheDocument();
+    expect(screen.getByText(/showing 1 out of 1 sessions/i)).toBeInTheDocument();
+    expect(screen.getByText('Unit 12')).toBeInTheDocument();
+    expect(screen.getByText('Mobile key')).toBeInTheDocument();
+    expect(screen.getByText('Status')).toBeInTheDocument();
   });
 
-  it('shows a brief denial note in the row and full failure reason when expanded', async () => {
+  it('shows raw event denial detail when raw view is enabled for DEV_ADMIN', async () => {
     const user = userEvent.setup();
+    mockUseAuth.mockReturnValue({
+      authState: {
+        user: { id: 'dev-1', role: 'dev_admin' as const },
+        isAuthenticated: true,
+      },
+    });
     const longFailure =
       'Timed out waiting for gateway confirmation — Gateway did not confirm lock command before timeout';
     const ts = new Date().toISOString();
@@ -258,9 +286,12 @@ describe('AccessHistoryPage', () => {
         },
       ],
       total: 1,
+      view: 'raw',
     });
 
-    renderPage(<AccessHistoryPage />);
+    renderPage(<AccessHistoryPage />, {
+      initialEntries: ['/access-history?view=raw'],
+    });
 
     await waitFor(() => {
       expect(screen.getByText('Unlock attempt denied')).toBeInTheDocument();
@@ -275,5 +306,14 @@ describe('AccessHistoryPage', () => {
       expect(screen.getByLabelText('Failure reason')).toBeInTheDocument();
     });
     expect(screen.getByText(longFailure)).toBeInTheDocument();
+  });
+
+  it('hides Raw events for non DEV_ADMIN roles', async () => {
+    renderPage(<AccessHistoryPage />);
+    await waitFor(() => {
+      expect(mockGetAccessSessions).toHaveBeenCalled();
+    });
+    expect(screen.getByRole('button', { name: /needs attention/i })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /raw events/i })).not.toBeInTheDocument();
   });
 });

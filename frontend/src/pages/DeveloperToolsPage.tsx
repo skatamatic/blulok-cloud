@@ -634,6 +634,9 @@ export default function DeveloperToolsPage() {
   const [activeTab, setActiveTab] = useState<DevTabs>('database');
   const [seedStatus, setSeedStatus] = useState<OperationStatus>({ type: 'idle', message: '' });
   const [resetStatus, setResetStatus] = useState<OperationStatus>({ type: 'idle', message: '' });
+  const [backfillStatus, setBackfillStatus] = useState<OperationStatus>({ type: 'idle', message: '' });
+  const [backfillDays, setBackfillDays] = useState(90);
+  const [backfillDryRun, setBackfillDryRun] = useState(true);
   const { isDebugEnabled, toggleDebug } = useWebSocketDebug();
   
   // Log viewer state
@@ -1102,6 +1105,43 @@ export default function DeveloperToolsPage() {
     }
   };
 
+  const handleAccessSessionBackfill = async () => {
+    const days = Math.min(365, Math.max(1, Number(backfillDays) || 90));
+    const label = backfillDryRun ? 'dry-run' : 'backfill';
+    if (
+      !backfillDryRun
+      && !window.confirm(
+        `Correlate the last ${days} days of unlinked activity_logs into access_sessions?\n\n`
+        + 'Safe to re-run: rows that already have access_session_id are skipped.',
+      )
+    ) {
+      return;
+    }
+
+    setBackfillStatus({ type: 'loading', message: `Running access session ${label}…` });
+    try {
+      const data = await apiService.backfillAccessSessions({ days, dryRun: backfillDryRun });
+      if (data.success && data.results) {
+        const r = data.results;
+        setBackfillStatus({
+          type: 'success',
+          message:
+            `${backfillDryRun ? 'Dry-run' : 'Backfill'} complete: `
+            + `${r.unlinkedActivityRows} unlinked rows → ${r.sessionsCreated} sessions, `
+            + `${r.activityLinks} links (${r.days} days).`,
+        });
+      } else {
+        setBackfillStatus({
+          type: 'error',
+          message: data.error || data.message || 'Failed to backfill access sessions.',
+        });
+      }
+    } catch (error) {
+      console.error('Access session backfill error:', error);
+      setBackfillStatus({ type: 'error', message: 'An unexpected error occurred.' });
+    }
+  };
+
   // Helper functions for styling
   const getStatusIcon = (status: OperationStatus) => {
     switch (status.type) {
@@ -1283,6 +1323,59 @@ export default function DeveloperToolsPage() {
               )}
             </div>
               </div>
+
+          <div className="bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700 p-6 md:col-span-2">
+            <div className="flex items-center space-x-3 mb-4">
+              <DocumentTextIcon className="h-6 w-6 text-primary-600" />
+              <h2 className="text-xl font-semibold text-gray-900 dark:text-white">
+                Backfill Access Sessions
+              </h2>
+            </div>
+            <p className="text-gray-600 dark:text-gray-400 mb-4">
+              Correlate historical <code className="text-sm">activity_logs</code> into{' '}
+              <code className="text-sm">access_sessions</code> so Access History shows one row per
+              logical access. Safe to re-run — already-linked rows are skipped. Prefer a dry-run first.
+            </p>
+            <div className="flex flex-col sm:flex-row sm:items-end gap-4 mb-4">
+              <label className="block">
+                <span className="text-sm font-medium text-gray-700 dark:text-gray-300">Days</span>
+                <input
+                  type="number"
+                  min={1}
+                  max={365}
+                  value={backfillDays}
+                  onChange={(e) => setBackfillDays(Number(e.target.value))}
+                  className="mt-1 block w-28 rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white px-3 py-2 text-sm"
+                />
+              </label>
+              <label className="inline-flex items-center gap-2 cursor-pointer pb-2">
+                <input
+                  type="checkbox"
+                  checked={backfillDryRun}
+                  onChange={(e) => setBackfillDryRun(e.target.checked)}
+                  className="rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+                />
+                <span className="text-sm text-gray-700 dark:text-gray-300">Dry-run only (no writes)</span>
+              </label>
+              <button
+                type="button"
+                onClick={handleAccessSessionBackfill}
+                disabled={backfillStatus.type === 'loading'}
+                className="sm:ml-auto bg-primary-600 hover:bg-primary-700 disabled:bg-primary-400 text-white font-medium py-2 px-4 rounded-md transition-colors duration-200 flex items-center justify-center space-x-2"
+              >
+                {backfillStatus.type === 'loading' && (
+                  <ArrowPathIcon className="h-4 w-4 animate-spin" />
+                )}
+                <span>{backfillDryRun ? 'Run Dry-Run' : 'Run Backfill'}</span>
+              </button>
+            </div>
+            {backfillStatus.message && (
+              <div className={`p-3 rounded-md border flex items-center space-x-2 ${getStatusColor(backfillStatus)}`}>
+                {getStatusIcon(backfillStatus)}
+                <span className="text-sm font-medium">{backfillStatus.message}</span>
+              </div>
+            )}
+          </div>
             </div>
           </div>
         )}

@@ -773,6 +773,54 @@ registerPost(
 
 registerPost(
   router,
+  '/access-sessions/backfill',
+  {
+    openApiPath: `${MOUNT}/access-sessions/backfill`,
+    tags: ['Admin'],
+    summary: 'Backfill access_sessions from activity_logs (last N days)',
+    security: 'bearer',
+  },
+  authenticateToken,
+  requireDevAdmin,
+  asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+    const user = req.user!;
+    const dryRun = req.body?.dryRun === true || req.body?.dry_run === true;
+    const daysRaw = Number(req.body?.days);
+    const days = Number.isFinite(daysRaw) && daysRaw > 0 ? daysRaw : undefined;
+
+    try {
+      const { AccessSessionBackfillService } = await import(
+        '@/services/access/access-session-backfill.service'
+      );
+      const results = await AccessSessionBackfillService.getInstance().run({ days, dryRun });
+      logger.info(`Access session backfill triggered by ${user.userId}`, results);
+      if (results.skippedBusy) {
+        res.status(409).json({
+          success: false,
+          message: 'Access session backfill already running',
+          results,
+        });
+        return;
+      }
+      res.json({
+        success: true,
+        message: dryRun ? 'Access session backfill dry-run completed' : 'Access session backfill completed',
+        results,
+      });
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : 'Unknown error';
+      logger.error('Error during access session backfill:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to backfill access sessions',
+        error: message,
+      });
+    }
+  }),
+);
+
+registerPost(
+  router,
   '/route-pass-prune',
   {
     openApiPath: `${MOUNT}/route-pass-prune`,

@@ -1,5 +1,6 @@
 import { AccessEventIngestionService } from '@/services/access/access-event-ingestion.service';
 import { AccessEventEntityResolverService } from '@/services/access/access-event-entity-resolver.service';
+import { AccessSessionService } from '@/services/access/access-session.service';
 import { ActivityService } from '@/services/activity.service';
 import { DeviceModel } from '@/models/device.model';
 import { UnitModel } from '@/models/unit.model';
@@ -7,24 +8,15 @@ import type { AccessEventPayload } from '@/services/access/access-event.types';
 
 jest.mock('@/services/access/access-event-entity-resolver.service');
 jest.mock('@/services/activity.service');
+jest.mock('@/services/access/access-session.service');
 jest.mock('@/models/device.model');
 jest.mock('@/models/unit.model');
-
-const mockPeekCommandAttribution = jest.fn().mockReturnValue(null);
-const mockHasRecentBluLokRemoteUnlockSettlement = jest.fn().mockReturnValue(false);
-jest.mock('@/services/lock-command.service', () => ({
-  LockCommandService: {
-    getInstance: jest.fn(() => ({
-      peekCommandAttribution: (...args: unknown[]) => mockPeekCommandAttribution(...args),
-      hasRecentBluLokRemoteUnlockSettlement: (...args: unknown[]) =>
-        mockHasRecentBluLokRemoteUnlockSettlement(...args),
-    })),
-  },
-}));
 
 describe('AccessEventIngestionService', () => {
   const facilityId = 'fac-1';
   let logActivity: jest.Mock;
+  let onGrantAccessEvent: jest.Mock;
+  let onDenialAccessEvent: jest.Mock;
   let resolve: jest.Mock;
   let findBluLokDeviceById: jest.Mock;
   let findAccessControlDeviceWithGateway: jest.Mock;
@@ -54,9 +46,9 @@ describe('AccessEventIngestionService', () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
-    mockPeekCommandAttribution.mockReturnValue(null);
-    mockHasRecentBluLokRemoteUnlockSettlement.mockReturnValue(false);
     logActivity = jest.fn().mockResolvedValue({ id: 'activity-1' });
+    onGrantAccessEvent = jest.fn().mockResolvedValue({ id: 'session-1' });
+    onDenialAccessEvent = jest.fn().mockResolvedValue({ id: 'session-deny-1' });
     resolve = jest.fn();
     findBluLokDeviceById = jest.fn().mockResolvedValue({
       id: 'cloud-device-1',
@@ -67,6 +59,10 @@ describe('AccessEventIngestionService', () => {
 
     (ActivityService.getInstance as jest.Mock) = jest.fn().mockReturnValue({
       logActivity,
+    });
+    (AccessSessionService.getInstance as jest.Mock) = jest.fn().mockReturnValue({
+      onGrantAccessEvent,
+      onDenialAccessEvent,
     });
     (AccessEventEntityResolverService as unknown as jest.Mock).mockImplementation(() => ({
       resolve,
@@ -228,7 +224,7 @@ describe('AccessEventIngestionService', () => {
     );
   });
 
-  it('skips grant-like access-events while a remote unlock is pending for the device', async () => {
+  it('writes grant events through the session correlator (no skip while remote pending)', async () => {
     resolve.mockResolvedValue({
       event: {
         ...rawEvent(),
@@ -237,71 +233,52 @@ describe('AccessEventIngestionService', () => {
       },
       deviceType: 'blulok',
     });
-    mockPeekCommandAttribution.mockReturnValue({
-      commandId: 'cmd-1',
-      requestedStatus: 'unlocked',
-      deviceType: 'blulok',
-      initiator: { userId: 'admin-1', userName: 'Admin', role: 'facility_admin' },
-    });
 
     const result = await service.ingestOne(rawEvent(), {
       facilityId,
       source: 'gateway_internal_api',
     });
 
-    expect(result).toBeNull();
-    expect(logActivity).not.toHaveBeenCalled();
-    expect(mockPeekCommandAttribution).toHaveBeenCalledWith('cloud-device-1');
+    expect(result).toEqual({ id: 'activity-1' });
+    expect(onGrantAccessEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        deviceId: 'cloud-device-1',
+        method: 'mobile_key',
+      }),
+    );
+    expect(logActivity).toHaveBeenCalledWith(
+      expect.objectContaining({
+        accessSessionId: 'session-1',
+        deviceId: 'cloud-device-1',
+      }),
+    );
   });
 
-  it('does not skip grant-like events when pending unlock is access_control', async () => {
+  it('writes denial events as terminal sessions', async () => {
     resolve.mockResolvedValue({
       event: {
         ...rawEvent(),
-        device_id: 'ac-1',
+        action: 'access_denied',
+        success: false,
+        denial_reason: 'invalid_credential',
+        device_id: 'cloud-device-1',
         actor: { user_id: 'user-1', role: 'tenant', name: 'Casey Jones' },
       },
-      deviceType: 'access_control',
+      deviceType: 'blulok',
     });
-    mockPeekCommandAttribution.mockReturnValue({
-      commandId: 'cmd-ac',
-      requestedStatus: 'unlocked',
-      deviceType: 'access_control',
-      initiator: { userId: 'admin-1', userName: 'Admin', role: 'facility_admin' },
-    });
-    findAccessControlDeviceWithGateway.mockResolvedValue({
-      id: 'ac-1',
-      facility_id: facilityId,
-    });
-    findBluLokDeviceById.mockResolvedValue(null);
 
     await service.ingestOne(
-      { ...rawEvent(), device_id: 'ac-1' },
+      { ...rawEvent(), action: 'access_denied', success: false },
       { facilityId, source: 'gateway_internal_api' },
     );
 
-    expect(logActivity).toHaveBeenCalled();
-  });
-
-  it('skips grant-like access-events shortly after BluLok remote unlock settlement', async () => {
-    resolve.mockResolvedValue({
-      event: {
-        ...rawEvent(),
-        device_id: 'cloud-device-1',
-        actor: { user_id: 'user-1', role: 'tenant', name: 'Casey Jones' },
-      },
-      deviceType: 'blulok',
-    });
-    mockPeekCommandAttribution.mockReturnValue(null);
-    mockHasRecentBluLokRemoteUnlockSettlement.mockReturnValue(true);
-
-    const result = await service.ingestOne(rawEvent(), {
-      facilityId,
-      source: 'gateway_internal_api',
-    });
-
-    expect(result).toBeNull();
-    expect(logActivity).not.toHaveBeenCalled();
-    expect(mockHasRecentBluLokRemoteUnlockSettlement).toHaveBeenCalledWith('cloud-device-1');
+    expect(onDenialAccessEvent).toHaveBeenCalled();
+    expect(onGrantAccessEvent).not.toHaveBeenCalled();
+    expect(logActivity).toHaveBeenCalledWith(
+      expect.objectContaining({
+        accessSessionId: 'session-deny-1',
+        result: 'failure',
+      }),
+    );
   });
 });

@@ -698,6 +698,30 @@ describe('APIService', () => {
   });
 
   describe('access history endpoints', () => {
+    it('getAccessSessions passes query params', async () => {
+      mockAxios.get.mockResolvedValueOnce({ data: { sessions: [], total: 0, currently_open: 0 } });
+      await apiService.getAccessSessions({ limit: 20, facility_id: 'fac-1' });
+      expect(mockAxios.get).toHaveBeenCalledWith('/access-sessions', {
+        params: { limit: 20, facility_id: 'fac-1' },
+      });
+    });
+
+    it('getAccessSessionById GETs session detail', async () => {
+      mockAxios.get.mockResolvedValueOnce({ data: { session: { id: 's1' }, events: [] } });
+      const result = await apiService.getAccessSessionById('s1');
+      expect(mockAxios.get).toHaveBeenCalledWith('/access-sessions/s1');
+      expect(result).toEqual({ session: { id: 's1' }, events: [] });
+    });
+
+    it('exportAccessSessions requests a blob', async () => {
+      mockAxios.get.mockResolvedValueOnce({ data: new Blob() });
+      await apiService.exportAccessSessions({ date_from: '2024-01-01' });
+      expect(mockAxios.get).toHaveBeenCalledWith('/access-sessions/export', {
+        params: { date_from: '2024-01-01' },
+        responseType: 'blob',
+      });
+    });
+
     it('getAccessHistory passes query params', async () => {
       mockAxios.get.mockResolvedValueOnce({ data: { logs: [], total: 0 } });
       await apiService.getAccessHistory({ limit: 20, user_id: 'u-1' });

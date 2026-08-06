@@ -5,6 +5,7 @@ import {
   formatAccessMethod,
   getAccessUserDisplay,
 } from '@/utils/access-history-display.utils';
+import { UNIDENTIFIED_USER_LABEL } from '@/utils/access-session-display.utils';
 import { formatRelativeWithExact } from '@/utils/datetime.utils';
 
 export type AccessHistoryCompactRowLog = {
@@ -51,7 +52,7 @@ export function AccessHistoryCompactRow({ log, index }: AccessHistoryCompactRowP
           }`}
         />
         <span className="text-gray-800 dark:text-gray-200">{formatAccessAction(accessLog)}</span>
-        <span className="truncate">{userLabel !== '—' ? userLabel : formatAccessMethod(accessLog.method ?? '')}</span>
+        <span className="truncate">{userLabel !== UNIDENTIFIED_USER_LABEL ? userLabel : formatAccessMethod(accessLog.method ?? '')}</span>
       </span>
       <span className="shrink-0 tabular-nums" title={relativeTs.title}>
         {relativeTs.display}

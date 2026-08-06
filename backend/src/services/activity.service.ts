@@ -69,6 +69,7 @@ export interface LogActivityOptions {
   facilityId?: string;
   unitId?: string;
   deviceId?: string;
+  accessSessionId?: string;
   metadata?: Record<string, any>;
   ipAddress?: string;
   occurredAt?: Date;
@@ -134,6 +135,7 @@ export class ActivityService {
       facility_id: options.facilityId,
       unit_id: options.unitId,
       device_id: options.deviceId,
+      access_session_id: options.accessSessionId,
       metadata: options.metadata,
       ip_address: options.ipAddress,
       occurred_at: options.occurredAt || new Date(),

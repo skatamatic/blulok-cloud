@@ -68,6 +68,7 @@ export interface ActivityLog {
   facility_id: string | null;
   unit_id: string | null;
   device_id: string | null;
+  access_session_id: string | null;
   metadata: Record<string, any> | null;
   ip_address: string | null;
   occurred_at: Date;
@@ -92,6 +93,7 @@ export interface CreateActivityLogData {
   facility_id?: string;
   unit_id?: string;
   device_id?: string;
+  access_session_id?: string;
   metadata?: Record<string, any>;
   ip_address?: string;
   occurred_at?: Date;
@@ -125,6 +127,7 @@ export interface ActivityLogFilters {
     actor_id: string;
   };
   device_id?: string;
+  access_session_id?: string;
   from_date?: Date;
   to_date?: Date;
   limit?: number;
@@ -186,6 +189,7 @@ export class ActivityLogModel {
       facility_id: data.facility_id || null,
       unit_id: data.unit_id || null,
       device_id: data.device_id || null,
+      access_session_id: data.access_session_id || null,
       metadata: data.metadata ? JSON.stringify(data.metadata) : null,
       ip_address: data.ip_address || null,
       occurred_at: data.occurred_at || now,
@@ -270,6 +274,10 @@ export class ActivityLogModel {
 
     if (filters.device_id) {
       query = query.where(`${tablePrefix}device_id`, filters.device_id);
+    }
+
+    if (filters.access_session_id) {
+      query = query.where(`${tablePrefix}access_session_id`, filters.access_session_id);
     }
 
     if (filters.from_date) {

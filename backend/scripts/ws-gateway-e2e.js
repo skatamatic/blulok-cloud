@@ -47,6 +47,8 @@ const {
   waitForDeviceStatusRow,
   waitForWsEvent,
   waitForAppEvent,
+  waitForSessionUpsert,
+  waitForAccessSession,
 } = require('./ws-gateway-e2e/ws-waiters');
 const {
   base64UrlDecode,
@@ -2946,7 +2948,7 @@ async function run() {
       ok('Access-control cloud unlock (OPEN) accepted');
     }
 
-    // ---- Access History: remote unlock → 3 rows (grant + site unlock + manual lock) ----
+    // ---- Access History: remote unlock → raw 3 rows + session lifecycle ----
     heading('Access History — BluLok remote unlock (3-row semantics)');
     step('Settle prior cloud unlock pending, then lock device locally for clean cycle');
     {
@@ -2977,78 +2979,226 @@ async function run() {
     // outbound grant when date_from lands in the same second as occurred_at.
     const historyCycleStartedAtMs = Date.now();
     const historyCycleQueryFrom = new Date(historyCycleStartedAtMs - 5000).toISOString();
-    step('Issue cloud remote unlock (expect outbound remote_access_granted)');
-    const histUnlockRes = await axios.put(
-      `${API_BASE}/devices/blulok/${deviceId}/lock`,
-      { lock_status: 'unlocked' },
-      { headers: authHeaders(token) },
-    );
-    if (histUnlockRes.status !== 200 || histUnlockRes.data?.success === false) {
-      throw new Error(`History-cycle cloud unlock failed: ${histUnlockRes.status} ${JSON.stringify(histUnlockRes.data)}`);
-    }
-    ok('Cloud remote unlock accepted for history cycle');
+    const sessionListParams = {
+      facility_id: facilityId,
+      device_id: deviceId,
+      date_from: historyCycleQueryFrom,
+      limit: 50,
+    };
+    const isRemoteCycleSession = (s) =>
+      s
+      && s.origin === 'cloud_remote'
+      && (s.method === 'admin_remote' || s.method === 'remote_gateway')
+      && s.device_id === deviceId
+      && s.started_at
+      && new Date(s.started_at).getTime() >= historyCycleStartedAtMs - 5000;
 
-    step('While pending, attempt grant-like access-events (must be suppressed)');
-    {
-      const suppressEvtId = `evt-suppress-remote-${Date.now()}`;
-      const reqSuppress = `req-access-suppress-${Date.now()}`;
-      ws.send(JSON.stringify({
-        type: 'PROXY_REQUEST',
-        id: reqSuppress,
-        method: 'POST',
-        path: '/internal/gateway/access-events',
-        body: {
-          facility_id: facilityId,
-          events: [{
-            event_id: suppressEvtId,
-            occurred_at: new Date().toISOString(),
-            facility_id: facilityId,
-            unit_id: unitId,
-            device_id: deviceId,
-            action: 'access_granted',
-            method: 'mobile_key',
-            success: true,
-            actor: { role: 'tenant', name: 'Should Not Persist' },
-          }],
-        },
+    let histSessionFeed = null;
+    try {
+      histSessionFeed = {
+        events: [],
+        socket: new WebSocket(`${UI_WS_URL}?token=${token}`),
+      };
+      await new Promise((resolve, reject) => {
+        histSessionFeed.socket.once('open', resolve);
+        histSessionFeed.socket.once('error', reject);
+      });
+      histSessionFeed.socket.on('message', (data) => {
+        try {
+          const msg = JSON.parse(data.toString());
+          if (msg.type === 'access_session_upsert' && msg.data?.session) {
+            histSessionFeed.events.push(msg);
+          }
+        } catch { /* ignore */ }
+      });
+      histSessionFeed.socket.send(JSON.stringify({
+        type: 'subscription',
+        subscriptionType: 'activity',
+        data: { facility_id: facilityId },
       }));
-      const respSuppress = await waitForProxyResponse(ws, reqSuppress);
-      if (respSuppress.status !== 200) {
-        throw new Error(`Suppress access-events request failed: ${respSuppress.status} ${JSON.stringify(respSuppress.body)}`);
+      await delay(300);
+      ok('Subscribed activity feed for access_session_upsert during remote unlock cycle');
+
+      step('Issue cloud remote unlock (expect outbound remote_access_granted)');
+      const histUnlockRes = await axios.put(
+        `${API_BASE}/devices/blulok/${deviceId}/lock`,
+        { lock_status: 'unlocked' },
+        { headers: authHeaders(token) },
+      );
+      if (histUnlockRes.status !== 200 || histUnlockRes.data?.success === false) {
+        throw new Error(`History-cycle cloud unlock failed: ${histUnlockRes.status} ${JSON.stringify(histUnlockRes.data)}`);
       }
-      const ingested = respSuppress.body?.data?.ingested;
-      if (ingested !== 0) {
-        throw new Error(`Expected suppressed grant ingest ingested=0, got ${ingested}`);
+      ok('Cloud remote unlock accepted for history cycle');
+
+      step('Assert access session reaches pending (REST + WS)');
+      const pendingHit = await waitForAccessSession(
+        axios,
+        API_BASE,
+        authHeaders(token),
+        sessionListParams,
+        (s) => isRemoteCycleSession(s) && s.state === 'pending',
+        10000,
+      );
+      if (!pendingHit.session) {
+        throw new Error(
+          `Expected pending cloud_remote session on GET /access-sessions; got ${
+            (pendingHit.sessions || []).map((s) => `${s.origin}/${s.state}/${s.method}`).join(',') || 'none'
+          }`,
+        );
       }
-      ok('Pending-remote grant-like access-event suppressed (ingested=0)');
+      const pendingUpsert = await waitForSessionUpsert(
+        histSessionFeed.events,
+        (s) => isRemoteCycleSession(s) && (s.state === 'pending' || s.id === pendingHit.session.id),
+        0,
+        8000,
+      );
+      if (!pendingUpsert) {
+        warn('access_session_upsert for pending not observed (REST pending still OK); continuing');
+      } else {
+        ok('access_session_upsert observed for pending remote session');
+      }
+      ok('Access session pending after cloud unlock');
+
+      step('While pending, attempt grant-like access-events (must be suppressed)');
+      {
+        const suppressEvtId = `evt-suppress-remote-${Date.now()}`;
+        const reqSuppress = `req-access-suppress-${Date.now()}`;
+        ws.send(JSON.stringify({
+          type: 'PROXY_REQUEST',
+          id: reqSuppress,
+          method: 'POST',
+          path: '/internal/gateway/access-events',
+          body: {
+            facility_id: facilityId,
+            events: [{
+              event_id: suppressEvtId,
+              occurred_at: new Date().toISOString(),
+              facility_id: facilityId,
+              unit_id: unitId,
+              device_id: deviceId,
+              action: 'access_granted',
+              method: 'mobile_key',
+              success: true,
+              actor: { role: 'tenant', name: 'Should Not Persist' },
+            }],
+          },
+        }));
+        const respSuppress = await waitForProxyResponse(ws, reqSuppress);
+        if (respSuppress.status !== 200) {
+          throw new Error(`Suppress access-events request failed: ${respSuppress.status} ${JSON.stringify(respSuppress.body)}`);
+        }
+        const ingested = respSuppress.body?.data?.ingested;
+        if (ingested !== 0) {
+          throw new Error(`Expected suppressed grant ingest ingested=0, got ${ingested}`);
+        }
+        ok('Pending-remote grant-like access-event suppressed (ingested=0)');
+      }
+
+      step('Settle unlock via devices/state (expect open session + currently_open)');
+      {
+        const settleUnlock = await stateSync(
+          ws,
+          facilityId,
+          [gwLockDevice({ lock_id: remainingSerial, locked: false, state: 'OPENED', online: true })],
+          `req-hist-settle-unlock-${Date.now()}`,
+        );
+        if (settleUnlock.status !== 200) {
+          throw new Error(`History unlock settle failed: ${settleUnlock.status} ${JSON.stringify(settleUnlock.body)}`);
+        }
+        await delay(500);
+      }
+      const openHit = await waitForAccessSession(
+        axios,
+        API_BASE,
+        authHeaders(token),
+        sessionListParams,
+        (s, currentlyOpen) => isRemoteCycleSession(s) && s.state === 'open' && currentlyOpen >= 1,
+        10000,
+      );
+      if (!openHit.session) {
+        throw new Error(
+          `Expected open cloud_remote session with currently_open>=1; currently_open=${openHit.currently_open} sessions=${
+            (openHit.sessions || []).map((s) => `${s.origin}/${s.state}`).join(',') || 'none'
+          }`,
+        );
+      }
+      const openUpsert = await waitForSessionUpsert(
+        histSessionFeed.events,
+        (s) => s.id === openHit.session.id && s.state === 'open',
+        0,
+        8000,
+      );
+      if (!openUpsert) {
+        warn('access_session_upsert for open not observed (REST open still OK); continuing');
+      } else {
+        ok('access_session_upsert observed for open remote session');
+      }
+      ok(`Access session open (currently_open=${openHit.currently_open})`);
+
+      step('Settle local re-lock (expect closed session)');
+      {
+        const settleLock = await stateSync(
+          ws,
+          facilityId,
+          [gwLockDevice({ lock_id: remainingSerial, locked: true, state: 'CLOSED', online: true })],
+          `req-hist-settle-lock-${Date.now()}`,
+        );
+        if (settleLock.status !== 200) {
+          throw new Error(`History local lock settle failed: ${settleLock.status} ${JSON.stringify(settleLock.body)}`);
+        }
+        await delay(500);
+        ok('Physical unlock + manual lock settled');
+      }
+
+      const closedHit = await waitForAccessSession(
+        axios,
+        API_BASE,
+        authHeaders(token),
+        sessionListParams,
+        (s) => isRemoteCycleSession(s) && s.state === 'closed',
+        10000,
+      );
+      if (!closedHit.session) {
+        throw new Error(
+          `Expected closed cloud_remote session on GET /access-sessions; got ${
+            (closedHit.sessions || []).map((s) => `${s.origin}/${s.state}/${s.method}`).join(',') || 'none'
+          }`,
+        );
+      }
+      if (closedHit.session.open_duration_sec == null || closedHit.session.open_duration_sec < 0) {
+        throw new Error('Closed remote session missing open_duration_sec');
+      }
+      const closedUpsert = await waitForSessionUpsert(
+        histSessionFeed.events,
+        (s) => s.id === closedHit.session.id && s.state === 'closed',
+        0,
+        8000,
+      );
+      if (!closedUpsert) {
+        warn('access_session_upsert for closed not observed (REST closed still OK); continuing');
+      } else {
+        ok('access_session_upsert observed for closed remote session');
+      }
+
+      const sessionDetail = await axios.get(`${API_BASE}/access-sessions/${closedHit.session.id}`, {
+        headers: authHeaders(token),
+      });
+      if (sessionDetail.status !== 200 || !sessionDetail.data?.session) {
+        throw new Error(`GET /access-sessions/:id failed: ${sessionDetail.status}`);
+      }
+      if (!sessionDetail.data?.events || sessionDetail.data.events.length < 2) {
+        throw new Error(
+          `Session detail expected linked events trail, got ${sessionDetail.data?.events?.length ?? 0}`,
+        );
+      }
+      ok('GET /access-sessions collapses remote unlock cycle into one closed session with events trail');
+    } finally {
+      if (histSessionFeed?.socket && histSessionFeed.socket.readyState === WebSocket.OPEN) {
+        try { histSessionFeed.socket.close(); } catch { /* ignore */ }
+      }
     }
 
-    step('Settle unlock via devices/state, then local re-lock');
-    {
-      const settleUnlock = await stateSync(
-        ws,
-        facilityId,
-        [gwLockDevice({ lock_id: remainingSerial, locked: false, state: 'OPENED', online: true })],
-        `req-hist-settle-unlock-${Date.now()}`,
-      );
-      if (settleUnlock.status !== 200) {
-        throw new Error(`History unlock settle failed: ${settleUnlock.status} ${JSON.stringify(settleUnlock.body)}`);
-      }
-      await delay(500);
-      const settleLock = await stateSync(
-        ws,
-        facilityId,
-        [gwLockDevice({ lock_id: remainingSerial, locked: true, state: 'CLOSED', online: true })],
-        `req-hist-settle-lock-${Date.now()}`,
-      );
-      if (settleLock.status !== 200) {
-        throw new Error(`History local lock settle failed: ${settleLock.status} ${JSON.stringify(settleLock.body)}`);
-      }
-      await delay(500);
-      ok('Physical unlock + manual lock settled');
-    }
-
-    step('Assert Access History has remote_access_granted, correlated unlock, and local lock');
+    step('Assert Access History raw has remote_access_granted, correlated unlock, and local lock');
     {
       let inWindow = [];
       let grant = null;
@@ -3060,6 +3210,7 @@ async function run() {
             device_id: deviceId,
             date_from: historyCycleQueryFrom,
             limit: 50,
+            view: 'raw',
           },
         });
         if (histRes.status !== 200) {
@@ -3132,7 +3283,7 @@ async function run() {
         throw new Error('Unexpected access_granted/mobile_key row during remote unlock cycle');
       }
 
-      ok('Access History 3-row remote unlock cycle verified (grant + site unlock + manual lock; grant suppressed)');
+      ok('Access History raw 3-row remote unlock cycle verified (grant + site unlock + manual lock)');
     }
 
     // ---- Gateway-specific tests via PROXY_REQUEST over WS ----
@@ -6720,7 +6871,10 @@ async function run() {
       socket.on('message', (data) => {
         try {
           const msg = JSON.parse(data.toString());
-          if ((msg.type === 'activity_update' || msg.type === 'activity_new') && msg.data) {
+          if (
+            (msg.type === 'activity_update' || msg.type === 'activity_new' || msg.type === 'access_session_upsert')
+            && msg.data
+          ) {
             events.push(msg);
           }
         } catch {}
@@ -7065,7 +7219,7 @@ async function run() {
     step('Validating cloud resolved user/device/unit from placeholder payload');
     const placeholderHistory = await axios.get(`${API_BASE}/access-history`, {
       headers: authHeaders(platformAdmin.token),
-      params: { facility_id: facilityId, limit: 50 },
+      params: { facility_id: facilityId, limit: 50, view: 'raw' },
     });
     const resolvedLog = (placeholderHistory.data?.logs || []).find((x) => x.id === placeholderActivityId);
     if (!resolvedLog) {
@@ -7104,9 +7258,9 @@ async function run() {
 
     step('Validating role-scoped access-history API');
     const [tenantHistory, facAdminHistory, adminHistory] = await Promise.all([
-      axios.get(`${API_BASE}/access-history`, { headers: authHeaders(primaryToken), params: { facility_id: facilityId, limit: 50 } }),
-      axios.get(`${API_BASE}/access-history`, { headers: authHeaders(facilityAdmin.token), params: { facility_id: facilityId, limit: 50 } }),
-      axios.get(`${API_BASE}/access-history`, { headers: authHeaders(platformAdmin.token), params: { facility_id: facilityId, limit: 50 } }),
+      axios.get(`${API_BASE}/access-history`, { headers: authHeaders(primaryToken), params: { facility_id: facilityId, limit: 50, view: 'raw' } }),
+      axios.get(`${API_BASE}/access-history`, { headers: authHeaders(facilityAdmin.token), params: { facility_id: facilityId, limit: 50, view: 'raw' } }),
+      axios.get(`${API_BASE}/access-history`, { headers: authHeaders(platformAdmin.token), params: { facility_id: facilityId, limit: 50, view: 'raw' } }),
     ]);
     if (!tenantHistory.data?.logs?.length) throw new Error('Tenant history feed missing expected scoped entries');
     if (!facAdminHistory.data?.logs?.length) throw new Error('Facility-admin history feed missing expected entries');
@@ -7145,6 +7299,50 @@ async function run() {
       (x) => x.unit_id === shadowUnit.id && x.denial_reason === 'denylist_blocked',
     );
     if (shadowUnitLeakedToTenant) throw new Error('Tenant leaked secondary-unit event they should not see');
+
+    step('Validating GET /access-sessions for denied/on-site rows + tenant RBAC');
+    const [tenantSessions, facAdminSessions, adminSessions] = await Promise.all([
+      axios.get(`${API_BASE}/access-sessions`, {
+        headers: authHeaders(primaryToken),
+        params: { facility_id: facilityId, limit: 50 },
+      }),
+      axios.get(`${API_BASE}/access-sessions`, {
+        headers: authHeaders(facilityAdmin.token),
+        params: { facility_id: facilityId, limit: 50 },
+      }),
+      axios.get(`${API_BASE}/access-sessions`, {
+        headers: authHeaders(platformAdmin.token),
+        params: { facility_id: facilityId, limit: 50 },
+      }),
+    ]);
+    if (adminSessions.status !== 200 || !Array.isArray(adminSessions.data?.sessions)) {
+      throw new Error(`GET /access-sessions admin failed: ${adminSessions.status}`);
+    }
+    if (typeof adminSessions.data.currently_open !== 'number') {
+      throw new Error('GET /access-sessions missing currently_open');
+    }
+    const deniedSession = (adminSessions.data.sessions || []).find(
+      (s) => s.state === 'denied' && s.denial_reason === 'route_pass_invalid_signature',
+    );
+    if (!deniedSession) {
+      throw new Error('Missing denied route_pass_invalid_signature session on GET /access-sessions');
+    }
+    const keypadDeniedSession = (adminSessions.data.sessions || []).find(
+      (s) => s.state === 'denied' && s.denial_reason === 'out_of_schedule' && s.method === 'keypad',
+    );
+    if (!keypadDeniedSession) {
+      throw new Error('Missing keypad out_of_schedule denied session on GET /access-sessions');
+    }
+    if (!(facAdminSessions.data?.sessions || []).length) {
+      throw new Error('Facility-admin GET /access-sessions returned no sessions');
+    }
+    const shadowDeniedLeakedToTenant = (tenantSessions.data?.sessions || []).some(
+      (s) => s.unit_id === shadowUnit.id && s.denial_reason === 'denylist_blocked',
+    );
+    if (shadowDeniedLeakedToTenant) {
+      throw new Error('Tenant GET /access-sessions leaked secondary-unit denied session');
+    }
+    ok('GET /access-sessions returns session aggregates with currently_open; tenant RBAC holds');
 
     step('Validating tenant REST access-history includes non-self unit events on assigned unit');
     const tenantLogs = tenantHistory.data.logs;
@@ -7304,6 +7502,17 @@ async function run() {
     }
     ok('activity_new payloads include access-history-shaped accessLog records for live grid updates');
 
+    const adminSessionUpserts = adminFeed.events.filter((evt) => evt.type === 'access_session_upsert');
+    if (adminSessionUpserts.length > 0) {
+      const sample = adminSessionUpserts[0]?.data?.session;
+      if (!sample?.id || !sample?.state) {
+        throw new Error('access_session_upsert missing session.id/state');
+      }
+      ok(`Admin feed received ${adminSessionUpserts.length} access_session_upsert event(s)`);
+    } else {
+      warn('No access_session_upsert on admin feed during canonical ingest (denials may be terminal-only); REST sessions still validated');
+    }
+
     const tenantShadowLeak = tenantFeed.events.some((evt) => matchesRealtimeShadow(evt));
     if (tenantShadowLeak) {
       throw new Error('Tenant realtime feed leaked secondary-unit event');
@@ -7314,7 +7523,7 @@ async function run() {
     await delay(500);
     const tenantHistoryAfterRealtime = await axios.get(`${API_BASE}/access-history`, {
       headers: authHeaders(primaryToken),
-      params: { facility_id: facilityId, limit: 50 },
+      params: { facility_id: facilityId, limit: 50, view: 'raw' },
     });
     const tenantAdminRemotesOnUnit = (tenantHistoryAfterRealtime.data?.logs || []).filter(
       (x) => x.unit_id === unitId

@@ -6,11 +6,15 @@ import {
   LockOpenIcon,
   CheckCircleIcon,
   CloudIcon,
+  DevicePhoneMobileIcon,
+  CalculatorIcon,
+  ClockIcon,
 } from '@heroicons/react/24/outline';
 import { AccessLog } from '@/types/access-history.types';
 import {
   getAccessHistoryActionIcon,
   getAccessHistoryMethodIcon,
+  getAccessSessionActionIcon,
 } from '@/components/AccessHistory/accessHistoryIcons';
 
 describe('accessHistoryIcons', () => {
@@ -110,6 +114,42 @@ describe('accessHistoryIcons', () => {
         },
       };
       expect(getAccessHistoryMethodIcon(correlatedUnlock)).toBe(LockOpenIcon);
+    });
+
+    it('returns CalculatorIcon for keypad and DevicePhoneMobileIcon for app', () => {
+      expect(getAccessHistoryMethodIcon({ ...baseLog, method: 'keypad' })).toBe(CalculatorIcon);
+      expect(getAccessHistoryMethodIcon({ ...baseLog, method: 'app' })).toBe(DevicePhoneMobileIcon);
+      expect(getAccessHistoryMethodIcon({ ...baseLog, method: 'mobile_key' })).toBe(
+        DevicePhoneMobileIcon,
+      );
+    });
+  });
+
+  describe('getAccessSessionActionIcon', () => {
+    it('uses phone for mobile key and calculator for keypad', () => {
+      expect(
+        getAccessSessionActionIcon({ state: 'closed', method: 'app', origin: 'on_site' }),
+      ).toBe(DevicePhoneMobileIcon);
+      expect(
+        getAccessSessionActionIcon({ state: 'closed', method: 'keypad', origin: 'on_site' }),
+      ).toBe(CalculatorIcon);
+    });
+
+    it('uses cloud for remote unlock and clock while pending', () => {
+      expect(
+        getAccessSessionActionIcon({
+          state: 'closed',
+          method: 'admin_remote',
+          origin: 'cloud_remote',
+        }),
+      ).toBe(CloudIcon);
+      expect(
+        getAccessSessionActionIcon({
+          state: 'pending',
+          method: 'admin_remote',
+          origin: 'cloud_remote',
+        }),
+      ).toBe(ClockIcon);
     });
   });
 });

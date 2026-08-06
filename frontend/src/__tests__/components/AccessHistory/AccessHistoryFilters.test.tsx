@@ -33,6 +33,7 @@ describe('AccessHistoryFilters', () => {
     filtersExpanded: true,
     isCustomDateRange: false,
     onFilterChange: jest.fn(),
+    onToggleNeedsAttention: jest.fn(),
     onToggleExpanded: jest.fn(),
     onClearFilters: jest.fn(),
     onSetCustomDateRange: jest.fn(),
@@ -52,12 +53,17 @@ describe('AccessHistoryFilters', () => {
     expect(screen.getByText('Method')).toBeInTheDocument();
   });
 
-  it('includes Cloud option in Method filter', () => {
-    renderWithTheme(<AccessHistoryFilters {...defaultProps} />);
-    
-    const methodSection = screen.getByText('Method').closest('div')?.parentElement;
-    expect(methodSection).toBeTruthy();
-    expect(methodSection?.textContent).toContain('Cloud');
+  it('shows Needs attention chip and hides Raw events by default', () => {
+    renderWithTheme(<AccessHistoryFilters {...defaultProps} currentlyOpenCount={2} />);
+    expect(screen.getByRole('button', { name: /needs attention/i })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /raw events/i })).not.toBeInTheDocument();
+  });
+
+  it('shows Raw events only when canViewRaw is true', () => {
+    renderWithTheme(
+      <AccessHistoryFilters {...defaultProps} canViewRaw currentlyOpenCount={0} />,
+    );
+    expect(screen.getByRole('button', { name: /raw events/i })).toBeInTheDocument();
   });
 
   it('includes Remote Access Granted in Action filter', () => {

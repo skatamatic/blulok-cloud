@@ -12,6 +12,7 @@ import {
   CalendarIcon,
   ComputerDesktopIcon,
   CloudIcon,
+  CalculatorIcon,
 } from '@heroicons/react/24/outline';
 import { AccessLog } from '@/types/access-history.types';
 import {
@@ -44,10 +45,12 @@ const actionIcons = {
 const methodIcons = {
   app: DevicePhoneMobileIcon,
   mobile_app: DevicePhoneMobileIcon,
-  keypad: KeyIcon,
+  mobile_key: DevicePhoneMobileIcon,
+  /** Number-pad stand-in — distinct from mobile phone. */
+  keypad: CalculatorIcon,
+  pin: CalculatorIcon,
   card: CreditCardIcon,
   physical_key: KeyIcon,
-  mobile_key: DevicePhoneMobileIcon,
   manual: KeyIcon,
   automatic: ComputerDesktopIcon,
   local_device: ComputerDesktopIcon,
@@ -61,7 +64,6 @@ const methodIcons = {
   scheduled: CalendarIcon,
   biometric: FingerPrintIcon,
   rfid: CreditCardIcon,
-  pin: KeyIcon,
   remote: CloudIcon,
 };
 
@@ -77,4 +79,35 @@ export function getAccessHistoryMethodIcon(log: AccessLog) {
   if (isCorrelatedRemoteUnlock(log)) return LockOpenIcon;
   if (log.method === 'admin_remote' || log.method === 'remote_gateway') return CloudIcon;
   return methodIcons[log.method as keyof typeof methodIcons] || KeyIcon;
+}
+
+/** Session-row Access icon: status when unsettled/denied; otherwise method identity. */
+export function getAccessSessionActionIcon(session: {
+  kind?: string;
+  state?: string;
+  outcome?: string | null;
+  origin?: string;
+  method?: string;
+}) {
+  if (session.state === 'denied' || session.outcome === 'denied') return XCircleIcon;
+  if (session.state === 'failed') return ExclamationTriangleIcon;
+  if (session.state === 'timed_out') return ClockIcon;
+  if (session.state === 'pending') return ClockIcon;
+  return getAccessSessionMethodIcon(session);
+}
+
+export function getAccessSessionMethodIcon(session: {
+  method?: string;
+  kind?: string;
+  origin?: string;
+}) {
+  const method = session.method || '';
+  if (
+    session.origin === 'cloud_remote'
+    || method === 'admin_remote'
+    || method === 'remote_gateway'
+  ) {
+    return CloudIcon;
+  }
+  return methodIcons[method as keyof typeof methodIcons] || KeyIcon;
 }

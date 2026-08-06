@@ -58,8 +58,11 @@ export const mockApiService = {
 
   // Access History
   getAccessHistory: jest.fn(),
+  getAccessSessions: jest.fn(),
+  getAccessSessionById: jest.fn(),
   getAccessLog: jest.fn(),
   exportAccessHistory: jest.fn(),
+  exportAccessSessions: jest.fn(),
 
   // Key Sharing
   getKeySharing: jest.fn(),

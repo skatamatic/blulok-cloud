@@ -4,51 +4,36 @@ import { UserRole } from '@/types/auth.types';
 import { BaseSubscriptionManager, SubscriptionClient, WebSocketMessage } from './base-subscription-manager';
 import { ActivityLogModel } from '@/models/activity-log.model';
 import { ActivityEventsService, ActivityEvent } from '@/services/events/activity-events.service';
+import {
+  AccessSessionEventsService,
+  AccessSessionUpsertEvent,
+} from '@/services/events/access-session-events.service';
 import { AuthService } from '@/services/auth.service';
 import { UnitModel } from '@/models/unit.model';
 import { DeviceModel } from '@/models/device.model';
 import { AccessEventScopeService } from '@/services/access/access-event-scope.service';
 import { AccessHistoryReadService } from '@/services/access/access-history-read.service';
+import { AccessSessionReadService } from '@/services/access/access-session-read.service';
 
 const LIVE_ACTIVITY_TYPES = AccessHistoryReadService.ACCESS_HISTORY_ACTIVITY_TYPES;
 
 /**
  * Activity Subscription Manager
  *
- * Manages real-time subscriptions to activity log updates.
- * Provides live activity feed for units, devices, and facilities.
- *
+ * Manages real-time subscriptions to activity log updates and access session upserts.
  * Subscription Type: 'activity'
- *
- * Key Features:
- * - Real-time activity updates
- * - Facility-scoped activity feeds
- * - Unit and device-specific subscriptions
- * - Lock/unlock event notifications
- *
- * Data Provided:
- * - Recent activity logs
- * - New activities as they occur
- * - Activity type filtering
- *
- * Access Control:
- * - All authenticated users can subscribe
- * - Activity is filtered by facility access
- *
- * Subscription Parameters:
- * - facility_id: (optional) Subscribe to facility-specific activity
- * - unit_id: (optional) Subscribe to unit-specific activity
- * - device_id: (optional) Subscribe to device-specific activity
  */
 export class ActivitySubscriptionManager extends BaseSubscriptionManager {
   private activityLogModel: ActivityLogModel;
   private eventService: ActivityEventsService;
+  private sessionEventService: AccessSessionEventsService;
   private unitModel: UnitModel;
   private deviceModel: DeviceModel;
   private initialized: boolean = false;
   private cleanupFunctions: Array<() => void> = [];
   private scopeService: AccessEventScopeService;
   private accessHistoryReadService: AccessHistoryReadService;
+  private accessSessionReadService: AccessSessionReadService;
   // Store filters per subscription
   private subscriptionFilters: Map<string, { facilityId?: string; unitId?: string; deviceId?: string; action?: string; method?: string; denialReason?: string }> = new Map();
   private tenantUnitScopes: Map<string, string[]> = new Map();
@@ -57,10 +42,12 @@ export class ActivitySubscriptionManager extends BaseSubscriptionManager {
     super();
     this.activityLogModel = new ActivityLogModel();
     this.eventService = ActivityEventsService.getInstance();
+    this.sessionEventService = AccessSessionEventsService.getInstance();
     this.unitModel = new UnitModel();
     this.deviceModel = new DeviceModel();
     this.scopeService = new AccessEventScopeService();
     this.accessHistoryReadService = new AccessHistoryReadService();
+    this.accessSessionReadService = new AccessSessionReadService();
     this.setupEventListeners();
   }
 
@@ -219,12 +206,76 @@ export class ActivitySubscriptionManager extends BaseSubscriptionManager {
     if (this.initialized) return;
     this.initialized = true;
 
-    // Listen for all activity events
     this.cleanupFunctions.push(
       this.eventService.onActivityLogged(async (event: ActivityEvent) => {
         await this.broadcastActivity(event);
-      })
+      }),
     );
+
+    this.cleanupFunctions.push(
+      this.sessionEventService.onSessionUpsert(async (event: AccessSessionUpsertEvent) => {
+        await this.broadcastSessionUpsert(event);
+      }),
+    );
+  }
+
+  private async broadcastSessionUpsert(event: AccessSessionUpsertEvent): Promise<void> {
+    const activeSubscriptions = Array.from(this.watchers.keys());
+    if (activeSubscriptions.length === 0) return;
+
+    const sessionRecord = await this.accessSessionReadService.findSessionRecordById(event.sessionId);
+
+    for (const subscriptionId of activeSubscriptions) {
+      const client = this.clientContext.get(subscriptionId);
+      const filters = this.subscriptionFilters.get(subscriptionId);
+      if (!client) continue;
+
+      if (filters?.facilityId) {
+        if (!event.facilityId || filters.facilityId !== event.facilityId) continue;
+      }
+      if (filters?.unitId) {
+        if (!event.unitId || filters.unitId !== event.unitId) continue;
+      }
+      if (filters?.deviceId) {
+        if (filters.deviceId !== event.deviceId) continue;
+      }
+      if (!AuthService.canAccessAllFacilities(client.userRole)) {
+        if (event.facilityId && client.facilityIds && !client.facilityIds.includes(event.facilityId)) {
+          continue;
+        }
+      }
+      if (client.userRole === UserRole.TENANT) {
+        const unitIds = this.tenantUnitScopes.get(subscriptionId) || [];
+        const hasUnitAccess = !!event.unitId && unitIds.includes(event.unitId);
+        const isOwn = !!event.session.actor_id && event.session.actor_id === client.userId;
+        if (!hasUnitAccess && !isOwn) continue;
+      }
+      if (client.userRole === UserRole.MAINTENANCE) {
+        if (!event.session.actor_id || event.session.actor_id !== client.userId) continue;
+      }
+
+      const watchers = this.watchers.get(subscriptionId);
+      if (!watchers) continue;
+
+      for (const ws of watchers) {
+        if (ws.readyState === WebSocket.OPEN) {
+          try {
+            ws.send(JSON.stringify({
+              type: 'access_session_upsert',
+              subscriptionId,
+              data: {
+                session: sessionRecord,
+                changed: event.changed,
+                timestamp: event.timestamp.toISOString(),
+              },
+              timestamp: new Date().toISOString(),
+            }));
+          } catch (error) {
+            this.logger.error('Error broadcasting access session upsert:', error);
+          }
+        }
+      }
+    }
   }
 
   protected async sendInitialData(ws: WebSocket, subscriptionId: string, client: SubscriptionClient): Promise<void> {

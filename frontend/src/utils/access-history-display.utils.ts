@@ -7,6 +7,7 @@ import {
 import { formatDateTime } from '@/utils/datetime.utils';
 import { formatBluLokUserFacingLabel } from '@/utils/blulokDeviceDisplay.utils';
 import { readDisplayName } from '@/utils/deviceMetadataForm.utils';
+import { UNIDENTIFIED_USER_LABEL } from '@/utils/access-session-display.utils';
 
 export type AccessLogPresentationMetadata = {
   user?: { id: string; name: string; email?: string; navigation_url: string };
@@ -401,22 +402,22 @@ export function getAccessUserDisplay(log: AccessLog): { primary: string; seconda
   // Correlated remote unlock keeps the initiator even though method is local_device.
   if (meta.initiated_by?.name && (isCorrelatedRemoteUnlock(log) || log.action === 'remote_access_granted')) {
     return {
-      primary: trimPersonDisplayText(meta.initiated_by.name) || '—',
+      primary: trimPersonDisplayText(meta.initiated_by.name) || UNIDENTIFIED_USER_LABEL,
       secondary: meta.user?.email || log.user_email || null,
     };
   }
 
   if (log.method === 'local_device' || log.method === 'automatic' || log.method === 'keypad') {
-    return { primary: '—', secondary: null };
+    return { primary: UNIDENTIFIED_USER_LABEL, secondary: null };
   }
 
   if (isNonUserAccessActor(log)) {
-    return { primary: '—', secondary: null };
+    return { primary: UNIDENTIFIED_USER_LABEL, secondary: null };
   }
 
   const primary = meta.actor?.name || log.user_name;
   return {
-    primary: trimPersonDisplayText(primary) || '—',
+    primary: trimPersonDisplayText(primary) || UNIDENTIFIED_USER_LABEL,
     secondary: log.user_email || null,
   };
 }
@@ -530,7 +531,7 @@ export function buildAccessLogDetailItems(
         navigationTarget: userLink ? 'user' : undefined,
       },
     );
-  } else if (userLink && user.primary !== '—') {
+  } else if (userLink && user.primary !== UNIDENTIFIED_USER_LABEL) {
     items.push({
       label: 'User',
       value: userLink.label,

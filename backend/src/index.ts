@@ -128,6 +128,10 @@ async function bootstrap(): Promise<void> {
     const { DataPruningService } = await import('@/services/data-pruning.service');
     DataPruningService.getInstance().start();
 
+    // Expire pending access sessions past expires_at
+    const { AccessSessionSweeperService } = await import('@/services/access/access-session-sweeper.service');
+    AccessSessionSweeperService.getInstance().start();
+
     // Initialize route pass pruning service (daily cleanup of expired route pass issuance logs)
     const { RoutePassPruningService } = await import('@/services/route-pass-pruning.service');
     RoutePassPruningService.getInstance().start();
@@ -154,6 +158,8 @@ async function bootstrap(): Promise<void> {
       DenylistPruningService.getInstance().stop();
       const { DataPruningService } = require('@/services/data-pruning.service');
       DataPruningService.getInstance().stop();
+      const { AccessSessionSweeperService } = require('@/services/access/access-session-sweeper.service');
+      AccessSessionSweeperService.getInstance().stop();
       const { RoutePassPruningService } = require('@/services/route-pass-pruning.service');
       RoutePassPruningService.getInstance().stop();
       const { AccessCodeSchedulerService } = require('@/services/access-code-scheduler.service');

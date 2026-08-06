@@ -12,9 +12,3 @@ export const MAX_LOCK_COMMAND_TIMEOUT_SEC = 3600;
  * Aligned with on-ground occupied-unlock intent default (60s).
  */
 export const ONE_SHOT_ATTRIBUTION_TTL_SEC = 60;
-
-/**
- * After a BluLok remote unlock settles via state sync, keep suppressing grant-like
- * access-events briefly so late Mobile key / Access granted posts do not duplicate history.
- */
-export const REMOTE_UNLOCK_GRANT_SUPPRESSION_TTL_MS = 15_000;

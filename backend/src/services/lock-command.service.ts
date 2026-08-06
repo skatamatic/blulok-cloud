@@ -4,67 +4,31 @@ import { logger } from '@/utils/logger';
 import { lockCommandTimeoutMs } from '@/utils/facility-lock-timeout.utils';
 import { resolveRemoteAccessMethod } from '@/utils/access-history-remote.utils';
 import { RemoteLockActivityLogger } from '@/services/access/remote-lock-activity-logger.service';
-import { ONE_SHOT_ATTRIBUTION_TTL_SEC, REMOTE_UNLOCK_GRANT_SUPPRESSION_TTL_MS } from '@/constants/lock-command.constants';
+import { ONE_SHOT_ATTRIBUTION_TTL_SEC } from '@/constants/lock-command.constants';
 import { randomUUID } from 'crypto';
+import {
+  LockCommandAttribution,
+  LockCommandInitiator,
+  PendingLockCommand,
+  LockStatus,
+  attributionFromAccessSession,
+} from '@/services/lock-command-attribution';
+import { AccessSessionService } from '@/services/access/access-session.service';
 
-type LockStatus =
-  | 'locked'
-  | 'unlocked'
-  | 'locking'
-  | 'unlocking'
-  | 'error'
-  | 'maintenance'
-  | 'unknown';
-
-export interface LockCommandInitiator {
-  userId: string;
-  userName: string;
-  role: string;
-}
-
-export interface LockCommandAttribution {
-  commandId: string;
-  initiator: LockCommandInitiator;
-  gatewayId: string;
-  facilityId: string;
-  unitId?: string;
-  requestedStatus: 'locked' | 'unlocked';
-  deviceType: 'blulok' | 'access_control';
-  tenantUnlockOverride?: {
-    reason: string;
-    reasonLabel: string;
-    notes?: string;
-  };
-}
-
-interface PendingLockCommand {
-  commandId: string;
-  deviceId: string;
-  previousStatus: LockStatus;
-  requestedStatus: 'locked' | 'unlocked';
-  timeoutHandle?: NodeJS.Timeout;
-  initiator?: LockCommandInitiator;
-  gatewayId: string;
-  facilityId: string;
-  unitId?: string;
-  deviceType: 'blulok' | 'access_control';
-  tenantUnlockOverride?: {
-    reason: string;
-    reasonLabel: string;
-    notes?: string;
-  };
-}
+export type {
+  LockCommandAttribution,
+  LockCommandInitiator,
+  LockStatus,
+} from '@/services/lock-command-attribution';
 
 /**
  * LockCommandService
  *
  * Orchestrates lock/unlock commands from the cloud UI to facility gateways.
  *
- * Attribution: pending initiator context is held in-process (Map) until gateway state
- * settles or the attribution TTL expires. This is affinity-sensitive on multi-instance
- * Cloud Run — prefer max-instances=1 or sticky sessions until a shared store exists.
- * Every production BluLok / access-control lock route passes an initiator so Access
- * History can stamp the originating user (tenant override is optional metadata only).
+ * Command timers remain process-local. Durable pending attribution for Access History
+ * is persisted in access_sessions (see AccessSessionCorrelator). Every production BluLok /
+ * access-control lock route passes an initiator so Access History can stamp the user.
  */
 export class LockCommandService {
   private static instance: LockCommandService;
@@ -74,9 +38,6 @@ export class LockCommandService {
   private readonly pendingCommands = new Map<string, PendingLockCommand>();
   /** Skips one lock-activity log row after timeout-driven status revert. */
   private readonly suppressRevertActivityLog = new Set<string>();
-  /** deviceId → expiresAt for post-settlement grant-event suppression (BluLok remote unlock). */
-  private readonly recentlySettledBluLokUnlocks = new Map<string, number>();
-  private readonly recentlySettledTimers = new Map<string, NodeJS.Timeout>();
 
   private constructor() {
     this.deviceModel = new DeviceModel();
@@ -265,6 +226,7 @@ export class LockCommandService {
         method: resolveRemoteAccessMethod(initiator.role),
         deviceType: 'blulok',
         commandId: pending?.commandId,
+        expiresAt: new Date(Date.now() + attributionTimeoutMs),
         tenantUnlockOverride: options?.tenantUnlockOverride,
       });
     }
@@ -543,11 +505,12 @@ export class LockCommandService {
       errorMessage: params.message,
       initiator: pending.initiator,
       deviceType: params.deviceType,
+      remoteCommandId: pending.commandId,
       tenantUnlockOverride: pending.tenantUnlockOverride,
     });
   }
 
-  /** True while a remote lock/unlock command is awaiting gateway confirmation. */
+  /** True while a remote lock/unlock command is awaiting gateway confirmation (in-process). */
   public hasPendingLockCommand(deviceId: string): boolean {
     return this.pendingCommands.has(deviceId);
   }
@@ -570,17 +533,21 @@ export class LockCommandService {
   }
 
   /**
-   * True briefly after a BluLok remote unlock was success-consumed via state sync.
-   * Used to ignore late grant-like access-events (Mobile key / Access granted).
+   * Prefer in-memory pending (same instance), else durable access_sessions pending row.
+   * Used when state sync may land on a different Cloud Run instance than the command.
    */
-  public hasRecentBluLokRemoteUnlockSettlement(deviceId: string): boolean {
-    const expiresAt = this.recentlySettledBluLokUnlocks.get(deviceId);
-    if (!expiresAt) return false;
-    if (Date.now() >= expiresAt) {
-      this.clearRecentBluLokUnlockSettlement(deviceId);
-      return false;
+  public async peekCommandAttributionDurable(deviceId: string): Promise<LockCommandAttribution | null> {
+    const local = this.peekCommandAttribution(deviceId);
+    if (local) return local;
+    try {
+      const session = await AccessSessionService.getInstance().findPendingByDevice(deviceId);
+      if (!session || session.origin !== 'cloud_remote') return null;
+      return attributionFromAccessSession(session);
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      logger.warn('LockCommandService: durable attribution lookup failed', { deviceId, error: message });
+      return null;
     }
-    return true;
   }
 
   /**
@@ -602,12 +569,7 @@ export class LockCommandService {
       return null;
     }
     const attribution = this.peekCommandAttribution(deviceId);
-    const wasBluLokUnlock =
-      pending.deviceType === 'blulok' && pending.requestedStatus === 'unlocked';
     this.clearPending(deviceId);
-    if (wasBluLokUnlock) {
-      this.markRecentBluLokUnlockSettlement(deviceId);
-    }
     return attribution;
   }
 
@@ -727,6 +689,7 @@ export class LockCommandService {
     errorMessage: string;
     initiator?: LockCommandInitiator;
     deviceType: 'blulok' | 'access_control';
+    remoteCommandId?: string;
     tenantUnlockOverride?: {
       reason: string;
       reasonLabel: string;
@@ -786,6 +749,7 @@ private async facilityExists(facilityId: string): Promise<boolean> {
     unitId?: string;
     initiator?: LockCommandInitiator;
     deviceType: 'blulok' | 'access_control';
+    remoteCommandId?: string;
     tenantUnlockOverride?: {
       reason: string;
       reasonLabel: string;
@@ -837,26 +801,6 @@ private async facilityExists(facilityId: string): Promise<boolean> {
     }
   }
 
-  private markRecentBluLokUnlockSettlement(deviceId: string): void {
-    this.clearRecentBluLokUnlockSettlement(deviceId);
-    const expiresAt = Date.now() + REMOTE_UNLOCK_GRANT_SUPPRESSION_TTL_MS;
-    this.recentlySettledBluLokUnlocks.set(deviceId, expiresAt);
-    const timer = setTimeout(() => {
-      this.clearRecentBluLokUnlockSettlement(deviceId);
-    }, REMOTE_UNLOCK_GRANT_SUPPRESSION_TTL_MS);
-    timer.unref?.();
-    this.recentlySettledTimers.set(deviceId, timer);
-  }
-
-  private clearRecentBluLokUnlockSettlement(deviceId: string): void {
-    this.recentlySettledBluLokUnlocks.delete(deviceId);
-    const timer = this.recentlySettledTimers.get(deviceId);
-    if (timer) {
-      clearTimeout(timer);
-      this.recentlySettledTimers.delete(deviceId);
-    }
-  }
-
   private async handleTimeout(deviceId: string): Promise<void> {
     const pending = this.pendingCommands.get(deviceId);
     this.pendingCommands.delete(deviceId);
@@ -888,6 +832,7 @@ private async facilityExists(facilityId: string): Promise<boolean> {
           errorMessage: timeoutMessage,
           initiator: pending.initiator,
           deviceType: 'access_control',
+          remoteCommandId: pending.commandId,
           tenantUnlockOverride: pending.tenantUnlockOverride,
         });
       }
@@ -918,6 +863,7 @@ private async facilityExists(facilityId: string): Promise<boolean> {
             errorMessage: timeoutMessage,
             initiator: pending.initiator,
             deviceType: 'blulok',
+            remoteCommandId: pending.commandId,
             tenantUnlockOverride: pending.tenantUnlockOverride,
           });
         }
@@ -934,6 +880,7 @@ private async facilityExists(facilityId: string): Promise<boolean> {
           errorMessage: timeoutMessage,
           initiator: pending.initiator,
           deviceType: 'blulok',
+          remoteCommandId: pending.commandId,
           tenantUnlockOverride: pending.tenantUnlockOverride,
         });
       }

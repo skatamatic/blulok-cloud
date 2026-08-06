@@ -24,6 +24,7 @@ import { gatewayRouter } from '@/routes/gateway.routes';
 import { devicesRouter } from '@/routes/devices.routes';
 import { unitsRouter } from '@/routes/units.routes';
 import accessHistoryRouter from '@/routes/access-history.routes';
+import accessSessionsRouter from '@/routes/access-sessions.routes';
 import keySharingRouter from '@/routes/key-sharing.routes';
 
 // Mock the database service before importing routes
@@ -332,6 +333,7 @@ export function createIntegrationTestApp(): Application {
   app.use('/api/v1/devices', devicesRouter);
   app.use('/api/v1/units', unitsRouter);
   app.use('/api/v1/access-history', accessHistoryRouter);
+  app.use('/api/v1/access-sessions', accessSessionsRouter);
   app.use('/api/v1/key-sharing', keySharingRouter);
 
   // Error handling middleware (must be last)
