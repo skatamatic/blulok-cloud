@@ -94,9 +94,14 @@ import {
   buildFacilityUserLookupMaps,
   findExistingUserForFmsTenant,
   formatFmsTenantContactLabel,
+  hasFmsTenantLoginIdentity,
   validateFmsTenantSyncFields,
   validateFmsTenantWebhookFields,
 } from './fms-tenant-validation.utils';
+import {
+  isPlaceholderUser,
+} from './fms-placeholder-user.utils';
+import { toE164 } from '@/utils/phone.util';
 import {
   summarizeFmsWebhookPayload,
 } from './fms-webhook-summary.utils';
@@ -958,6 +963,10 @@ export class FMSService {
         
         let currentPhone: string | undefined;
         if (mapping) currentPhone = mapping.metadata?.phone as string | undefined;
+        const currentEmail =
+          (typeof mapping?.metadata?.email === 'string' ? mapping.metadata.email : undefined)
+          ?? user.email
+          ?? undefined;
 
         const facilityAssignmentCount =
           assignmentsByTenantId.get(user.id)?.length ?? 0;
@@ -968,10 +977,25 @@ export class FMSService {
         );
         const needsReactivation = isUserInactive(user);
 
+        const normalizedUserEmail = (user.email || '').trim().toLowerCase();
+        const normalizedFmsEmail = (fmsTenant.email || '').trim().toLowerCase();
+        const normalizedUserPhone = (user.phone_number || '').trim();
+        const normalizedFmsPhone = fmsTenant.phone?.trim() ? toE164(fmsTenant.phone) : '';
+        const normalizedMetaPhone = currentPhone?.trim()
+          ? (toE164(currentPhone) || currentPhone.trim())
+          : '';
+        const emailChanged = normalizedUserEmail !== normalizedFmsEmail;
+        const phoneChanged =
+          (normalizedUserPhone || normalizedMetaPhone) !== normalizedFmsPhone;
+        const needsPlaceholderUpgrade =
+          isPlaceholderUser(user) && hasFmsTenantLoginIdentity(fmsTenant);
+
         const hasInfoChanges =
           user.first_name !== fmsTenant.firstName ||
           user.last_name !== fmsTenant.lastName ||
-          currentPhone !== fmsTenant.phone;
+          emailChanged ||
+          phoneChanged ||
+          needsPlaceholderUpgrade;
 
         if (needsFmsRestore || hasInfoChanges || needsReactivation) {
           logger.debug(
@@ -988,7 +1012,12 @@ export class FMSService {
             entity_type: 'tenant',
             external_id: fmsTenant.externalId,
             internal_id: user.id,
-            before_data: { firstName: user.first_name, lastName: user.last_name, phone: currentPhone },
+            before_data: {
+              firstName: user.first_name,
+              lastName: user.last_name,
+              email: currentEmail ?? user.email ?? null,
+              phone: currentPhone ?? user.phone_number ?? null,
+            },
             after_data: fmsTenant,
             required_actions: [FMSChangeAction.UPDATE_USER],
             impact_summary: needsFmsRestore && !hasInfoChanges
@@ -1655,10 +1684,28 @@ export class FMSService {
     const { toE164 } = await import('@/utils/phone.util');
     const phoneE164 = rawPhone ? toE164(rawPhone) : '';
     const preferredIdentifier = rawEmail ? rawEmail.toLowerCase() : (phoneE164 ? phoneE164.toLowerCase() : '');
+    const isPlaceholderCreate = !preferredIdentifier;
 
-    // Check if user already exists by login identifier when available, fallback to targeted DB query
+    const {
+      buildFmsPlaceholderLoginIdentifier,
+      FMS_PLACEHOLDER_PASSWORD_HASH,
+      isPlaceholderUser,
+    } = await import('@/services/fms/fms-placeholder-user.utils');
+
+    // Prefer existing FMS mapping so contact matching cannot silently hijack another user
+    // while a placeholder (or prior mapped tenant) still owns this external_id.
+    const priorMapping = await this.entityMappingModel.findByExternalId(
+      facilityId,
+      'user',
+      tenantData.externalId,
+    );
+
     let existingUser: User | undefined;
-    if (preferredIdentifier) {
+    if (priorMapping?.internal_id) {
+      existingUser = await UserModel.findById(priorMapping.internal_id) as User | undefined;
+    }
+
+    if (!existingUser && preferredIdentifier) {
       existingUser = await UserModel.findByLoginIdentifier(preferredIdentifier);
     }
     if (!existingUser && (rawEmail || phoneE164)) {
@@ -1685,10 +1732,11 @@ export class FMSService {
     }
 
     let user: User;
+    let upgradedFromPlaceholder = false;
     if (existingUser) {
       // User already exists - ensure their core identity fields are up to date and they are
       // associated with this facility and mapped to the FMS tenant.
-      logger.info(`[FMS] User ${tenantData.email} already exists. Ensuring data, facility association and mapping.`, {
+      logger.info(`[FMS] User ${tenantData.email || tenantData.externalId} already exists. Ensuring data, facility association and mapping.`, {
         fms_sync: true,
         sync_log_id: change.sync_log_id,
         facility_id: facilityId,
@@ -1697,15 +1745,36 @@ export class FMSService {
 
       const updates: Partial<User> = {};
       const normalizedEmail = rawEmail ? rawEmail.toLowerCase() : null;
+      const wasPlaceholder = isPlaceholderUser(existingUser);
+      const {
+        requirePlaceholderUpgradeUpdates,
+        queueInviteAfterPlaceholderUpgrade,
+      } = await import('@/services/fms/fms-placeholder-upgrade');
 
-      // Update email if FMS has a (possibly new) email
-      if (normalizedEmail && existingUser.email !== normalizedEmail) {
-        updates.email = normalizedEmail;
-      }
+      if (wasPlaceholder && preferredIdentifier) {
+        const upgrade = await requirePlaceholderUpgradeUpdates(existingUser.id, {
+          email: normalizedEmail,
+          phoneE164: phoneE164 || null,
+        });
+        if (upgrade) {
+          Object.assign(updates, upgrade);
+        }
+      } else {
+        // Update email if FMS has a (possibly new) email
+        if (normalizedEmail && existingUser.email !== normalizedEmail) {
+          updates.email = normalizedEmail;
+        }
 
-      // Update phone_number if FMS has a normalized phone
-      if (phoneE164 && existingUser.phone_number !== phoneE164) {
-        updates.phone_number = phoneE164;
+        // Update phone_number if FMS has a normalized phone
+        if (phoneE164 && existingUser.phone_number !== phoneE164) {
+          updates.phone_number = phoneE164;
+        }
+
+        // Keep login_identifier aligned with our preferred identifier (email > phone)
+        const newLoginIdentifier = preferredIdentifier || (existingUser.email || existingUser.phone_number || existingUser.login_identifier);
+        if (newLoginIdentifier && existingUser.login_identifier !== newLoginIdentifier) {
+          updates.login_identifier = newLoginIdentifier.toLowerCase();
+        }
       }
 
       if (tenantData.firstName && existingUser.first_name !== tenantData.firstName) {
@@ -1715,12 +1784,6 @@ export class FMSService {
         updates.last_name = tenantData.lastName;
       }
 
-      // Keep login_identifier aligned with our preferred identifier (email > phone)
-      const newLoginIdentifier = preferredIdentifier || (existingUser.email || existingUser.phone_number || existingUser.login_identifier);
-      if (newLoginIdentifier && existingUser.login_identifier !== newLoginIdentifier) {
-        updates.login_identifier = newLoginIdentifier.toLowerCase();
-      }
-
       if (Object.keys(updates).length > 0) {
         await UserModel.updateById(existingUser.id, updates as any);
         user = await UserModel.findById(existingUser.id) as User;
@@ -1728,34 +1791,63 @@ export class FMSService {
         user = existingUser;
       }
 
+      upgradedFromPlaceholder = wasPlaceholder && !isPlaceholderUser(user);
+      if (upgradedFromPlaceholder) {
+        queueInviteAfterPlaceholderUpgrade(user, {
+          syncLogId: change.sync_log_id,
+          facilityId,
+        });
+      }
+
     } else {
       // SECURITY: Create user with TENANT role ONLY (FMS never creates admin/maintenance)
-      // Backfill fields: login_identifier and phone_number
-      user = await UserModel.create({
-        login_identifier: preferredIdentifier || (tenantData.externalId || '').toLowerCase(),
-        email: rawEmail || null,
-        phone_number: phoneE164 || null,
-        first_name: tenantData.firstName,
-        last_name: tenantData.lastName,
-        role: UserRole.TENANT, // ← ALWAYS TENANT, never admin/maintenance
-        password_hash: '$2b$10$dummyhashforinvitationflow', // Temporary - should send invitation
-        is_active: true,
-        requires_password_reset: true,
-      }) as any;
-
-      // Trigger first-time invite notification (non-blocking — Twilio can be slow)
-      void import('@/services/first-time-user.service')
-        .then(({ FirstTimeUserService }) => FirstTimeUserService.getInstance().sendInvite(user))
-        .catch((e) => {
-          logger.warn(`[FMS] Failed to send first-time invite for user ${user.id}:`, e);
+      if (isPlaceholderCreate) {
+        user = await UserModel.create({
+          login_identifier: buildFmsPlaceholderLoginIdentifier(facilityId, tenantData.externalId),
+          email: null,
+          phone_number: null,
+          first_name: tenantData.firstName,
+          last_name: tenantData.lastName,
+          role: UserRole.TENANT,
+          password_hash: FMS_PLACEHOLDER_PASSWORD_HASH,
+          is_active: true,
+          is_placeholder: true,
+          requires_password_reset: true,
+        }) as any;
+        logger.info(`[FMS] Created placeholder tenant user for external_id ${tenantData.externalId} (${user.id}) by ${performedBy}`, {
+          fms_sync: true,
+          sync_log_id: change.sync_log_id,
+          facility_id: facilityId,
         });
+      } else {
+        user = await UserModel.create({
+          login_identifier: preferredIdentifier,
+          email: rawEmail || null,
+          phone_number: phoneE164 || null,
+          first_name: tenantData.firstName,
+          last_name: tenantData.lastName,
+          role: UserRole.TENANT,
+          password_hash: FMS_PLACEHOLDER_PASSWORD_HASH,
+          is_active: true,
+          is_placeholder: false,
+          requires_password_reset: true,
+        }) as any;
+
+        // Trigger first-time invite notification (non-blocking — Twilio can be slow)
+        void import('@/services/first-time-user.service')
+          .then(({ FirstTimeUserService }) => FirstTimeUserService.getInstance().sendInvite(user))
+          .catch((e) => {
+            logger.warn(`[FMS] Failed to send first-time invite for user ${user.id}:`, e);
+          });
+
+        logger.info(`[FMS] Created tenant user: ${user.email || user.phone_number} (${user.id}) by ${performedBy}`, {
+          fms_sync: true,
+          sync_log_id: change.sync_log_id,
+          facility_id: facilityId,
+        });
+      }
 
       result.accessChanges.usersCreated.push(user.id);
-      logger.info(`[FMS] Created tenant user: ${user.email} (${user.id}) by ${performedBy}`, {
-        fms_sync: true,
-        sync_log_id: change.sync_log_id,
-        facility_id: facilityId,
-      });
 
       // Associate user with facility
       await UserFacilityAssociationModel.addUserToFacility(user.id, facilityId);
@@ -1763,7 +1855,7 @@ export class FMSService {
 
     // Create or ensure FMS entity mapping (store phone in metadata since it's not in users table)
     // Check if mapping already exists to avoid duplicates
-    const existingMapping = await this.entityMappingModel.findByExternalId(
+    const existingMapping = priorMapping ?? await this.entityMappingModel.findByExternalId(
       facilityId,
       'user',
       tenantData.externalId
@@ -1795,6 +1887,17 @@ export class FMSService {
         syncLogId: change.sync_log_id,
         force: true,
       });
+      // Mapped user row was missing earlier; bind mapping to the resolved/created user
+      if (existingMapping.internal_id !== user.id) {
+        await this.entityMappingModel.updateInternalId(existingMapping.id, user.id);
+        logger.info(`[FMS] Remapped tenant external_id ${tenantData.externalId} to user ${user.id}`, {
+          fms_sync: true,
+          sync_log_id: change.sync_log_id,
+          facility_id: facilityId,
+          previous_internal_id: existingMapping.internal_id,
+          new_internal_id: user.id,
+        });
+      }
       await this.entityMappingModel.updateMetadata(
         existingMapping.id,
         clearFmsMappingRemoved({
@@ -1809,8 +1912,8 @@ export class FMSService {
         fms_sync: true,
         sync_log_id: change.sync_log_id,
         facility_id: facilityId,
-        existing_internal_id: existingMapping.internal_id,
-        new_internal_id: user.id,
+        internal_id: user.id,
+        upgraded_from_placeholder: upgradedFromPlaceholder,
       });
     }
 
@@ -2019,11 +2122,56 @@ export class FMSService {
       throw new Error(`Security violation: User ${change.internal_id} is not associated with facility ${facilityId}`);
     }
 
-    // Update user (phone is not in users table, store in entity mapping metadata)
-    await UserModel.updateById(change.internal_id, {
+    // Update user profile + upgrade placeholder identity when contact arrives
+    const rawEmail = tenantData.email?.trim() || '';
+    const rawPhone = tenantData.phone?.trim() || '';
+    const { toE164 } = await import('@/utils/phone.util');
+    const phoneE164 = rawPhone ? toE164(rawPhone) : '';
+    const preferredIdentifier = rawEmail
+      ? rawEmail.toLowerCase()
+      : (phoneE164 ? phoneE164.toLowerCase() : '');
+
+    const { isPlaceholderUser } = await import('@/services/fms/fms-placeholder-user.utils');
+    const {
+      requirePlaceholderUpgradeUpdates,
+      queueInviteAfterPlaceholderUpgrade,
+    } = await import('@/services/fms/fms-placeholder-upgrade');
+
+    const profileUpdates: Partial<User> = {
       first_name: tenantData.firstName,
       last_name: tenantData.lastName,
-    });
+    };
+
+    const wasPlaceholder = isPlaceholderUser(user as User);
+    if (wasPlaceholder && preferredIdentifier) {
+      const upgrade = await requirePlaceholderUpgradeUpdates(change.internal_id, {
+        email: rawEmail ? rawEmail.toLowerCase() : null,
+        phoneE164: phoneE164 || null,
+      });
+      if (upgrade) {
+        Object.assign(profileUpdates, upgrade);
+      }
+    } else if (preferredIdentifier) {
+      if (rawEmail && (user as User).email !== rawEmail.toLowerCase()) {
+        profileUpdates.email = rawEmail.toLowerCase();
+      }
+      if (phoneE164 && (user as User).phone_number !== phoneE164) {
+        profileUpdates.phone_number = phoneE164;
+      }
+      if ((user as User).login_identifier !== preferredIdentifier) {
+        profileUpdates.login_identifier = preferredIdentifier;
+      }
+    }
+
+    await UserModel.updateById(change.internal_id, profileUpdates as any);
+
+    const upgradedUser = await UserModel.findById(change.internal_id) as User;
+    if (wasPlaceholder && upgradedUser && !isPlaceholderUser(upgradedUser)) {
+      queueInviteAfterPlaceholderUpgrade(upgradedUser, {
+        syncLogId: change.sync_log_id,
+        facilityId,
+      });
+    }
 
     // Update or create entity mapping for this tenant
     const config = ctx.config ?? (await this.fmsConfigModel.findByFacilityId(facilityId));
@@ -2067,6 +2215,8 @@ export class FMSService {
         firstName: tenantData.firstName,
         lastName: tenantData.lastName,
         phone: tenantData.phone,
+        email: tenantData.email,
+        upgradedFromPlaceholder: isPlaceholderUser(user as User) && !isPlaceholderUser(upgradedUser),
       },
     });
   }

@@ -3,8 +3,6 @@ import {
   deriveFmsTenantValidationErrors,
   findExistingUserForFmsTenant,
   formatFmsTenantContactLabel,
-  FMS_TENANT_MISSING_CONTACT_SYNC,
-  FMS_TENANT_MISSING_CONTACT_WEBHOOK,
   hasFmsTenantLoginIdentity,
   refreshPendingTenantChangeForDisplay,
   resolveFmsTenantLoginIdentifier,
@@ -49,7 +47,7 @@ describe('fms-tenant-validation.utils', () => {
       ).toEqual([]);
     });
 
-    it('rejects tenant missing both email and phone', () => {
+    it('accepts tenant missing both email and phone (placeholder)', () => {
       expect(
         validateFmsTenantSyncFields({
           email: '',
@@ -57,7 +55,7 @@ describe('fms-tenant-validation.utils', () => {
           firstName: 'Kelvin',
           lastName: 'Benjamin',
         }),
-      ).toContain(FMS_TENANT_MISSING_CONTACT_SYNC);
+      ).toEqual([]);
     });
 
     it('rejects tenant missing first name even with phone', () => {
@@ -81,14 +79,14 @@ describe('fms-tenant-validation.utils', () => {
       ).toEqual([]);
     });
 
-    it('rejects tenant missing both email and phone with explicit message', () => {
+    it('accepts tenant missing both email and phone (placeholder)', () => {
       expect(
         validateFmsTenantWebhookFields({
           email: null,
           phone: '',
           firstName: 'Edythe',
         }),
-      ).toContain(FMS_TENANT_MISSING_CONTACT_WEBHOOK);
+      ).toEqual([]);
     });
   });
 
@@ -110,13 +108,13 @@ describe('fms-tenant-validation.utils', () => {
       expect(formatFmsTenantContactLabel({ email: null, phone: '+13450899583' })).toBe('+13450899583');
     });
 
-    it('says both email and phone are missing when neither is present', () => {
-      expect(formatFmsTenantContactLabel({ email: null, phone: null })).toBe('no email or phone');
+    it('labels missing contact as placeholder — no login', () => {
+      expect(formatFmsTenantContactLabel({ email: null, phone: null })).toBe('placeholder — no login');
     });
   });
 
   describe('refreshPendingTenantChangeForDisplay', () => {
-    it('rewrites stale email-only identity errors and impact summary', () => {
+    it('clears obsolete contact identity errors so no-contact tenants become valid', () => {
       const refreshed = refreshPendingTenantChangeForDisplay({
         entity_type: 'tenant' as const,
         is_valid: false,
@@ -125,8 +123,9 @@ describe('fms-tenant-validation.utils', () => {
         after_data: { email: null, phone: null, firstName: 'Edythe', lastName: 'Orn' },
       });
 
-      expect(refreshed.validation_errors).toEqual([FMS_TENANT_MISSING_CONTACT_SYNC]);
-      expect(refreshed.impact_summary).toContain('(no email or phone)');
+      expect(refreshed.is_valid).toBe(true);
+      expect(refreshed.validation_errors).toEqual([]);
+      expect(refreshed.impact_summary).toContain('placeholder — no login');
       expect(refreshed.impact_summary).not.toContain('(no email)');
     });
 
@@ -149,7 +148,7 @@ describe('fms-tenant-validation.utils', () => {
       expect(refreshed.impact_summary).toContain('+13450899583');
     });
 
-    it('preserves unrelated validation errors', () => {
+    it('strips obsolete contact errors while preserving unrelated validation errors', () => {
       const refreshed = refreshPendingTenantChangeForDisplay({
         entity_type: 'tenant' as const,
         is_valid: false,
@@ -163,7 +162,6 @@ describe('fms-tenant-validation.utils', () => {
 
       expect(refreshed.validation_errors).toEqual([
         'Tenant is not mapped in BluLok yet',
-        FMS_TENANT_MISSING_CONTACT_SYNC,
       ]);
       expect(refreshed.is_valid).toBe(false);
     });

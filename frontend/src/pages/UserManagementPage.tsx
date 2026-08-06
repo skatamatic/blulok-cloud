@@ -12,15 +12,18 @@ import { SortableHeader } from '@/components/UserManagement/SortableHeader';
 import { useGlobalFacility, ALL_FACILITIES_ID } from '@/contexts/GlobalFacilityContext';
 import { withReturnPath } from '@/hooks/useBackNavigation';
 import { formatDate } from '@/utils/datetime.utils';
+import { PlaceholderUserBadge } from '@/components/UserManagement/PlaceholderUserBadge';
+import { formatUserContactSubtitle } from '@/utils/userDisplay.utils';
 
 interface User {
   id: string;
-  email: string;
+  email: string | null;
   phoneNumber?: string | null;
   firstName: string;
   lastName: string;
   role: UserRole;
   isActive: boolean;
+  isPlaceholder?: boolean;
   lastLogin?: string;
   createdAt: string;
   facilityNames?: string[];
@@ -336,11 +339,20 @@ export default function UserManagementPage() {
                           </div>
                         </div>
                         <div className="ml-4">
-                          <div className="text-sm font-medium text-gray-900 dark:text-white">
-                            {user.firstName} {user.lastName}
+                          <div className="flex flex-wrap items-center gap-2">
+                            <div className="text-sm font-medium text-gray-900 dark:text-white">
+                              {user.firstName} {user.lastName}
+                            </div>
+                            {user.isPlaceholder ? <PlaceholderUserBadge /> : null}
                           </div>
-                          <div className="text-sm text-gray-500 dark:text-gray-400">{user.email}</div>
-                          {user.phoneNumber ? (
+                          <div className="text-sm text-gray-500 dark:text-gray-400">
+                            {formatUserContactSubtitle({
+                              email: user.email,
+                              phoneNumber: user.phoneNumber,
+                              isPlaceholder: user.isPlaceholder,
+                            })}
+                          </div>
+                          {!user.isPlaceholder && user.phoneNumber ? (
                             <div className="text-xs text-gray-400 dark:text-gray-500 mt-0.5">{user.phoneNumber}</div>
                           ) : null}
                         </div>

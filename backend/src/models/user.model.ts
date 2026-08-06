@@ -38,7 +38,12 @@ export interface User {
    * Presentation-only: facility admins may use a simplified Cloud UI.
    * Not an authorization boundary — APIs remain role-scoped.
    */
-  simplified_ui: boolean;
+  simplified_ui?: boolean;
+  /**
+   * Non-loginable FMS tenant created without email/phone.
+   * FMS identity is on fms_entity_mappings; login_identifier uses a reserved prefix.
+   */
+  is_placeholder?: boolean;
   /** Whether the user must set a new password on next login */
   requires_password_reset?: boolean;
   /** Timestamp of user's last successful login */
@@ -155,7 +160,7 @@ export class UserModel extends BaseModel {
     role: UserRole,
     facilityId: string,
   ): Promise<
-    Pick<User, 'id' | 'email' | 'phone_number' | 'first_name' | 'last_name' | 'login_identifier' | 'is_active'>[]
+    Pick<User, 'id' | 'email' | 'phone_number' | 'first_name' | 'last_name' | 'login_identifier' | 'is_active' | 'is_placeholder'>[]
   > {
     return this.db('users')
       .join('user_facility_associations', 'users.id', 'user_facility_associations.user_id')
@@ -169,6 +174,7 @@ export class UserModel extends BaseModel {
         'users.last_name',
         'users.login_identifier',
         'users.is_active',
+        'users.is_placeholder',
       );
   }
 

@@ -199,6 +199,7 @@ registerGet(
     role: user.role,
     isActive: user.is_active,
     simplifiedUi: Boolean(user.simplified_ui),
+    isPlaceholder: Boolean(user.is_placeholder),
     lastLogin: user.last_login,
     createdAt: user.created_at,
     updatedAt: user.updated_at,
@@ -269,6 +270,7 @@ registerGet(
       role: user.role,
       isActive: user.is_active,
       simplifiedUi: Boolean(user.simplified_ui),
+      isPlaceholder: Boolean(user.is_placeholder),
       lastLogin: user.last_login,
       createdAt: user.created_at,
       updatedAt: user.updated_at
@@ -539,6 +541,7 @@ registerGet(
       role: user.role,
       isActive: user.is_active,
       simplifiedUi: Boolean(user.simplified_ui),
+      isPlaceholder: Boolean(user.is_placeholder),
       lastLogin: user.last_login,
       createdAt: user.created_at,
       updatedAt: user.updated_at,
@@ -750,6 +753,15 @@ registerPost(
     return;
   }
 
+  const { isPlaceholderUser } = await import('@/services/fms/fms-placeholder-user.utils');
+  if (isPlaceholderUser(user)) {
+    res.status(400).json({
+      success: false,
+      message: 'Cannot invite a placeholder tenant. Add an email or phone first to enable login.',
+    });
+    return;
+  }
+
   await FirstTimeUserService.getInstance().sendInvite(user);
   res.json({ success: true, message: 'Invite resent' });
 }));
@@ -834,15 +846,17 @@ registerPut(
 
   // For self-updates, restrict what can be modified
   if (id === req.user!.userId) {
-    // Users can only update their own firstName and lastName, not role, isActive, or simplifiedUi
+    // Users can only update their own firstName and lastName, not role, isActive, simplifiedUi, or login identity
     if (
       updateData.role !== undefined ||
       updateData.isActive !== undefined ||
-      updateData.simplifiedUi !== undefined
+      updateData.simplifiedUi !== undefined ||
+      updateData.email !== undefined ||
+      updateData.phoneNumber !== undefined
     ) {
       res.status(400).json({
         success: false,
-        message: 'You cannot modify your own role, active status, or simplified UI preference'
+        message: 'You cannot modify your own role, active status, simplified UI preference, or login identity'
       });
       return;
     }
@@ -866,11 +880,40 @@ registerPut(
     return;
   }
 
+  const { isPlaceholderUser } = await import(
+    '@/services/fms/fms-placeholder-user.utils'
+  );
+  const { preparePlaceholderUpgrade, queueInviteAfterPlaceholderUpgrade } = await import(
+    '@/services/fms/fms-placeholder-upgrade'
+  );
+  const wasPlaceholder = isPlaceholderUser(existingUser);
+
+  let nextEmail =
+    existingUser.email != null ? String(existingUser.email).toLowerCase() : null;
+  let nextPhone = existingUser.phone_number ?? null;
+
+  if (updateData.email !== undefined) {
+    if (!wasPlaceholder && existingUser.email) {
+      res.status(400).json({
+        success: false,
+        message: 'Email can only be set when upgrading a placeholder tenant',
+      });
+      return;
+    }
+    const rawEmail =
+      updateData.email === null ? '' : String(updateData.email).trim().toLowerCase();
+    if (rawEmail === '') {
+      nextEmail = null;
+    } else {
+      nextEmail = rawEmail;
+    }
+  }
+
   if (updateData.phoneNumber !== undefined) {
     const raw =
       updateData.phoneNumber === null ? '' : String(updateData.phoneNumber).trim();
     if (raw === '') {
-      await UserModel.setPhoneNumber(id, null);
+      nextPhone = null;
     } else {
       const normalized = toE164(raw, 'US');
       const digits = normalized.replace(/\D/g, '');
@@ -881,7 +924,29 @@ registerPut(
         });
         return;
       }
-      const other = await UserModel.findByPhone(normalized);
+      nextPhone = normalized;
+    }
+  }
+
+  // Placeholder upgrades require at least one contact when email/phone is being changed
+  if (
+    wasPlaceholder
+    && (updateData.email !== undefined || updateData.phoneNumber !== undefined)
+    && !nextEmail
+    && !nextPhone
+  ) {
+    res.status(400).json({
+      success: false,
+      message: 'Add an email or phone number to enable login for this placeholder tenant',
+    });
+    return;
+  }
+
+  // Non-placeholder phone updates: write immediately (nullable clear supported).
+  // Placeholder phone is applied atomically with the upgrade payload below.
+  if (updateData.phoneNumber !== undefined && !wasPlaceholder) {
+    if (nextPhone) {
+      const other = await UserModel.findByPhone(nextPhone);
       if (other && other.id !== id) {
         res.status(400).json({
           success: false,
@@ -889,8 +954,8 @@ registerPut(
         });
         return;
       }
-      await UserModel.setPhoneNumber(id, normalized);
     }
+    await UserModel.setPhoneNumber(id, nextPhone);
   }
 
   // Update user (non-phone fields)
@@ -926,12 +991,29 @@ registerPut(
     simplifiedUiUpdate = updateData.simplifiedUi;
   }
 
+  const identityUpdates: Record<string, unknown> = {};
+  if (wasPlaceholder && (nextEmail || nextPhone)) {
+    const prepared = await preparePlaceholderUpgrade(id, {
+      email: nextEmail,
+      phoneE164: nextPhone,
+    });
+    if (!prepared.ok) {
+      res.status(400).json({
+        success: false,
+        message: prepared.message,
+      });
+      return;
+    }
+    Object.assign(identityUpdates, prepared.updates);
+  }
+
   const updatedUser = await UserModel.updateById(id, {
     first_name: updateData.firstName,
     last_name: updateData.lastName,
     role: updateData.role,
     is_active: updateData.isActive,
     simplified_ui: simplifiedUiUpdate,
+    ...identityUpdates,
   }) as User;
 
   if (activating) {
@@ -939,6 +1021,10 @@ registerPut(
   }
   if (deactivating) {
     void runUserDeactivationSideEffects(id, req.user!.userId);
+  }
+
+  if (wasPlaceholder && updatedUser && !isPlaceholderUser(updatedUser)) {
+    queueInviteAfterPlaceholderUpgrade(updatedUser);
   }
 
   res.json({
@@ -953,6 +1039,7 @@ registerPut(
       role: updatedUser.role,
       isActive: updatedUser.is_active,
       simplifiedUi: Boolean(updatedUser.simplified_ui),
+      isPlaceholder: Boolean(updatedUser.is_placeholder),
       lastLogin: updatedUser.last_login,
       createdAt: updatedUser.created_at,
       updatedAt: updatedUser.updated_at

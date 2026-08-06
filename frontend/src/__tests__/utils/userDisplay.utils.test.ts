@@ -1,4 +1,8 @@
 import { getUserDisplayName, getUserInitials } from '@/utils/userDisplay.utils';
+import {
+  formatUserContactSubtitle,
+  shouldShowUserEmail,
+} from '@/utils/userDisplay.utils';
 
 describe('userDisplay.utils', () => {
   it('builds initials from first and last name', () => {
@@ -13,5 +17,10 @@ describe('userDisplay.utils', () => {
   it('uses User label when nothing is available', () => {
     expect(getUserDisplayName({})).toBe('User');
     expect(getUserInitials({})).toBe('?');
+  });
+
+  it('formats placeholder contact subtitle and hides email', () => {
+    expect(formatUserContactSubtitle({ isPlaceholder: true })).toBe('No login · FMS placeholder');
+    expect(shouldShowUserEmail({ first_name: 'A', last_name: 'B', email: 'x@y.com', isPlaceholder: true })).toBe(false);
   });
 });

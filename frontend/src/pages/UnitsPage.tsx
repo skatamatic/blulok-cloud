@@ -28,6 +28,7 @@ import {
   CpuChipIcon
 } from '@heroicons/react/24/outline';
 import { apiService } from '@/services/api.service';
+import { PrimaryTenantContact } from '@/components/UserManagement/PrimaryTenantContact';
 import { Unit, UnitFilters } from '@/types/facility.types';
 import { useAuth } from '@/contexts/AuthContext';
 import { AddUnitModal } from '@/components/Units/AddUnitModal';
@@ -564,10 +565,10 @@ export default function UnitsPage() {
         </td>
         <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-white">
           {unit.primary_tenant ? (
-            <div>
-              <div className="font-medium">{unit.primary_tenant.first_name} {unit.primary_tenant.last_name}</div>
-              <div className="text-gray-500 dark:text-gray-400">{unit.primary_tenant.email}</div>
-            </div>
+            <PrimaryTenantContact
+              tenant={unit.primary_tenant}
+              contactClassName="text-gray-500 dark:text-gray-400"
+            />
           ) : (
             <span className="text-gray-400 dark:text-gray-500">—</span>
           )}

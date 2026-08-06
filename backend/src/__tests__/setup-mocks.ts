@@ -1455,12 +1455,28 @@ jest.mock('../models/user.model', () => {
       last_name: 'User',
       role: 'maintenance',
       is_active: true,
+      is_placeholder: false,
+      created_at: new Date('2024-01-01'),
+      updated_at: new Date('2024-01-01'),
+    },
+    {
+      id: 'placeholder-tenant-1',
+      email: null,
+      phone_number: null,
+      login_identifier: 'fms-ph:facility-1:ext-placeholder-1',
+      password_hash: '$2b$10$dummyhashforinvitationflow',
+      first_name: 'Placeholder',
+      last_name: 'Tenant',
+      role: 'tenant',
+      is_active: true,
+      is_placeholder: true,
+      requires_password_reset: true,
       created_at: new Date('2024-01-01'),
       updated_at: new Date('2024-01-01'),
     },
   ];
   
-  defaultUsers.forEach(user => mockUsers.set(user.id, { ...user }));
+  defaultUsers.forEach(user => mockUsers.set(user.id, { ...user, is_placeholder: user.is_placeholder ?? false }));
   
   return {
     UserModel: {
@@ -1497,11 +1513,23 @@ jest.mock('../models/user.model', () => {
           ...user,
           ...cleanData,
           id: user.id, // Preserve original ID
-          email: user.email, // Preserve original email
           updated_at: new Date(),
         };
         mockUsers.set(id, updatedUser);
         return Promise.resolve(updatedUser);
+      }),
+      setPhoneNumber: jest.fn().mockImplementation((id: string, phoneE164: string | null) => {
+        const user = mockUsers.get(id);
+        if (!user) {
+          return Promise.resolve(undefined);
+        }
+        const updatedUser = {
+          ...user,
+          phone_number: phoneE164,
+          updated_at: new Date(),
+        };
+        mockUsers.set(id, updatedUser);
+        return Promise.resolve(undefined);
       }),
       deleteById: jest.fn().mockImplementation((id: string) => {
         const deleted = mockUsers.delete(id);
@@ -1617,6 +1645,7 @@ jest.mock('../models/user-facility-association.model', () => {
     'tenant-1': ['550e8400-e29b-41d4-a716-446655440001', 'facility-1'],
     'tenant-2': ['550e8400-e29b-41d4-a716-446655440001'],
     'tenant-3': ['550e8400-e29b-41d4-a716-446655440002'],
+    'placeholder-tenant-1': ['550e8400-e29b-41d4-a716-446655440001', 'facility-1'],
     'facility2-tenant-1': ['550e8400-e29b-41d4-a716-446655440002', 'facility-2'],
     'maintenance-1': ['550e8400-e29b-41d4-a716-446655440001', 'facility-1'],
   };

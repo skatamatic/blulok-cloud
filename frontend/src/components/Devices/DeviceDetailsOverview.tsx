@@ -40,7 +40,8 @@ import { isGatewaySyncProvisioned } from '@/utils/accessDeviceDisplay.utils';
 import { readDisplayName } from '@/utils/deviceMetadataForm.utils';
 import { formatDateTime } from '@/utils/datetime.utils';
 import { isSupportsRemoteLockEnabled } from '@/utils/unitLock.utils';
-import { getUserDisplayName, getUserInitials, shouldShowUserEmail } from '@/utils/userDisplay.utils';
+import { getUserDisplayName, getUserInitials, shouldShowUserEmail, formatUserContactSubtitle } from '@/utils/userDisplay.utils';
+import { PlaceholderUserBadge } from '@/components/UserManagement/PlaceholderUserBadge';
 import { DeviceConnectivityOverview } from '@/components/Devices/DeviceConnectivityOverview';
 import type { EffectiveAccessCode, AccessMethod } from '@/types/facility.types';
 import type { Location } from 'react-router-dom';
@@ -85,7 +86,8 @@ export interface DeviceDetailsOverviewData {
     id: string;
     first_name: string;
     last_name: string;
-    email: string;
+    email: string | null;
+    is_placeholder?: boolean;
   };
 }
 
@@ -258,9 +260,16 @@ export function DeviceDetailsOverview({
             >
               {getUserDisplayName(device.primary_tenant)}
             </Link>
-            {shouldShowUserEmail(device.primary_tenant) && (
-              <p className="truncate text-xs text-gray-500 dark:text-gray-400">{device.primary_tenant.email}</p>
-            )}
+            <div className="mt-0.5 flex flex-wrap items-center gap-1.5">
+              {device.primary_tenant.is_placeholder ? <PlaceholderUserBadge /> : null}
+              {device.primary_tenant.is_placeholder ? (
+                <p className="truncate text-xs text-gray-500 dark:text-gray-400">
+                  {formatUserContactSubtitle(device.primary_tenant)}
+                </p>
+              ) : shouldShowUserEmail(device.primary_tenant) ? (
+                <p className="truncate text-xs text-gray-500 dark:text-gray-400">{device.primary_tenant.email}</p>
+              ) : null}
+            </div>
           </div>
         </div>
       ) : (

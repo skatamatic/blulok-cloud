@@ -772,4 +772,65 @@ describe('UserDetailsPage', () => {
       expect(screen.queryByRole('switch', { name: 'Simplified UI' })).not.toBeInTheDocument();
     });
   });
+
+  describe('FMS placeholder tenants', () => {
+    const placeholderUser = {
+      ...mockUserDetails,
+      email: null,
+      phoneNumber: null,
+      isPlaceholder: true,
+      lastLogin: undefined,
+    };
+
+    it('shows No login badge and upgrade CTA on summary', async () => {
+      mockApiService.getUserDetails.mockResolvedValue({
+        success: true,
+        user: placeholderUser,
+      });
+
+      renderUserDetailsPage();
+
+      await waitFor(() => {
+        expect(screen.getByText('FMS placeholder — no login')).toBeInTheDocument();
+      });
+      expect(screen.getAllByText('No login').length).toBeGreaterThan(0);
+      expect(screen.getByText('Add email or phone')).toBeInTheDocument();
+      expect(screen.getByText('Enable login')).toBeInTheDocument();
+    });
+
+    it('opens edit form with email field and upgrades via updateUser', async () => {
+      mockApiService.getUserDetails.mockResolvedValue({
+        success: true,
+        user: placeholderUser,
+      });
+      mockApiService.updateUser = jest.fn().mockResolvedValue({
+        success: true,
+        user: { ...placeholderUser, email: 'upgraded@test.com', isPlaceholder: false },
+      });
+
+      renderUserDetailsPage();
+
+      await waitFor(() => {
+        expect(screen.getByText('Add email or phone')).toBeInTheDocument();
+      });
+      fireEvent.click(screen.getByText('Add email or phone'));
+
+      await waitFor(() => {
+        expect(screen.getByPlaceholderText('tenant@example.com')).toBeInTheDocument();
+      });
+
+      fireEvent.change(screen.getByPlaceholderText('tenant@example.com'), {
+        target: { value: 'upgraded@test.com' },
+      });
+      const enableButtons = screen.getAllByRole('button', { name: 'Enable login' });
+      fireEvent.click(enableButtons[enableButtons.length - 1]);
+
+      await waitFor(() => {
+        expect(mockApiService.updateUser).toHaveBeenCalledWith(
+          'test-user-id',
+          expect.objectContaining({ email: 'upgraded@test.com' }),
+        );
+      });
+    });
+  });
 });

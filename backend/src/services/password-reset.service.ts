@@ -75,6 +75,13 @@ export class PasswordResetService {
       throw new Error('Account is not active');
     }
 
+    const { isPlaceholderUser } = await import('@/services/fms/fms-placeholder-user.utils');
+    if (isPlaceholderUser(user)) {
+      // Same generic response as missing user — do not confirm placeholder accounts
+      logger.warn(`Password reset requested for FMS placeholder user: ${user.id}`);
+      throw new Error('If an account exists with this information, you will receive a reset link');
+    }
+
     // Invalidate any existing unused tokens for this user
     await this.db('password_reset_tokens')
       .where('user_id', user.id)
@@ -190,6 +197,11 @@ export class PasswordResetService {
 
     if (!user.is_active) {
       throw new Error('Account is not active');
+    }
+
+    const { isPlaceholderUser } = await import('@/services/fms/fms-placeholder-user.utils');
+    if (isPlaceholderUser(user)) {
+      throw new Error('Invalid or expired reset link');
     }
 
     // Mark token as used

@@ -26,11 +26,13 @@ import {
   DetailsPageShell,
   DetailsTabNav,
 } from '@/components/Common/DetailsPageLayout';
+import { PlaceholderUserBadge } from '@/components/UserManagement/PlaceholderUserBadge';
 import { formatDateTime, buildLocalDateRangeQuery } from '@/utils/datetime.utils';
+import { formatUserContactSubtitle } from '@/utils/userDisplay.utils';
 
 interface UserDetails {
   id: string;
-  email: string;
+  email: string | null;
   phoneNumber?: string | null;
   firstName: string;
   lastName: string;
@@ -38,6 +40,8 @@ interface UserDetails {
   isActive: boolean;
   /** Presentation-only; facility admins. Not an API authorization boundary. */
   simplifiedUi?: boolean;
+  /** FMS tenant synced without email/phone — cannot log in until upgraded. */
+  isPlaceholder?: boolean;
   lastLogin?: string;
   createdAt: string;
   updatedAt: string;
@@ -150,6 +154,7 @@ export default function UserDetailsPage() {
   const [editForm, setEditForm] = useState({
     firstName: '',
     lastName: '',
+    email: '',
     phoneNumber: '',
     role: '' as UserRole | '',
     isActive: true,
@@ -445,16 +450,33 @@ export default function UserDetailsPage() {
         role: editForm.role,
         isActive: editForm.isActive,
       };
+      if (userDetails.isPlaceholder) {
+        payload.email = editForm.email.trim() === '' ? '' : editForm.email.trim().toLowerCase();
+        if (!payload.email && !editForm.phoneNumber.trim()) {
+          addToast({
+            type: 'error',
+            title: 'Contact required to enable login',
+            message: 'Add an email or phone number to upgrade this placeholder tenant.',
+          });
+          return;
+        }
+      }
       if (canSetSimplifiedUi && editForm.role === UserRole.FACILITY_ADMIN) {
         payload.simplifiedUi = editForm.simplifiedUi;
       }
 
+      const wasPlaceholder = Boolean(userDetails.isPlaceholder);
       const response = await apiService.updateUser(userDetails.id, payload);
 
       if (response.success) {
         addToast({
           type: 'success',
-          title: 'User updated successfully',
+          title: wasPlaceholder && response.user && !response.user.isPlaceholder
+            ? 'Login enabled — invite will be sent'
+            : 'User updated successfully',
+          message: wasPlaceholder && response.user && !response.user.isPlaceholder
+            ? 'This tenant can now log in. A first-time invite is sent to the new contact.'
+            : undefined,
         });
         setEditing(false);
         await loadUserDetails();
@@ -607,10 +629,15 @@ export default function UserDetailsPage() {
         onBack={showBack ? goBack : undefined}
         backLabel={backLabel}
         title={`${userDetails.firstName} ${userDetails.lastName}`}
-        subtitle={userDetails.email}
+        subtitle={formatUserContactSubtitle({
+          email: userDetails.email,
+          phoneNumber: userDetails.phoneNumber,
+          isPlaceholder: userDetails.isPlaceholder,
+        })}
         meta={
           <div className="flex flex-wrap items-center gap-2">
-            {userDetails.phoneNumber ? (
+            {userDetails.isPlaceholder ? <PlaceholderUserBadge size="md" /> : null}
+            {!userDetails.isPlaceholder && userDetails.phoneNumber ? (
               <span className="text-xs text-gray-500 dark:text-gray-400">{userDetails.phoneNumber}</span>
             ) : null}
             <span className={`inline-flex rounded-full px-2 py-0.5 text-xs font-medium ${getRoleBadgeColor(userDetails.role)}`}>
@@ -645,6 +672,7 @@ export default function UserDetailsPage() {
                   setEditForm({
                     firstName: userDetails.firstName,
                     lastName: userDetails.lastName,
+                    email: userDetails.email || '',
                     phoneNumber: userDetails.phoneNumber || '',
                     role: userDetails.role,
                     isActive: userDetails.isActive,
@@ -655,7 +683,7 @@ export default function UserDetailsPage() {
                 className="inline-flex items-center px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-600 transition-colors"
               >
                 <PencilIcon className="h-4 w-4 mr-2" />
-                Edit
+                {userDetails.isPlaceholder ? 'Enable login' : 'Edit'}
               </button>
               {userDetails.isActive ? (
                 <button
@@ -691,6 +719,46 @@ export default function UserDetailsPage() {
           {/* Summary Tab */}
           {activeTab === 'summary' && (
             <div className="space-y-6">
+              {userDetails.isPlaceholder && canManageUsersScope && (
+                <div className="rounded-lg border border-amber-200 bg-amber-50 p-5 dark:border-amber-800/60 dark:bg-amber-900/20">
+                  <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+                    <div className="min-w-0">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <h2 className="text-lg font-medium text-amber-950 dark:text-amber-100">
+                          FMS placeholder — no login
+                        </h2>
+                        <PlaceholderUserBadge />
+                      </div>
+                      <p className="mt-1 text-sm text-amber-900/80 dark:text-amber-200/80 max-w-2xl">
+                        This tenant was synced from FMS without an email or phone. They cannot sign in,
+                        receive invites, or use the app until you add contact details (or FMS provides them
+                        on the next sync).
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setEditing(true);
+                        setEditForm({
+                          firstName: userDetails.firstName,
+                          lastName: userDetails.lastName,
+                          email: userDetails.email || '',
+                          phoneNumber: userDetails.phoneNumber || '',
+                          role: userDetails.role,
+                          isActive: userDetails.isActive,
+                          simplifiedUi: Boolean(userDetails.simplifiedUi),
+                        });
+                        setActiveTab('edit');
+                      }}
+                      className="inline-flex shrink-0 items-center rounded-lg bg-primary-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-primary-700"
+                    >
+                      <PencilIcon className="mr-2 h-4 w-4" />
+                      Add email or phone
+                    </button>
+                  </div>
+                </div>
+              )}
+
               {canSetSimplifiedUi && userDetails.role === UserRole.FACILITY_ADMIN && (
                 <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-6">
                   <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
@@ -744,7 +812,17 @@ export default function UserDetailsPage() {
                       </div>
                       <div>
                         <label className="text-xs text-gray-500 dark:text-gray-400 uppercase tracking-wide">Email</label>
-                        <p className="text-sm text-gray-900 dark:text-white">{userDetails.email}</p>
+                        <p className="text-sm text-gray-900 dark:text-white">
+                          {userDetails.isPlaceholder
+                            ? 'None — placeholder (no login)'
+                            : (userDetails.email || '—')}
+                        </p>
+                      </div>
+                      <div>
+                        <label className="text-xs text-gray-500 dark:text-gray-400 uppercase tracking-wide">Phone</label>
+                        <p className="text-sm text-gray-900 dark:text-white">
+                          {userDetails.phoneNumber || (userDetails.isPlaceholder ? 'None — placeholder (no login)' : '—')}
+                        </p>
                       </div>
                       <div>
                         <label className="text-xs text-gray-500 dark:text-gray-400 uppercase tracking-wide">Role</label>
@@ -752,7 +830,11 @@ export default function UserDetailsPage() {
                       </div>
                       <div>
                         <label className="text-xs text-gray-500 dark:text-gray-400 uppercase tracking-wide">Status</label>
-                        <p className="text-sm text-gray-900 dark:text-white">{userDetails.isActive ? 'Active' : 'Inactive'}</p>
+                        <p className="text-sm text-gray-900 dark:text-white">
+                          {userDetails.isPlaceholder
+                            ? 'Active · cannot log in'
+                            : (userDetails.isActive ? 'Active' : 'Inactive')}
+                        </p>
                       </div>
                     </div>
                   </div>
@@ -1075,7 +1157,17 @@ export default function UserDetailsPage() {
           {/* Edit Tab */}
           {activeTab === 'edit' && canManageUsersScope && (
             <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-6">
-              <h2 className="text-lg font-medium text-gray-900 dark:text-white mb-6">Edit User</h2>
+              <h2 className="text-lg font-medium text-gray-900 dark:text-white mb-2">
+                {userDetails.isPlaceholder ? 'Enable login' : 'Edit User'}
+              </h2>
+              {userDetails.isPlaceholder ? (
+                <p className="mb-6 text-sm text-gray-600 dark:text-gray-400">
+                  Add an email and/or phone number to upgrade this FMS placeholder. Saving with contact
+                  details enables login and sends a first-time invite.
+                </p>
+              ) : (
+                <div className="mb-6" />
+              )}
               <div className="space-y-6">
                 <div>
                   <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
@@ -1099,9 +1191,27 @@ export default function UserDetailsPage() {
                     className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
                   />
                 </div>
+                {userDetails.isPlaceholder && (
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                      Email <span className="text-gray-400 font-normal">(optional if phone is set)</span>
+                    </label>
+                    <input
+                      type="email"
+                      autoComplete="off"
+                      value={editForm.email}
+                      onChange={(e) => setEditForm({ ...editForm, email: e.target.value })}
+                      className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+                      placeholder="tenant@example.com"
+                    />
+                  </div>
+                )}
                 <div>
                   <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-                    Phone number <span className="text-gray-400 font-normal">(optional)</span>
+                    Phone number{' '}
+                    <span className="text-gray-400 font-normal">
+                      {userDetails.isPlaceholder ? '(optional if email is set)' : '(optional)'}
+                    </span>
                   </label>
                   <input
                     type="tel"
@@ -1112,7 +1222,9 @@ export default function UserDetailsPage() {
                     placeholder="E.164 or 10-digit US"
                   />
                   <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
-                    Clear the field to remove the phone number from this account.
+                    {userDetails.isPlaceholder
+                      ? 'Provide at least one of email or phone to enable login.'
+                      : 'Clear the field to remove the phone number from this account.'}
                   </p>
                 </div>
                 <div>
@@ -1200,7 +1312,7 @@ export default function UserDetailsPage() {
                     onClick={handleSaveEdit}
                     className="px-4 py-2 text-sm font-medium text-white bg-primary-600 rounded-lg hover:bg-primary-700 transition-colors"
                   >
-                    Save Changes
+                    {userDetails.isPlaceholder ? 'Enable login' : 'Save Changes'}
                   </button>
                 </div>
               </div>
@@ -1332,7 +1444,7 @@ export default function UserDetailsPage() {
                       </div>
                     )}
                   </div>
-                  {!userDetails.lastLogin && (
+                  {!userDetails.lastLogin && !userDetails.isPlaceholder && (
                     <button
                       onClick={async () => {
                         try {
@@ -1359,9 +1471,11 @@ export default function UserDetailsPage() {
                   <div className="flex items-center text-sm text-gray-500 dark:text-gray-400">
                     <ClockIcon className="h-4 w-4 mr-2" />
                     <span>
-                      {userDetails.lastLogin 
-                        ? 'This user has already set up their account. Invites cannot be resent for active accounts.'
-                        : 'Invites are sent automatically when users are created via FMS sync. The resend button invalidates any previous invites and sends a new one.'}
+                      {userDetails.isPlaceholder
+                        ? 'Placeholder tenants cannot receive invites until an email or phone is added (Edit → Enable login).'
+                        : userDetails.lastLogin
+                          ? 'This user has already set up their account. Invites cannot be resent for active accounts.'
+                          : 'Invites are sent automatically when users are created via FMS sync. The resend button invalidates any previous invites and sends a new one.'}
                     </span>
                   </div>
                 </div>

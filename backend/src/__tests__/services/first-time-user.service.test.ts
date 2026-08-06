@@ -123,6 +123,50 @@ describe('FirstTimeUserService', () => {
     expect(args.code).toBe('654321');
   });
 
+  test('sendInvite skips FMS placeholder users', async () => {
+    const user: User = {
+      id: 'placeholder-1',
+      login_identifier: 'fms-ph:fac:ext',
+      email: null,
+      phone_number: null,
+      first_name: 'No',
+      last_name: 'Contact',
+      role: UserRole.TENANT,
+      password_hash: 'hashed',
+      is_active: true,
+      is_placeholder: true,
+      requires_password_reset: true,
+      created_at: new Date(),
+      updated_at: new Date(),
+    };
+
+    await svc.sendInvite(user);
+
+    expect(mockInvites.createInvite).not.toHaveBeenCalled();
+    expect(mockNotifications.sendInvite).not.toHaveBeenCalled();
+  });
+
+  test('acceptInvite rejects placeholder users', async () => {
+    mockInvites.findActiveInviteByToken.mockResolvedValue({
+      id: 'invite-ph',
+      user_id: 'placeholder-1',
+      token: 'token-ph',
+    });
+    const { UserModel } = require('@/models/user.model');
+    UserModel.findById.mockResolvedValue({
+      id: 'placeholder-1',
+      is_placeholder: true,
+      login_identifier: 'fms-ph:fac:ext',
+      email: null,
+      first_name: 'A',
+      last_name: 'B',
+    });
+
+    await expect(svc.acceptInvite({ token: 'token-ph' })).rejects.toThrow(
+      /Invalid or expired invite/,
+    );
+  });
+
   test('requestOtp with phone validates ownership and calls OTP service', async () => {
     const user = {
       id: 'user-456',

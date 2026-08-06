@@ -2733,6 +2733,97 @@ async function run() {
     created.users.push(phoneTenantUser.id);
     ok(`Phone-only FMS tenant synced: user=${phoneTenantUser.id} login=${phoneLoginId}`);
 
+    step('FMS sync creates placeholder tenant (no email or phone)');
+    const extPlaceholderTenantId = `ext-placeholder-tenant-${nowTs}`;
+    datasetPhase1.tenants.push({
+      id: extPlaceholderTenantId,
+      email: null,
+      first_name: 'Edythe',
+      last_name: 'Orn',
+      phone_numbers: [],
+      active: true,
+    });
+    // Keep as unassigned tenant record (no unit/ledger) — exercise user create only
+    const placeholderSyncRes = await axios.post(`${API_BASE}/fms/sync/${facilityId}`, {}, { headers: { Authorization: `Bearer ${token}` } });
+    const placeholderSyncLogId = placeholderSyncRes.data?.result?.syncLogId;
+    if (!placeholderSyncLogId) throw new Error('Placeholder FMS sync missing syncLogId');
+    const placeholderPending = await axios.get(`${API_BASE}/fms/changes/${placeholderSyncLogId}/pending`, { headers: { Authorization: `Bearer ${token}` } });
+    const placeholderTenantChange = (placeholderPending.data?.changes || []).find(
+      (c) => c.entity_type === 'tenant'
+        && c.change_type === 'tenant_added'
+        && c.after_data?.externalId === extPlaceholderTenantId,
+    );
+    if (!placeholderTenantChange) throw new Error('Placeholder FMS tenant change not detected');
+    if (placeholderTenantChange.is_valid === false) {
+      throw new Error(`Placeholder tenant incorrectly invalid: ${JSON.stringify(placeholderTenantChange.validation_errors)}`);
+    }
+    await axios.post(`${API_BASE}/fms/changes/review`, {
+      syncLogId: placeholderSyncLogId,
+      changeIds: [placeholderTenantChange.id],
+      accepted: true,
+    }, { headers: { Authorization: `Bearer ${token}` } });
+    const placeholderApplyRes = await axios.post(`${API_BASE}/fms/changes/apply`, {
+      syncLogId: placeholderSyncLogId,
+      changeIds: [placeholderTenantChange.id],
+    }, { headers: { Authorization: `Bearer ${token}` } });
+    if (placeholderApplyRes.data?.result?.changesFailed > 0) {
+      throw new Error(`Placeholder tenant apply failed: ${JSON.stringify(placeholderApplyRes.data?.result?.errors || [])}`);
+    }
+
+    async function findUserByName(authToken, firstName, lastName) {
+      const res = await axios.get(`${API_BASE}/users`, {
+        headers: { Authorization: `Bearer ${authToken}` },
+        params: { search: `${firstName} ${lastName}`, limit: 20 },
+      });
+      return (res.data?.users || []).find(
+        (u) => (u.firstName || u.first_name) === firstName && (u.lastName || u.last_name) === lastName,
+      ) || null;
+    }
+
+    let placeholderUser = await findUserByName(token, 'Edythe', 'Orn');
+    if (!placeholderUser?.id) throw new Error('Placeholder FMS tenant user not created');
+    if (!(placeholderUser.isPlaceholder || placeholderUser.is_placeholder)) {
+      throw new Error(`Expected isPlaceholder=true for no-contact FMS tenant, got ${JSON.stringify({
+        isPlaceholder: placeholderUser.isPlaceholder,
+        email: placeholderUser.email,
+        phone: placeholderUser.phoneNumber || placeholderUser.phone_number,
+      })}`);
+    }
+    created.placeholderTenantId = placeholderUser.id;
+    created.users.push(placeholderUser.id);
+    ok(`Placeholder FMS tenant synced: user=${placeholderUser.id}`);
+
+    step('Placeholder tenant cannot log in');
+    const placeholderLoginId = (
+      placeholderUser.login_identifier
+      || placeholderUser.loginIdentifier
+      || `fms-ph:${String(facilityId).toLowerCase()}:${String(extPlaceholderTenantId).toLowerCase()}`
+    ).toLowerCase();
+    const placeholderLoginAttempt = await axios.post(`${API_BASE}/auth/login`, {
+      identifier: placeholderLoginId,
+      password: 'AnyPassword123!',
+    }, { validateStatus: () => true });
+    if (placeholderLoginAttempt.status !== 401 || placeholderLoginAttempt.data?.success || placeholderLoginAttempt.data?.token) {
+      throw new Error(`Placeholder tenant must not log in: status=${placeholderLoginAttempt.status} body=${JSON.stringify(placeholderLoginAttempt.data)}`);
+    }
+    ok(`Placeholder login blocked for identifier=${placeholderLoginId}`);
+
+    step('Upgrade placeholder tenant via admin PUT (email)');
+    const upgradedEmail = `edythe.orn.${nowTs}@example.com`;
+    const upgradeRes = await axios.put(`${API_BASE}/users/${placeholderUser.id}`, {
+      email: upgradedEmail,
+    }, { headers: { Authorization: `Bearer ${token}` } });
+    if (!upgradeRes.data?.success) {
+      throw new Error(`Placeholder upgrade failed: ${JSON.stringify(upgradeRes.data)}`);
+    }
+    if (upgradeRes.data?.user?.isPlaceholder) {
+      throw new Error('Expected isPlaceholder=false after email upgrade');
+    }
+    if ((upgradeRes.data?.user?.email || '').toLowerCase() !== upgradedEmail.toLowerCase()) {
+      throw new Error(`Upgrade email mismatch: ${upgradeRes.data?.user?.email}`);
+    }
+    ok(`Placeholder upgraded to loginable user email=${upgradedEmail}`);
+
     // Phase 1: Simulate realistic gateway inventory syncs (add, then remove)
     heading('Gateway Device Inventory');
     step('Initial inventory sync (add 3 devices)');

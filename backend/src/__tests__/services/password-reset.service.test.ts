@@ -133,6 +133,20 @@ describe('PasswordResetService', () => {
         .rejects.toThrow('If an account exists');
     });
 
+    it('should reject FMS placeholder users with generic missing-account message', async () => {
+      (UserModel.findByEmail as jest.Mock).mockResolvedValue({
+        ...mockUser,
+        is_placeholder: true,
+        login_identifier: 'fms-ph:fac:ext',
+        email: null,
+        phone_number: null,
+      });
+
+      await expect(service.requestReset({ email: 'placeholder@example.com' }))
+        .rejects.toThrow('If an account exists');
+      expect(mockQueryBuilder.insert).not.toHaveBeenCalled();
+    });
+
     it('should throw error when user is inactive', async () => {
       const inactiveUser = { ...mockUser, is_active: false };
       (UserModel.findByEmail as jest.Mock).mockResolvedValue(inactiveUser);

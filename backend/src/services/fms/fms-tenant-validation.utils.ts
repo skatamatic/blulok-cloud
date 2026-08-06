@@ -10,11 +10,11 @@ export type FmsTenantValidationPayload = {
   login_identifier?: string | null;
 };
 
-/** Sync detection: tenant needs email and/or phone for login. */
+/** Sync detection: tenant needs email and/or phone for login. (Placeholders allowed without contact.) */
 export const FMS_TENANT_MISSING_CONTACT_SYNC =
   'Missing both email and phone number';
 
-/** Webhook payloads: same rule, slightly different wording. */
+/** Webhook payloads: same rule, slightly different wording. (Placeholders allowed without contact.) */
 export const FMS_TENANT_MISSING_CONTACT_WEBHOOK =
   'Tenant must have an email or a phone number — both are missing';
 
@@ -55,9 +55,7 @@ export function resolveFmsTenantLoginIdentifier(
 export function validateFmsTenantSyncFields(tenant: FmsTenantValidationPayload): string[] {
   const errors: string[] = [];
 
-  if (!hasFmsTenantLoginIdentity(tenant)) {
-    errors.push(FMS_TENANT_MISSING_CONTACT_SYNC);
-  }
+  // Missing email+phone is allowed: sync creates a non-loginable placeholder tenant.
 
   const firstName = readTenantField(tenant, 'firstName', 'first_name');
   if (!firstName) {
@@ -76,9 +74,7 @@ export function validateFmsTenantSyncFields(tenant: FmsTenantValidationPayload):
 export function validateFmsTenantWebhookFields(tenant: FmsTenantValidationPayload): string[] {
   const errors: string[] = [];
 
-  if (!hasFmsTenantLoginIdentity(tenant)) {
-    errors.push(FMS_TENANT_MISSING_CONTACT_WEBHOOK);
-  }
+  // Missing email+phone is allowed: apply creates a non-loginable placeholder tenant.
 
   const firstName = readTenantField(tenant, 'firstName', 'first_name');
   const lastName = readTenantField(tenant, 'lastName', 'last_name');
@@ -99,7 +95,7 @@ export function formatFmsTenantContactLabel(tenant: { email?: string | null; pho
   if (email) return email;
   const phone = tenant.phone?.trim();
   if (phone) return phone;
-  return 'no email or phone';
+  return 'placeholder — no login';
 }
 
 function refreshImpactSummaryContactLabel(
@@ -165,19 +161,13 @@ export function refreshPendingTenantChangeForDisplay<
 
   let nextErrors = existingErrors;
   if (hasIdentityErrors) {
+    // Contact-only identity errors are obsolete (placeholders allowed); strip them.
     const withoutIdentity = existingErrors.filter((e) => !IDENTITY_ERROR_RE.test(e));
-    const identityError = hasFmsTenantLoginIdentity(tenantPayload)
-      ? null
-      : FMS_TENANT_MISSING_CONTACT_SYNC;
-    nextErrors = identityError
-      ? [...withoutIdentity, identityError]
-      : withoutIdentity;
-    // Dedupe while preserving order
-    nextErrors = [...new Set(nextErrors)];
+    nextErrors = [...new Set(withoutIdentity)];
   }
 
   const nextValid =
-    isInvalid && nextErrors.length === 0 && hasFmsTenantLoginIdentity(tenantPayload)
+    isInvalid && nextErrors.length === 0
       ? true
       : change.is_valid;
 

@@ -199,7 +199,8 @@ export interface DeviceWithContext extends BluLokDevice {
     id: string;
     first_name: string;
     last_name: string;
-    email: string;
+    email: string | null;
+    is_placeholder?: boolean;
   };
 }
 
@@ -492,7 +493,8 @@ export class DeviceModel {
             'users.id',
             'users.first_name',
             'users.last_name',
-            'users.email'
+            'users.email',
+            'users.is_placeholder'
           )
           .join('users', 'unit_assignments.tenant_id', 'users.id')
           .where('unit_assignments.unit_id', row.unit_id)
@@ -534,6 +536,7 @@ export class DeviceModel {
           first_name: primaryTenant.first_name,
           last_name: primaryTenant.last_name,
           email: primaryTenant.email,
+          is_placeholder: Boolean(primaryTenant.is_placeholder),
         };
       }
 

@@ -11,6 +11,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useGlobalFacility } from '@/contexts/GlobalFacilityContext';
 import { Unit } from '@/types/facility.types';
 import { apiService } from '@/services/api.service';
+import { PrimaryTenantContact } from '@/components/UserManagement/PrimaryTenantContact';
 import { useDetailsBackNavigation } from '@/hooks/useBackNavigation';
 import { DetailsPageHeader } from '@/components/Common/DetailsPageLayout';
 import { canRequestRemoteUnlock, isLockTransitionPending } from '@/utils/unitLock.utils';
@@ -275,13 +276,11 @@ export default function SimpleSiteMapPage() {
               {selectedUnit.primary_tenant && (
                 <div>
                   <h4 className="text-sm font-medium text-gray-900 dark:text-white mb-2">Primary Tenant</h4>
-                  <div className="bg-gray-50 dark:bg-gray-700 rounded-lg p-3">
-                    <p className="font-medium text-gray-900 dark:text-white">
-                      {selectedUnit.primary_tenant.first_name} {selectedUnit.primary_tenant.last_name}
-                    </p>
-                    <p className="text-sm text-gray-500 dark:text-gray-400">
-                      {selectedUnit.primary_tenant.email}
-                    </p>
+                  <div className="bg-gray-50 dark:bg-gray-700 rounded-lg p-3 text-gray-900 dark:text-white">
+                    <PrimaryTenantContact
+                      tenant={selectedUnit.primary_tenant}
+                      contactClassName="text-sm text-gray-500 dark:text-gray-400"
+                    />
                   </div>
                 </div>
               )}

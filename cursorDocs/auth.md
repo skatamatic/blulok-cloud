@@ -191,12 +191,13 @@ Single-user reads (`GET /users/:id`, `/details`) use `UserListScopeService.canRe
    ```
 
 2. **Server Validation**:
-   - Email format validation
-   - Password complexity check
+   - Identifier (email or phone) format validation
    - User existence verification
    - Account active status check
+   - **FMS placeholder rejection**: users with `is_placeholder=true` (or reserved `fms-ph:` login) always fail with generic “Invalid email or password” — they have no usable login identity until upgraded
    - Password hash comparison (bcrypt)
 
+   Placeholder tenants are also blocked from invite accept / set-password and password-reset request/complete paths (defense-in-depth). Upgrade via FMS sync or admin **Enable login** (`PUT /users/:id` with email/phone) uses shared `preparePlaceholderUpgrade` uniqueness checks.
 3. **Success Response**:
    ```json
    {

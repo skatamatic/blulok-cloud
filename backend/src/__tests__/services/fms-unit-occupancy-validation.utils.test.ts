@@ -99,7 +99,7 @@ describe('resolveOccupiedUnitBlockers', () => {
   it('blocks occupied when the holding tenant cannot be created, naming tenant and reason', () => {
     const ctx = buildFmsOccupancyContext({
       fmsTenants: [tenant({ externalId: 'fms-tenant-1', firstName: 'Lucien', lastName: 'Robel' })],
-      tenantChanges: [invalidTenantAdded('fms-tenant-1', ['Missing both email and phone number'])],
+      tenantChanges: [invalidTenantAdded('fms-tenant-1', ['Missing or empty first name'])],
       mappedTenantExternalIds: [],
     });
 
@@ -112,9 +112,35 @@ describe('resolveOccupiedUnitBlockers', () => {
     expect(blockers).toHaveLength(1);
     expect(blockers[0]).toContain('Unit 908');
     expect(blockers[0]).toContain('Lucien Robel');
-    expect(blockers[0]).toContain('Missing both email and phone number');
+    expect(blockers[0]).toContain('Missing or empty first name');
     expect(blockers[0]).toContain('Fix the tenant record in your FMS');
     expect(blockers[0]).not.toContain('fms-tenant-1');
+  });
+
+  it('does not block occupied when tenant_added is a valid no-contact placeholder', () => {
+    const ctx = buildFmsOccupancyContext({
+      fmsTenants: [
+        tenant({
+          externalId: 'fms-tenant-1',
+          firstName: 'Lucien',
+          lastName: 'Robel',
+          email: null,
+          phone: undefined,
+        }),
+      ],
+      tenantChanges: [
+        { change_type: FMSChangeType.TENANT_ADDED, external_id: 'fms-tenant-1', is_valid: true },
+      ],
+      mappedTenantExternalIds: [],
+    });
+
+    expect(
+      resolveOccupiedUnitBlockers(
+        { unitNumber: '908', status: 'occupied', tenantId: 'fms-tenant-1' },
+        'available',
+        ctx,
+      ),
+    ).toEqual([]);
   });
 
   it('falls back to a generic reason when the invalid tenant row carries no errors', () => {
@@ -143,7 +169,7 @@ describe('resolveOccupiedUnitBlockers', () => {
           change_type: FMSChangeType.TENANT_ADDED,
           external_id: 'fms-tenant-1',
           is_valid: 0 as unknown as boolean,
-          validation_errors: ['Missing both email and phone number'],
+          validation_errors: ['Missing or empty first name'],
         },
       ],
       mappedTenantExternalIds: [],

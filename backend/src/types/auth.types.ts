@@ -182,6 +182,8 @@ export interface UpdateUserRequest {
   firstName?: string;
   /** Updated last name */
   lastName?: string;
+  /** Updated email (used to upgrade FMS placeholder tenants) */
+  email?: string | null;
   /** Updated phone (raw); empty string clears the stored E.164 number */
   phoneNumber?: string | null;
   /** Updated role (requires admin privileges) */

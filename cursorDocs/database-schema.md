@@ -36,13 +36,15 @@ CREATE TABLE users (
   role ENUM('tenant', 'admin', 'facility_admin', 'maintenance', 'blulok_technician', 'dev_admin') NOT NULL DEFAULT 'tenant',
   is_active BOOLEAN NOT NULL DEFAULT true,
   simplified_ui BOOLEAN NOT NULL DEFAULT false,
+  is_placeholder BOOLEAN NOT NULL DEFAULT false,
   last_login TIMESTAMP NULL,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   
   INDEX idx_email (email),
   INDEX idx_role (role),
-  INDEX idx_is_active (is_active)
+  INDEX idx_is_active (is_active),
+  INDEX idx_users_is_placeholder (is_placeholder)
 );
 ```
 
@@ -53,6 +55,7 @@ CREATE TABLE users (
 - Soft delete capability
 - Login tracking
 - Optional presentation-only `simplified_ui` for facility admins (not an API permission boundary; see [auth.md](./auth.md))
+- `is_placeholder` for FMS tenants synced without email/phone (non-loginable until upgraded; see [fms-webhooks.md](./fms-webhooks.md))
 
 ### Facilities Table
 

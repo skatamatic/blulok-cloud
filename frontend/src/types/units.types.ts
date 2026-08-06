@@ -31,7 +31,8 @@ export interface Unit {
     id: string;
     first_name?: string;
     last_name?: string;
-    email?: string;
+    email?: string | null;
+    is_placeholder?: boolean;
   } | null;
   shared_tenants?: Array<{ id: string }> | null;
   

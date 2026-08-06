@@ -28,6 +28,16 @@ export class FirstTimeUserService {
    * notification containing both the deeplink and verification code.
    */
   public async sendInvite(user: User): Promise<void> {
+    const { isPlaceholderUser } = await import('@/services/fms/fms-placeholder-user.utils');
+    if (isPlaceholderUser(user)) {
+      logger.info(`Skipping invite for FMS placeholder user ${user.id} (no login identity)`);
+      return;
+    }
+    if (!user.email && !user.phone_number) {
+      logger.warn(`Skipping invite for user ${user.id}: no email or phone`);
+      return;
+    }
+
     const { token, inviteId } = await this.invites.createInvite(user.id);
     const deeplinkBase = await this.settings.get('notifications.deeplink_base');
     let base = deeplinkBase || 'blulok://';
@@ -173,6 +183,11 @@ export class FirstTimeUserService {
     const user = await UserModel.findById(invite.user_id) as User | undefined;
     if (!user) throw new Error('User not found for invite');
 
+    const { isPlaceholderUser } = await import('@/services/fms/fms-placeholder-user.utils');
+    if (isPlaceholderUser(user)) {
+      throw new Error('Invalid or expired invite token');
+    }
+
     // Determine which profile fields are missing
     const hasFirstName = typeof user.first_name === 'string' && user.first_name.trim().length > 0;
     const hasLastName = typeof user.last_name === 'string' && user.last_name.trim().length > 0;
@@ -211,6 +226,11 @@ export class FirstTimeUserService {
 
     const user = await UserModel.findById(invite.user_id) as User | undefined;
     if (!user) throw new Error('User not found for invite');
+
+    const { isPlaceholderUser } = await import('@/services/fms/fms-placeholder-user.utils');
+    if (isPlaceholderUser(user)) {
+      throw new Error('Invalid or expired invite token');
+    }
 
     // Check if profile fields are missing and require them
     const hasFirstName = typeof user.first_name === 'string' && user.first_name.trim().length > 0;

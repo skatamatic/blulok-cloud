@@ -106,4 +106,98 @@ describe('FMSService.detectTenantChanges — phone-only tenants', () => {
 
     expect(changes.filter((c: { change_type: string }) => c.change_type === FMSChangeType.TENANT_ADDED)).toHaveLength(0);
   });
+
+  it('marks no-contact tenant as valid placeholder TENANT_ADDED', async () => {
+    const svc = FMSService.getInstance() as any;
+
+    svc.entityMappingModel = {
+      findByFacility: jest.fn().mockResolvedValue([]),
+    };
+    svc.unitAssignmentModel = {
+      findByFacilityId: jest.fn().mockResolvedValue([]),
+    };
+    svc.changeModel = {
+      bulkCreate: jest.fn().mockImplementation(async (rows: unknown[]) =>
+        rows.map((row, index) => ({ id: `change-${index}`, ...(row as object) })),
+      ),
+    };
+
+    jest.spyOn(UserModel, 'findByRoleMinimalForFacility').mockResolvedValue([]);
+
+    const fmsTenants = [
+      {
+        externalId: 'ext-placeholder-1',
+        email: null,
+        firstName: 'Edythe',
+        lastName: 'Orn',
+        phone: null,
+        unitIds: ['ext-unit-1'],
+        status: 'active' as const,
+      },
+    ];
+
+    const changes = await svc.detectTenantChanges('fac-1', fmsTenants, [], 'sync-1', [], jest.fn());
+
+    expect(changes).toHaveLength(1);
+    expect(changes[0].change_type).toBe(FMSChangeType.TENANT_ADDED);
+    expect(changes[0].is_valid).toBe(true);
+    expect(changes[0].validation_errors).toEqual([]);
+    expect(changes[0].impact_summary).toContain('placeholder — no login');
+  });
+
+  it('emits TENANT_UPDATED when a mapped placeholder gains email only', async () => {
+    const svc = FMSService.getInstance() as any;
+
+    svc.entityMappingModel = {
+      findByFacility: jest.fn().mockResolvedValue([
+        {
+          id: 'map-ph-1',
+          external_id: 'ext-placeholder-1',
+          internal_id: 'placeholder-user-1',
+          metadata: { email: null, phone: null },
+        },
+      ]),
+    };
+    svc.unitAssignmentModel = {
+      findByFacilityId: jest.fn().mockResolvedValue([]),
+    };
+    svc.changeModel = {
+      bulkCreate: jest.fn().mockImplementation(async (rows: unknown[]) =>
+        rows.map((row, index) => ({ id: `change-${index}`, ...(row as object) })),
+      ),
+    };
+
+    jest.spyOn(UserModel, 'findByRoleMinimalForFacility').mockResolvedValue([
+      {
+        id: 'placeholder-user-1',
+        email: null,
+        phone_number: null,
+        login_identifier: 'fms-ph:fac-1:ext-placeholder-1',
+        first_name: 'Edythe',
+        last_name: 'Orn',
+        is_active: true,
+        is_placeholder: true,
+      },
+    ] as any);
+
+    const fmsTenants = [
+      {
+        externalId: 'ext-placeholder-1',
+        email: 'edythe.orn@example.com',
+        firstName: 'Edythe',
+        lastName: 'Orn',
+        phone: null,
+        unitIds: [],
+        status: 'active' as const,
+      },
+    ];
+
+    const changes = await svc.detectTenantChanges('fac-1', fmsTenants, [], 'sync-1', [], jest.fn());
+
+    expect(changes).toHaveLength(1);
+    expect(changes[0].change_type).toBe(FMSChangeType.TENANT_UPDATED);
+    expect(changes[0].is_valid).toBe(true);
+    expect(changes[0].internal_id).toBe('placeholder-user-1');
+    expect(changes[0].after_data.email).toBe('edythe.orn@example.com');
+  });
 });

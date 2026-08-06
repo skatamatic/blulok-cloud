@@ -564,7 +564,8 @@ export class UnitModel {
           'users.first_name as tenant_first_name',
           'users.last_name as tenant_last_name',
           'users.email as tenant_email',
-          'users.phone_number as tenant_phone'
+          'users.phone_number as tenant_phone',
+          'users.is_placeholder as tenant_is_placeholder'
         ])
         .from('units as u')
         .leftJoin('facilities as f', 'u.facility_id', 'f.id')
@@ -792,7 +793,8 @@ export class UnitModel {
           first_name: row.tenant_first_name,
           last_name: row.tenant_last_name,
           email: row.tenant_email,
-          phone_number: row.tenant_phone
+          phone_number: row.tenant_phone,
+          is_placeholder: Boolean(row.tenant_is_placeholder),
         } : null
       }));
 
@@ -1153,7 +1155,8 @@ export class UnitModel {
           'ua.tenant_id as primary_tenant_id',
           'users.first_name as tenant_first_name',
           'users.last_name as tenant_last_name',
-          'users.email as tenant_email'
+          'users.email as tenant_email',
+          'users.is_placeholder as tenant_is_placeholder'
         ])
         .from('units as u')
         .leftJoin('facilities as f', 'u.facility_id', 'f.id')
@@ -1280,7 +1283,8 @@ export class UnitModel {
           id: result.primary_tenant_id,
           first_name: result.tenant_first_name,
           last_name: result.tenant_last_name,
-          email: result.tenant_email
+          email: result.tenant_email,
+          is_placeholder: Boolean(result.tenant_is_placeholder),
         } : null,
         shared_tenants: sharedTenants,
         access_groups: accessGroups,

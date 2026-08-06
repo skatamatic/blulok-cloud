@@ -95,6 +95,16 @@ export class AuthService {
           };
         }
 
+        // FMS placeholder tenants have no login identity — treat as invalid credentials
+        const { isPlaceholderUser } = await import('@/services/fms/fms-placeholder-user.utils');
+        if (isPlaceholderUser(user)) {
+          logger.warn(`Login attempt with FMS placeholder account: ${user.id}`);
+          return {
+            success: false,
+            message: 'Invalid email or password'
+          };
+        }
+
         // Verify password
         const isValidPassword = await bcrypt.compare(password, user.password_hash);
         if (!isValidPassword) {

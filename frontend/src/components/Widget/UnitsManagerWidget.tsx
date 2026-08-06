@@ -36,7 +36,9 @@ import { useAuth } from '@/contexts/AuthContext';
 import { resolveLockTimeoutMsForUnit } from '@/utils/facilityLockTimeout.utils';
 import { useLockDeviceRealtime } from '@/hooks/useLockDeviceRealtime';
 import { AccessHistoryCompactRow, type AccessHistoryCompactRowLog } from '@/components/AccessHistory/AccessHistoryCompactRow';
+import { PlaceholderUserBadge } from '@/components/UserManagement/PlaceholderUserBadge';
 import { formatRelativeWithExact, RELATIVE_UNITS_ACTIVITY_OPTS } from '@/utils/datetime.utils';
+import { formatUserContactSubtitle } from '@/utils/userDisplay.utils';
 import {
   mergeUnitRowsFromDeviceSnapshots,
   type LockDeviceSnapshot,
@@ -73,6 +75,7 @@ interface UnitRow {
     last_name?: string | null;
     email?: string | null;
     phone_number?: string | null;
+    is_placeholder?: boolean;
   } | null;
   tenant_name?: string | null;
   tenant_email?: string | null;
@@ -721,8 +724,13 @@ const ExpandedDetails: React.FC<{
   }, [unit.id]);
 
   const tenantName = tenantDisplayName(unit) || 'Unassigned';
-  const tenantEmail = unit.primary_tenant?.email ?? unit.tenant_email ?? null;
-  const tenantPhone = unit.primary_tenant?.phone_number ?? unit.tenant_phone ?? null;
+  const isPlaceholderTenant = Boolean(unit.primary_tenant?.is_placeholder);
+  const tenantEmail = isPlaceholderTenant
+    ? null
+    : (unit.primary_tenant?.email ?? unit.tenant_email ?? null);
+  const tenantPhone = isPlaceholderTenant
+    ? null
+    : (unit.primary_tenant?.phone_number ?? unit.tenant_phone ?? null);
   const tenantId = unit.primary_tenant?.id;
   const supportsRemoteUnlock = unit.blulok_device?.supports_remote_lock !== false;
   const deviceId = unit.blulok_device?.id;
@@ -795,6 +803,7 @@ const ExpandedDetails: React.FC<{
             <div className={`flex items-center gap-2 ${TYPE.bodyStrong}`}>
               <UserCircleIcon className="h-4 w-4 shrink-0 text-gray-400" />
               <span className="truncate">{tenantName}</span>
+              {isPlaceholderTenant ? <PlaceholderUserBadge /> : null}
             </div>
             {tenantEmail && (
               <a
@@ -814,9 +823,13 @@ const ExpandedDetails: React.FC<{
                 <span>{tenantPhone}</span>
               </a>
             )}
-            {!tenantEmail && !tenantPhone && (
+            {isPlaceholderTenant ? (
+              <p className={TYPE.meta}>
+                {formatUserContactSubtitle({ is_placeholder: true })}
+              </p>
+            ) : !tenantEmail && !tenantPhone ? (
               <p className={TYPE.meta}>No contact details on file.</p>
-            )}
+            ) : null}
           </div>
         </div>
 

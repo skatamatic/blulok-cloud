@@ -689,6 +689,94 @@ describe('Users Routes', () => {
 
       expectBadRequest(response);
     });
+
+    it('should upgrade an FMS placeholder tenant when email is added', async () => {
+      const { FirstTimeUserService } = await import('@/services/first-time-user.service');
+      const sendInviteSpy = jest
+        .spyOn(FirstTimeUserService.getInstance(), 'sendInvite')
+        .mockResolvedValue(undefined);
+
+      const response = await request(app)
+        .put('/api/v1/users/placeholder-tenant-1')
+        .set('Authorization', `Bearer ${testData.users.admin.token}`)
+        .send({ email: 'placeholder.upgraded@test.com' })
+        .expect(200);
+
+      expectSuccess(response);
+      expect(response.body.user.isPlaceholder).toBe(false);
+      expect(response.body.user.email).toBe('placeholder.upgraded@test.com');
+      await new Promise((r) => setImmediate(r));
+      expect(sendInviteSpy).toHaveBeenCalled();
+      sendInviteSpy.mockRestore();
+    });
+
+    it('should return 400 when setting email on a non-placeholder user', async () => {
+      const response = await request(app)
+        .put(`/api/v1/users/${testData.users.tenant.id}`)
+        .set('Authorization', `Bearer ${testData.users.admin.token}`)
+        .send({ email: 'newemail@test.com' })
+        .expect(400);
+
+      expectBadRequest(response);
+      expect(response.body.message).toMatch(/placeholder/i);
+    });
+
+    it('should return 400 when clearing contact on a placeholder without replacement', async () => {
+      const { UserModel } = await import('@/models/user.model');
+      (UserModel.findById as jest.Mock).mockResolvedValueOnce({
+        id: 'placeholder-tenant-1',
+        email: null,
+        phone_number: null,
+        login_identifier: 'fms-ph:facility-1:ext-placeholder-1',
+        password_hash: '$2b$10$dummyhashforinvitationflow',
+        first_name: 'Placeholder',
+        last_name: 'Tenant',
+        role: 'tenant',
+        is_active: true,
+        is_placeholder: true,
+        requires_password_reset: true,
+        created_at: new Date(),
+        updated_at: new Date(),
+      });
+
+      const response = await request(app)
+        .put('/api/v1/users/placeholder-tenant-1')
+        .set('Authorization', `Bearer ${testData.users.admin.token}`)
+        .send({ email: '' })
+        .expect(400);
+
+      expectBadRequest(response);
+      expect(response.body.message).toMatch(/email or phone/i);
+    });
+
+    it('should reject resend-invite for placeholder tenants', async () => {
+      const { UserModel } = await import('@/models/user.model');
+      const placeholderRow = {
+        id: 'placeholder-tenant-1',
+        email: null,
+        phone_number: null,
+        login_identifier: 'fms-ph:facility-1:ext-placeholder-1',
+        password_hash: '$2b$10$dummyhashforinvitationflow',
+        first_name: 'Placeholder',
+        last_name: 'Tenant',
+        role: 'tenant',
+        is_active: true,
+        is_placeholder: true,
+        requires_password_reset: true,
+        created_at: new Date(),
+        updated_at: new Date(),
+      };
+      const originalFindById = UserModel.findById as jest.Mock;
+      originalFindById.mockResolvedValueOnce(placeholderRow);
+
+      const response = await request(app)
+        .post('/api/v1/users/placeholder-tenant-1/resend-invite')
+        .set('Authorization', `Bearer ${testData.users.admin.token}`)
+        .expect(400);
+
+      expectBadRequest(response);
+      expect(response.body.message).toMatch(/placeholder/i);
+    });
   });
 
   describe('DELETE /api/v1/users/:id - Delete User', () => {

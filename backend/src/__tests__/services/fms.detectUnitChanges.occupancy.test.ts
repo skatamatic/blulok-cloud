@@ -63,7 +63,7 @@ describe('FMSService.detectUnitChanges — occupancy blockers', () => {
           change_type: FMSChangeType.TENANT_ADDED,
           external_id: 'ext-tenant-1',
           is_valid: false,
-          validation_errors: ['Missing both email and phone number'],
+          validation_errors: ['Missing or empty first name'],
         },
       ],
       mappedTenantExternalIds: [],
@@ -85,7 +85,33 @@ describe('FMSService.detectUnitChanges — occupancy blockers', () => {
       is_valid: false,
     });
     expect(changes[0].validation_errors[0]).toContain('Lucien Robel');
-    expect(changes[0].validation_errors[0]).toContain('Missing both email and phone number');
+    expect(changes[0].validation_errors[0]).toContain('Missing or empty first name');
+  });
+
+  it('leaves the unit update applicable when the FMS tenant will be created as a placeholder', async () => {
+    const svc: any = FMSService.getInstance();
+    wire(svc);
+
+    const occupancyContext = buildFmsOccupancyContext({
+      fmsTenants: [fmsTenant()],
+      tenantChanges: [
+        { change_type: FMSChangeType.TENANT_ADDED, external_id: 'ext-tenant-1', is_valid: true },
+      ],
+      mappedTenantExternalIds: [],
+    });
+
+    const changes = await svc.detectUnitChanges(
+      facilityId,
+      [fmsUnit({ unitType: 'Self-Storage Unit' })],
+      [fmsTenant()],
+      'sync-1',
+      [blulokUnit()],
+      occupancyContext,
+    );
+
+    expect(changes).toHaveLength(1);
+    expect(changes[0]).toMatchObject({ is_valid: true });
+    expect(changes[0].validation_errors).toBeUndefined();
   });
 
   it('leaves the unit update applicable when the FMS tenant will be created in the same batch', async () => {

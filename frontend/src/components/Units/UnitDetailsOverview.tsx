@@ -47,7 +47,8 @@ import { UnitSharedAccessAddPanel } from '@/components/Units/UnitSharedAccessAdd
 import { withReturnPath } from '@/hooks/useBackNavigation';
 import { canRequestRemoteUnlock, isLockTransitionPending } from '@/utils/unitLock.utils';
 import { formatDate, formatDateTime } from '@/utils/datetime.utils';
-import { getUserDisplayName, getUserInitials, shouldShowUserEmail } from '@/utils/userDisplay.utils';
+import { getUserDisplayName, getUserInitials, shouldShowUserEmail, formatUserContactSubtitle } from '@/utils/userDisplay.utils';
+import { PlaceholderUserBadge } from '@/components/UserManagement/PlaceholderUserBadge';
 import type { UnitAccessGroupRef } from '@/utils/device-group-membership.utils';
 import type { Location } from 'react-router-dom';
 import { DeviceConnectivityOverview } from '@/components/Devices/DeviceConnectivityOverview';
@@ -93,7 +94,8 @@ export interface UnitDetailsOverviewData {
     id: string;
     first_name: string;
     last_name: string;
-    email: string;
+    email: string | null;
+    is_placeholder?: boolean;
   };
   shared_tenants?: Array<{
     id: string;
@@ -288,9 +290,16 @@ export function UnitDetailsOverview({
             >
               {getUserDisplayName(unit.primary_tenant)}
             </Link>
-            {shouldShowUserEmail(unit.primary_tenant) && (
-              <p className="truncate text-xs text-gray-500 dark:text-gray-400">{unit.primary_tenant.email}</p>
-            )}
+            <div className="mt-0.5 flex flex-wrap items-center gap-1.5">
+              {unit.primary_tenant.is_placeholder ? <PlaceholderUserBadge /> : null}
+              {unit.primary_tenant.is_placeholder ? (
+                <p className="truncate text-xs text-gray-500 dark:text-gray-400">
+                  {formatUserContactSubtitle(unit.primary_tenant)}
+                </p>
+              ) : shouldShowUserEmail(unit.primary_tenant) ? (
+                <p className="truncate text-xs text-gray-500 dark:text-gray-400">{unit.primary_tenant.email}</p>
+              ) : null}
+            </div>
           </div>
         </div>
       ) : (
@@ -458,9 +467,16 @@ export function UnitDetailsOverview({
                 >
                   {getUserDisplayName(unit.primary_tenant)}
                 </Link>
-                <p className="truncate text-xs text-gray-500 dark:text-gray-400">
-                  {shouldShowUserEmail(unit.primary_tenant) ? unit.primary_tenant.email : 'Primary tenant'}
-                </p>
+                <div className="mt-0.5 flex flex-wrap items-center gap-1.5">
+                  {unit.primary_tenant.is_placeholder ? <PlaceholderUserBadge /> : null}
+                  <p className="truncate text-xs text-gray-500 dark:text-gray-400">
+                    {unit.primary_tenant.is_placeholder
+                      ? formatUserContactSubtitle(unit.primary_tenant)
+                      : shouldShowUserEmail(unit.primary_tenant)
+                        ? unit.primary_tenant.email
+                        : 'Primary tenant'}
+                  </p>
+                </div>
               </div>
               <div className="flex shrink-0 items-center gap-2">
                 <span className={primaryRoleBadgeClass}>
