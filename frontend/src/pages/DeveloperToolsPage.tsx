@@ -1112,7 +1112,8 @@ export default function DeveloperToolsPage() {
       !backfillDryRun
       && !window.confirm(
         `Correlate the last ${days} days of unlinked activity_logs into access_sessions?\n\n`
-        + 'Safe to re-run: rows that already have access_session_id are skipped.',
+        + 'Safe to re-run: rows that already have access_session_id are skipped.\n'
+        + 'Large windows run in short chunks so Cloud Run does not kill the request.',
       )
     ) {
       return;
@@ -1120,21 +1121,83 @@ export default function DeveloperToolsPage() {
 
     setBackfillStatus({ type: 'loading', message: `Running access session ${label}…` });
     try {
-      const data = await apiService.backfillAccessSessions({ days, dryRun: backfillDryRun });
-      if (data.success && data.results) {
-        const r = data.results;
+      let cursor: { afterOccurredAt: string; afterId: string } | null = null;
+      let chunk = 0;
+      let totalUnlinked = 0;
+      let totalCreated = 0;
+      let totalUpdated = 0;
+      let totalLinks = 0;
+      let totalLocksAttached = 0;
+      let totalLocksSynthesized = 0;
+      let totalSkippedErrors = 0;
+
+      for (;;) {
+        chunk += 1;
         setBackfillStatus({
-          type: 'success',
+          type: 'loading',
           message:
-            `${backfillDryRun ? 'Dry-run' : 'Backfill'} complete: `
-            + `${r.unlinkedActivityRows} unlinked rows → ${r.sessionsCreated} sessions, `
-            + `${r.activityLinks} links (${r.days} days).`,
+            `Running access session ${label}… chunk ${chunk}`
+            + (totalCreated || totalLinks
+              ? ` (${totalCreated} sessions, ${totalLinks} links so far)`
+              : ''),
         });
-      } else {
-        setBackfillStatus({
-          type: 'error',
-          message: data.error || data.message || 'Failed to backfill access sessions.',
+
+        const data = await apiService.backfillAccessSessions({
+          days,
+          dryRun: backfillDryRun,
+          cursor,
         });
+
+        if (!data.success || !data.results) {
+          setBackfillStatus({
+            type: 'error',
+            message: data.error || data.message || 'Failed to backfill access sessions.',
+          });
+          return;
+        }
+
+        const r = data.results;
+        if (r.skippedBusy) {
+          setBackfillStatus({
+            type: 'error',
+            message: 'Backfill already running on another request. Try again in a moment.',
+          });
+          return;
+        }
+
+        totalUnlinked += r.unlinkedActivityRows;
+        totalCreated += r.sessionsCreated;
+        totalUpdated += r.sessionsUpdated || 0;
+        totalLinks += r.activityLinks;
+        totalLocksAttached += r.locksAttached || 0;
+        totalLocksSynthesized += r.locksSynthesized || 0;
+        totalSkippedErrors += r.skippedErrors || 0;
+
+        if (r.done) {
+          setBackfillStatus({
+            type: 'success',
+            message:
+              `${backfillDryRun ? 'Dry-run' : 'Backfill'} complete (${chunk} chunk${chunk === 1 ? '' : 's'}): `
+              + `${totalUnlinked} rows scanned → ${totalCreated} sessions`
+              + (totalUpdated ? `, ${totalUpdated} updated` : '')
+              + `, ${totalLinks} links`
+              + (totalLocksAttached || totalLocksSynthesized
+                ? ` (locks attached ${totalLocksAttached}, synthesized ${totalLocksSynthesized})`
+                : '')
+              + (totalSkippedErrors ? `, ${totalSkippedErrors} errors skipped` : '')
+              + ` (${days} days).`,
+          });
+          return;
+        }
+
+        if (!r.cursor) {
+          setBackfillStatus({
+            type: 'error',
+            message: 'Backfill stopped early without a resume cursor. Check backend logs.',
+          });
+          return;
+        }
+        cursor = r.cursor;
       }
     } catch (error) {
       console.error('Access session backfill error:', error);

@@ -102,6 +102,7 @@ export interface CreateAccessSessionData {
 export interface UpdateAccessSessionData {
   unit_id?: string | null;
   gateway_id?: string | null;
+  origin?: AccessSessionOrigin;
   method?: string;
   outcome?: AccessSessionOutcome | null;
   state?: AccessSessionState;
@@ -215,6 +216,7 @@ export class AccessSessionModel {
 
     assign('unit_id');
     assign('gateway_id');
+    assign('origin');
     assign('method');
     assign('outcome');
     assign('state');

@@ -10,6 +10,12 @@ export const BACKFILL_ADVISORY_LOCK_KEY = 'access_session_backfill';
 /** Non-blocking: concurrent backfills fail fast instead of stacking. */
 export const BACKFILL_ADVISORY_LOCK_TIMEOUT_SEC = 0;
 export const BACKFILL_LOAD_BATCH_SIZE = 2000;
+/** Cap rows loaded per HTTP/CLI chunk so memory stays bounded. */
+export const BACKFILL_CHUNK_MAX_ROWS = 5000;
+/** Default wall-clock budget for admin HTTP chunks (Cloud Run-safe). */
+export const BACKFILL_HTTP_MAX_RUNTIME_MS = 45_000;
+/** Emit a progress log about this often while processing. */
+export const BACKFILL_PROGRESS_LOG_EVERY = 100;
 
 const TERMINAL_STATES = new Set(['closed', 'denied', 'timed_out', 'failed']);
 
@@ -19,6 +25,11 @@ export type ActivityRowLike = {
   device_id: string | null;
   occurred_at: Date | string;
   metadata?: unknown;
+};
+
+export type AccessSessionBackfillCursor = {
+  afterOccurredAt: string;
+  afterId: string;
 };
 
 export function parseActivityMeta(raw: unknown): Record<string, unknown> {
@@ -102,6 +113,56 @@ export function resolveRemoteBackfillState(input: {
   return { state: 'closed', outcome: 'granted' };
 }
 
+/** Group lock rows by device, sorted ascending by occurred_at. */
+export function indexLocksByDevice<T extends ActivityRowLike>(rows: T[]): Map<string, T[]> {
+  const map = new Map<string, T[]>();
+  for (const row of rows) {
+    if (row.activity_type !== 'lock' || !row.device_id) continue;
+    const list = map.get(row.device_id);
+    if (list) list.push(row);
+    else map.set(row.device_id, [row]);
+  }
+  for (const list of map.values()) {
+    list.sort((a, b) => asDate(a.occurred_at).getTime() - asDate(b.occurred_at).getTime());
+  }
+  return map;
+}
+
+/**
+ * First unclaimed lock for device in [unlockAt, unlockAt+window], using a
+ * per-device sorted index (binary search + linear scan). O(log n + k).
+ */
+export function findLockInWindowIndexed<T extends ActivityRowLike>(
+  locksByDevice: Map<string, T[]>,
+  deviceId: string,
+  unlockAt: Date,
+  claimed: Set<string>,
+  windowMs: number = BACKFILL_LOCK_ATTACH_WINDOW_MS,
+): T | undefined {
+  const locks = locksByDevice.get(deviceId);
+  if (!locks?.length) return undefined;
+
+  const unlockMs = unlockAt.getTime();
+  const endMs = unlockMs + windowMs;
+
+  let lo = 0;
+  let hi = locks.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (asDate(locks[mid].occurred_at).getTime() < unlockMs) lo = mid + 1;
+    else hi = mid;
+  }
+
+  for (let i = lo; i < locks.length; i++) {
+    const lock = locks[i];
+    const t = asDate(lock.occurred_at).getTime();
+    if (t > endMs) break;
+    if (!claimed.has(lock.id)) return lock;
+  }
+  return undefined;
+}
+
+/** Compatibility wrapper: builds a one-shot index then searches. Prefer indexed form in hot loops. */
 export function findLockInWindow<T extends ActivityRowLike>(
   rows: T[],
   deviceId: string,
@@ -109,13 +170,7 @@ export function findLockInWindow<T extends ActivityRowLike>(
   claimed: Set<string>,
   windowMs: number = BACKFILL_LOCK_ATTACH_WINDOW_MS,
 ): T | undefined {
-  const unlockMs = unlockAt.getTime();
-  return rows.find((r) => {
-    if (r.activity_type !== 'lock' || r.device_id !== deviceId || claimed.has(r.id)) return false;
-    const lockAt = asDate(r.occurred_at);
-    const delta = lockAt.getTime() - unlockMs;
-    return delta >= 0 && delta <= windowMs;
-  });
+  return findLockInWindowIndexed(indexLocksByDevice(rows), deviceId, unlockAt, claimed, windowMs);
 }
 
 export function remoteCommandIdFromMeta(meta: Record<string, unknown>): string | null {
@@ -158,4 +213,23 @@ export function computeOpenDurationSec(
     return Math.max(0, Math.round((closedAt.getTime() - asDate(openedAt).getTime()) / 1000));
   }
   return fallback ?? null;
+}
+
+export function cursorFromActivity(row: {
+  id: string;
+  occurred_at: Date | string;
+}): AccessSessionBackfillCursor {
+  return {
+    afterOccurredAt: asDate(row.occurred_at).toISOString(),
+    afterId: row.id,
+  };
+}
+
+export function parseBackfillCursor(
+  raw: AccessSessionBackfillCursor | null | undefined,
+): { afterOccurredAt: Date; afterId: string } | null {
+  if (!raw?.afterOccurredAt || !raw?.afterId) return null;
+  const afterOccurredAt = new Date(raw.afterOccurredAt);
+  if (Number.isNaN(afterOccurredAt.getTime())) return null;
+  return { afterOccurredAt, afterId: String(raw.afterId) };
 }

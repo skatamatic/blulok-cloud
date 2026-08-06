@@ -353,7 +353,15 @@ describe('AccessSessionBackfillService', () => {
     });
   });
 
-  const run = (opts: { days?: number; dryRun?: boolean; skipAdvisoryLock?: boolean } = {}) =>
+  const run = (
+    opts: {
+      days?: number;
+      dryRun?: boolean;
+      skipAdvisoryLock?: boolean;
+      maxRuntimeMs?: number;
+      cursor?: { afterOccurredAt: string; afterId: string } | null;
+    } = {},
+  ) =>
     AccessSessionBackfillService.getInstance().run({
       days: 90,
       skipAdvisoryLock: true,
@@ -681,10 +689,81 @@ describe('AccessSessionBackfillService', () => {
     });
     const result = await AccessSessionBackfillService.getInstance().run({
       days: 30,
+      dryRun: false,
       skipAdvisoryLock: false,
     });
     expect(result.skippedBusy).toBe(true);
+    expect(result.done).toBe(false);
     expect(result.sessionsCreated).toBe(0);
+  });
+
+  it('dry-run does not take the advisory lock', async () => {
+    store.lockAcquired = 0;
+    AccessSessionBackfillService.resetInstanceForTests();
+    (DatabaseService.getInstance as jest.Mock).mockReturnValue({
+      connection: createMemoryKnex(store),
+    });
+    store.activity_logs = [
+      seedActivity({
+        id: 'u1',
+        activity_type: 'unlock',
+        occurred_at: new Date(),
+      }),
+    ];
+    const result = await AccessSessionBackfillService.getInstance().run({
+      days: 30,
+      dryRun: true,
+      skipAdvisoryLock: false,
+    });
+    expect(result.skippedBusy).toBe(false);
+    expect(result.done).toBe(true);
+    expect(result.sessionsCreated).toBe(1);
+  });
+
+  it('respects maxRuntimeMs and resumes via cursor without skipping rows', async () => {
+    const t0 = new Date('2026-06-01T10:00:00Z');
+    store.activity_logs = Array.from({ length: 8 }, (_, i) =>
+      seedActivity({
+        id: `denial-${i}`,
+        activity_type: 'access_attempt',
+        result: 'failure',
+        occurred_at: new Date(t0.getTime() + i * 1000),
+        metadata: { method: 'keypad', denial_reason: 'invalid_code' },
+      }),
+    );
+
+    let now = 1_000_000;
+    const dateNowSpy = jest.spyOn(Date, 'now').mockImplementation(() => {
+      now += 20;
+      return now;
+    });
+
+    try {
+      const first = await run({ maxRuntimeMs: 50 });
+      expect(first.done).toBe(false);
+      expect(first.cursor).toBeTruthy();
+      expect(first.sessionsCreated).toBeGreaterThanOrEqual(1);
+      expect(first.sessionsCreated).toBeLessThan(8);
+
+      let cursor = first.cursor;
+      let totalCreated = first.sessionsCreated;
+      let guard = 0;
+      while (cursor && guard < 20) {
+        guard += 1;
+        const chunk = await run({ maxRuntimeMs: 50, cursor });
+        totalCreated += chunk.sessionsCreated;
+        if (chunk.done) {
+          cursor = null;
+          break;
+        }
+        cursor = chunk.cursor;
+      }
+      expect(totalCreated).toBe(8);
+      expect(store.access_sessions).toHaveLength(8);
+      expect(store.activity_logs.every((a) => a.access_session_id != null)).toBe(true);
+    } finally {
+      dateNowSpy.mockRestore();
+    }
   });
 
   it('nulls facility/unit on FK failure and continues', async () => {

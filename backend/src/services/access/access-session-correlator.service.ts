@@ -12,6 +12,7 @@ import {
 } from '@/models/access-session.model';
 import {
   COALESCEABLE_GRANT_METHODS,
+  ON_SITE_GRANT_ABSORB_OPEN_WINDOW_SEC,
   ON_SITE_GRANT_TO_OPEN_TTL_SEC,
 } from '@/constants/access-session.constants';
 import { logger } from '@/utils/logger';
@@ -98,6 +99,35 @@ function sameActor(session: AccessSession, actor?: SessionActor): boolean {
   return actor.id === session.actor_id;
 }
 
+/**
+ * Prefer the pending session method when devices/state reports a generic unlock
+ * (`local_device` / `automatic`). Keeps admin_remote, mobile_key, keypad, etc.
+ */
+function resolveUnlockMethod(
+  paramsMethod: string | undefined,
+  pendingMethod: string,
+): string {
+  if (
+    paramsMethod
+    && paramsMethod !== 'local_device'
+    && paramsMethod !== 'automatic'
+  ) {
+    return paramsMethod;
+  }
+  return pendingMethod || paramsMethod || 'local_device';
+}
+
+function isAbsorbableLocalOpen(session: AccessSession, now: Date = new Date()): boolean {
+  if (session.state !== 'open') return false;
+  if (session.origin !== 'local' && session.method !== 'local_device' && session.method !== 'automatic') {
+    return false;
+  }
+  const openedAt = session.opened_at || session.started_at;
+  if (!openedAt) return false;
+  const ageMs = now.getTime() - new Date(openedAt).getTime();
+  return ageMs >= 0 && ageMs <= ON_SITE_GRANT_ABSORB_OPEN_WINDOW_SEC * 1000;
+}
+
 export class AccessSessionCorrelator {
   private readonly model = new AccessSessionModel();
 
@@ -138,7 +168,9 @@ export class AccessSessionCorrelator {
   }
 
   /**
-   * Gateway grant: coalesce into open session, attach to pending cloud, or create on-site pending.
+   * Gateway grant: coalesce into matching open session; else attach to pending cloud_remote
+   * (takes priority over unlock-before-grant absorb); else absorb recent local open;
+   * else create on-site pending.
    */
   async onGrantAccessEvent(params: GrantEventParams): Promise<AccessSession> {
     const open = await this.model.findOpenByDevice(params.deviceId);
@@ -155,6 +187,7 @@ export class AccessSessionCorrelator {
       return updated || open;
     }
 
+    // Pending cloud unlock wins over absorb — gateway grants while waiting attach to that session.
     const pending = await this.model.findPendingByDevice(params.deviceId);
     if (pending && pending.origin === 'cloud_remote') {
       const updated = await this.model.update(pending.id, {
@@ -167,6 +200,36 @@ export class AccessSessionCorrelator {
         }),
       });
       return updated || pending;
+    }
+
+    // devices/state often arrives before the gateway grant. Upgrade the anonymous
+    // local open instead of spawning a pending that will time out beside it.
+    if (
+      open
+      && isCoalesceableMethod(params.method)
+      && isAbsorbableLocalOpen(open, params.occurredAt || new Date())
+      && (!open.actor_id || sameActor(open, params.actor))
+    ) {
+      const updated = await this.model.update(open.id, {
+        origin: 'on_site',
+        method: params.method,
+        outcome: 'granted',
+        actor_type: params.actor?.type || open.actor_type || (params.actor?.id ? 'user' : 'device'),
+        actor_id: params.actor?.id || open.actor_id,
+        actor_name: params.actor?.name || open.actor_name,
+        actor_role: params.actor?.role || open.actor_role,
+        unit_id: params.unitId || open.unit_id,
+        gateway_id: params.gatewayId || open.gateway_id,
+        correlation_id: params.correlationId || open.correlation_id,
+        attempt_count: Math.max(1, open.attempt_count),
+        expires_at: null,
+        metadata: this.mergeMetadata(open.metadata, {
+          ...params.metadata,
+          absorbed_local_open: true,
+          grant_method: params.method,
+        }),
+      });
+      return updated || open;
     }
 
     const expiresAt = new Date(Date.now() + ON_SITE_GRANT_TO_OPEN_TTL_SEC * 1000);
@@ -243,7 +306,8 @@ export class AccessSessionCorrelator {
         actor_id: params.actor?.id || pending.actor_id,
         actor_name: params.actor?.name || pending.actor_name,
         actor_role: params.actor?.role || pending.actor_role,
-        method: params.method || pending.method,
+        // Keep pending method (admin_remote / mobile_key / …); devices/state often sends local_device.
+        method: resolveUnlockMethod(params.method, pending.method),
         metadata: this.mergeMetadata(pending.metadata, params.metadata),
       });
       return updated || pending;
@@ -268,6 +332,22 @@ export class AccessSessionCorrelator {
       opened_at: openedAt,
       metadata: params.metadata,
     });
+  }
+
+  /**
+   * Close live open/pending sessions when the device is confirmed locked, without
+   * synthesizing a new session. Used for same-state locked re-reports.
+   */
+  async confirmLockedIfLive(params: LockStateParams): Promise<AccessSession | null> {
+    const open = await this.model.findOpenByDevice(params.deviceId);
+    if (open) {
+      return this.onDeviceLocked(params);
+    }
+    const pending = await this.model.findPendingByDevice(params.deviceId);
+    if (pending) {
+      return this.onDeviceLocked(params);
+    }
+    return null;
   }
 
   /**

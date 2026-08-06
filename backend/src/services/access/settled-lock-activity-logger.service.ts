@@ -81,6 +81,46 @@ export class SettledLockActivityLogger {
           commandId: attribution.commandId,
           requestedStatus: attribution.requestedStatus,
         });
+        // Device already in the requested state: still open the pending cloud session.
+        if (activityType === 'unlock') {
+          const sessions = AccessSessionService.getInstance();
+          await sessions.onDeviceUnlocked({
+            facilityId: gateway.facility_id,
+            deviceId: event.deviceId,
+            unitId,
+            gatewayId: event.gatewayId,
+            deviceType,
+            remoteCommandId: attribution.commandId,
+            method: 'local_device',
+            actor: {
+              type: 'user',
+              id: attribution.initiator.userId,
+              name: attribution.initiator.userName,
+              role: attribution.initiator.role,
+            },
+            metadata: {
+              oldStatus: event.oldStatus,
+              newStatus: event.newStatus,
+              correlated_remote: true,
+              same_state_settle: true,
+            },
+          });
+        }
+      }
+      // Confirmed locked with no transition: still close orphan open/pending sessions.
+      if (activityType === 'lock') {
+        await AccessSessionService.getInstance().confirmLockedIfLive({
+          facilityId: gateway.facility_id,
+          deviceId: event.deviceId,
+          unitId,
+          gatewayId: event.gatewayId,
+          deviceType,
+          metadata: {
+            oldStatus: event.oldStatus,
+            newStatus: event.newStatus,
+            same_state_settle: true,
+          },
+        });
       }
       return;
     }

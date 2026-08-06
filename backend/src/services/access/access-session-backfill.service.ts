@@ -3,12 +3,13 @@
  * Used by CLI script and DEV_ADMIN Developer Tools UI.
  *
  * Production guarantees:
- * - Single-flight via MySQL GET_LOCK (non-blocking)
+ * - Single-flight via MySQL GET_LOCK (non-blocking; skipped for dry-run)
  * - Per-session DB transactions (insert/update + activity links atomic)
  * - Unique remote_command_id races → attach to existing instead of failing
  * - Never downgrade live pending/open from grant-only historical rows
  * - Dry-run lock accounting mirrors real host-attach / synthesize paths
  * - Per-item errors are logged and skipped; FK orphans null facility/unit and retry
+ * - HTTP-safe time/row budgets with resumable cursor (Cloud Run won't kill mid-response)
  */
 
 import { v4 as uuidv4 } from 'uuid';
@@ -17,26 +18,38 @@ import { logger } from '@/utils/logger';
 import {
   BACKFILL_ADVISORY_LOCK_KEY,
   BACKFILL_ADVISORY_LOCK_TIMEOUT_SEC,
+  BACKFILL_CHUNK_MAX_ROWS,
   BACKFILL_LOAD_BATCH_SIZE,
+  BACKFILL_PROGRESS_LOG_EVERY,
   asDate,
   clampBackfillDays,
   computeOpenDurationSec,
-  findLockInWindow,
+  cursorFromActivity,
+  findLockInWindowIndexed,
+  indexLocksByDevice,
   isDuplicateKeyError,
   isForeignKeyError,
   parseActivityMeta,
+  parseBackfillCursor,
   pickBestHostSession,
   remoteCommandIdFromMeta,
   resolveRemoteBackfillState,
   shouldAdvanceExistingSession,
+  type AccessSessionBackfillCursor,
   type HostSessionLike,
 } from './access-session-backfill.utils';
+
+export type { AccessSessionBackfillCursor };
 
 export type AccessSessionBackfillOptions = {
   days?: number;
   dryRun?: boolean;
-  /** Skip advisory lock (tests only). */
+  /** Skip advisory lock (tests / dry-run). */
   skipAdvisoryLock?: boolean;
+  /** Wall-clock budget for this invocation; omit for unlimited (CLI). */
+  maxRuntimeMs?: number;
+  /** Resume after a previous chunk. */
+  cursor?: AccessSessionBackfillCursor | null;
 };
 
 export type AccessSessionBackfillResult = {
@@ -51,6 +64,9 @@ export type AccessSessionBackfillResult = {
   skippedNoDevice: number;
   skippedErrors: number;
   skippedBusy: boolean;
+  /** False when more unlinked rows remain (caller should continue with cursor). */
+  done: boolean;
+  cursor: AccessSessionBackfillCursor | null;
 };
 
 type ActivityRow = {
@@ -83,6 +99,20 @@ type VirtualSession = HostSessionLike & {
   settled_at?: Date | string | null;
 };
 
+type ProcessContext = {
+  knex: KnexLike;
+  dryRun: boolean;
+  claimed: Set<string>;
+  virtualSessions: VirtualSession[];
+  hostsByDevice: Map<string, VirtualSession[]>;
+  dbHostCache: Map<string, VirtualSession | null>;
+  remoteSessionCache: Map<string, VirtualSession | null>;
+  locksByDevice: Map<string, ActivityRow[]>;
+  deadlineMs: number | null;
+  startedAtMs: number;
+  unitsProcessed: number;
+};
+
 export class AccessSessionBackfillService {
   private static instance: AccessSessionBackfillService;
   private readonly db = DatabaseService.getInstance();
@@ -104,6 +134,9 @@ export class AccessSessionBackfillService {
     const dryRun = Boolean(options.dryRun);
     const knex = this.db.connection as KnexLike;
     const cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+    const parsedCursor = parseBackfillCursor(options.cursor ?? null);
+    // Dry-run is read-only accounting — never hold the write lock.
+    const useAdvisoryLock = !dryRun && !options.skipAdvisoryLock;
 
     const empty = (extra: Partial<AccessSessionBackfillResult> = {}): AccessSessionBackfillResult => ({
       days,
@@ -117,24 +150,40 @@ export class AccessSessionBackfillService {
       skippedNoDevice: 0,
       skippedErrors: 0,
       skippedBusy: false,
+      done: true,
+      cursor: null,
       ...extra,
     });
 
-    logger.info('Access session backfill starting', { days, dryRun, cutoff: cutoff.toISOString() });
+    logger.info('Access session backfill starting', {
+      days,
+      dryRun,
+      cutoff: cutoff.toISOString(),
+      maxRuntimeMs: options.maxRuntimeMs ?? null,
+      cursor: parsedCursor
+        ? { afterOccurredAt: parsedCursor.afterOccurredAt.toISOString(), afterId: parsedCursor.afterId }
+        : null,
+    });
 
-    if (!options.skipAdvisoryLock) {
+    if (useAdvisoryLock) {
       const acquired = await this.tryAcquireAdvisoryLock(knex);
       if (!acquired) {
         logger.warn('Access session backfill skipped — already running');
-        return empty({ skippedBusy: true });
+        return empty({ skippedBusy: true, done: false });
       }
     }
 
     try {
-      const rows = await this.loadUnlinkedActivities(knex, cutoff);
-      return await this.processRows(knex, rows, { days, dryRun });
+      const rows = await this.loadUnlinkedActivities(knex, cutoff, parsedCursor, BACKFILL_CHUNK_MAX_ROWS);
+      return await this.processRows(knex, rows, {
+        days,
+        dryRun,
+        maxRuntimeMs: options.maxRuntimeMs,
+        hitRowCap: rows.length >= BACKFILL_CHUNK_MAX_ROWS,
+        requestCursor: options.cursor ?? null,
+      });
     } finally {
-      if (!options.skipAdvisoryLock) {
+      if (useAdvisoryLock) {
         await this.releaseAdvisoryLock(knex);
       }
     }
@@ -164,19 +213,27 @@ export class AccessSessionBackfillService {
     }
   }
 
-  private async loadUnlinkedActivities(knex: KnexLike, cutoff: Date): Promise<ActivityRow[]> {
+  private async loadUnlinkedActivities(
+    knex: KnexLike,
+    cutoff: Date,
+    cursor: { afterOccurredAt: Date; afterId: string } | null,
+    maxRows: number,
+  ): Promise<ActivityRow[]> {
     const rows: ActivityRow[] = [];
-    let lastOccurredAt: Date | null = null;
-    let lastId: string | null = null;
+    let lastOccurredAt: Date | null = cursor?.afterOccurredAt ?? null;
+    let lastId: string | null = cursor?.afterId ?? null;
 
     for (;;) {
+      const remaining = maxRows - rows.length;
+      if (remaining <= 0) break;
+
       let query = knex('activity_logs')
         .whereIn('activity_type', ['access_attempt', 'lock', 'unlock'])
         .where('occurred_at', '>=', cutoff)
         .whereNull('access_session_id')
         .orderBy('occurred_at', 'asc')
         .orderBy('id', 'asc')
-        .limit(BACKFILL_LOAD_BATCH_SIZE);
+        .limit(Math.min(BACKFILL_LOAD_BATCH_SIZE, remaining));
 
       if (lastOccurredAt && lastId) {
         const cursorAt = lastOccurredAt;
@@ -194,19 +251,69 @@ export class AccessSessionBackfillService {
       const last = batch[batch.length - 1];
       lastOccurredAt = asDate(last.occurred_at);
       lastId = last.id;
-      if (batch.length < BACKFILL_LOAD_BATCH_SIZE) break;
+      if (batch.length < Math.min(BACKFILL_LOAD_BATCH_SIZE, remaining)) break;
     }
 
     return rows;
   }
 
+  private budgetExceeded(ctx: ProcessContext): boolean {
+    if (ctx.deadlineMs == null) return false;
+    return Date.now() >= ctx.deadlineMs;
+  }
+
+  private maybeLogProgress(ctx: ProcessContext, phase: string): void {
+    ctx.unitsProcessed += 1;
+    if (ctx.unitsProcessed % BACKFILL_PROGRESS_LOG_EVERY !== 0) return;
+    logger.info('Access session backfill progress', {
+      phase,
+      unitsProcessed: ctx.unitsProcessed,
+      elapsedMs: Date.now() - ctx.startedAtMs,
+      claimed: ctx.claimed.size,
+      sessionsInRun: ctx.virtualSessions.length,
+    });
+  }
+
+  private registerHost(ctx: ProcessContext, session: VirtualSession): void {
+    const list = ctx.hostsByDevice.get(session.device_id) || [];
+    const idx = list.findIndex((s) => s.id === session.id);
+    if (idx >= 0) list[idx] = session;
+    else list.push(session);
+    ctx.hostsByDevice.set(session.device_id, list);
+    if (session.remote_command_id) {
+      ctx.remoteSessionCache.set(session.remote_command_id, session);
+    }
+  }
+
   private async processRows(
     knex: KnexLike,
     rows: ActivityRow[],
-    opts: { days: number; dryRun: boolean },
+    opts: {
+      days: number;
+      dryRun: boolean;
+      maxRuntimeMs?: number;
+      hitRowCap: boolean;
+      requestCursor: AccessSessionBackfillCursor | null;
+    },
   ): Promise<AccessSessionBackfillResult> {
-    const claimed = new Set<string>();
-    const virtualSessions: VirtualSession[] = [];
+    const startedAtMs = Date.now();
+    const ctx: ProcessContext = {
+      knex,
+      dryRun: opts.dryRun,
+      claimed: new Set<string>(),
+      virtualSessions: [],
+      hostsByDevice: new Map(),
+      dbHostCache: new Map(),
+      remoteSessionCache: new Map(),
+      locksByDevice: indexLocksByDevice(rows),
+      deadlineMs:
+        opts.maxRuntimeMs != null && opts.maxRuntimeMs > 0
+          ? startedAtMs + opts.maxRuntimeMs
+          : null,
+      startedAtMs,
+      unitsProcessed: 0,
+    };
+
     let sessionsCreated = 0;
     let sessionsUpdated = 0;
     let linked = 0;
@@ -214,6 +321,7 @@ export class AccessSessionBackfillService {
     let locksSynthesized = 0;
     let skippedNoDevice = 0;
     let skippedErrors = 0;
+    let stoppedEarly = false;
 
     const byCommand = new Map<string, { grant?: ActivityRow; unlock?: ActivityRow }>();
     for (const row of rows) {
@@ -230,52 +338,79 @@ export class AccessSessionBackfillService {
       byCommand.set(commandId, bucket);
     }
 
-    for (const [commandId, pair] of byCommand.entries()) {
-      if (!pair.grant && !pair.unlock) continue;
-      try {
-        const result = await this.processRemoteCommand({
-          knex,
-          commandId,
-          pair,
-          rows,
-          claimed,
-          virtualSessions,
-          dryRun: opts.dryRun,
-        });
-        if (result.skippedNoDevice) skippedNoDevice += 1;
-        sessionsCreated += result.sessionsCreated;
-        sessionsUpdated += result.sessionsUpdated;
-        linked += result.linked;
-      } catch (err) {
-        skippedErrors += 1;
-        logger.error('Access session backfill remote-command unit failed', { commandId, err });
-      }
-    }
+    const processedCommands = new Set<string>();
 
     for (const row of rows) {
-      if (claimed.has(row.id)) continue;
+      if (ctx.claimed.has(row.id)) continue;
+      if (ctx.unitsProcessed > 0 && this.budgetExceeded(ctx)) {
+        stoppedEarly = true;
+        break;
+      }
       if (!row.device_id) {
         skippedNoDevice += 1;
         continue;
       }
+
+      const meta = parseActivityMeta(row.metadata);
+      const commandId = remoteCommandIdFromMeta(meta);
+      const pair = commandId ? byCommand.get(commandId) : undefined;
+      const isRemoteUnit =
+        Boolean(commandId)
+        && pair
+        && (pair.grant || pair.unlock)
+        && !processedCommands.has(commandId!)
+        && (row.id === pair.grant?.id || row.id === pair.unlock?.id);
+
       try {
-        const result = await this.processStandaloneRow({
-          knex,
-          row,
-          claimed,
-          virtualSessions,
-          dryRun: opts.dryRun,
-        });
-        sessionsCreated += result.sessionsCreated;
-        sessionsUpdated += result.sessionsUpdated;
-        linked += result.linked;
-        locksAttached += result.locksAttached;
-        locksSynthesized += result.locksSynthesized;
+        if (isRemoteUnit && commandId && pair) {
+          processedCommands.add(commandId);
+          const result = await this.processRemoteCommand({
+            ctx,
+            commandId,
+            pair,
+          });
+          if (result.skippedNoDevice) skippedNoDevice += 1;
+          sessionsCreated += result.sessionsCreated;
+          sessionsUpdated += result.sessionsUpdated;
+          linked += result.linked;
+          this.maybeLogProgress(ctx, 'remote');
+        } else if (!ctx.claimed.has(row.id)) {
+          const result = await this.processStandaloneRow({
+            ctx,
+            row,
+          });
+          sessionsCreated += result.sessionsCreated;
+          sessionsUpdated += result.sessionsUpdated;
+          linked += result.linked;
+          locksAttached += result.locksAttached;
+          locksSynthesized += result.locksSynthesized;
+          this.maybeLogProgress(ctx, 'standalone');
+        }
       } catch (err) {
         skippedErrors += 1;
-        logger.error('Access session backfill standalone row failed', { activityId: row.id, err });
+        logger.error('Access session backfill unit failed', {
+          activityId: row.id,
+          commandId: commandId || undefined,
+          err,
+        });
       }
     }
+
+    const firstUnclaimedIdx = rows.findIndex(
+      (r) => !ctx.claimed.has(r.id) && Boolean(r.device_id),
+    );
+    // Resume just before the first still-unclaimed work row.
+    let cursor: AccessSessionBackfillCursor | null = null;
+    if (firstUnclaimedIdx > 0) {
+      cursor = cursorFromActivity(rows[firstUnclaimedIdx - 1]);
+    } else if (firstUnclaimedIdx === 0) {
+      // Still have work at the start of this page — do not advance (avoid skipping).
+      cursor = opts.requestCursor;
+    } else if (opts.hitRowCap && rows.length) {
+      cursor = cursorFromActivity(rows[rows.length - 1]);
+    }
+
+    const done = firstUnclaimedIdx < 0 && !opts.hitRowCap;
 
     const result: AccessSessionBackfillResult = {
       days: opts.days,
@@ -289,26 +424,31 @@ export class AccessSessionBackfillService {
       skippedNoDevice,
       skippedErrors,
       skippedBusy: false,
+      done,
+      cursor: done ? null : cursor,
     };
-    logger.info('Access session backfill complete', result);
+    logger.info('Access session backfill chunk complete', {
+      ...result,
+      elapsedMs: Date.now() - startedAtMs,
+      stoppedEarly,
+      hitRowCap: opts.hitRowCap,
+      firstUnclaimedIdx,
+    });
     return result;
   }
 
   private async processRemoteCommand(input: {
-    knex: KnexLike;
+    ctx: ProcessContext;
     commandId: string;
     pair: { grant?: ActivityRow; unlock?: ActivityRow };
-    rows: ActivityRow[];
-    claimed: Set<string>;
-    virtualSessions: VirtualSession[];
-    dryRun: boolean;
   }): Promise<{
     sessionsCreated: number;
     sessionsUpdated: number;
     linked: number;
     skippedNoDevice: boolean;
   }> {
-    const { knex, commandId, pair, rows, claimed, virtualSessions, dryRun } = input;
+    const { ctx, commandId, pair } = input;
+    const { knex, claimed, dryRun } = ctx;
     const grant = pair.grant;
     const unlock = pair.unlock;
     const deviceId = (unlock || grant)?.device_id;
@@ -318,7 +458,12 @@ export class AccessSessionBackfillService {
 
     let lockRow: ActivityRow | undefined;
     if (unlock) {
-      lockRow = findLockInWindow(rows, deviceId, asDate(unlock.occurred_at), claimed);
+      lockRow = findLockInWindowIndexed(
+        ctx.locksByDevice,
+        deviceId,
+        asDate(unlock.occurred_at),
+        claimed,
+      );
     }
 
     const members = [grant, unlock, lockRow].filter(Boolean) as ActivityRow[];
@@ -340,7 +485,7 @@ export class AccessSessionBackfillService {
       openedAt && closedAt ? computeOpenDurationSec(openedAt, closedAt, null) : null;
     const method = String(grantMeta.method || 'admin_remote');
 
-    const existing = await this.findSessionByRemoteCommand(knex, commandId, virtualSessions);
+    const existing = await this.findSessionByRemoteCommand(ctx, commandId);
     const sessionId = existing?.id || uuidv4();
     let sessionsCreated = 0;
     let sessionsUpdated = 0;
@@ -352,7 +497,7 @@ export class AccessSessionBackfillService {
     if (dryRun) {
       if (!existing) {
         sessionsCreated = 1;
-        virtualSessions.push({
+        const created: VirtualSession = {
           id: sessionId,
           device_id: deviceId,
           kind: 'access',
@@ -362,13 +507,16 @@ export class AccessSessionBackfillService {
           closed_at: closedAt,
           open_duration_sec: openDurationSec,
           remote_command_id: commandId,
-        });
+        };
+        ctx.virtualSessions.push(created);
+        this.registerHost(ctx, created);
       } else if (advance) {
         sessionsUpdated = 1;
         existing.state = state;
         if (openedAt) existing.opened_at = openedAt;
         if (closedAt) existing.closed_at = closedAt;
         if (openDurationSec != null) existing.open_duration_sec = openDurationSec;
+        this.registerHost(ctx, existing);
       }
       for (const m of members) claimed.add(m.id);
       return { sessionsCreated, sessionsUpdated, linked: members.length, skippedNoDevice: false };
@@ -423,6 +571,18 @@ export class AccessSessionBackfillService {
             });
             sessionsUpdated = 1;
           }
+          const racedSession: VirtualSession = {
+            id: raced.id,
+            device_id: raced.device_id || deviceId,
+            kind: raced.kind || 'access',
+            state: sessionsUpdated ? state : raced.state,
+            started_at: raced.started_at,
+            opened_at: openedAt || raced.opened_at,
+            closed_at: closedAt || raced.closed_at,
+            open_duration_sec: openDurationSec ?? raced.open_duration_sec,
+            remote_command_id: commandId,
+          };
+          this.registerHost(ctx, racedSession);
           return;
         }
       } else if (advance) {
@@ -435,13 +595,18 @@ export class AccessSessionBackfillService {
           updated_at: new Date(),
         });
         sessionsUpdated = 1;
+        existing.state = state;
+        if (openedAt) existing.opened_at = openedAt;
+        if (closedAt) existing.closed_at = closedAt;
+        if (openDurationSec != null) existing.open_duration_sec = openDurationSec;
+        this.registerHost(ctx, existing);
       }
 
       await this.linkMembers(trx, sessionId, members, claimed);
     });
 
     if (sessionsCreated) {
-      virtualSessions.push({
+      const created: VirtualSession = {
         id: sessionId,
         device_id: deviceId,
         kind: 'access',
@@ -451,7 +616,9 @@ export class AccessSessionBackfillService {
         closed_at: closedAt,
         open_duration_sec: openDurationSec,
         remote_command_id: commandId,
-      });
+      };
+      ctx.virtualSessions.push(created);
+      this.registerHost(ctx, created);
     }
 
     return {
@@ -463,11 +630,8 @@ export class AccessSessionBackfillService {
   }
 
   private async processStandaloneRow(input: {
-    knex: KnexLike;
+    ctx: ProcessContext;
     row: ActivityRow;
-    claimed: Set<string>;
-    virtualSessions: VirtualSession[];
-    dryRun: boolean;
   }): Promise<{
     sessionsCreated: number;
     sessionsUpdated: number;
@@ -475,12 +639,13 @@ export class AccessSessionBackfillService {
     locksAttached: number;
     locksSynthesized: number;
   }> {
-    const { knex, row, claimed, virtualSessions, dryRun } = input;
+    const { ctx, row } = input;
+    const { knex, claimed, dryRun } = ctx;
     const meta = parseActivityMeta(row.metadata);
     const deviceId = row.device_id!;
 
     if (row.activity_type === 'lock') {
-      return this.processLockRow({ knex, row, deviceId, claimed, virtualSessions, dryRun });
+      return this.processLockRow({ ctx, row, deviceId });
     }
 
     let state = 'closed';
@@ -510,7 +675,7 @@ export class AccessSessionBackfillService {
 
     const remoteCommandId = remoteCommandIdFromMeta(meta);
     if (remoteCommandId) {
-      const existing = await this.findSessionByRemoteCommand(knex, remoteCommandId, virtualSessions);
+      const existing = await this.findSessionByRemoteCommand(ctx, remoteCommandId);
       if (existing) {
         if (dryRun) {
           claimed.add(row.id);
@@ -523,9 +688,8 @@ export class AccessSessionBackfillService {
           };
         }
         await knex.transaction(async (trx: any) => {
-          await trx('activity_logs').where('id', row.id).update({ access_session_id: existing.id });
+          await this.linkMembers(trx, existing.id, [row], claimed);
         });
-        claimed.add(row.id);
         return {
           sessionsCreated: 0,
           sessionsUpdated: 0,
@@ -570,7 +734,7 @@ export class AccessSessionBackfillService {
 
     if (dryRun) {
       claimed.add(row.id);
-      virtualSessions.push({
+      const created: VirtualSession = {
         id: sessionId,
         device_id: deviceId,
         kind,
@@ -580,7 +744,9 @@ export class AccessSessionBackfillService {
         closed_at: payload.closed_at,
         open_duration_sec: payload.open_duration_sec,
         remote_command_id: remoteCommandId,
-      });
+      };
+      ctx.virtualSessions.push(created);
+      this.registerHost(ctx, created);
       return {
         sessionsCreated: 1,
         sessionsUpdated: 0,
@@ -597,8 +763,7 @@ export class AccessSessionBackfillService {
       if (remoteCommandId) {
         const raced = await trx('access_sessions').where('remote_command_id', remoteCommandId).first();
         if (raced) {
-          await trx('activity_logs').where('id', row.id).update({ access_session_id: raced.id });
-          claimed.add(row.id);
+          await this.linkMembers(trx, raced.id, [row], claimed);
           linkedOnly = true;
           return;
         }
@@ -610,19 +775,17 @@ export class AccessSessionBackfillService {
         if (isDuplicateKeyError(err) && remoteCommandId) {
           const raced = await trx('access_sessions').where('remote_command_id', remoteCommandId).first();
           if (!raced) throw err;
-          await trx('activity_logs').where('id', row.id).update({ access_session_id: raced.id });
-          claimed.add(row.id);
+          await this.linkMembers(trx, raced.id, [row], claimed);
           linkedOnly = true;
           return;
         }
         throw err;
       }
-      await trx('activity_logs').where('id', row.id).update({ access_session_id: sessionId });
-      claimed.add(row.id);
+      await this.linkMembers(trx, sessionId, [row], claimed);
     });
 
     if (created) {
-      virtualSessions.push({
+      const session: VirtualSession = {
         id: sessionId,
         device_id: deviceId,
         kind,
@@ -632,7 +795,9 @@ export class AccessSessionBackfillService {
         closed_at: payload.closed_at,
         open_duration_sec: payload.open_duration_sec,
         remote_command_id: remoteCommandId,
-      });
+      };
+      ctx.virtualSessions.push(session);
+      this.registerHost(ctx, session);
     }
 
     return {
@@ -645,12 +810,9 @@ export class AccessSessionBackfillService {
   }
 
   private async processLockRow(input: {
-    knex: KnexLike;
+    ctx: ProcessContext;
     row: ActivityRow;
     deviceId: string;
-    claimed: Set<string>;
-    virtualSessions: VirtualSession[];
-    dryRun: boolean;
   }): Promise<{
     sessionsCreated: number;
     sessionsUpdated: number;
@@ -658,8 +820,9 @@ export class AccessSessionBackfillService {
     locksAttached: number;
     locksSynthesized: number;
   }> {
-    const { knex, row, deviceId, claimed, virtualSessions, dryRun } = input;
-    const host = await this.findHostForLock(knex, deviceId, virtualSessions);
+    const { ctx, row, deviceId } = input;
+    const { knex, claimed, dryRun } = ctx;
+    const host = await this.findHostForLock(ctx, deviceId);
 
     if (host) {
       const lockAt = asDate(row.occurred_at);
@@ -674,6 +837,7 @@ export class AccessSessionBackfillService {
         host.state = 'closed';
         host.closed_at = lockAt;
         host.open_duration_sec = openDuration;
+        this.registerHost(ctx, host);
         return {
           sessionsCreated: 0,
           sessionsUpdated: 1,
@@ -692,10 +856,14 @@ export class AccessSessionBackfillService {
           expires_at: null,
           updated_at: new Date(),
         });
-        await trx('activity_logs').where('id', row.id).update({ access_session_id: host.id });
+        await this.linkMembers(trx, host.id, [row], claimed);
       });
-      claimed.add(row.id);
       host.state = 'closed';
+      host.closed_at = lockAt;
+      host.open_duration_sec = openDuration;
+      this.registerHost(ctx, host);
+      // Invalidate stale DB cache entry for this device so later locks re-query if needed.
+      ctx.dbHostCache.delete(deviceId);
       return {
         sessionsCreated: 0,
         sessionsUpdated: 1,
@@ -740,7 +908,7 @@ export class AccessSessionBackfillService {
 
     if (dryRun) {
       claimed.add(row.id);
-      virtualSessions.push({
+      const created: VirtualSession = {
         id: sessionId,
         device_id: deviceId,
         kind: 'access',
@@ -749,7 +917,9 @@ export class AccessSessionBackfillService {
         opened_at: lockAt,
         closed_at: lockAt,
         open_duration_sec: 0,
-      });
+      };
+      ctx.virtualSessions.push(created);
+      this.registerHost(ctx, created);
       return {
         sessionsCreated: 1,
         sessionsUpdated: 0,
@@ -761,10 +931,9 @@ export class AccessSessionBackfillService {
 
     await knex.transaction(async (trx: any) => {
       await this.insertSession(trx, payload);
-      await trx('activity_logs').where('id', row.id).update({ access_session_id: sessionId });
+      await this.linkMembers(trx, sessionId, [row], claimed);
     });
-    claimed.add(row.id);
-    virtualSessions.push({
+    const created: VirtualSession = {
       id: sessionId,
       device_id: deviceId,
       kind: 'access',
@@ -773,7 +942,9 @@ export class AccessSessionBackfillService {
       opened_at: lockAt,
       closed_at: lockAt,
       open_duration_sec: 0,
-    });
+    };
+    ctx.virtualSessions.push(created);
+    this.registerHost(ctx, created);
     return {
       sessionsCreated: 1,
       sessionsUpdated: 0,
@@ -784,15 +955,23 @@ export class AccessSessionBackfillService {
   }
 
   private async findSessionByRemoteCommand(
-    knex: KnexLike,
+    ctx: ProcessContext,
     commandId: string,
-    virtualSessions: VirtualSession[],
   ): Promise<VirtualSession | null> {
-    const virtual = virtualSessions.find((s) => s.remote_command_id === commandId);
-    if (virtual) return virtual;
-    const row = await knex('access_sessions').where('remote_command_id', commandId).first();
-    if (!row) return null;
-    return {
+    if (ctx.remoteSessionCache.has(commandId)) {
+      return ctx.remoteSessionCache.get(commandId) ?? null;
+    }
+    const virtual = ctx.virtualSessions.find((s) => s.remote_command_id === commandId);
+    if (virtual) {
+      ctx.remoteSessionCache.set(commandId, virtual);
+      return virtual;
+    }
+    const row = await ctx.knex('access_sessions').where('remote_command_id', commandId).first();
+    if (!row) {
+      ctx.remoteSessionCache.set(commandId, null);
+      return null;
+    }
+    const session: VirtualSession = {
       id: row.id,
       device_id: row.device_id,
       kind: row.kind || 'access',
@@ -804,22 +983,44 @@ export class AccessSessionBackfillService {
       settled_at: row.settled_at,
       remote_command_id: row.remote_command_id,
     };
+    ctx.remoteSessionCache.set(commandId, session);
+    this.registerHost(ctx, session);
+    return session;
   }
 
   private async findHostForLock(
-    knex: KnexLike,
+    ctx: ProcessContext,
     deviceId: string,
-    virtualSessions: VirtualSession[],
   ): Promise<VirtualSession | null> {
-    const virtualHosts = virtualSessions.filter(
-      (s) => s.device_id === deviceId && s.kind === 'access' && s.state !== 'denied',
+    const inRun = (ctx.hostsByDevice.get(deviceId) || []).filter(
+      (s) => s.kind === 'access' && s.state !== 'denied',
     );
+    const bestInRun = pickBestHostSession(inRun);
+    // Prefer live open/pending hosts from this run before hitting the DB.
+    if (bestInRun && (bestInRun.state === 'open' || bestInRun.state === 'pending')) {
+      return bestInRun;
+    }
 
-    let dbRows: VirtualSession[] = [];
+    let dbHost: VirtualSession | null | undefined;
+    if (ctx.dbHostCache.has(deviceId)) {
+      dbHost = ctx.dbHostCache.get(deviceId) ?? null;
+    } else {
+      dbHost = await this.lookupDbHost(ctx.knex, deviceId);
+      ctx.dbHostCache.set(deviceId, dbHost);
+      if (dbHost) this.registerHost(ctx, dbHost);
+    }
+
+    const merged = [...inRun];
+    if (dbHost && !merged.some((m) => m.id === dbHost!.id)) merged.push(dbHost);
+    return pickBestHostSession(merged) || null;
+  }
+
+  private async lookupDbHost(knex: KnexLike, deviceId: string): Promise<VirtualSession | null> {
     try {
-      dbRows = await knex('access_sessions')
+      const live = await knex('access_sessions')
         .where({ device_id: deviceId, kind: 'access' })
-        .whereNotIn('state', ['denied'])
+        .whereIn('state', ['open', 'pending'])
+        .orderBy('started_at', 'desc')
         .select(
           'id',
           'device_id',
@@ -830,21 +1031,36 @@ export class AccessSessionBackfillService {
           'closed_at',
           'open_duration_sec',
           'remote_command_id',
-        );
-      if (!Array.isArray(dbRows)) dbRows = [];
+          'settled_at',
+        )
+        .first();
+      if (live) return live as VirtualSession;
+
+      const latest = await knex('access_sessions')
+        .where({ device_id: deviceId, kind: 'access' })
+        .whereNotIn('state', ['denied'])
+        .orderBy('started_at', 'desc')
+        .select(
+          'id',
+          'device_id',
+          'kind',
+          'state',
+          'started_at',
+          'opened_at',
+          'closed_at',
+          'open_duration_sec',
+          'remote_command_id',
+          'settled_at',
+        )
+        .first();
+      return (latest as VirtualSession) || null;
     } catch (err) {
       logger.warn('Access session backfill host lookup failed; using in-run sessions only', {
         deviceId,
         err,
       });
-      dbRows = [];
+      return null;
     }
-
-    const merged = [...virtualHosts];
-    for (const row of dbRows) {
-      if (row && !merged.some((m) => m.id === row.id)) merged.push(row);
-    }
-    return pickBestHostSession(merged) || null;
   }
 
   private async linkMembers(
@@ -853,10 +1069,10 @@ export class AccessSessionBackfillService {
     members: ActivityRow[],
     claimed: Set<string>,
   ): Promise<void> {
-    for (const m of members) {
-      await trx('activity_logs').where('id', m.id).update({ access_session_id: sessionId });
-      claimed.add(m.id);
-    }
+    const ids = members.map((m) => m.id).filter((id) => !claimed.has(id));
+    if (!ids.length) return;
+    await trx('activity_logs').whereIn('id', ids).update({ access_session_id: sessionId });
+    for (const id of ids) claimed.add(id);
   }
 
   private async insertSession(trx: any, payload: Record<string, unknown>): Promise<void> {

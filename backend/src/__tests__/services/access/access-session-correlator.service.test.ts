@@ -165,9 +165,11 @@ describe('AccessSessionCorrelator', () => {
       deviceId: 'dev-1',
       deviceType: 'blulok',
       remoteCommandId: 'cmd-1',
+      method: 'local_device',
       occurredAt: openedAt,
     });
     expect(open.state).toBe('open');
+    expect(open.method).toBe('admin_remote');
     expect(open.opened_at?.toISOString()).toBe(openedAt.toISOString());
 
     const closedAt = new Date('2026-08-04T22:04:12.000Z');
@@ -341,5 +343,141 @@ describe('AccessSessionCorrelator', () => {
     });
     expect(attached.id).toBe(pending.id);
     expect(attached.attempt_count).toBe(2);
+  });
+
+  it('confirmLockedIfLive closes pending without synthesizing when already locked', async () => {
+    const pending = await correlator.onCloudRemoteUnlockIssued({
+      facilityId: 'fac-1',
+      deviceId: 'dev-1',
+      commandId: 'cmd-same-state-lock',
+      method: 'admin_remote',
+      deviceType: 'blulok',
+      initiator: { type: 'user', id: 'u1', name: 'Admin', role: 'admin' },
+      expiresAt: new Date(Date.now() + 60_000),
+    });
+    const closed = await correlator.confirmLockedIfLive({
+      facilityId: 'fac-1',
+      deviceId: 'dev-1',
+      deviceType: 'blulok',
+    });
+    expect(closed?.id).toBe(pending.id);
+    expect(closed?.state).toBe('closed');
+
+    const noop = await correlator.confirmLockedIfLive({
+      facilityId: 'fac-1',
+      deviceId: 'dev-1',
+      deviceType: 'blulok',
+    });
+    expect(noop).toBeNull();
+  });
+
+  it('prefers pending cloud_remote attach over absorbing a concurrent local open', async () => {
+    const local = await correlator.onDeviceUnlocked({
+      facilityId: 'fac-1',
+      deviceId: 'dev-1',
+      deviceType: 'blulok',
+      method: 'local_device',
+    });
+    expect(local.state).toBe('open');
+
+    const pending = await correlator.onCloudRemoteUnlockIssued({
+      facilityId: 'fac-1',
+      deviceId: 'dev-1',
+      commandId: 'cmd-prefer-pending',
+      method: 'admin_remote',
+      deviceType: 'blulok',
+      initiator: { type: 'user', id: 'u1', name: 'Admin', role: 'admin' },
+      expiresAt: new Date(Date.now() + 60_000),
+    });
+
+    const attached = await correlator.onGrantAccessEvent({
+      facilityId: 'fac-1',
+      deviceId: 'dev-1',
+      deviceType: 'blulok',
+      method: 'mobile_key',
+      actor: { type: 'user', id: 'u2', name: 'Tenant', role: 'tenant' },
+    });
+
+    expect(attached.id).toBe(pending.id);
+    expect(attached.id).not.toBe(local.id);
+    expect(attached.state).toBe('pending');
+    expect(attached.attempt_count).toBe(2);
+    expect(attached.origin).toBe('cloud_remote');
+  });
+
+  it('opens pending mobile_key grant without overwriting method to local_device', async () => {
+    const pending = await correlator.onGrantAccessEvent({
+      facilityId: 'fac-1',
+      deviceId: 'dev-1',
+      deviceType: 'blulok',
+      method: 'mobile_key',
+      actor: { type: 'user', id: 'u1', name: 'FM', role: 'facility_admin' },
+    });
+    expect(pending.state).toBe('pending');
+    expect(pending.method).toBe('mobile_key');
+
+    const opened = await correlator.onDeviceUnlocked({
+      facilityId: 'fac-1',
+      deviceId: 'dev-1',
+      deviceType: 'blulok',
+      method: 'local_device',
+    });
+    expect(opened.id).toBe(pending.id);
+    expect(opened.state).toBe('open');
+    expect(opened.method).toBe('mobile_key');
+    expect(opened.actor_id).toBe('u1');
+    expect(opened.actor_name).toBe('FM');
+  });
+
+  it('absorbs recent local open into a later mobile_key grant (unlock-before-grant)', async () => {
+    const openedAt = new Date();
+    const local = await correlator.onDeviceUnlocked({
+      facilityId: 'fac-1',
+      deviceId: 'dev-1',
+      deviceType: 'blulok',
+      method: 'local_device',
+      occurredAt: openedAt,
+    });
+    expect(local.origin).toBe('local');
+    expect(local.method).toBe('local_device');
+
+    const granted = await correlator.onGrantAccessEvent({
+      facilityId: 'fac-1',
+      deviceId: 'dev-1',
+      deviceType: 'blulok',
+      method: 'mobile_key',
+      actor: { type: 'user', id: 'u1', name: 'FM', role: 'facility_admin' },
+      occurredAt: new Date(openedAt.getTime() + 200),
+    });
+
+    expect(granted.id).toBe(local.id);
+    expect(granted.state).toBe('open');
+    expect(granted.origin).toBe('on_site');
+    expect(granted.method).toBe('mobile_key');
+    expect(granted.actor_id).toBe('u1');
+    expect(granted.actor_name).toBe('FM');
+  });
+
+  it('does not absorb a stale local open into a new grant', async () => {
+    const staleOpenAt = new Date(Date.now() - 5 * 60_000);
+    const local = await correlator.onDeviceUnlocked({
+      facilityId: 'fac-1',
+      deviceId: 'dev-1',
+      deviceType: 'blulok',
+      method: 'local_device',
+      occurredAt: staleOpenAt,
+    });
+
+    const granted = await correlator.onGrantAccessEvent({
+      facilityId: 'fac-1',
+      deviceId: 'dev-1',
+      deviceType: 'blulok',
+      method: 'mobile_key',
+      actor: { type: 'user', id: 'u1', name: 'FM', role: 'facility_admin' },
+    });
+
+    expect(granted.id).not.toBe(local.id);
+    expect(granted.state).toBe('pending');
+    expect(granted.method).toBe('mobile_key');
   });
 });

@@ -27,6 +27,7 @@ jest.mock('@/services/lock-command.service', () => ({
   LockCommandService: {
     getInstance: jest.fn(() => ({
       peekCommandAttribution: mockPeekCommandAttribution,
+      peekCommandAttributionDurable: mockPeekCommandAttribution,
       tryConsumeAttribution: mockTryConsumeAttribution,
       consumeSuppressRevertActivityLog: mockConsumeSuppressRevertActivityLog,
       recordRemoteCommandSettlementMismatch: mockRecordRemoteCommandSettlementMismatch,
@@ -35,11 +36,24 @@ jest.mock('@/services/lock-command.service', () => ({
 }));
 
 const mockTryConsumeForUnlockState = jest.fn().mockReturnValue(null);
+const mockOnDeviceUnlocked = jest.fn().mockResolvedValue({ id: 'sess-1' });
+const mockOnDeviceLocked = jest.fn().mockResolvedValue({ id: 'sess-1' });
+const mockConfirmLockedIfLive = jest.fn().mockResolvedValue(null);
 
 jest.mock('@/services/occupied-unlock-intent.service', () => ({
   OccupiedUnlockIntentService: {
     getInstance: jest.fn(() => ({
       tryConsumeForUnlockState: mockTryConsumeForUnlockState,
+    })),
+  },
+}));
+
+jest.mock('@/services/access/access-session.service', () => ({
+  AccessSessionService: {
+    getInstance: jest.fn(() => ({
+      onDeviceUnlocked: mockOnDeviceUnlocked,
+      onDeviceLocked: mockOnDeviceLocked,
+      confirmLockedIfLive: mockConfirmLockedIfLive,
     })),
   },
 }));
@@ -204,13 +218,33 @@ describe('DeviceEventService logLockActivity', () => {
       commandId: 'cmd-3',
       requestedStatus: 'unlocked',
     });
+    expect(mockOnDeviceUnlocked).toHaveBeenCalledWith(
+      expect.objectContaining({
+        deviceId: 'dev-1',
+        remoteCommandId: 'cmd-3',
+        metadata: expect.objectContaining({ same_state_settle: true }),
+      }),
+    );
     expect(mockLogActivity).not.toHaveBeenCalled();
   });
 
-  it('ignores same-state re-reports with no pending attribution', async () => {
+  it('ignores same-state unlock re-reports with no pending attribution', async () => {
     mockPeekCommandAttribution.mockReturnValue(null);
     await emitLockChanged('unlocked', 'unlocked');
     expect(mockTryConsumeAttribution).not.toHaveBeenCalled();
+    expect(mockOnDeviceUnlocked).not.toHaveBeenCalled();
+    expect(mockLogActivity).not.toHaveBeenCalled();
+  });
+
+  it('closes live sessions on same-state locked re-reports without activity', async () => {
+    mockPeekCommandAttribution.mockReturnValue(null);
+    await emitLockChanged('locked', 'locked');
+    expect(mockConfirmLockedIfLive).toHaveBeenCalledWith(
+      expect.objectContaining({
+        deviceId: 'dev-1',
+        metadata: expect.objectContaining({ same_state_settle: true }),
+      }),
+    );
     expect(mockLogActivity).not.toHaveBeenCalled();
   });
 

@@ -129,16 +129,24 @@ registerGet(
     sharedAccessUserIds
   );
 
-  // Apply search filter
+  // Apply search filter (supports full "First Last" as well as partial field matches)
   if (search) {
-    const searchTerm = String(search).toLowerCase();
+    const searchTerm = String(search).toLowerCase().trim();
     filteredUsers = filteredUsers.filter(user => {
       const first = (user.first_name || '').toLowerCase();
       const last = (user.last_name || '').toLowerCase();
+      const fullName = `${first} ${last}`.trim();
       const email = (user.email || '').toLowerCase();
       const phone = String(user.phone_number || '').toLowerCase();
       const facNames = (user.facility_names || '').toLowerCase();
-      return first.includes(searchTerm) || last.includes(searchTerm) || email.includes(searchTerm) || phone.includes(searchTerm) || facNames.includes(searchTerm);
+      return (
+        fullName.includes(searchTerm)
+        || first.includes(searchTerm)
+        || last.includes(searchTerm)
+        || email.includes(searchTerm)
+        || phone.includes(searchTerm)
+        || facNames.includes(searchTerm)
+      );
     });
   }
 

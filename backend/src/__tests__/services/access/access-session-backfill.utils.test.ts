@@ -6,10 +6,14 @@ import {
   asDate,
   clampBackfillDays,
   computeOpenDurationSec,
+  cursorFromActivity,
   findLockInWindow,
+  findLockInWindowIndexed,
+  indexLocksByDevice,
   isDuplicateKeyError,
   isForeignKeyError,
   parseActivityMeta,
+  parseBackfillCursor,
   pickBestHostSession,
   resolveRemoteBackfillState,
   shouldAdvanceExistingSession,
@@ -120,7 +124,7 @@ describe('access-session-backfill.utils', () => {
     });
   });
 
-  describe('findLockInWindow / pickBestHostSession', () => {
+  describe('findLockInWindow / indexed locks / pickBestHostSession', () => {
     const t0 = new Date('2026-01-01T12:00:00Z');
 
     it('finds the first unclaimed lock within the attach window', () => {
@@ -141,6 +145,31 @@ describe('access-session-backfill.utils', () => {
       const found = findLockInWindow(rows, 'd1', t0, new Set());
       expect(found?.id).toBe('lock-ok');
       expect(findLockInWindow(rows, 'd1', t0, new Set(['lock-ok']))).toBeUndefined();
+    });
+
+    it('indexLocksByDevice sorts and findLockInWindowIndexed binary-searches', () => {
+      const rows = [];
+      for (let i = 0; i < 50; i++) {
+        rows.push({
+          id: `lock-${i}`,
+          activity_type: 'lock' as const,
+          device_id: 'd1',
+          occurred_at: new Date(t0.getTime() + i * 60_000),
+        });
+      }
+      rows.push({
+        id: 'other',
+        activity_type: 'lock' as const,
+        device_id: 'd2',
+        occurred_at: new Date(t0.getTime() + 10_000),
+      });
+      const index = indexLocksByDevice(rows);
+      expect(index.get('d1')).toHaveLength(50);
+      expect(index.get('d1')![0].id).toBe('lock-0');
+      const unlockAt = new Date(t0.getTime() + 10 * 60_000);
+      const found = findLockInWindowIndexed(index, 'd1', unlockAt, new Set(['lock-10']));
+      expect(found?.id).toBe('lock-11');
+      expect(findLockInWindowIndexed(index, 'd2', t0, new Set())).toMatchObject({ id: 'other' });
     });
 
     it('prefers open hosts over pending/closed', () => {
@@ -168,6 +197,22 @@ describe('access-session-backfill.utils', () => {
         },
       ]);
       expect(best?.id).toBe('open');
+    });
+  });
+
+  describe('cursor helpers', () => {
+    it('serializes and parses resume cursors', () => {
+      const row = { id: 'abc', occurred_at: '2026-06-01T10:00:00.000Z' };
+      const cursor = cursorFromActivity(row);
+      expect(cursor).toEqual({
+        afterOccurredAt: '2026-06-01T10:00:00.000Z',
+        afterId: 'abc',
+      });
+      const parsed = parseBackfillCursor(cursor);
+      expect(parsed?.afterId).toBe('abc');
+      expect(parsed?.afterOccurredAt.toISOString()).toBe('2026-06-01T10:00:00.000Z');
+      expect(parseBackfillCursor(null)).toBeNull();
+      expect(parseBackfillCursor({ afterOccurredAt: 'nope', afterId: 'x' })).toBeNull();
     });
   });
 

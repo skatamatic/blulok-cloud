@@ -1275,23 +1275,16 @@ export class DeviceModel {
       (updates.lock_status === 'locked' || updates.lock_status === 'unlocked') &&
       updates.lock_status === oldLockStatus
     ) {
-      // Mirror access-control: settle pending remote commands even when hardware
-      // re-reports the same terminal state (e.g. unlock failed — stayed locked).
-      void import('@/services/lock-command.service')
-        .then(({ LockCommandService }) => {
-          const lockCommandService = LockCommandService.getInstance();
-          if (!lockCommandService.hasPendingLockCommand(device.id)) return;
-          this.eventService.emitLockStatusChanged({
-            deviceId: device.id,
-            oldStatus: oldLockStatus || 'unknown',
-            newStatus: updates.lock_status!,
-            gatewayId: device.gateway_id,
-            unitId: device.unit_id,
-          });
-        })
-        .catch((err) => {
-          logger.warn('Failed to settle pending BluLok lock command on unchanged state', err);
-        });
+      // Same terminal re-report: still emit so attribution + access_sessions can settle
+      // (pending remote commands, orphan open/pending sessions). Activity logger no-ops
+      // when there is nothing to settle and skips duplicate success rows.
+      this.eventService.emitLockStatusChanged({
+        deviceId: device.id,
+        oldStatus: oldLockStatus || 'unknown',
+        newStatus: updates.lock_status,
+        gatewayId: device.gateway_id,
+        unitId: device.unit_id,
+      });
     }
 
     if (diff.deviceStatusChanged && updates.device_status) {

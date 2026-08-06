@@ -1,6 +1,12 @@
 /** Short window for on-site grant → physical open correlation when no facility timeout applies. */
 export const ON_SITE_GRANT_TO_OPEN_TTL_SEC = 60;
 
+/**
+ * When devices/state unlock arrives before the gateway grant event, absorb a recent
+ * anonymous/local open session into the grant instead of creating an orphan pending.
+ */
+export const ON_SITE_GRANT_ABSORB_OPEN_WINDOW_SEC = 60;
+
 /** Default poll interval for pending session expiry sweeper. */
 export const ACCESS_SESSION_SWEEPER_INTERVAL_MS = 30_000;
 

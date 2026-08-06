@@ -38,10 +38,10 @@ Owned by `AccessSessionCorrelator` (`backend/src/services/access/access-session-
 
 1. **Cloud remote unlock issued** → `pending`, `origin: cloud_remote`, `remote_command_id`, `expires_at = now + facility lock_command_timeout_sec` (or 60s one-shot TTL).
 2. **Cloud failure / timeout / mismatch** → same session → `failed` / `timed_out` (no second row).
-3. **Gateway grant** (`app` / `mobile_key` / `keypad` / `route_pass`) → bump `attempt_count` on matching **open** session; else attach to pending cloud; else create `pending` `origin: on_site` (60s grant→open TTL).
+3. **Gateway grant** (`app` / `mobile_key` / `keypad` / `route_pass`) → bump `attempt_count` on matching **open** session (same method + actor); else **attach** to pending `cloud_remote` (takes priority over absorb); else **absorb** a recent anonymous `local` / `local_device` open on the same device (unlock-before-grant race, ~60s window) by upgrading method/actor/`origin: on_site`; else create `pending` `origin: on_site` (60s grant→open TTL).
 4. **Gateway denial** → always a new terminal `denied` session.
-5. **`devices/state` → unlocked** → open newest pending (prefer `remote_command_id`); else create `origin: local` open session.
-6. **`devices/state` → locked** → close newest open unlock session (set duration). Never create a standalone lock row — attach to the latest unlock session on the device, or synthesize a local access closed at lock time if none exists.
+5. **`devices/state` → unlocked** → open newest pending (prefer `remote_command_id`); when state reports generic `local_device`/`automatic`, keep the pending method (`admin_remote`, `mobile_key`, `app`, …); else create `origin: local` open session. Same-state unlocked re-reports that match a pending remote command still open that session (no duplicate activity row).
+6. **`devices/state` → locked** → close newest open unlock session (set duration). Never create a standalone lock row — attach to the latest unlock session on the device, or synthesize a local access closed at lock time if none exists. Same-state locked re-reports still close live open/pending sessions (no synthesize, no duplicate activity row).
 7. **Sweeper** (~30s) → pending past `expires_at` → `timed_out`.
 
 `open` / `closed` are never fabricated from timeouts. Manual / local locks always appear as the **Locked** step on an unlock session timeline — never as a separate "Manually locked" history row.
@@ -88,7 +88,8 @@ Access History page and Access History widget call **`GET /access-sessions`**:
 - Table columns (sessions): **Unit / Device** (method icon + subject) · User · Method · Status · Time. Raw view keeps Action · User · Unit · Method · Status · Time.
 - Expanded row (page): timeline rail centered in the same-width column as the parent method icon (`w-8` / widget `w-7`) with matching `gap-2.5`, so markers align under the row icon.
   - **Remote:** Requested → Opened → Locked (pending: Waiting for device to unlock with spinner; timeout: Requested → Timed out).
-  - **Keypad / app / other on-site:** near-instant **Unlocked → Locked** (or single **Denied**) — no Requested/Granted/Opened split.
+  - **Mobile key / app / route pass:** **Access granted** → Waiting for unlock | **Unlocked** → Locked | **Timed out** (grant confirmation lag is first-class).
+  - **Keypad success:** near-instant **Unlocked → Locked** (or single **Denied**); keypad pending/timeout still uses Access granted → waiting / timed out.
   - Markers: open lock / closed lock / cloud (requested) / X (denied) / warning triangle (timeout, amber); spinner while waiting.
   - When no person can be attributed (e.g. keypad), User shows muted **Not identified** and unlock detail can say **via keypad**.
 - Widget (medium+): compact horizontal rows — **unit · method title** left, **status pill** top-right, user · time below; click expands timeline. Small size stays a dense strip without expand.
@@ -105,18 +106,25 @@ Re-runnable (not part of the migration). Correlates last N days (default 90, max
 
 **Production behavior (`AccessSessionBackfillService`):**
 
-- Single-flight via MySQL `GET_LOCK` (non-blocking); concurrent runs return `skippedBusy` (HTTP **409** from admin API).
-- Cursor-batched load of unlinked activities; per-session **transactions** (session write + activity links atomic).
+- Single-flight via MySQL `GET_LOCK` (non-blocking) on **write** runs only; dry-run does not hold the lock.
+- Cursor-batched load of unlinked activities (cap per chunk); per-session **transactions** (session write + batched activity links).
+- Lock attach uses a per-device sorted index (not a full-array scan); host lookup prefers in-run sessions, then a `LIMIT 1` DB probe (cached per device).
 - Unique `remote_command_id` races attach to the winner instead of failing.
 - Never downgrades live **pending/open** sessions from grant-only historical rows (links only).
-- Dry-run lock accounting mirrors host-attach vs synthesize (same counts as a real run).
+- Dry-run lock accounting mirrors host-attach vs synthesize (same counts as a real run within a chunk).
 - FK misses null `facility_id`/`unit_id` and retry; per-item errors are skipped and counted.
 - On-site grant↔unlock coalescing is **weaker** than live `AccessSessionCorrelator` (remote_command_id + time windows only).
 - Historical unlock without a later lock is stored **closed** (avoids flooding Needs attention); live path keeps `open`.
 
-**Developer Tools (preferred):** Database tab → **Backfill Access Sessions** (DEV_ADMIN). Supports days + dry-run. Calls `POST /api/v1/admin/access-sessions/backfill`.
+**HTTP chunking (Developer Tools / admin API):**
 
-**CLI:**
+`POST /api/v1/admin/access-sessions/backfill` runs with a ~45s wall-clock budget and a row cap. Each response includes `results.done` and optional `results.cursor`. The UI loops until `done: true`.
+
+This avoids Cloud Run / edge killing a multi-minute write request mid-flight. Those kills return **no HTTP body and no CORS headers**, which browsers surface as a CORS / `ERR_FAILED` error even though CORS config is fine (dry-run succeeding is the tell).
+
+**Developer Tools (preferred):** Database tab → **Backfill Access Sessions** (DEV_ADMIN). Supports days + dry-run. Auto-continues chunks and shows running totals.
+
+**CLI** (no time budget; still resumes across the row-cap automatically):
 
 ```bash
 cd backend

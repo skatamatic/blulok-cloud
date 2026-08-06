@@ -20,19 +20,57 @@ async function main(): Promise<void> {
   const db = DatabaseService.getInstance();
   await db.initialize();
 
-  const result = await AccessSessionBackfillService.getInstance().run({ days, dryRun });
-  if (result.skippedBusy) {
-    console.error('Backfill already running (advisory lock held). Try again later.');
-    process.exit(1);
+  // CLI runs without a wall-clock budget but still resumes across row-cap chunks.
+  let cursor: { afterOccurredAt: string; afterId: string } | null = null;
+  let totalCreated = 0;
+  let totalUpdated = 0;
+  let totalLinks = 0;
+  let totalLocksAttached = 0;
+  let totalLocksSynthesized = 0;
+  let totalSkippedNoDevice = 0;
+  let totalSkippedErrors = 0;
+  let lastUnlinked = 0;
+  let chunk = 0;
+
+  for (;;) {
+    chunk += 1;
+    const result = await AccessSessionBackfillService.getInstance().run({
+      days,
+      dryRun,
+      cursor,
+    });
+    if (result.skippedBusy) {
+      console.error('Backfill already running (advisory lock held). Try again later.');
+      process.exit(1);
+    }
+    lastUnlinked = result.unlinkedActivityRows;
+    totalCreated += result.sessionsCreated;
+    totalUpdated += result.sessionsUpdated;
+    totalLinks += result.activityLinks;
+    totalLocksAttached += result.locksAttached;
+    totalLocksSynthesized += result.locksSynthesized;
+    totalSkippedNoDevice += result.skippedNoDevice;
+    totalSkippedErrors += result.skippedErrors;
+    console.log(
+      `Chunk ${chunk}: unlinked=${result.unlinkedActivityRows} created=${result.sessionsCreated} `
+      + `updated=${result.sessionsUpdated} links=${result.activityLinks} done=${result.done}`,
+    );
+    if (result.done) break;
+    if (!result.cursor) {
+      console.error('Backfill returned done=false without a cursor; stopping to avoid a loop.');
+      process.exit(1);
+    }
+    cursor = result.cursor;
   }
+
   console.log(
-    `Done. unlinked=${result.unlinkedActivityRows} created=${result.sessionsCreated} `
-    + `updated=${result.sessionsUpdated} links=${result.activityLinks} `
-    + `locksAttached=${result.locksAttached} locksSynthesized=${result.locksSynthesized} `
-    + `skippedNoDevice=${result.skippedNoDevice} skippedErrors=${result.skippedErrors} `
-    + `days=${result.days} dryRun=${result.dryRun}`,
+    `Done. lastChunkUnlinked=${lastUnlinked} created=${totalCreated} `
+    + `updated=${totalUpdated} links=${totalLinks} `
+    + `locksAttached=${totalLocksAttached} locksSynthesized=${totalLocksSynthesized} `
+    + `skippedNoDevice=${totalSkippedNoDevice} skippedErrors=${totalSkippedErrors} `
+    + `days=${days ?? 'default'} dryRun=${dryRun} chunks=${chunk}`,
   );
-  process.exit(result.skippedErrors > 0 ? 2 : 0);
+  process.exit(totalSkippedErrors > 0 ? 2 : 0);
 }
 
 main().catch((err) => {

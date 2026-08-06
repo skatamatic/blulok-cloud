@@ -27,6 +27,8 @@ export type TimelineStep = {
   icon: TimelineStepIcon;
 };
 
+const ON_SITE_GRANT_METHODS = new Set(['app', 'mobile_key', 'keypad', 'route_pass']);
+
 /** Cloud remote unlock — Requested vs Opened matter because confirmation can lag. */
 export function isRemoteCommandSession(session: AccessSession): boolean {
   return (
@@ -34,6 +36,24 @@ export function isRemoteCommandSession(session: AccessSession): boolean {
     || session.method === 'admin_remote'
     || session.method === 'remote_gateway'
   );
+}
+
+/**
+ * On-site credential grant that waits for physical unlock confirmation.
+ * Mobile key / app / route pass always use the grant timeline.
+ * Keypad success stays compact (Unlocked → Locked); keypad pending/timeout still
+ * shows Access granted → waiting / timed out.
+ */
+export function isOnSiteGrantSession(session: AccessSession): boolean {
+  if (isRemoteCommandSession(session)) return false;
+  if (!ON_SITE_GRANT_METHODS.has(session.method)) return false;
+  // Denials stay a single Denied step (no preceding "Access granted").
+  if (session.state === 'denied') return false;
+  // Keypad success is near-instant — keep Unlocked → Locked.
+  if (session.method === 'keypad' && (session.state === 'open' || session.state === 'closed')) {
+    return false;
+  }
+  return true;
 }
 
 function denialDetail(session: AccessSession): string {
@@ -56,7 +76,15 @@ function joinDetails(...parts: Array<string | null | undefined>): string | null 
   return cleaned.length > 0 ? cleaned.join(' · ') : null;
 }
 
-/** Keypad / app / other on-site: one near-instant unlock step (+ Locked). */
+function timeoutDetail(session: AccessSession): string {
+  return (
+    session.reason?.trim()
+    || DENIAL_REASON_LABELS.timeout
+    || 'No unlock confirmation from device'
+  );
+}
+
+/** Pure local / unknown: Unlocked → Locked (no separate grant step). */
 function buildInstantTimelineSteps(session: AccessSession): TimelineStep[] {
   const whoOrMethod = getAccessSessionRequestDetail(session);
 
@@ -80,9 +108,7 @@ function buildInstantTimelineSteps(session: AccessSession): TimelineStep[] {
         title: session.state === 'timed_out' ? 'Timed out' : 'Failed',
         detail:
           session.state === 'timed_out'
-            ? (session.reason?.trim()
-              || DENIAL_REASON_LABELS.timeout
-              || 'No unlock confirmation from device')
+            ? timeoutDetail(session)
             : (session.reason?.trim() || denialDetail(session) || 'Failed'),
         at: session.settled_at || session.expires_at || session.started_at,
         tone: session.state === 'timed_out' ? 'warning' : 'danger',
@@ -114,6 +140,93 @@ function buildInstantTimelineSteps(session: AccessSession): TimelineStep[] {
       title: 'Locked',
       at: session.closed_at,
       deltaFromPrev: formatStepDelta(unlockedAt, session.closed_at),
+      tone: 'neutral',
+      icon: 'locked',
+    });
+  }
+
+  return steps;
+}
+
+/**
+ * On-site grant: Access granted → Waiting for unlock | Timed out | Unlocked → Locked.
+ */
+function buildOnSiteGrantTimelineSteps(session: AccessSession): TimelineStep[] {
+  const whoOrMethod = getAccessSessionRequestDetail(session);
+  const steps: TimelineStep[] = [
+    {
+      id: 'granted',
+      title: 'Access granted',
+      detail: joinDetails(whoOrMethod, attemptDetail(session)),
+      at: session.started_at,
+      tone: 'neutral',
+      icon: 'granted',
+    },
+  ];
+
+  if (session.state === 'denied') {
+    steps.push({
+      id: 'denied',
+      title: 'Denied',
+      detail: denialDetail(session),
+      at: session.settled_at || session.started_at,
+      deltaFromPrev: formatStepDelta(session.started_at, session.settled_at || session.started_at),
+      tone: 'danger',
+      icon: 'denied',
+    });
+    return steps;
+  }
+
+  if (session.state === 'failed' || session.state === 'timed_out') {
+    steps.push({
+      id: session.state === 'timed_out' ? 'timed_out' : 'failed',
+      title: session.state === 'timed_out' ? 'Timed out' : 'Failed',
+      detail:
+        session.state === 'timed_out'
+          ? timeoutDetail(session)
+          : (session.reason?.trim() || denialDetail(session) || 'Failed'),
+      at: session.settled_at || session.expires_at || session.started_at,
+      deltaFromPrev: formatStepDelta(
+        session.started_at,
+        session.settled_at || session.expires_at || session.started_at,
+      ),
+      tone: session.state === 'timed_out' ? 'warning' : 'danger',
+      icon: session.state === 'timed_out' ? 'timed_out' : 'failed',
+    });
+    return steps;
+  }
+
+  if (session.state === 'pending') {
+    steps.push({
+      id: 'waiting_unlock',
+      title: 'Waiting for device to unlock',
+      detail: attemptDetail(session),
+      at: session.started_at,
+      waiting: true,
+      tone: 'success',
+      icon: 'waiting',
+    });
+    return steps;
+  }
+
+  const openedAt = session.opened_at || session.started_at;
+  steps.push({
+    id: 'unlocked',
+    title: 'Unlocked',
+    detail: session.state === 'open' ? 'Waiting for re-lock' : attemptDetail(session),
+    at: openedAt,
+    deltaFromPrev: formatStepDelta(session.started_at, openedAt),
+    waiting: session.state === 'open',
+    tone: 'success',
+    icon: session.state === 'open' ? 'waiting' : 'opened',
+  });
+
+  if (session.closed_at || session.state === 'closed') {
+    steps.push({
+      id: 'locked',
+      title: 'Locked',
+      at: session.closed_at,
+      deltaFromPrev: formatStepDelta(session.opened_at, session.closed_at),
       tone: 'neutral',
       icon: 'locked',
     });
@@ -155,9 +268,7 @@ function buildRemoteTimelineSteps(session: AccessSession): TimelineStep[] {
       title: session.state === 'timed_out' ? 'Timed out' : 'Failed',
       detail:
         session.state === 'timed_out'
-          ? (session.reason?.trim()
-            || DENIAL_REASON_LABELS.timeout
-            || 'No unlock confirmation from device')
+          ? timeoutDetail(session)
           : (session.reason?.trim() || denialDetail(session) || 'Failed'),
       at: session.settled_at || session.expires_at || session.started_at,
       deltaFromPrev: formatStepDelta(
@@ -210,7 +321,7 @@ function buildRemoteTimelineSteps(session: AccessSession): TimelineStep[] {
 }
 
 export function buildAccessSessionTimelineSteps(session: AccessSession): TimelineStep[] {
-  return isRemoteCommandSession(session)
-    ? buildRemoteTimelineSteps(session)
-    : buildInstantTimelineSteps(session);
+  if (isRemoteCommandSession(session)) return buildRemoteTimelineSteps(session);
+  if (isOnSiteGrantSession(session)) return buildOnSiteGrantTimelineSteps(session);
+  return buildInstantTimelineSteps(session);
 }

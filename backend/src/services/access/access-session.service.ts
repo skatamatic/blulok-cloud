@@ -92,6 +92,15 @@ export class AccessSessionService {
     return session;
   }
 
+  /** Same-state locked confirm: close open/pending only (no synthesized session). */
+  async confirmLockedIfLive(params: LockStateParams): Promise<AccessSession | null> {
+    const session = await this.correlator.confirmLockedIfLive(params);
+    if (session) {
+      this.emitUpsert(session, ['state', 'closed_at', 'open_duration_sec', 'settled_at']);
+    }
+    return session;
+  }
+
   async failOrTimeout(params: FailSessionParams): Promise<AccessSession | null> {
     const session = await this.correlator.failOrTimeout(params);
     if (session) this.emitUpsert(session, ['state', 'outcome', 'settled_at']);

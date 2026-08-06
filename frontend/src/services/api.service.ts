@@ -516,11 +516,16 @@ class ApiService {
     return response.data as { success: boolean; facilityId: string };
   }
 
-  /** DEV_ADMIN: correlate activity_logs into access_sessions (last N days). */
-  async backfillAccessSessions(params?: { days?: number; dryRun?: boolean }) {
+  /** DEV_ADMIN: correlate activity_logs into access_sessions (last N days). Chunked; pass cursor to continue. */
+  async backfillAccessSessions(params?: {
+    days?: number;
+    dryRun?: boolean;
+    cursor?: { afterOccurredAt: string; afterId: string } | null;
+  }) {
     const response = await this.api.post('/admin/access-sessions/backfill', {
       days: params?.days,
       dryRun: params?.dryRun === true,
+      cursor: params?.cursor ?? undefined,
     });
     return response.data as {
       success: boolean;
@@ -530,7 +535,15 @@ class ApiService {
         dryRun: boolean;
         unlinkedActivityRows: number;
         sessionsCreated: number;
+        sessionsUpdated: number;
         activityLinks: number;
+        locksAttached: number;
+        locksSynthesized: number;
+        skippedNoDevice: number;
+        skippedErrors: number;
+        skippedBusy: boolean;
+        done: boolean;
+        cursor: { afterOccurredAt: string; afterId: string } | null;
       };
       error?: string;
     };

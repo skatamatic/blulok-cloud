@@ -12,6 +12,7 @@ const dotenv = require('dotenv');
  *   device_status_update (HTTP + gateway lock_status), units_update, gateway_status_update
  *   Access-control unlock settlement: unchanged gateway locked:true while a remote OPEN is pending
  *   must still fan out lock_status locked on device_status (clears UI unlocking state).
+ *   Access History mobile_key: grant→unlock keeps method/actor; unlock→grant absorbs local open.
  * Uses DEV_ADMIN (or env overrides) to provision facility/gateway/device, then validates
  * the same paths the web app uses (UI_WS_URL + subscription JSON).
  *
@@ -2771,13 +2772,19 @@ async function run() {
     }
 
     async function findUserByName(authToken, firstName, lastName) {
-      const res = await axios.get(`${API_BASE}/users`, {
-        headers: { Authorization: `Bearer ${authToken}` },
-        params: { search: `${firstName} ${lastName}`, limit: 20 },
-      });
-      return (res.data?.users || []).find(
+      const match = (users) => (users || []).find(
         (u) => (u.firstName || u.first_name) === firstName && (u.lastName || u.last_name) === lastName,
       ) || null;
+      // Prefer full-name search; fall back to first-name if API only matches single fields.
+      for (const search of [`${firstName} ${lastName}`, firstName]) {
+        const res = await axios.get(`${API_BASE}/users`, {
+          headers: { Authorization: `Bearer ${authToken}` },
+          params: { search, limit: 50 },
+        });
+        const found = match(res.data?.users);
+        if (found) return found;
+      }
+      return null;
     }
 
     let placeholderUser = await findUserByName(token, 'Edythe', 'Orn');
@@ -3043,26 +3050,36 @@ async function run() {
     heading('Access History — BluLok remote unlock (3-row semantics)');
     step('Settle prior cloud unlock pending, then lock device locally for clean cycle');
     {
-      const settlePrior = await stateSync(
-        ws,
-        facilityId,
-        [gwLockDevice({ lock_id: remainingSerial, locked: false, state: 'OPENED', online: true })],
-        `req-hist-settle-prior-${Date.now()}`,
-      );
-      if (settlePrior.status !== 200) {
-        throw new Error(`Prior unlock settle failed: ${settlePrior.status} ${JSON.stringify(settlePrior.body)}`);
+      // Prefer lock-only drain: lock settles open sessions and pending (locked_without_open).
+      // Unlocking when already open would spawn extra local opens.
+      for (let i = 0; i < 6; i++) {
+        const openCheck = await axios.get(`${API_BASE}/access-sessions`, {
+          headers: authHeaders(token),
+          params: { facility_id: facilityId, device_id: deviceId, limit: 30 },
+        });
+        const live = (openCheck.data?.sessions || []).filter(
+          (s) => s.state === 'open' || s.state === 'pending',
+        );
+        if (live.length === 0) break;
+
+        const preLock = await stateSync(
+          ws,
+          facilityId,
+          [gwLockDevice({ lock_id: remainingSerial, locked: true, state: 'CLOSED', online: true })],
+          `req-hist-prelock-${i}-${Date.now()}`,
+        );
+        if (preLock.status !== 200) {
+          throw new Error(`Pre-lock for history cycle failed: ${preLock.status} ${JSON.stringify(preLock.body)}`);
+        }
+        await delay(300);
+        if (i === 5) {
+          throw new Error(
+            `Could not drain open/pending sessions before remote unlock history cycle: ${
+              live.map((s) => `${s.origin}/${s.method}/${s.state}`).join(',')
+            }`,
+          );
+        }
       }
-      await delay(400);
-      const preLock = await stateSync(
-        ws,
-        facilityId,
-        [gwLockDevice({ lock_id: remainingSerial, locked: true, state: 'CLOSED', online: true })],
-        `req-hist-prelock-${Date.now()}`,
-      );
-      if (preLock.status !== 200) {
-        throw new Error(`Pre-lock for history cycle failed: ${preLock.status} ${JSON.stringify(preLock.body)}`);
-      }
-      await delay(400);
       ok('Device locked and ready for remote unlock history cycle');
     }
 
@@ -3150,19 +3167,20 @@ async function run() {
       }
       ok('Access session pending after cloud unlock');
 
-      step('While pending, attempt grant-like access-events (must be suppressed)');
+      step('While pending, grant-like access-events attach (attempt_count) without replacing remote actor');
       {
-        const suppressEvtId = `evt-suppress-remote-${Date.now()}`;
-        const reqSuppress = `req-access-suppress-${Date.now()}`;
+        const priorAttempts = Number(pendingHit.session.attempt_count || 1);
+        const attachEvtId = `evt-attach-remote-${Date.now()}`;
+        const reqAttach = `req-access-attach-${Date.now()}`;
         ws.send(JSON.stringify({
           type: 'PROXY_REQUEST',
-          id: reqSuppress,
+          id: reqAttach,
           method: 'POST',
           path: '/internal/gateway/access-events',
           body: {
             facility_id: facilityId,
             events: [{
-              event_id: suppressEvtId,
+              event_id: attachEvtId,
               occurred_at: new Date().toISOString(),
               facility_id: facilityId,
               unit_id: unitId,
@@ -3170,19 +3188,45 @@ async function run() {
               action: 'access_granted',
               method: 'mobile_key',
               success: true,
-              actor: { role: 'tenant', name: 'Should Not Persist' },
+              actor: { role: 'tenant', name: 'Should Not Replace Remote Actor' },
             }],
           },
         }));
-        const respSuppress = await waitForProxyResponse(ws, reqSuppress);
-        if (respSuppress.status !== 200) {
-          throw new Error(`Suppress access-events request failed: ${respSuppress.status} ${JSON.stringify(respSuppress.body)}`);
+        const respAttach = await waitForProxyResponse(ws, reqAttach);
+        if (respAttach.status !== 200) {
+          throw new Error(`Attach access-events request failed: ${respAttach.status} ${JSON.stringify(respAttach.body)}`);
         }
-        const ingested = respSuppress.body?.data?.ingested;
-        if (ingested !== 0) {
-          throw new Error(`Expected suppressed grant ingest ingested=0, got ${ingested}`);
+        const ingested = respAttach.body?.data?.ingested ?? respAttach.body?.ingested;
+        if (ingested !== 1) {
+          throw new Error(`Expected grant attach ingest ingested=1, got ${ingested}`);
         }
-        ok('Pending-remote grant-like access-event suppressed (ingested=0)');
+        const attached = await waitForAccessSession(
+          axios,
+          API_BASE,
+          authHeaders(token),
+          sessionListParams,
+          (s) =>
+            s
+            && s.id === pendingHit.session.id
+            && s.state === 'pending'
+            && s.origin === 'cloud_remote'
+            && Number(s.attempt_count || 0) >= priorAttempts + 1,
+          10000,
+        );
+        if (!attached.session) {
+          throw new Error(
+            `Expected pending cloud_remote ${pendingHit.session.id} attempt_count>=${priorAttempts + 1}; got ${
+              (attached.sessions || [])
+                .map((s) => `${s.id.slice(0, 8)}/${s.origin}/${s.state}/attempts=${s.attempt_count}`)
+                .join(',') || 'none'
+            }`,
+          );
+        }
+        const attachedActorName = attached.session.actor_name || attached.session.actorName || '';
+        if (String(attachedActorName).includes('Should Not Replace')) {
+          throw new Error(`On-site grant must not overwrite cloud_remote actor; got actor_name=${attachedActorName}`);
+        }
+        ok(`Pending-remote grant attached (attempt_count ${priorAttempts}→${attached.session.attempt_count})`);
       }
 
       step('Settle unlock via devices/state (expect open session + currently_open)');
@@ -3367,14 +3411,318 @@ async function run() {
         }
       }
 
-      const spuriousGrant = inWindow.find(
+      // Pending-remote attach step intentionally ingests one on-site grant (session linkage
+      // already asserted via attempt_count on the cloud_remote session).
+      const attachedGrants = inWindow.filter(
         (l) => l.action === 'access_granted' && l.method === 'mobile_key',
       );
-      if (spuriousGrant) {
-        throw new Error('Unexpected access_granted/mobile_key row during remote unlock cycle');
+      if (attachedGrants.length !== 1) {
+        throw new Error(
+          `Expected exactly 1 attached access_granted/mobile_key during pending remote, got ${attachedGrants.length}`,
+        );
       }
 
-      ok('Access History raw 3-row remote unlock cycle verified (grant + site unlock + manual lock)');
+      ok('Access History raw remote unlock cycle verified (remote grant + attach + site unlock + manual lock)');
+    }
+
+    // ---- Access History: on-site mobile_key grant ↔ physical unlock correlation ----
+    heading('Access History — mobile_key grant/unlock correlation');
+    {
+      async function ensureDeviceLockedForMobileKeyCycle(label) {
+        // Lock-only drain: settles open + pending without spawning extra local opens.
+        for (let i = 0; i < 6; i++) {
+          const openCheck = await axios.get(`${API_BASE}/access-sessions`, {
+            headers: authHeaders(token),
+            params: { facility_id: facilityId, device_id: deviceId, limit: 30 },
+          });
+          const live = (openCheck.data?.sessions || []).filter(
+            (s) => s.state === 'open' || s.state === 'pending',
+          );
+          if (live.length === 0) return;
+
+          const settleClosed = await stateSync(
+            ws,
+            facilityId,
+            [gwLockDevice({ lock_id: remainingSerial, locked: true, state: 'CLOSED', online: true })],
+            `req-mk-${label}-close-${i}-${Date.now()}`,
+          );
+          if (settleClosed.status !== 200) {
+            throw new Error(`mobile_key ${label}: settle-close failed: ${settleClosed.status}`);
+          }
+          await delay(300);
+        }
+        throw new Error(`mobile_key ${label}: device still has open/pending sessions after settle`);
+      }
+
+      async function postMobileKeyGrant(label, occurredAtIso) {
+        const evtId = `evt-mk-${label}-${Date.now()}`;
+        const reqId = `req-mk-grant-${label}-${Date.now()}`;
+        ws.send(JSON.stringify({
+          type: 'PROXY_REQUEST',
+          id: reqId,
+          method: 'POST',
+          path: '/internal/gateway/access-events',
+          body: {
+            facility_id: facilityId,
+            events: [{
+              event_id: evtId,
+              occurred_at: occurredAtIso,
+              facility_id: facilityId,
+              unit_id: unitId,
+              device_id: deviceId,
+              device_type: 'blulok',
+              action: 'access_granted',
+              method: 'mobile_key',
+              success: true,
+              actor: {
+                user_id: devAdminProfile.id,
+                role: 'dev_admin',
+                name: 'E2E Mobile Key User',
+              },
+            }],
+          },
+        }));
+        const resp = await waitForProxyResponse(ws, reqId);
+        if (resp.status !== 200) {
+          throw new Error(`mobile_key ${label}: access-events failed: ${resp.status} ${JSON.stringify(resp.body)}`);
+        }
+        const ingested = resp.body?.data?.ingested ?? resp.body?.ingested;
+        if (ingested !== 1) {
+          throw new Error(`mobile_key ${label}: expected ingested=1, got ${ingested}`);
+        }
+        return evtId;
+      }
+
+      // A) Grant then unlock: pending mobile_key must open and keep method + actor (not local_device).
+      step('mobile_key grant→unlock: preserve method/actor on open (not overwritten to local_device)');
+      await ensureDeviceLockedForMobileKeyCycle('grant-first');
+      const grantFirstStartedAtMs = Date.now();
+      const grantFirstQueryFrom = new Date(grantFirstStartedAtMs - 5000).toISOString();
+      await postMobileKeyGrant('grant-first', new Date().toISOString());
+      const grantFirstPending = await waitForAccessSession(
+        axios,
+        API_BASE,
+        authHeaders(token),
+        {
+          facility_id: facilityId,
+          device_id: deviceId,
+          date_from: grantFirstQueryFrom,
+          limit: 50,
+        },
+        (s) =>
+          s
+          && s.device_id === deviceId
+          && s.method === 'mobile_key'
+          && s.origin === 'on_site'
+          && s.state === 'pending'
+          && s.user_id === devAdminProfile.id
+          && new Date(s.started_at).getTime() >= grantFirstStartedAtMs - 5000,
+        10000,
+      );
+      if (!grantFirstPending.session) {
+        throw new Error(
+          `Expected pending mobile_key session with actor; got ${
+            (grantFirstPending.sessions || [])
+              .map((s) => `${s.origin}/${s.method}/${s.state}/user=${s.user_id || '-'}`)
+              .join(',') || 'none'
+          }`,
+        );
+      }
+      ok('mobile_key grant created pending on_site session with actor');
+
+      {
+        const settleUnlock = await stateSync(
+          ws,
+          facilityId,
+          [gwLockDevice({ lock_id: remainingSerial, locked: false, state: 'OPENED', online: true })],
+          `req-mk-grant-first-unlock-${Date.now()}`,
+        );
+        if (settleUnlock.status !== 200) {
+          throw new Error(`mobile_key grant→unlock settle failed: ${settleUnlock.status}`);
+        }
+      }
+      const grantFirstOpen = await waitForAccessSession(
+        axios,
+        API_BASE,
+        authHeaders(token),
+        {
+          facility_id: facilityId,
+          device_id: deviceId,
+          date_from: grantFirstQueryFrom,
+          limit: 50,
+        },
+        (s) =>
+          s
+          && s.id === grantFirstPending.session.id
+          && s.state === 'open'
+          && s.method === 'mobile_key'
+          && s.user_id === devAdminProfile.id,
+        10000,
+      );
+      if (!grantFirstOpen.session) {
+        throw new Error(
+          `Expected open mobile_key session (method not overwritten); pending id=${grantFirstPending.session.id} sessions=${
+            (grantFirstOpen.sessions || [])
+              .map((s) => `${s.id.slice(0, 8)}/${s.method}/${s.state}/user=${s.user_id || '-'}`)
+              .join(',') || 'none'
+          }`,
+        );
+      }
+      ok('devices/state unlock opened mobile_key session without demoting method to local_device');
+
+      {
+        const settleLock = await stateSync(
+          ws,
+          facilityId,
+          [gwLockDevice({ lock_id: remainingSerial, locked: true, state: 'CLOSED', online: true })],
+          `req-mk-grant-first-lock-${Date.now()}`,
+        );
+        if (settleLock.status !== 200) {
+          throw new Error(`mobile_key grant→unlock re-lock failed: ${settleLock.status}`);
+        }
+      }
+      const grantFirstClosed = await waitForAccessSession(
+        axios,
+        API_BASE,
+        authHeaders(token),
+        {
+          facility_id: facilityId,
+          device_id: deviceId,
+          date_from: grantFirstQueryFrom,
+          limit: 50,
+        },
+        (s) => s && s.id === grantFirstPending.session.id && s.state === 'closed' && s.method === 'mobile_key',
+        10000,
+      );
+      if (!grantFirstClosed.session) {
+        throw new Error('Expected closed mobile_key session after re-lock');
+      }
+      ok('mobile_key grant→unlock→lock collapsed to one closed session');
+
+      // B) Unlock-before-grant: anonymous local open must be absorbed into later mobile_key grant.
+      step('mobile_key unlock→grant: absorb recent local open (no orphan timed_out pending)');
+      await ensureDeviceLockedForMobileKeyCycle('unlock-first');
+      const unlockFirstStartedAtMs = Date.now();
+      const unlockFirstQueryFrom = new Date(unlockFirstStartedAtMs - 5000).toISOString();
+      {
+        const unlockFirst = await stateSync(
+          ws,
+          facilityId,
+          [gwLockDevice({ lock_id: remainingSerial, locked: false, state: 'OPENED', online: true })],
+          `req-mk-unlock-first-${Date.now()}`,
+        );
+        if (unlockFirst.status !== 200) {
+          throw new Error(`mobile_key unlock-first settle failed: ${unlockFirst.status}`);
+        }
+      }
+      const localOpen = await waitForAccessSession(
+        axios,
+        API_BASE,
+        authHeaders(token),
+        {
+          facility_id: facilityId,
+          device_id: deviceId,
+          date_from: unlockFirstQueryFrom,
+          limit: 50,
+        },
+        (s) =>
+          s
+          && s.device_id === deviceId
+          && s.state === 'open'
+          && (s.origin === 'local' || s.method === 'local_device')
+          && new Date(s.started_at).getTime() >= unlockFirstStartedAtMs - 5000,
+        10000,
+      );
+      if (!localOpen.session) {
+        throw new Error(
+          `Expected anonymous local open before grant; got ${
+            (localOpen.sessions || [])
+              .map((s) => `${s.origin}/${s.method}/${s.state}`)
+              .join(',') || 'none'
+          }`,
+        );
+      }
+      ok(`Anonymous local open created (${localOpen.session.id})`);
+
+      await postMobileKeyGrant('unlock-first', new Date().toISOString());
+      const absorbed = await waitForAccessSession(
+        axios,
+        API_BASE,
+        authHeaders(token),
+        {
+          facility_id: facilityId,
+          device_id: deviceId,
+          date_from: unlockFirstQueryFrom,
+          limit: 50,
+        },
+        (s) =>
+          s
+          && s.id === localOpen.session.id
+          && s.state === 'open'
+          && s.method === 'mobile_key'
+          && s.origin === 'on_site'
+          && s.user_id === devAdminProfile.id,
+        10000,
+      );
+      if (!absorbed.session) {
+        throw new Error(
+          `Expected local open ${localOpen.session.id} absorbed into mobile_key/on_site with actor; got ${
+            (absorbed.sessions || [])
+              .map((s) => `${s.id.slice(0, 8)}/${s.origin}/${s.method}/${s.state}/user=${s.user_id || '-'}`)
+              .join(',') || 'none'
+          }`,
+        );
+      }
+
+      // Must not have spawned a sibling pending mobile_key that will time out beside the open session.
+      const siblingPending = (absorbed.sessions || []).find(
+        (s) =>
+          s.id !== localOpen.session.id
+          && s.device_id === deviceId
+          && s.method === 'mobile_key'
+          && s.state === 'pending'
+          && new Date(s.started_at).getTime() >= unlockFirstStartedAtMs - 5000,
+      );
+      if (siblingPending) {
+        throw new Error(
+          `Unlock-before-grant spawned orphan pending mobile_key ${siblingPending.id} beside absorbed open`,
+        );
+      }
+      ok('Unlock-before-grant absorbed into one mobile_key session (no orphan pending)');
+
+      {
+        const settleLock = await stateSync(
+          ws,
+          facilityId,
+          [gwLockDevice({ lock_id: remainingSerial, locked: true, state: 'CLOSED', online: true })],
+          `req-mk-unlock-first-lock-${Date.now()}`,
+        );
+        if (settleLock.status !== 200) {
+          throw new Error(`mobile_key unlock-first re-lock failed: ${settleLock.status}`);
+        }
+      }
+      const absorbedClosed = await waitForAccessSession(
+        axios,
+        API_BASE,
+        authHeaders(token),
+        {
+          facility_id: facilityId,
+          device_id: deviceId,
+          date_from: unlockFirstQueryFrom,
+          limit: 50,
+        },
+        (s) =>
+          s
+          && s.id === localOpen.session.id
+          && s.state === 'closed'
+          && s.method === 'mobile_key'
+          && s.user_id === devAdminProfile.id,
+        10000,
+      );
+      if (!absorbedClosed.session) {
+        throw new Error('Expected absorbed mobile_key session to close with actor preserved');
+      }
+      ok('Absorbed mobile_key session closed with method + actor preserved');
     }
 
     // ---- Gateway-specific tests via PROXY_REQUEST over WS ----

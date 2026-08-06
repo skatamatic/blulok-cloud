@@ -787,12 +787,32 @@ registerPost(
     const dryRun = req.body?.dryRun === true || req.body?.dry_run === true;
     const daysRaw = Number(req.body?.days);
     const days = Number.isFinite(daysRaw) && daysRaw > 0 ? daysRaw : undefined;
+    const cursorRaw = req.body?.cursor;
+    const cursor =
+      cursorRaw
+      && typeof cursorRaw.afterOccurredAt === 'string'
+      && typeof cursorRaw.afterId === 'string'
+        ? {
+            afterOccurredAt: cursorRaw.afterOccurredAt,
+            afterId: cursorRaw.afterId,
+          }
+        : undefined;
 
     try {
-      const { AccessSessionBackfillService } = await import(
-        '@/services/access/access-session-backfill.service'
+      const {
+        AccessSessionBackfillService,
+      } = await import('@/services/access/access-session-backfill.service');
+      const { BACKFILL_HTTP_MAX_RUNTIME_MS } = await import(
+        '@/services/access/access-session-backfill.utils'
       );
-      const results = await AccessSessionBackfillService.getInstance().run({ days, dryRun });
+      // Time-budgeted chunks keep each HTTP response under Cloud Run / edge limits.
+      // Browser "CORS" failures on long writes are usually killed requests with no headers.
+      const results = await AccessSessionBackfillService.getInstance().run({
+        days,
+        dryRun,
+        cursor,
+        maxRuntimeMs: BACKFILL_HTTP_MAX_RUNTIME_MS,
+      });
       logger.info(`Access session backfill triggered by ${user.userId}`, results);
       if (results.skippedBusy) {
         res.status(409).json({
@@ -804,7 +824,9 @@ registerPost(
       }
       res.json({
         success: true,
-        message: dryRun ? 'Access session backfill dry-run completed' : 'Access session backfill completed',
+        message: results.done
+          ? (dryRun ? 'Access session backfill dry-run completed' : 'Access session backfill completed')
+          : (dryRun ? 'Access session backfill dry-run chunk completed' : 'Access session backfill chunk completed'),
         results,
       });
     } catch (error: unknown) {

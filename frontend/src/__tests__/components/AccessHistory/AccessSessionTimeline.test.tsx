@@ -94,6 +94,52 @@ describe('buildAccessSessionTimelineSteps', () => {
     expect(steps.map((s) => s.id)).toEqual(['requested', 'timed_out']);
     expect(steps[1].icon).toBe('timed_out');
   });
+
+  it('shows Access granted → Timed out for on-site mobile key timeout', () => {
+    const steps = buildAccessSessionTimelineSteps(
+      baseSession({
+        origin: 'on_site',
+        method: 'mobile_key',
+        state: 'timed_out',
+        outcome: 'failed',
+        opened_at: undefined,
+        closed_at: undefined,
+        settled_at: '2026-08-05T04:01:00.000Z',
+        reason: 'Timed out waiting for device confirmation',
+      }),
+    );
+    expect(steps.map((s) => s.id)).toEqual(['granted', 'timed_out']);
+    expect(steps[0].title).toBe('Access granted');
+    expect(steps[1].icon).toBe('timed_out');
+  });
+
+  it('shows Access granted → Unlocked → Locked for mobile key success', () => {
+    const steps = buildAccessSessionTimelineSteps(
+      baseSession({
+        origin: 'on_site',
+        method: 'mobile_key',
+        user_name: 'BluLok FacilityManager',
+      }),
+    );
+    expect(steps.map((s) => s.id)).toEqual(['granted', 'unlocked', 'locked']);
+    expect(steps[0].title).toBe('Access granted');
+    expect(steps[1].title).toBe('Unlocked');
+  });
+
+  it('shows Access granted → Waiting for pending mobile key', () => {
+    const steps = buildAccessSessionTimelineSteps(
+      baseSession({
+        origin: 'on_site',
+        method: 'mobile_key',
+        state: 'pending',
+        opened_at: undefined,
+        closed_at: undefined,
+        expires_at: '2026-08-05T04:01:00.000Z',
+      }),
+    );
+    expect(steps.map((s) => s.id)).toEqual(['granted', 'waiting_unlock']);
+    expect(steps[1].waiting).toBe(true);
+  });
 });
 
 describe('AccessSessionTimeline', () => {
@@ -187,5 +233,27 @@ describe('AccessSessionTimeline', () => {
     expect(screen.getByText('Requested')).toBeInTheDocument();
     expect(screen.getByText('Timed out')).toBeInTheDocument();
     expect(screen.getByText(/Timed out waiting for device confirmation/i)).toBeInTheDocument();
+  });
+
+  it('shows Access granted → Timed out for mobile key timeout', () => {
+    render(
+      <AccessSessionTimeline
+        session={baseSession({
+          origin: 'on_site',
+          method: 'mobile_key',
+          state: 'timed_out',
+          outcome: 'failed',
+          opened_at: undefined,
+          closed_at: undefined,
+          settled_at: '2026-08-05T04:01:00.000Z',
+          reason: 'Timed out waiting for device confirmation',
+          user_name: 'BluLok FacilityManager',
+        })}
+      />,
+    );
+
+    expect(screen.getByText('Access granted')).toBeInTheDocument();
+    expect(screen.getByText(/by BluLok FacilityManager/)).toBeInTheDocument();
+    expect(screen.getByText('Timed out')).toBeInTheDocument();
   });
 });
