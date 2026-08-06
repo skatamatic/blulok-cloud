@@ -80,6 +80,7 @@ type VirtualSession = HostSessionLike & {
   opened_at?: Date | null;
   closed_at?: Date | null;
   open_duration_sec?: number | null;
+  settled_at?: Date | string | null;
 };
 
 export class AccessSessionBackfillService {
@@ -800,6 +801,7 @@ export class AccessSessionBackfillService {
       opened_at: row.opened_at,
       closed_at: row.closed_at,
       open_duration_sec: row.open_duration_sec,
+      settled_at: row.settled_at,
       remote_command_id: row.remote_command_id,
     };
   }
@@ -859,7 +861,7 @@ export class AccessSessionBackfillService {
 
   private async insertSession(trx: any, payload: Record<string, unknown>): Promise<void> {
     const now = new Date();
-    const row = { ...payload, created_at: now, updated_at: now };
+    const row: Record<string, unknown> = { ...payload, created_at: now, updated_at: now };
     try {
       await trx('access_sessions').insert(row);
     } catch (err) {

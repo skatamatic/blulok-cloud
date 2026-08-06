@@ -2138,8 +2138,8 @@ export class FMSService {
     } = await import('@/services/fms/fms-placeholder-upgrade');
 
     const profileUpdates: Partial<User> = {
-      first_name: tenantData.firstName,
-      last_name: tenantData.lastName,
+      ...(tenantData.firstName != null ? { first_name: tenantData.firstName } : {}),
+      ...(tenantData.lastName != null ? { last_name: tenantData.lastName } : {}),
     };
 
     const wasPlaceholder = isPlaceholderUser(user as User);

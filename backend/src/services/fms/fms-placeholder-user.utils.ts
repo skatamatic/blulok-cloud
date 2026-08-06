@@ -53,19 +53,22 @@ export type UpgradePlaceholderInput = {
   phoneE164?: string | null;
 };
 
+/** Column updates applied when upgrading a placeholder to a loginable user. */
+export type PlaceholderUpgradeUpdates = {
+  email: string | null;
+  phone_number: string | null;
+  login_identifier: string;
+  is_placeholder: boolean;
+  requires_password_reset: boolean;
+};
+
 /**
  * Compute user-column updates to upgrade a placeholder when contact arrives.
  * Caller must resolve uniqueness conflicts before applying.
  */
 export function buildPlaceholderUpgradeUpdates(
   input: UpgradePlaceholderInput,
-): Partial<{
-  email: string | null;
-  phone_number: string | null;
-  login_identifier: string;
-  is_placeholder: boolean;
-  requires_password_reset: boolean;
-}> | null {
+): PlaceholderUpgradeUpdates | null {
   const email = input.email?.trim() ? input.email.trim().toLowerCase() : '';
   const phone = input.phoneE164?.trim() ? input.phoneE164.trim() : '';
   if (!email && !phone) return null;
