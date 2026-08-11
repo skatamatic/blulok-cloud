@@ -6,6 +6,8 @@ import {
   isLockTransitionPending,
 } from '@/utils/unitLock.utils';
 
+export type RemoteUnlockTone = 'primary' | 'warning';
+
 export type RemoteUnlockButtonProps = {
   lockStatus: string | undefined;
   isSubmitting?: boolean;
@@ -15,6 +17,11 @@ export type RemoteUnlockButtonProps = {
   remoteSupported?: boolean;
   /** BluLok connectivity — offline/error/maintenance disables unlock with a tooltip. */
   deviceStatus?: string | null;
+  /**
+   * Visual tone when unlock is available.
+   * Use `warning` when unlock will require an occupied-unit override confirm.
+   */
+  tone?: RemoteUnlockTone;
   fullWidth?: boolean;
   size?: 'sm' | 'md';
   className?: string;
@@ -57,6 +64,7 @@ export const RemoteUnlockButton: React.FC<RemoteUnlockButtonProps> = ({
   hasDevice = true,
   remoteSupported = true,
   deviceStatus = null,
+  tone = 'primary',
   fullWidth = false,
   size = 'md',
   className = '',
@@ -75,10 +83,15 @@ export const RemoteUnlockButton: React.FC<RemoteUnlockButtonProps> = ({
   });
   const canUnlock = disabledReason === null;
   const disabled = !canUnlock;
+  const activeToneClass = tone === 'warning' ? 'btn-warning' : 'btn-primary';
 
   const title =
     disabledReason ??
-    (canUnlock ? 'Send remote unlock command' : 'Unlock unavailable');
+    (canUnlock
+      ? tone === 'warning'
+        ? 'Unlock occupied unit (override required)'
+        : 'Send remote unlock command'
+      : 'Unlock unavailable');
 
   const label = resolveRemoteUnlockLabel(
     disabledReason,
@@ -89,9 +102,9 @@ export const RemoteUnlockButton: React.FC<RemoteUnlockButtonProps> = ({
   );
 
   const toneClass = busy
-    ? 'btn-primary animate-pulse'
+    ? `${activeToneClass} animate-pulse`
     : canUnlock
-      ? 'btn-primary'
+      ? activeToneClass
       : 'cursor-not-allowed bg-gray-100 text-gray-500 dark:bg-gray-800 dark:text-gray-400 border border-transparent';
 
   return (

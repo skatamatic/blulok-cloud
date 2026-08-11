@@ -148,7 +148,7 @@ export function InviteActions({
           setShowResetModal(true);
         }}
         disabled={busy}
-        className={`${btnBase} ${widthClass} bg-red-600 text-white hover:bg-red-700 ${className || ''}`}
+        className={`${btnBase} ${widthClass} btn-warning ${className || ''}`}
       >
         <ArrowPathIcon className={iconClass} />
         {size === 'compact' ? 'Reset account' : 'Reset Account & Re-invite'}

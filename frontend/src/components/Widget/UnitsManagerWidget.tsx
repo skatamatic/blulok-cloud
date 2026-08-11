@@ -697,7 +697,16 @@ const ExpandedDetails: React.FC<{
   onUnlock: () => void;
   canManageTenantInvites?: boolean;
   onTenantInviteComplete?: () => void;
-}> = ({ unit, isSubmitting, onUnlock, canManageTenantInvites = false, onTenantInviteComplete }) => {
+  /** When true, Unlock uses warning tone (occupied-unit override confirm). */
+  unlockRequiresOverride?: boolean;
+}> = ({
+  unit,
+  isSubmitting,
+  onUnlock,
+  canManageTenantInvites = false,
+  onTenantInviteComplete,
+  unlockRequiresOverride = false,
+}) => {
   const navigate = useNavigate();
   const [sessions, setSessions] = useState<RecentAccessSession[] | null>(null);
   const [sessionsError, setSessionsError] = useState<string | null>(null);
@@ -741,6 +750,8 @@ const ExpandedDetails: React.FC<{
   const deviceId = unit.blulok_device?.id;
   const lockStatus = deviceLockStatus(unit);
   const metrics = deviceMetrics(unit);
+  const actionFooterClass =
+    'mt-auto border-t border-gray-100 pt-2.5 dark:border-gray-700/50';
 
   return (
     <motion.div
@@ -753,112 +764,111 @@ const ExpandedDetails: React.FC<{
     >
       <div className="bg-gradient-to-b from-[#147FD4]/[0.04] to-transparent px-3 pb-3 pt-3 dark:from-[#147FD4]/10 lg:px-4 lg:pb-4">
         <div className="grid grid-cols-1 gap-3 lg:grid-cols-3 lg:items-stretch lg:gap-4">
-        <div className={ACCESS_EXPAND_COLUMN_CLASS}>
-          <ExpandSectionHeader
-            title="Recent access"
-            action={
-              <SectionNavLink
-                label="View all"
-                onClick={() => navigate(buildAccessHistoryUrl(unit))}
-              />
-            }
-          />
-
-          <div className={ACCESS_HISTORY_DETAIL_CARD_CLASS}>
-            {sessionsLoading ? (
-              <ul className="space-y-1.5">
-                {[0, 1, 2].map((i) => (
-                  <li
-                    key={i}
-                    className="h-7 animate-pulse rounded-md bg-gray-100 dark:bg-gray-800"
-                  />
-                ))}
-              </ul>
-            ) : sessionsError ? (
-              <p className={`${TYPE.meta} text-rose-500`}>{sessionsError}</p>
-            ) : sessions && sessions.length > 0 ? (
-              <ul className="space-y-1.5">
-                {sessions.slice(0, 5).map((session, i) => (
-                  <AccessHistoryCompactSessionRow
-                    key={session.id}
-                    session={session}
-                    index={i}
-                  />
-                ))}
-              </ul>
-            ) : (
-              <p className={TYPE.meta}>No recent access sessions.</p>
-            )}
-          </div>
-        </div>
-
-        <div className={EXPAND_COLUMN_CLASS}>
-          <ExpandSectionHeader
-            title="Tenant"
-            action={
-              tenantId ? (
+          <div className={ACCESS_EXPAND_COLUMN_CLASS}>
+            <ExpandSectionHeader
+              title="Recent access"
+              action={
                 <SectionNavLink
-                  label="View tenant"
-                  onClick={() => navigate(`/users/${tenantId}/details`)}
+                  label="View all"
+                  onClick={() => navigate(buildAccessHistoryUrl(unit))}
                 />
-              ) : undefined
-            }
-          />
-          <div className={`${EXPAND_DETAIL_CARD_CLASS} flex flex-col space-y-2`}>
-            <div className={`flex items-center gap-2 ${TYPE.bodyStrong}`}>
-              <UserCircleIcon className="h-4 w-4 shrink-0 text-gray-400" />
-              <span className="truncate">{tenantName}</span>
-              {isPlaceholderTenant ? <PlaceholderUserBadge /> : null}
+              }
+            />
+
+            <div className={ACCESS_HISTORY_DETAIL_CARD_CLASS}>
+              {sessionsLoading ? (
+                <ul className="space-y-1.5">
+                  {[0, 1, 2].map((i) => (
+                    <li
+                      key={i}
+                      className="h-7 animate-pulse rounded-md bg-gray-100 dark:bg-gray-800"
+                    />
+                  ))}
+                </ul>
+              ) : sessionsError ? (
+                <p className={`${TYPE.meta} text-rose-500`}>{sessionsError}</p>
+              ) : sessions && sessions.length > 0 ? (
+                <ul className="space-y-1.5">
+                  {sessions.slice(0, 5).map((session, i) => (
+                    <AccessHistoryCompactSessionRow
+                      key={session.id}
+                      session={session}
+                      index={i}
+                    />
+                  ))}
+                </ul>
+              ) : (
+                <p className={TYPE.meta}>No recent access sessions.</p>
+              )}
             </div>
-            {tenantEmail && (
-              <a
-                href={`mailto:${tenantEmail}`}
-                className={`flex items-center gap-2 ${TYPE.meta} transition-colors hover:text-[#147FD4]`}
-              >
-                <EnvelopeIcon className="h-3.5 w-3.5 shrink-0" />
-                <span className="truncate">{tenantEmail}</span>
-              </a>
-            )}
-            {tenantPhone && (
-              <a
-                href={`tel:${tenantPhone}`}
-                className={`flex items-center gap-2 ${TYPE.meta} transition-colors hover:text-[#147FD4]`}
-              >
-                <PhoneIcon className="h-3.5 w-3.5 shrink-0" />
-                <span>{tenantPhone}</span>
-              </a>
-            )}
-            {isPlaceholderTenant ? (
-              <p className={TYPE.meta}>
-                {formatUserContactSubtitle({ is_placeholder: true })}
-              </p>
-            ) : !tenantEmail && !tenantPhone ? (
-              <p className={TYPE.meta}>No contact details on file.</p>
-            ) : null}
-
-            {canManageTenantInvites && tenantId ? (
-              <div className="mt-auto border-t border-gray-100 pt-2.5 dark:border-gray-700/50">
-                <InviteActions
-                  size="compact"
-                  fullWidth
-                  user={{
-                    id: tenantId,
-                    firstName: unit.primary_tenant?.first_name,
-                    lastName: unit.primary_tenant?.last_name,
-                    email: tenantEmail,
-                    phoneNumber: tenantPhone,
-                    lastLogin: unit.primary_tenant?.last_login ?? null,
-                    isPlaceholder: isPlaceholderTenant,
-                  }}
-                  onComplete={onTenantInviteComplete}
-                />
-              </div>
-            ) : null}
           </div>
-        </div>
 
-        <div className={`${EXPAND_COLUMN_CLASS} gap-3 lg:h-full`}>
-          <div className={`${EXPAND_COLUMN_CLASS} min-h-0 flex-1`}>
+          <div className={EXPAND_COLUMN_CLASS}>
+            <ExpandSectionHeader
+              title="Tenant"
+              action={
+                tenantId ? (
+                  <SectionNavLink
+                    label="View tenant"
+                    onClick={() => navigate(`/users/${tenantId}/details`)}
+                  />
+                ) : undefined
+              }
+            />
+            <div className={`${EXPAND_DETAIL_CARD_CLASS} flex flex-col space-y-2`}>
+              <div className={`flex items-center gap-2 ${TYPE.bodyStrong}`}>
+                <UserCircleIcon className="h-4 w-4 shrink-0 text-gray-400" />
+                <span className="truncate">{tenantName}</span>
+                {isPlaceholderTenant ? <PlaceholderUserBadge /> : null}
+              </div>
+              {tenantEmail && (
+                <a
+                  href={`mailto:${tenantEmail}`}
+                  className={`flex items-center gap-2 ${TYPE.meta} transition-colors hover:text-[#147FD4]`}
+                >
+                  <EnvelopeIcon className="h-3.5 w-3.5 shrink-0" />
+                  <span className="truncate">{tenantEmail}</span>
+                </a>
+              )}
+              {tenantPhone && (
+                <a
+                  href={`tel:${tenantPhone}`}
+                  className={`flex items-center gap-2 ${TYPE.meta} transition-colors hover:text-[#147FD4]`}
+                >
+                  <PhoneIcon className="h-3.5 w-3.5 shrink-0" />
+                  <span>{tenantPhone}</span>
+                </a>
+              )}
+              {isPlaceholderTenant ? (
+                <p className={TYPE.meta}>
+                  {formatUserContactSubtitle({ is_placeholder: true })}
+                </p>
+              ) : !tenantEmail && !tenantPhone ? (
+                <p className={TYPE.meta}>No contact details on file.</p>
+              ) : null}
+
+              {canManageTenantInvites && tenantId ? (
+                <div className={actionFooterClass}>
+                  <InviteActions
+                    size="compact"
+                    fullWidth
+                    user={{
+                      id: tenantId,
+                      firstName: unit.primary_tenant?.first_name,
+                      lastName: unit.primary_tenant?.last_name,
+                      email: tenantEmail,
+                      phoneNumber: tenantPhone,
+                      lastLogin: unit.primary_tenant?.last_login ?? null,
+                      isPlaceholder: isPlaceholderTenant,
+                    }}
+                    onComplete={onTenantInviteComplete}
+                  />
+                </div>
+              ) : null}
+            </div>
+          </div>
+
+          <div className={EXPAND_COLUMN_CLASS}>
             <ExpandSectionHeader
               title="Device"
               action={
@@ -868,69 +878,69 @@ const ExpandedDetails: React.FC<{
               }
             />
             <div className={`${EXPAND_DETAIL_CARD_CLASS} flex flex-col space-y-2.5`}>
-                {metrics.hasDevice ? (
-                  <>
-                    {metrics.serial && (
-                      <p className={`truncate ${TYPE.meta}`} title={metrics.serial}>
-                        <span className="text-gray-400 dark:text-gray-500">Serial · </span>
-                        <span className="tabular-nums text-gray-700 dark:text-gray-300">
-                          {metrics.serial}
-                        </span>
-                      </p>
-                    )}
-                    <div className="grid grid-cols-2 gap-2">
-                      <div className="rounded-md bg-gray-50/80 px-2 py-1.5 dark:bg-gray-900/40">
-                        <p className={`mb-1 ${TYPE.meta}`}>Battery</p>
-                        <BatteryGauge
-                          level={metrics.battery}
-                          deviceStatus={metrics.status}
-                        />
-                      </div>
-                      <div className="rounded-md bg-gray-50/80 px-2 py-1.5 dark:bg-gray-900/40">
-                        <p className={`mb-1 ${TYPE.meta}`}>Signal</p>
-                        <SignalGauge signal={metrics.signal} deviceStatus={metrics.status} />
-                        {metrics.signal != null && (
-                          <p className={`mt-1 tabular-nums ${TYPE.meta}`}>{metrics.signal} dBm</p>
-                        )}
-                      </div>
+              {metrics.hasDevice ? (
+                <>
+                  {metrics.serial && (
+                    <p className={`truncate ${TYPE.meta}`} title={metrics.serial}>
+                      <span className="text-gray-400 dark:text-gray-500">Serial · </span>
+                      <span className="tabular-nums text-gray-700 dark:text-gray-300">
+                        {metrics.serial}
+                      </span>
+                    </p>
+                  )}
+                  <div className="grid grid-cols-2 gap-2">
+                    <div className="rounded-md bg-gray-50/80 px-2 py-1.5 dark:bg-gray-900/40">
+                      <p className={`mb-1 ${TYPE.meta}`}>Battery</p>
+                      <BatteryGauge
+                        level={metrics.battery}
+                        deviceStatus={metrics.status}
+                      />
                     </div>
-                    {metrics.firmware && (
-                      <p className={TYPE.meta}>
-                        Firmware ·{' '}
-                        <span className="tabular-nums text-gray-700 dark:text-gray-300">
-                          {metrics.firmware}
-                        </span>
-                      </p>
-                    )}
-                  </>
-                ) : (
-                  <p className={TYPE.meta}>No BluLok device linked.</p>
-                )}
+                    <div className="rounded-md bg-gray-50/80 px-2 py-1.5 dark:bg-gray-900/40">
+                      <p className={`mb-1 ${TYPE.meta}`}>Signal</p>
+                      <SignalGauge signal={metrics.signal} deviceStatus={metrics.status} />
+                      {metrics.signal != null && (
+                        <p className={`mt-1 tabular-nums ${TYPE.meta}`}>{metrics.signal} dBm</p>
+                      )}
+                    </div>
+                  </div>
+                  {metrics.firmware && (
+                    <p className={TYPE.meta}>
+                      Firmware ·{' '}
+                      <span className="tabular-nums text-gray-700 dark:text-gray-300">
+                        {metrics.firmware}
+                      </span>
+                    </p>
+                  )}
+                </>
+              ) : (
+                <p className={TYPE.meta}>No BluLok device linked.</p>
+              )}
 
-                <div className="mt-auto border-t border-gray-100 pt-2.5 dark:border-gray-700/50">
-                  <RemoteUnlockButton
-                    lockStatus={lockStatus}
-                    isSubmitting={isSubmitting}
-                    hasDevice={Boolean(deviceId)}
-                    remoteSupported={supportsRemoteUnlock}
-                    deviceStatus={metrics.status}
-                    fullWidth
-                    size="sm"
-                    stopPropagation
-                    onUnlock={onUnlock}
-                  />
-                </div>
+              <div className={actionFooterClass}>
+                <RemoteUnlockButton
+                  lockStatus={lockStatus}
+                  isSubmitting={isSubmitting}
+                  hasDevice={Boolean(deviceId)}
+                  remoteSupported={supportsRemoteUnlock}
+                  deviceStatus={metrics.status}
+                  tone={unlockRequiresOverride ? 'warning' : 'primary'}
+                  fullWidth
+                  size="sm"
+                  stopPropagation
+                  onUnlock={onUnlock}
+                />
+              </div>
             </div>
           </div>
-
-          <div className="flex shrink-0 justify-end">
-            <SectionNavLink
-              label="Unit details"
-              compact
-              onClick={() => navigate(`/units/${unit.id}`)}
-            />
-          </div>
         </div>
+
+        <div className="mt-3 flex justify-end border-t border-gray-100 pt-2.5 dark:border-gray-700/50">
+          <SectionNavLink
+            label="Unit details"
+            compact
+            onClick={() => navigate(`/units/${unit.id}`)}
+          />
         </div>
       </div>
     </motion.div>
@@ -1504,6 +1514,10 @@ export const UnitsManagerWidget: React.FC<UnitsManagerWidgetProps> = ({
                             isSubmitting={isSubmitting(unit.id)}
                             onUnlock={() => void handleUnlock(unit)}
                             canManageTenantInvites={canManageTenantInvites}
+                            unlockRequiresOverride={requiresOccupiedUnitOverride(
+                              unit,
+                              authState.user?.id,
+                            )}
                             onTenantInviteComplete={() =>
                               void fetchUnitsRef.current({ background: true })
                             }

@@ -57,7 +57,9 @@ describe('InviteActions', () => {
         }}
       />,
     );
-    expect(screen.getByRole('button', { name: /Reset Account/i })).toBeInTheDocument();
+    const reset = screen.getByRole('button', { name: /Reset Account/i });
+    expect(reset).toBeInTheDocument();
+    expect(reset.className).toContain('btn-warning');
   });
 
   it('uses inviteStatus active for compact reset label', () => {

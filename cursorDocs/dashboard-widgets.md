@@ -30,7 +30,8 @@
 ## Units Manager · tenant invite actions
 
 - Expanded unit row **Tenant** column: **Resend invite** when the primary tenant has not completed setup (`last_login` empty); **Reset account** after invite acceptance. Both actions use a confirmation step. Placeholders show contact guidance; unassigned units omit the control.
-- Requires user-management roles (`canManageUsers`). Full-width control matches the Device column Unlock button.
+- Requires user-management roles (`canManageUsers`). Full-width control matches the Device column Unlock button; both CTAs sit in **aligned card footers** (`mt-auto`) so they share a baseline. **Unit details** lives in a shared meta row under the three columns.
+- Button tones: **Resend** stays primary; **Reset** uses warning (`btn-warning`). **Unlock** uses warning when an occupied-unit override confirm is required (`requiresOccupiedUnitOverride`); otherwise primary.
 - See [auth.md](./auth.md) for the reset-account API.
 
 ## Widget fullscreen (focus mode)
@@ -142,7 +143,7 @@ Within each tier, highest **`priority`** wins. Assigned layouts are read-only fo
 - **Quick filters** (toolbar, not persisted): **Occupied**, **Unoccupied**, **Unlocked**, and **Low batt** toggle like radio buttons — mutually exclusive, deselectable to show all. Occupied/unoccupied match unit `status` (`occupied` / `available`). Low batt includes low/critical levels (&lt;30%), `low_battery` device status, and unknown battery. Empty filter state shows a contextual message plus “Show all units”.
 - **Sort**: unit name (default, natural) or last access — click column headers to sort; click again to reverse.
 - Search matches unit number, facility, tenant name/email, and **device serial**.
-- Expanding a row (one at a time) uses a **3-column** panel with **inline section links** (same style as Recent access “View all”): unit details, view all activity, view tenant (`/users/:id/details`), device details. **Remote unlock** remains the only primary button in the device column. Tenant column hosts Resend invite / Reset account when the viewer can manage users.
+- Expanding a row (one at a time) uses a **3-column** panel with **inline section links** (same style as Recent access “View all”): view all activity, view tenant (`/users/:id/details`), device details. Equal-height detail cards use **aligned action footers** for Resend/Reset and Unlock; **Unit details** is a shared footer link under the grid. Tenant column hosts Resend invite / Reset account when the viewer can manage users. Unlock is **warning-toned** when occupied-unit override applies; Reset is always warning-toned.
 - **Recent access** loads **`GET /access-sessions?unit_id=:id&limit=5`** and renders compact **session** rows (title + live outcome status + user + time) — no expandable event timeline.
 - **View all** activity → `/access-history?unit_id=:id&facility_id=:facilityId` (when known). `AccessHistoryPage` reads `unit_id` / `facility_id` from the query string, pre-fills filters, expands the filter panel, and fetches scoped sessions.
 - RBAC: visible to admin / dev_admin / facility_admin / maintenance.
