@@ -1295,7 +1295,9 @@ export class WebsocketGatewayTransport implements GatewayTransport {
         }
         {
           const { UserModel } = await import('@/models/user.model');
-          const dbUser = await UserModel.findById(decoded.userId);
+          const dbUser = (await UserModel.findById(decoded.userId)) as
+            | import('@/models/user.model').User
+            | undefined;
           if (!dbUser) {
             logger.warn(`Gateway WS AUTH failed (user missing) user=${decoded.userId} remote=${remote}`);
             safeSend(ws, { type: 'ERROR', code: 'AUTH_FAILED', message: 'Invalid token' });

@@ -1,7 +1,7 @@
 import { Response, NextFunction, RequestHandler } from 'express';
 import { AuthService } from '@/services/auth.service';
 import { FacilityAccessService } from '@/services/facility-access.service';
-import { UserModel } from '@/models/user.model';
+import { UserModel, type User } from '@/models/user.model';
 import { UserRole, AuthenticatedRequest } from '@/types/auth.types';
 import { AppError, asyncHandler } from '@/middleware/error.middleware';
 
@@ -29,7 +29,7 @@ export const authenticateToken = asyncHandler(async (
     throw new AppError('Invalid or expired token', 401);
   }
 
-  const dbUser = await UserModel.findById(decoded.userId);
+  const dbUser = (await UserModel.findById(decoded.userId)) as User | undefined;
   if (!dbUser) {
     throw new AppError('Invalid or expired token', 401);
   }

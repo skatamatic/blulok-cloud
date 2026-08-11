@@ -1445,7 +1445,6 @@ export default function UserDetailsPage() {
                       </div>
                     )}
                   </div>
-                  </div>
                   <InviteActions
                     user={{
                       id: userId!,

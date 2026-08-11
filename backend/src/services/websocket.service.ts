@@ -215,7 +215,9 @@ export class WebSocketService {
 
       const { UserModel } = await import('@/models/user.model');
       const { AuthService } = await import('@/services/auth.service');
-      const dbUser = await UserModel.findById(decoded.userId);
+      const dbUser = (await UserModel.findById(decoded.userId)) as
+        | import('@/models/user.model').User
+        | undefined;
       if (!dbUser) {
         ws.close(1008, 'Authentication failed');
         return;
