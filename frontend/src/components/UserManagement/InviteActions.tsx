@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, type MouseEvent } from 'react';
 import { PaperAirplaneIcon, ArrowPathIcon } from '@heroicons/react/24/outline';
 import { apiService } from '@/services/api.service';
 import { useToast } from '@/contexts/ToastContext';
@@ -12,6 +12,8 @@ export interface InviteActionsUser {
   phoneNumber?: string | null;
   lastLogin?: string | Date | null;
   isPlaceholder?: boolean;
+  /** When set, preferred over lastLogin for choosing Resend vs Reset */
+  inviteStatus?: 'never_invited' | 'invite_pending' | 'active' | 'placeholder';
 }
 
 interface InviteActionsProps {
@@ -35,18 +37,25 @@ export function InviteActions({ user, size = 'default', onComplete, className }:
 
   const btnBase =
     size === 'compact'
-      ? 'inline-flex items-center px-2.5 py-1.5 text-xs font-medium rounded-md transition-colors disabled:opacity-50'
+      ? 'inline-flex items-center px-2 py-1 text-xs font-medium rounded-md transition-colors disabled:opacity-50 whitespace-nowrap'
       : 'inline-flex items-center px-4 py-2 rounded-lg transition-colors disabled:opacity-50';
 
-  if (user.isPlaceholder) {
+  const isPlaceholder =
+    user.isPlaceholder === true || user.inviteStatus === 'placeholder';
+  const hasLoggedIn =
+    user.inviteStatus === 'active' ||
+    (user.inviteStatus == null && Boolean(user.lastLogin));
+
+  if (isPlaceholder) {
     return (
       <span className={`text-xs text-gray-500 dark:text-gray-400 ${className || ''}`}>
-        Add email/phone to enable invites
+        {size === 'compact' ? 'Needs contact' : 'Add email/phone to enable invites'}
       </span>
     );
   }
 
-  const handleResend = async () => {
+  const handleResend = async (e?: MouseEvent) => {
+    e?.stopPropagation();
     setBusy(true);
     try {
       const response = await apiService.resendUserInvite(user.id);
@@ -87,7 +96,7 @@ export function InviteActions({ user, size = 'default', onComplete, className }:
     }
   };
 
-  if (!user.lastLogin) {
+  if (!hasLoggedIn) {
     return (
       <button
         type="button"
@@ -96,7 +105,7 @@ export function InviteActions({ user, size = 'default', onComplete, className }:
         className={`${btnBase} bg-primary-600 text-white hover:bg-primary-700 ${className || ''}`}
       >
         <PaperAirplaneIcon className={size === 'compact' ? 'h-3.5 w-3.5 mr-1' : 'h-4 w-4 mr-2'} />
-        {busy ? 'Sending…' : 'Resend Invite'}
+        {busy ? 'Sending…' : size === 'compact' ? 'Resend invite' : 'Resend Invite'}
       </button>
     );
   }
@@ -105,12 +114,15 @@ export function InviteActions({ user, size = 'default', onComplete, className }:
     <>
       <button
         type="button"
-        onClick={() => setShowResetModal(true)}
+        onClick={(e) => {
+          e.stopPropagation();
+          setShowResetModal(true);
+        }}
         disabled={busy}
         className={`${btnBase} bg-red-600 text-white hover:bg-red-700 ${className || ''}`}
       >
         <ArrowPathIcon className={size === 'compact' ? 'h-3.5 w-3.5 mr-1' : 'h-4 w-4 mr-2'} />
-        Reset Account &amp; Re-invite
+        {size === 'compact' ? 'Reset account' : 'Reset Account & Re-invite'}
       </button>
       <ResetAccountConfirmModal
         isOpen={showResetModal}

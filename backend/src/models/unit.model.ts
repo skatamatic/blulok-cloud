@@ -565,7 +565,8 @@ export class UnitModel {
           'users.last_name as tenant_last_name',
           'users.email as tenant_email',
           'users.phone_number as tenant_phone',
-          'users.is_placeholder as tenant_is_placeholder'
+          'users.is_placeholder as tenant_is_placeholder',
+          'users.last_login as tenant_last_login',
         ])
         .from('units as u')
         .leftJoin('facilities as f', 'u.facility_id', 'f.id')
@@ -795,6 +796,7 @@ export class UnitModel {
           email: row.tenant_email,
           phone_number: row.tenant_phone,
           is_placeholder: Boolean(row.tenant_is_placeholder),
+          last_login: row.tenant_last_login ?? null,
         } : null
       }));
 

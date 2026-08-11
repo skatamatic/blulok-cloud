@@ -40,6 +40,22 @@ describe('InviteActions', () => {
     expect(screen.getByRole('button', { name: /Reset Account/i })).toBeInTheDocument();
   });
 
+  it('uses inviteStatus active for compact reset label', () => {
+    render(
+      <InviteActions
+        size="compact"
+        user={{
+          id: 'u1',
+          firstName: 'A',
+          lastName: 'B',
+          inviteStatus: 'active',
+          lastLogin: null,
+        }}
+      />,
+    );
+    expect(screen.getByRole('button', { name: /Reset account/i })).toBeInTheDocument();
+  });
+
   it('disables invites for placeholders', () => {
     render(
       <InviteActions

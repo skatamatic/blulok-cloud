@@ -150,7 +150,6 @@ export const WIDGET_TYPES = {
 
   // Management widgets
   'units-manager': 'units-manager',
-  'user-management': 'user-management',
 } as const;
 
 /**
@@ -352,16 +351,6 @@ export const WIDGET_REGISTRY: Record<WidgetType, WidgetTypeDefinition> = {
     requiredPermissions: ['admin', 'dev_admin', 'facility_admin', 'maintenance'],
     supportsFullscreen: true,
   },
-  'user-management': {
-    type: 'user-management',
-    name: 'User Management',
-    description: 'Search users, view invite status, resend invites, or reset accounts',
-    defaultSize: 'large',
-    availableSizes: ['medium', 'large', 'medium-tall', 'large-wide'],
-    allowMultiple: false,
-    category: 'system',
-    requiredPermissions: ['admin', 'dev_admin', 'facility_admin'],
-  },
 };
 
 /**
@@ -457,9 +446,6 @@ export class WidgetTypeHelper {
   static extractWidgetTypeFromId(widgetId: string): string {
     if (widgetId.includes('units-manager') || widgetId.includes('units_manager')) {
       return WIDGET_TYPES['units-manager'];
-    }
-    if (widgetId.includes('user-management') || widgetId.includes('user_management')) {
-      return WIDGET_TYPES['user-management'];
     }
     // Map old widget ID patterns to new canonical types
     if (widgetId.includes('facilities_stats') || widgetId.includes('facilities')) {

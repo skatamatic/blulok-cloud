@@ -19,7 +19,7 @@ Widgets live inside **react-grid-layout** cells with a fixed height. Follow this
 
 4. **Facility scope**: When the global facility selector is a **single facility**, pass **`facility_id` / `facilityId`** query params from dashboard widgets; when **“All facilities”** is selected, omit the filter and rely on backend role scope.
 
-**User Management widget (`user-management`):** searchable list with invite-status badges and Resend / Reset Account actions; uses `WIDGET_LIST_SCROLL_CLASS` and honors `facilityFilter` from the dashboard.
+**Units Manager tenant actions:** expanded Tenant column hosts Resend invite / Reset account (`InviteActions`); Device column unlock is unchanged.
 
 ## Widget Interaction Design
 

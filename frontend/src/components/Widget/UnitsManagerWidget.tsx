@@ -37,6 +37,7 @@ import { resolveLockTimeoutMsForUnit } from '@/utils/facilityLockTimeout.utils';
 import { useLockDeviceRealtime } from '@/hooks/useLockDeviceRealtime';
 import { AccessHistoryCompactRow, type AccessHistoryCompactRowLog } from '@/components/AccessHistory/AccessHistoryCompactRow';
 import { PlaceholderUserBadge } from '@/components/UserManagement/PlaceholderUserBadge';
+import { InviteActions } from '@/components/UserManagement/InviteActions';
 import { formatRelativeWithExact, RELATIVE_UNITS_ACTIVITY_OPTS } from '@/utils/datetime.utils';
 import { formatUserContactSubtitle } from '@/utils/userDisplay.utils';
 import {
@@ -76,6 +77,7 @@ interface UnitRow {
     email?: string | null;
     phone_number?: string | null;
     is_placeholder?: boolean;
+    last_login?: string | Date | null;
   } | null;
   tenant_name?: string | null;
   tenant_email?: string | null;
@@ -692,7 +694,9 @@ const ExpandedDetails: React.FC<{
   unit: UnitRow;
   isSubmitting: boolean;
   onUnlock: () => void;
-}> = ({ unit, isSubmitting, onUnlock }) => {
+  canManageTenantInvites?: boolean;
+  onTenantInviteComplete?: () => void;
+}> = ({ unit, isSubmitting, onUnlock, canManageTenantInvites = false, onTenantInviteComplete }) => {
   const navigate = useNavigate();
   const [logs, setLogs] = useState<AccessLogEntry[] | null>(null);
   const [logsError, setLogsError] = useState<string | null>(null);
@@ -799,7 +803,7 @@ const ExpandedDetails: React.FC<{
               ) : undefined
             }
           />
-          <div className={`${EXPAND_DETAIL_CARD_CLASS} space-y-2`}>
+          <div className={`${EXPAND_DETAIL_CARD_CLASS} flex flex-col space-y-2`}>
             <div className={`flex items-center gap-2 ${TYPE.bodyStrong}`}>
               <UserCircleIcon className="h-4 w-4 shrink-0 text-gray-400" />
               <span className="truncate">{tenantName}</span>
@@ -829,6 +833,24 @@ const ExpandedDetails: React.FC<{
               </p>
             ) : !tenantEmail && !tenantPhone ? (
               <p className={TYPE.meta}>No contact details on file.</p>
+            ) : null}
+
+            {canManageTenantInvites && tenantId ? (
+              <div className="mt-auto border-t border-gray-100 pt-2.5 dark:border-gray-700/50">
+                <InviteActions
+                  size="compact"
+                  user={{
+                    id: tenantId,
+                    firstName: unit.primary_tenant?.first_name,
+                    lastName: unit.primary_tenant?.last_name,
+                    email: tenantEmail,
+                    phoneNumber: tenantPhone,
+                    lastLogin: unit.primary_tenant?.last_login ?? null,
+                    isPlaceholder: isPlaceholderTenant,
+                  }}
+                  onComplete={onTenantInviteComplete}
+                />
+              </div>
             ) : null}
           </div>
         </div>
@@ -945,8 +967,9 @@ export const UnitsManagerWidget: React.FC<UnitsManagerWidgetProps> = ({
     timeoutToast: lockHardwareFeedbackToasts.unitUnlockTimeout,
   });
   const { isAllFacilitiesSelected, facilities: globalFacilities } = useGlobalFacility();
-  const { authState } = useAuth();
+  const { authState, canManageUsers } = useAuth();
   const isAllFacilitiesMode = isAllFacilitiesSelected && !facilityFilter;
+  const canManageTenantInvites = canManageUsers();
 
   useEffect(() => {
     if (currentSize) setSize(currentSize);
@@ -1478,6 +1501,10 @@ export const UnitsManagerWidget: React.FC<UnitsManagerWidgetProps> = ({
                             unit={unit}
                             isSubmitting={isSubmitting(unit.id)}
                             onUnlock={() => void handleUnlock(unit)}
+                            canManageTenantInvites={canManageTenantInvites}
+                            onTenantInviteComplete={() =>
+                              void fetchUnitsRef.current({ background: true })
+                            }
                           />
                         )}
                       </AnimatePresence>
