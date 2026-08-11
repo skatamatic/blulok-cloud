@@ -4,7 +4,6 @@ import { Widget } from './Widget';
 import { WidgetSize } from './WidgetSizeDropdown';
 import {
   MagnifyingGlassIcon,
-  UserGroupIcon,
   UsersIcon,
 } from '@heroicons/react/24/outline';
 import { apiService } from '@/services/api.service';
@@ -109,9 +108,9 @@ export const UserManagementWidget: React.FC<UserManagementWidgetProps> = ({
 
   return (
     <Widget
+      id="user-management-widget"
       title="User Management"
-      icon={<UserGroupIcon className="h-5 w-5" />}
-      currentSize={currentSize}
+      size={currentSize}
       availableSizes={availableSizes}
       onSizeChange={onSizeChange}
       onRemove={onRemove}
