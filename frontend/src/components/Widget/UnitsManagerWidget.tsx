@@ -839,6 +839,7 @@ const ExpandedDetails: React.FC<{
               <div className="mt-auto border-t border-gray-100 pt-2.5 dark:border-gray-700/50">
                 <InviteActions
                   size="compact"
+                  fullWidth
                   user={{
                     id: tenantId,
                     firstName: unit.primary_tenant?.first_name,

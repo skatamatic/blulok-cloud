@@ -1,13 +1,14 @@
 /**
  * @jest-environment jsdom
  */
-import { render, screen } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { InviteActions } from '@/components/UserManagement/InviteActions';
+import { apiService } from '@/services/api.service';
 
 jest.mock('@/services/api.service', () => ({
   apiService: {
-    resendUserInvite: jest.fn(),
-    resetUserAccount: jest.fn(),
+    resendUserInvite: jest.fn().mockResolvedValue({ success: true }),
+    resetUserAccount: jest.fn().mockResolvedValue({ success: true, message: 'ok' }),
   },
 }));
 
@@ -16,6 +17,10 @@ jest.mock('@/contexts/ToastContext', () => ({
 }));
 
 describe('InviteActions', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
   it('shows resend for users who have not logged in', () => {
     render(
       <InviteActions
@@ -23,6 +28,21 @@ describe('InviteActions', () => {
       />,
     );
     expect(screen.getByRole('button', { name: /Resend Invite/i })).toBeInTheDocument();
+  });
+
+  it('confirms before resending an invite', async () => {
+    render(
+      <InviteActions
+        user={{ id: 'u1', firstName: 'A', lastName: 'B', lastLogin: null, isPlaceholder: false }}
+      />,
+    );
+    fireEvent.click(screen.getByRole('button', { name: /Resend Invite/i }));
+    expect(screen.getByText(/Send a new invite to A B/i)).toBeInTheDocument();
+    const confirmButtons = screen.getAllByRole('button', { name: /Resend invite/i });
+    fireEvent.click(confirmButtons[confirmButtons.length - 1]!);
+    await waitFor(() => {
+      expect(apiService.resendUserInvite).toHaveBeenCalledWith('u1');
+    });
   });
 
   it('shows reset for users who have logged in', () => {
@@ -44,6 +64,7 @@ describe('InviteActions', () => {
     render(
       <InviteActions
         size="compact"
+        fullWidth
         user={{
           id: 'u1',
           firstName: 'A',

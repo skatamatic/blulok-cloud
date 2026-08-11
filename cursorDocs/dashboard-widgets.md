@@ -29,8 +29,8 @@
 
 ## Units Manager · tenant invite actions
 
-- Expanded unit row **Tenant** column: **Resend invite** when the primary tenant has not completed setup (`last_login` empty); **Reset account** (confirm modal) after invite acceptance. Placeholders show contact guidance; unassigned units omit the control.
-- Requires user-management roles (`canManageUsers`). Unlock stays alone in the Device column.
+- Expanded unit row **Tenant** column: **Resend invite** when the primary tenant has not completed setup (`last_login` empty); **Reset account** after invite acceptance. Both actions use a confirmation step. Placeholders show contact guidance; unassigned units omit the control.
+- Requires user-management roles (`canManageUsers`). Full-width control matches the Device column Unlock button.
 - See [auth.md](./auth.md) for the reset-account API.
 
 ## Widget fullscreen (focus mode)
