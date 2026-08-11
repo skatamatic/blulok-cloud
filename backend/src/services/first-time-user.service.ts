@@ -1,6 +1,5 @@
 import { InviteService } from '@/services/invite.service';
 import { NotificationService } from '@/services/notifications/notification.service';
-import { SystemSettingsModel } from '@/models/system-settings.model';
 import { User, UserModel } from '@/models/user.model';
 import { OTPService } from '@/services/otp.service';
 import { logger } from '@/utils/logger';
@@ -11,7 +10,6 @@ export class FirstTimeUserService {
   private static instance: FirstTimeUserService;
   private invites = InviteService.getInstance();
   private notifications = NotificationService.getInstance();
-  private settings = new SystemSettingsModel();
   private otps = OTPService.getInstance();
   private db = DatabaseService.getInstance().connection;
 
@@ -39,14 +37,11 @@ export class FirstTimeUserService {
     }
 
     const { token, inviteId } = await this.invites.createInvite(user.id);
-    const deeplinkBase = await this.settings.get('notifications.deeplink_base');
-    let base = deeplinkBase || 'blulok://';
+    const { NotificationConfigService } = await import(
+      '@/services/notifications/notification-config.service'
+    );
+    const base = await NotificationConfigService.getInstance().resolveDeeplinkBase();
     const phone = user.phone_number || '';
-    
-    // For HTTP/HTTPS URLs, ensure trailing slash; for custom schemes (blulok://), no slash needed
-    if (base.match(/^https?:\/\//) && !base.endsWith('/')) {
-      base = `${base}/`;
-    }
     
     // Build: blulok://invite?token=...&phone=... or https://app.blulok.com/invite?token=...&phone=...
     const deeplink = `${base}invite?token=${encodeURIComponent(token)}${phone ? `&phone=${encodeURIComponent(phone)}` : ''}`;
@@ -68,6 +63,17 @@ export class FirstTimeUserService {
       deeplink,
       code,
     });
+
+    // Clear any FMS deferred-invite bookkeeping (manual/admin invite wins)
+    try {
+      const { DeferredInviteService } = await import(
+        '@/services/notifications/deferred-invite.service'
+      );
+      await DeferredInviteService.getInstance().resolvePendingForUser(user.id, 'manual_invite');
+    } catch (e) {
+      logger.warn(`Failed to resolve deferred invite for user ${user.id}`, e);
+    }
+
     logger.info(`Invite with OTP sent to user ${user.id} via ${delivery}`);
   }
 

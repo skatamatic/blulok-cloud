@@ -117,6 +117,12 @@ async function bootstrap(): Promise<void> {
     const { AccessRevocationListenerService } = await import('@/services/access-revocation-listener.service');
     AccessRevocationListenerService.getInstance();
 
+    // Auto-send deferred FMS invites when a tenant becomes BluLok-equipped
+    const { DeferredInviteListenerService } = await import(
+      '@/services/notifications/deferred-invite-listener.service'
+    );
+    DeferredInviteListenerService.getInstance();
+
     const { DeviceAccessPropagationService } = await import('@/services/device-access-propagation.service');
     DeviceAccessPropagationService.getInstance();
 

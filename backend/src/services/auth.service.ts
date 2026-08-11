@@ -467,6 +467,24 @@ export class AuthService {
     }
   }
 
+  /**
+   * Whether an existing JWT may continue to be used for API/WS access.
+   * Rejects deactivated accounts and invite / password-reset required accounts
+   * (including after scorched-earth account reset) so stale tokens cannot linger
+   * for the full JWT lifetime (default 30d).
+   */
+  public static getSessionDenialReason(
+    user: Pick<User, 'is_active' | 'requires_password_reset'>,
+  ): string | null {
+    if (!user.is_active) {
+      return 'Account is deactivated';
+    }
+    if (user.requires_password_reset) {
+      return 'Account requires re-authentication';
+    }
+    return null;
+  }
+
   public static hasPermission(userRole: UserRole, requiredRoles: UserRole[]): boolean {
     return requiredRoles.includes(userRole);
   }

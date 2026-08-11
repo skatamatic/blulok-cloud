@@ -54,6 +54,19 @@ export enum FMSWebhookAuthMode {
   HEADER_SECRET = 'header_secret',
 }
 
+/**
+ * Controls whether newly created FMS tenants receive invite SMS/email.
+ * Unset / unknown values resolve to NONE (no automatic invites).
+ */
+export enum FMSInvitePolicy {
+  /** Never auto-send invites (default). Admins can still invite manually. */
+  NONE = 'none',
+  /** Auto-send only when the tenant is assigned to a unit with a BluLok device. */
+  DEVICE_EQUIPPED = 'device_equipped',
+  /** Auto-send to every non-placeholder tenant with contact info. */
+  ALL = 'all',
+}
+
 export interface FMSAuthConfig {
   type: FMSAuthType;
   credentials: {
@@ -91,6 +104,11 @@ export interface FMSProviderConfig {
     webhookSecret?: string;
     webhookAuthHeader?: string;
     webhookSignatureHeader?: string;
+    /**
+     * When to send invite SMS/email for newly created FMS tenants.
+     * Defaults to `none` when unset.
+     */
+    invitePolicy?: FMSInvitePolicy;
   };
   customSettings?: Record<string, unknown>;
 }

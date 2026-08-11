@@ -1,6 +1,7 @@
 import { Response, NextFunction, RequestHandler } from 'express';
 import { AuthService } from '@/services/auth.service';
 import { FacilityAccessService } from '@/services/facility-access.service';
+import { UserModel } from '@/models/user.model';
 import { UserRole, AuthenticatedRequest } from '@/types/auth.types';
 import { AppError, asyncHandler } from '@/middleware/error.middleware';
 
@@ -8,6 +9,8 @@ import { AppError, asyncHandler } from '@/middleware/error.middleware';
  * Verify JWT and attach the authenticated user to the request.
  * For facility-scoped roles, overwrites `facilityIds` with live DB associations
  * so route handlers never authorize or filter using stale JWT claims.
+ * Also rejects tokens for deactivated or password-reset-required accounts
+ * (e.g. after account reset) so JWTs cannot outlive auth identity wipes.
  */
 export const authenticateToken = asyncHandler(async (
   req: AuthenticatedRequest,
@@ -24,6 +27,15 @@ export const authenticateToken = asyncHandler(async (
   const decoded = AuthService.verifyToken(token);
   if (!decoded) {
     throw new AppError('Invalid or expired token', 401);
+  }
+
+  const dbUser = await UserModel.findById(decoded.userId);
+  if (!dbUser) {
+    throw new AppError('Invalid or expired token', 401);
+  }
+  const denial = AuthService.getSessionDenialReason(dbUser);
+  if (denial) {
+    throw new AppError(denial, 401);
   }
 
   req.user = decoded;

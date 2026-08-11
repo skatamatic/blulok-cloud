@@ -100,6 +100,11 @@ Pass requests require authentication; device binding via `X-App-Device-Id` (pref
 Denylist is for **revoking credentials that were actually issued** to users on specific devices they had access to — primarily **tenants/maintenance on unit locks** and **shared-key invitees**. It is **not** used for facility-admin facility assignment changes (privileged management roles do not receive lock audiences in `aud`).
 
 Denylist targets include **BluLok locks on the unit**, **app-enabled access_control devices in specific access groups** linked to those locks, and **global/default-group access_control devices** in the same facility **only when the user loses all remaining unit/key-share access in that facility** (partial unit unassignment does not denylist facility-wide gates while the user still holds another unit or active share there).
+
+**Account reset** (`POST /users/:id/reset-account`) also pushes denylist entries for the user’s units (source `user_deactivation`) after revoking app devices, so stale device keys cannot open locks while tenancy is preserved. Setting `requires_password_reset=true` causes REST/WS JWT auth to reject existing tokens immediately (see `AuthService.getSessionDenialReason`).
+
+**System settings secrets:** Twilio auth tokens and SMTP passwords in `notifications.config` are encrypted at rest with AES-256-GCM when `SETTINGS_ENCRYPTION_KEY` is set (see [notifications-email-config.md](./notifications-email-config.md)).
+
 - Owner deactivation:
   - Denylist the owner on devices from both primary and shared units.
   - Inactivate all active, unexpired shares granted by the owner.

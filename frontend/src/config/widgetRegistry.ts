@@ -13,7 +13,8 @@ import {
   ArrowPathIcon,
   KeyIcon,
   BuildingOffice2Icon,
-  Squares2X2Icon
+  Squares2X2Icon,
+  UserGroupIcon,
 } from '@heroicons/react/24/outline';
 
 // Import the shared widget registry and add icons
@@ -88,6 +89,10 @@ export const WIDGET_REGISTRY: Record<string, WidgetTypeDefinition & { icon: Reac
   'units-manager': {
     ...SHARED_WIDGET_REGISTRY['units-manager'],
     icon: Squares2X2Icon
+  },
+  'user-management': {
+    ...SHARED_WIDGET_REGISTRY['user-management'],
+    icon: UserGroupIcon
   }
 };
 

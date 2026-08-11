@@ -13,12 +13,24 @@ export const notificationsConfigBodySchema = Joi.object({
   }).unknown(true).optional().allow(null),
   defaultProvider: Joi.object({
     sms: Joi.string().valid('twilio', 'console').allow(null).optional(),
-    email: Joi.string().valid('console').allow(null).optional(),
+    email: Joi.string().valid('console', 'smtp').allow(null).optional(),
   }).unknown(true).optional().allow(null),
   twilio: Joi.object({
     accountSid: Joi.string().allow(null, '').optional(),
     authToken: Joi.string().allow(null, '').optional(),
     fromNumber: Joi.string().allow(null, '').optional(),
+  }).unknown(true).optional().allow(null),
+  smtp: Joi.object({
+    host: Joi.string().allow(null, '').optional(),
+    port: Joi.number().integer().min(1).max(65535).optional(),
+    encryption: Joi.string().valid('none', 'starttls', 'tls').optional(),
+    authMode: Joi.string().valid('none', 'plain', 'login').optional(),
+    username: Joi.string().allow(null, '').optional(),
+    password: Joi.string().allow(null, '').optional(),
+    fromEmail: Joi.string().allow(null, '').optional(),
+    fromName: Joi.string().allow(null, '').optional(),
+    replyTo: Joi.string().allow(null, '').optional(),
+    rejectUnauthorized: Joi.boolean().optional(),
   }).unknown(true).optional().allow(null),
   templates: Joi.object({
     inviteSms: Joi.string().allow(null, '').optional(),
@@ -37,5 +49,9 @@ export const notificationsConfigBodySchema = Joi.object({
 export const notificationsTestBodySchema = Joi.object({
   toEmail: Joi.string().allow(null, '').optional(),
   toPhone: Joi.string().allow(null, '').optional(),
+  configOverride: Joi.object().unknown(true).optional(),
+}).unknown(true);
+
+export const notificationsTestConnectionBodySchema = Joi.object({
   configOverride: Joi.object().unknown(true).optional(),
 }).unknown(true);

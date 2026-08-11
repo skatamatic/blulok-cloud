@@ -1053,6 +1053,43 @@
         ]
       }
     },
+    "/users/{id}/reset-account": {
+      "post": {
+        "tags": [
+          "Users"
+        ],
+        "summary": "Reset account auth identity and re-send invite",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "HTTP 200",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SuccessEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "x-migration-status": "complete",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
     "/users/{id}/activate": {
       "post": {
         "tags": [
@@ -3379,6 +3416,116 @@
         ]
       }
     },
+    "/gateways/claim": {
+      "post": {
+        "tags": [
+          "Gateway"
+        ],
+        "summary": "Claim a gateway via sticker ZTP (live provision session + public key)",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PostGatewaysClaimRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "HTTP 201",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SuccessEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "x-migration-status": "complete",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/gateways/{id}/release": {
+      "post": {
+        "tags": [
+          "Gateway"
+        ],
+        "summary": "Release ZTP gateway binding (unbind facility; device returns to provision mode)",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "HTTP 200",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SuccessEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "x-migration-status": "complete",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/gateways/{id}/revoke": {
+      "post": {
+        "tags": [
+          "Gateway"
+        ],
+        "summary": "Revoke ZTP gateway public key (requires reflash)",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "HTTP 200",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SuccessEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "x-migration-status": "complete",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
     "/gateways": {
       "post": {
         "tags": [
@@ -4792,6 +4939,104 @@
           },
           "502": {
             "description": "HTTP 502",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "x-migration-status": "complete",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/devices/blulok/{id}/occupied-unit-override": {
+      "post": {
+        "tags": [
+          "Devices",
+          "App"
+        ],
+        "summary": "Register Occupied Unit Override intent for on-ground (BLE) unlock",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PostDevicesBlulokIdOccupiedUnitOverrideRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "HTTP 200",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PutDevicesBlulokIdLockResponse200"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "HTTP 400",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "HTTP 403",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "HTTP 404",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "HTTP 409",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "HTTP 500",
             "content": {
               "application/json": {
                 "schema": {
@@ -6293,7 +6538,7 @@
         "tags": [
           "AccessHistory"
         ],
-        "summary": "Query access history with filters",
+        "summary": "Query access history event rows (raw by default; view=sessions or GET /access-sessions for session aggregates)",
         "parameters": [
           {
             "name": "facility_id",
@@ -6353,6 +6598,22 @@
           },
           {
             "name": "denial_reason",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "state",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "view",
             "in": "query",
             "required": false,
             "schema": {
@@ -6533,6 +6794,22 @@
             }
           },
           {
+            "name": "state",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "view",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
             "name": "date_from",
             "in": "query",
             "required": false,
@@ -6699,6 +6976,22 @@
           },
           {
             "name": "denial_reason",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "state",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "view",
             "in": "query",
             "required": false,
             "schema": {
@@ -6879,6 +7172,22 @@
             }
           },
           {
+            "name": "state",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "view",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
             "name": "date_from",
             "in": "query",
             "required": false,
@@ -6976,7 +7285,7 @@
         "tags": [
           "AccessHistory"
         ],
-        "summary": "Export access history as CSV",
+        "summary": "Export access history as CSV (raw by default; view=sessions for session CSV)",
         "parameters": [
           {
             "name": "facility_id",
@@ -7036,6 +7345,22 @@
           },
           {
             "name": "denial_reason",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "state",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "view",
             "in": "query",
             "required": false,
             "schema": {
@@ -7185,6 +7510,387 @@
           "AccessHistory"
         ],
         "summary": "Get access history entry by ID",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "HTTP 200",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SuccessEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "x-migration-status": "complete",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/access-sessions": {
+      "get": {
+        "tags": [
+          "AccessSessions"
+        ],
+        "summary": "Query access sessions (one logical access per row)",
+        "parameters": [
+          {
+            "name": "facility_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "unit_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "user_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "device_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "action",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "action_type",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "method",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "denial_reason",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "state",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "date_from",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "date_to",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "start_date",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "end_date",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "success",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "sort_by",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "sort_order",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "HTTP 200",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SuccessEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "x-migration-status": "complete",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/access-sessions/export": {
+      "get": {
+        "tags": [
+          "AccessSessions"
+        ],
+        "summary": "Export access sessions as CSV",
+        "parameters": [
+          {
+            "name": "facility_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "unit_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "user_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "device_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "action",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "action_type",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "method",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "denial_reason",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "state",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "date_from",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "date_to",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "start_date",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "end_date",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "success",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "sort_by",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "sort_order",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "HTTP 200",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SuccessEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "x-migration-status": "complete",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/access-sessions/{id}": {
+      "get": {
+        "tags": [
+          "AccessSessions"
+        ],
+        "summary": "Get access session by ID with linked event timeline",
         "parameters": [
           {
             "name": "id",
@@ -8859,6 +9565,158 @@
         ]
       }
     },
+    "/dev/gateway-offline-grace": {
+      "get": {
+        "tags": [
+          "Admin"
+        ],
+        "summary": "Get gateway offline grace (effective + default)",
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Validation error"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "403": {
+            "description": "Forbidden"
+          },
+          "404": {
+            "description": "Not found"
+          },
+          "500": {
+            "description": "Server error"
+          }
+        },
+        "x-migration-status": "complete",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      },
+      "put": {
+        "tags": [
+          "Admin"
+        ],
+        "summary": "Override gateway offline grace for this process (e2e / local)",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PutDevGatewayOfflineGraceRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Validation error"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "403": {
+            "description": "Forbidden"
+          },
+          "404": {
+            "description": "Not found"
+          },
+          "500": {
+            "description": "Server error"
+          }
+        },
+        "x-migration-status": "complete",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/dev/firmware-timeouts": {
+      "get": {
+        "tags": [
+          "Admin"
+        ],
+        "summary": "Get firmware OTA reconnect grace timeouts (effective + defaults)",
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Validation error"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "403": {
+            "description": "Forbidden"
+          },
+          "404": {
+            "description": "Not found"
+          },
+          "500": {
+            "description": "Server error"
+          }
+        },
+        "x-migration-status": "complete",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      },
+      "put": {
+        "tags": [
+          "Admin"
+        ],
+        "summary": "Override firmware OTA reconnect grace timeouts for this process (e2e / local)",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PutDevFirmwareTimeoutsRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Validation error"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "403": {
+            "description": "Forbidden"
+          },
+          "404": {
+            "description": "Not found"
+          },
+          "500": {
+            "description": "Server error"
+          }
+        },
+        "x-migration-status": "complete",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
     "/dev/simulator/user-session": {
       "post": {
         "tags": [
@@ -9051,6 +9909,50 @@
           "System"
         ],
         "summary": "Send test notifications",
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Validation error"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "403": {
+            "description": "Forbidden"
+          },
+          "404": {
+            "description": "Not found"
+          },
+          "500": {
+            "description": "Server error"
+          }
+        },
+        "x-migration-status": "complete",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/system-settings/notifications/test-connection": {
+      "post": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Verify email provider connection (SMTP)",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PostSystemSettingsNotificationsTestConnectionRequest"
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
             "description": "Success"
@@ -10342,6 +11244,40 @@
           "Admin"
         ],
         "summary": "Manually trigger data pruning",
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Validation error"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "403": {
+            "description": "Forbidden"
+          },
+          "404": {
+            "description": "Not found"
+          },
+          "500": {
+            "description": "Server error"
+          }
+        },
+        "x-migration-status": "complete",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/admin/access-sessions/backfill": {
+      "post": {
+        "tags": [
+          "Admin"
+        ],
+        "summary": "Backfill access_sessions from activity_logs (last N days)",
         "responses": {
           "200": {
             "description": "Success"
@@ -17577,6 +18513,11 @@
             "minLength": 1,
             "maxLength": 100
           },
+          "email": {
+            "type": "string",
+            "format": "email",
+            "nullable": true
+          },
           "phoneNumber": {
             "type": "string",
             "nullable": true
@@ -17593,6 +18534,9 @@
             ]
           },
           "isActive": {
+            "type": "boolean"
+          },
+          "simplifiedUi": {
             "type": "boolean"
           }
         },
@@ -18743,6 +19687,35 @@
         ],
         "additionalProperties": false
       },
+      "PostGatewaysClaimRequest": {
+        "type": "object",
+        "properties": {
+          "facility_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "device_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "public_key": {
+            "type": "string",
+            "minLength": 40,
+            "maxLength": 128
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 255
+          }
+        },
+        "required": [
+          "facility_id",
+          "device_id",
+          "public_key"
+        ],
+        "additionalProperties": false
+      },
       "PutGatewaysIdRequest": {
         "type": "object",
         "properties": {
@@ -19432,6 +20405,18 @@
               "unlocked",
               "error"
             ]
+          },
+          "tenant_override_reason": {
+            "type": "string",
+            "enum": [
+              "tenant_locked_phone",
+              "emergency",
+              "testing_maintenance"
+            ]
+          },
+          "tenant_override_notes": {
+            "type": "string",
+            "maxLength": 500
           }
         },
         "required": [
@@ -19459,6 +20444,27 @@
           "success",
           "message"
         ]
+      },
+      "PostDevicesBlulokIdOccupiedUnitOverrideRequest": {
+        "type": "object",
+        "properties": {
+          "reason": {
+            "type": "string",
+            "enum": [
+              "tenant_locked_phone",
+              "emergency",
+              "testing_maintenance"
+            ]
+          },
+          "notes": {
+            "type": "string",
+            "maxLength": 500
+          }
+        },
+        "required": [
+          "reason"
+        ],
+        "additionalProperties": false
       },
       "PutDevicesAccessControlIdLockRequest": {
         "type": "object",
@@ -20003,7 +21009,78 @@
           },
           "config": {
             "type": "object",
-            "properties": {}
+            "properties": {
+              "providerType": {
+                "type": "string"
+              },
+              "baseUrl": {
+                "type": "string",
+                "nullable": true
+              },
+              "apiVersion": {
+                "type": "string",
+                "nullable": true
+              },
+              "auth": {
+                "type": "object",
+                "properties": {}
+              },
+              "features": {
+                "type": "object",
+                "properties": {}
+              },
+              "syncSettings": {
+                "type": "object",
+                "properties": {
+                  "autoAcceptChanges": {
+                    "type": "boolean"
+                  },
+                  "autoAcceptWebhookChanges": {
+                    "type": "boolean"
+                  },
+                  "syncInterval": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "webhookUrl": {
+                    "type": "string",
+                    "nullable": true
+                  },
+                  "webhookAuthMode": {
+                    "type": "string",
+                    "enum": [
+                      "hmac",
+                      "none",
+                      "header_secret"
+                    ]
+                  },
+                  "webhookSecret": {
+                    "type": "string",
+                    "nullable": true
+                  },
+                  "webhookAuthHeader": {
+                    "type": "string",
+                    "nullable": true
+                  },
+                  "webhookSignatureHeader": {
+                    "type": "string",
+                    "nullable": true
+                  },
+                  "invitePolicy": {
+                    "type": "string",
+                    "enum": [
+                      "none",
+                      "device_equipped",
+                      "all"
+                    ]
+                  }
+                }
+              },
+              "customSettings": {
+                "type": "object",
+                "properties": {}
+              }
+            }
           },
           "is_enabled": {
             "type": "boolean"
@@ -20136,7 +21213,78 @@
           },
           "config": {
             "type": "object",
-            "properties": {}
+            "properties": {
+              "providerType": {
+                "type": "string"
+              },
+              "baseUrl": {
+                "type": "string",
+                "nullable": true
+              },
+              "apiVersion": {
+                "type": "string",
+                "nullable": true
+              },
+              "auth": {
+                "type": "object",
+                "properties": {}
+              },
+              "features": {
+                "type": "object",
+                "properties": {}
+              },
+              "syncSettings": {
+                "type": "object",
+                "properties": {
+                  "autoAcceptChanges": {
+                    "type": "boolean"
+                  },
+                  "autoAcceptWebhookChanges": {
+                    "type": "boolean"
+                  },
+                  "syncInterval": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "webhookUrl": {
+                    "type": "string",
+                    "nullable": true
+                  },
+                  "webhookAuthMode": {
+                    "type": "string",
+                    "enum": [
+                      "hmac",
+                      "none",
+                      "header_secret"
+                    ]
+                  },
+                  "webhookSecret": {
+                    "type": "string",
+                    "nullable": true
+                  },
+                  "webhookAuthHeader": {
+                    "type": "string",
+                    "nullable": true
+                  },
+                  "webhookSignatureHeader": {
+                    "type": "string",
+                    "nullable": true
+                  },
+                  "invitePolicy": {
+                    "type": "string",
+                    "enum": [
+                      "none",
+                      "device_equipped",
+                      "all"
+                    ]
+                  }
+                }
+              },
+              "customSettings": {
+                "type": "object",
+                "properties": {}
+              }
+            }
           },
           "is_enabled": {
             "type": "boolean"
@@ -20448,6 +21596,39 @@
         ],
         "additionalProperties": false
       },
+      "PutDevGatewayOfflineGraceRequest": {
+        "type": "object",
+        "properties": {
+          "grace_ms": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 120000,
+            "nullable": true
+          }
+        },
+        "required": [
+          "grace_ms"
+        ],
+        "additionalProperties": false
+      },
+      "PutDevFirmwareTimeoutsRequest": {
+        "type": "object",
+        "properties": {
+          "transfer_disconnect_grace_ms": {
+            "type": "integer",
+            "minimum": 100,
+            "maximum": 600000,
+            "nullable": true
+          },
+          "verify_disconnect_grace_ms": {
+            "type": "integer",
+            "minimum": 100,
+            "maximum": 600000,
+            "nullable": true
+          }
+        },
+        "additionalProperties": false
+      },
       "PostDevSimulatorUserSessionRequest": {
         "type": "object",
         "properties": {
@@ -20477,6 +21658,15 @@
           }
         },
         "additionalProperties": false
+      },
+      "PostSystemSettingsNotificationsTestConnectionRequest": {
+        "type": "object",
+        "properties": {
+          "configOverride": {
+            "type": "object",
+            "properties": {}
+          }
+        }
       },
       "GetUserDevicesMeResponse200": {
         "type": "object",
@@ -21175,6 +22365,18 @@
                 },
                 "device_id": {
                   "type": "string"
+                },
+                "device_type": {
+                  "type": "string",
+                  "enum": [
+                    "blulok",
+                    "access_control"
+                  ]
+                },
+                "relay_channel": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 8
                 },
                 "gateway_id": {
                   "type": "string"

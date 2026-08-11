@@ -4,37 +4,6 @@
  * Dynamic system configuration management API providing runtime configuration
  * capabilities for system administrators. Enables configuration changes without
  * code deployments while maintaining security and audit trails.
- *
- * Key Features:
- * - Runtime configuration management without restarts
- * - Type-safe configuration validation with Joi schemas
- * - Role-based access control (ADMIN/DEV_ADMIN only)
- * - Audit trail for all configuration changes
- * - Secure storage with encryption for sensitive settings
- *
- * Configuration Categories:
- * - Security settings (device limits, authentication policies)
- * - Performance settings (timeouts, rate limits, caching)
- * - Feature flags (enable/disable functionality)
- * - Integration settings (API endpoints, credentials)
- * - Operational settings (maintenance modes, logging levels)
- *
- * Access Control:
- * - ADMIN/DEV_ADMIN: Full read/write access to all settings
- * - FACILITY_ADMIN/TENANT/MAINTENANCE: No access to system settings
- *
- * Setting Types:
- * - Numeric values (device limits, timeouts)
- * - Boolean flags (feature toggles, maintenance modes)
- * - String values (API endpoints, configuration strings)
- * - JSON objects (complex configuration structures)
- *
- * Security Considerations:
- * - Strict role-based access control
- * - Input validation on all setting values
- * - Audit logging for all configuration changes
- * - Secure storage for sensitive configuration
- * - Configuration change notifications
  */
 
 import { Router, Response } from 'express';
@@ -45,12 +14,19 @@ import { AuthenticatedRequest } from '@/types/auth.types';
 import { SystemSettingsModel } from '@/models/system-settings.model';
 import { NotificationsConfig } from '@/types/notification.types';
 import { NotificationService } from '@/services/notifications/notification.service';
+import { NotificationConfigService } from '@/services/notifications/notification-config.service';
+import {
+  maskNotificationSecrets,
+  prepareNotificationsConfigForSave,
+  resolveConfigOverrideSecrets,
+} from '@/services/notifications/notification-secrets.utils';
 import { UserModel, User } from '@/models/user.model';
 import { logger } from '@/utils/logger';
 import { registerGet, registerPost, registerPut } from '@/openapi/register-route';
 import {
   updateSystemSettingsBodySchema,
   notificationsConfigBodySchema,
+  notificationsTestConnectionBodySchema,
 } from '@/schemas/system-settings.schemas';
 
 const router = Router();
@@ -146,37 +122,19 @@ registerGet(
       return;
     }
 
+    const configService = NotificationConfigService.getInstance();
     const model = new SystemSettingsModel();
     const raw = await model.get('notifications.config');
-    let config: NotificationsConfig;
-
-    if (!raw) {
-      config = {
-        enabledChannels: { sms: true, email: false },
-        defaultProvider: { sms: 'console', email: 'console' },
-        templates: {
-          inviteSms: 'Welcome to BluLok. Tap to get started: {{deeplink}}',
-          otpSms: 'Your verification code is: {{code}}',
-        },
-        deeplinkBaseUrl: 'blulok://invite',
-      };
-    } else {
+    let stored: NotificationsConfig = configService.getDefaultConfig();
+    if (raw) {
       try {
-        config = JSON.parse(raw);
+        stored = JSON.parse(raw) as NotificationsConfig;
       } catch {
-        config = {
-          enabledChannels: { sms: true, email: false },
-          defaultProvider: { sms: 'console', email: 'console' },
-          templates: {
-            inviteSms: 'Welcome to BluLok. Tap to get started: {{deeplink}}',
-            otpSms: 'Your verification code is: {{code}}',
-          },
-          deeplinkBaseUrl: 'blulok://invite',
-        };
+        stored = configService.getDefaultConfig();
       }
     }
 
-    res.json({ success: true, config });
+    res.json({ success: true, config: maskNotificationSecrets(stored) });
   }),
 );
 
@@ -216,7 +174,15 @@ registerPut(
     }
 
     const model = new SystemSettingsModel();
-    await model.set('notifications.config', JSON.stringify(value));
+    const existingRaw = await model.get('notifications.config');
+    const toStore = prepareNotificationsConfigForSave(value as NotificationsConfig, existingRaw ?? null);
+
+    // Keep legacy deeplink key in sync so older readers stay consistent
+    if (toStore.deeplinkBaseUrl) {
+      await model.set('notifications.deeplink_base', toStore.deeplinkBaseUrl);
+    }
+
+    await model.set('notifications.config', JSON.stringify(toStore));
 
     res.json({ success: true, message: 'Notification settings updated successfully' });
   }),
@@ -256,8 +222,17 @@ registerPost(
     }
 
     const notifications = NotificationService.getInstance();
+    const stored = await NotificationConfigService.getInstance().loadConfig();
+    let resolvedOverride: NotificationsConfig | undefined;
+    if (configOverride) {
+      resolvedOverride = resolveConfigOverrideSecrets(configOverride as NotificationsConfig, stored);
+    }
+
     try {
-      const result = await notifications.sendTestNotifications({ toEmail: targetEmail, toPhone: targetPhone }, configOverride);
+      const result = await notifications.sendTestNotifications(
+        { toEmail: targetEmail, toPhone: targetPhone },
+        resolvedOverride,
+      );
 
       if ((result.sent?.length || 0) === 0 && (result.errors?.length || 0) > 0) {
         res.status(500).json({
@@ -279,6 +254,41 @@ registerPost(
     } catch (e: any) {
       res.status(500).json({ success: false, message: e?.message || 'Failed to send test notifications' });
     }
+  }),
+);
+
+registerPost(
+  router,
+  '/notifications/test-connection',
+  {
+    openApiPath: `${MOUNT}/notifications/test-connection`,
+    tags: ['System'],
+    summary: 'Verify email provider connection (SMTP)',
+    security: 'bearer',
+    body: notificationsTestConnectionBodySchema,
+  },
+  authenticateToken as any,
+  asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+    const user = req.user!;
+    if (user.role !== UserRole.ADMIN && user.role !== UserRole.DEV_ADMIN) {
+      res.status(403).json({ success: false, message: 'Access denied' });
+      return;
+    }
+
+    const { configOverride } = req.body || {};
+    const notifications = NotificationService.getInstance();
+    const stored = await NotificationConfigService.getInstance().loadConfig();
+    let resolvedOverride: NotificationsConfig | undefined;
+    if (configOverride) {
+      resolvedOverride = resolveConfigOverrideSecrets(configOverride as NotificationsConfig, stored);
+    }
+
+    const result = await notifications.testEmailConnection(resolvedOverride);
+    if (!result.ok) {
+      res.status(400).json({ success: false, message: result.message });
+      return;
+    }
+    res.json({ success: true, message: result.message });
   }),
 );
 

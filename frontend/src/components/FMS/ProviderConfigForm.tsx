@@ -7,7 +7,7 @@
 import { useState, useEffect } from 'react';
 import { fmsService } from '@/services/fms.service';
 import { getProviderMetadata } from '@/config/fms-providers';
-import { FMSConfiguration, FMSProviderType, FMSWebhookAuthMode } from '@/types/fms.types';
+import { FMSConfiguration, FMSInvitePolicy, FMSProviderType, FMSWebhookAuthMode } from '@/types/fms.types';
 import { useToast } from '@/contexts/ToastContext';
 import { FmsWebhookSecurityFields } from './FmsWebhookSecurityFields';
 
@@ -29,6 +29,7 @@ export function ProviderConfigForm({
   const [saving, setSaving] = useState(false);
   const [autoAccept, setAutoAccept] = useState(false);
   const [autoAcceptWebhook, setAutoAcceptWebhook] = useState(false);
+  const [invitePolicy, setInvitePolicy] = useState<FMSInvitePolicy>(FMSInvitePolicy.NONE);
   const [webhookAuthMode, setWebhookAuthMode] = useState<FMSWebhookAuthMode>(FMSWebhookAuthMode.HMAC);
   const [webhookSecret, setWebhookSecret] = useState('');
   const [hasStoredWebhookSecret, setHasStoredWebhookSecret] = useState(false);
@@ -69,6 +70,7 @@ export function ProviderConfigForm({
       } else {
         setAutoAcceptWebhook(config.syncSettings?.autoAcceptChanges ?? false);
       }
+      setInvitePolicy(config.syncSettings?.invitePolicy ?? FMSInvitePolicy.NONE);
       setWebhookAuthMode(config.syncSettings?.webhookAuthMode ?? FMSWebhookAuthMode.HMAC);
       setHasStoredWebhookSecret(Boolean(config.syncSettings?.webhookSecret));
       setWebhookSecret('');
@@ -126,6 +128,7 @@ export function ProviderConfigForm({
         syncSettings: {
           autoAcceptChanges: autoAccept,
           autoAcceptWebhookChanges: autoAcceptWebhook,
+          invitePolicy,
           webhookAuthMode,
           ...(webhookAuthHeader.trim() ? { webhookAuthHeader: webhookAuthHeader.trim() } : {}),
           ...(webhookSignatureHeader.trim()
@@ -215,6 +218,53 @@ export function ProviderConfigForm({
           autoAcceptWebhook={autoAcceptWebhook}
         />
       )}
+
+      <div className="space-y-3 pt-4 border-t border-gray-200 dark:border-gray-700">
+        <p className="text-sm font-medium text-gray-900 dark:text-white">Tenant invites</p>
+        <p className="text-xs text-gray-500 dark:text-gray-400">
+          Controls whether newly synced tenants receive invite SMS/email. Default is off to avoid
+          spam during partial BluLok adoption.
+        </p>
+        <div className="space-y-2">
+          {(
+            [
+              {
+                value: FMSInvitePolicy.NONE,
+                label: 'Do not send invites',
+                help: 'Tenants are created without notification. Admins can invite manually.',
+              },
+              {
+                value: FMSInvitePolicy.DEVICE_EQUIPPED,
+                label: 'Only tenants with a BluLok-equipped unit',
+                help: 'Invite is sent when the tenant is assigned to a unit that has a BluLok device (or when a device is later installed).',
+              },
+              {
+                value: FMSInvitePolicy.ALL,
+                label: 'All new tenants with contact info',
+                help: 'Every non-placeholder tenant with email or phone receives an invite.',
+              },
+            ] as const
+          ).map((opt) => (
+            <label
+              key={opt.value}
+              className="flex items-start gap-3 cursor-pointer rounded-lg border border-gray-200 dark:border-gray-700 px-3 py-2.5 hover:bg-gray-50 dark:hover:bg-gray-800/50 transition-colors"
+            >
+              <input
+                type="radio"
+                name="invitePolicy"
+                value={opt.value}
+                checked={invitePolicy === opt.value}
+                onChange={() => setInvitePolicy(opt.value)}
+                className="mt-0.5 h-4 w-4 text-primary-600 focus:ring-primary-500 border-gray-300"
+              />
+              <span className="block text-sm text-gray-700 dark:text-gray-300">
+                {opt.label}
+                <span className="block text-xs text-gray-500 dark:text-gray-400 mt-0.5">{opt.help}</span>
+              </span>
+            </label>
+          ))}
+        </div>
+      </div>
 
       <div className="space-y-3 pt-4 border-t border-gray-200 dark:border-gray-700">
         <p className="text-sm font-medium text-gray-900 dark:text-white">Change review</p>

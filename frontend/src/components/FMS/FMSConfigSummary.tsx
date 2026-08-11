@@ -163,6 +163,13 @@ export function FMSConfigSummary({
   const autoAccept = config.config?.syncSettings?.autoAcceptChanges ?? false;
   const autoAcceptWebhook =
     config.config?.syncSettings?.autoAcceptWebhookChanges ?? autoAccept;
+  const invitePolicy = config.config?.syncSettings?.invitePolicy ?? 'none';
+  const invitePolicyLabel =
+    invitePolicy === 'all'
+      ? 'Invite all tenants'
+      : invitePolicy === 'device_equipped'
+        ? 'Invite BluLok-equipped tenants'
+        : 'Invites disabled';
 
   return (
     <div className="space-y-5">
@@ -263,6 +270,9 @@ export function FMSConfigSummary({
               Auto-apply manual sync
             </span>
           )}
+          <span className="inline-flex px-2.5 py-1 rounded-full text-xs font-medium bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-300">
+            {invitePolicyLabel}
+          </span>
         </div>
       )}
 

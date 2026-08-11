@@ -19,6 +19,23 @@ export interface TwilioConfig {
   fromNumber: string;
 }
 
+export type SmtpEncryption = 'none' | 'starttls' | 'tls';
+export type SmtpAuthMode = 'none' | 'plain' | 'login';
+
+export interface SmtpConfig {
+  host: string;
+  port: number;
+  encryption: SmtpEncryption;
+  authMode: SmtpAuthMode;
+  username?: string;
+  password?: string;
+  fromEmail: string;
+  fromName?: string;
+  replyTo?: string;
+  /** TLS certificate validation; default true */
+  rejectUnauthorized?: boolean;
+}
+
 export interface NotificationsConfig {
   enabledChannels: {
     sms: boolean;
@@ -26,11 +43,12 @@ export interface NotificationsConfig {
   };
   defaultProvider: {
     sms: 'twilio' | 'console';
-    email: 'console';
+    email: 'console' | 'smtp';
   };
   twilio?: TwilioConfig;
+  smtp?: SmtpConfig;
   templates: NotificationTemplatesConfig;
-  deeplinkBaseUrl?: string; // e.g., blulok://invite or https://app.blulok.com/invite
+  deeplinkBaseUrl?: string; // e.g., blulok:// or https://app.blulok.com/
 }
 
 export interface SendInviteParams {
@@ -55,5 +73,3 @@ export interface SendPasswordResetParams {
   token: string;
   templateId?: string; // reserved for future use
 }
-
-

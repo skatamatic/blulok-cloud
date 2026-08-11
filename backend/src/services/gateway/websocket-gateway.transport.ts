@@ -1293,6 +1293,21 @@ export class WebsocketGatewayTransport implements GatewayTransport {
           safeSend(ws, { type: 'ERROR', code: 'AUTH_FAILED', message: 'Invalid token' });
           return closeAndCleanup();
         }
+        {
+          const { UserModel } = await import('@/models/user.model');
+          const dbUser = await UserModel.findById(decoded.userId);
+          if (!dbUser) {
+            logger.warn(`Gateway WS AUTH failed (user missing) user=${decoded.userId} remote=${remote}`);
+            safeSend(ws, { type: 'ERROR', code: 'AUTH_FAILED', message: 'Invalid token' });
+            return closeAndCleanup();
+          }
+          const denial = AuthService.getSessionDenialReason(dbUser);
+          if (denial) {
+            logger.warn(`Gateway WS AUTH failed (${denial}) user=${decoded.userId} remote=${remote}`);
+            safeSend(ws, { type: 'ERROR', code: 'AUTH_FAILED', message: denial });
+            return closeAndCleanup();
+          }
+        }
         if (![UserRole.FACILITY_ADMIN, UserRole.ADMIN, UserRole.DEV_ADMIN].includes(decoded.role)) {
           logger.warn(`Gateway WS AUTH forbidden (role=${decoded.role}) user=${decoded.userId} remote=${remote} facility=${facilityId}`);
           safeSend(ws, { type: 'ERROR', code: 'AUTH_FORBIDDEN', message: 'Insufficient role' });

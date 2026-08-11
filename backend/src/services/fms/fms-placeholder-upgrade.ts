@@ -10,6 +10,7 @@ import {
   isPlaceholderUser,
   UpgradePlaceholderInput,
 } from '@/services/fms/fms-placeholder-user.utils';
+import type { FMSProviderConfig } from '@/types/fms.types';
 
 export type PlaceholderUpgradeFailureReason =
   | 'no_contact'
@@ -67,7 +68,7 @@ export async function preparePlaceholderUpgrade(
     }
   }
 
-  const byLogin = await UserModel.findByLoginIdentifier(upgrade.login_identifier);
+  const byLogin = await UserModel.findByLoginIdentifier(upgrade.login_identifier!);
   if (byLogin && byLogin.id !== userId) {
     return {
       ok: false,
@@ -98,16 +99,38 @@ export async function requirePlaceholderUpgradeUpdates(
 
 /**
  * Fire-and-forget first-time invite after a successful placeholder → loginable upgrade.
+ * When facilityId + syncSettings are provided (FMS path), respects invitePolicy.
+ * When facilityId is omitted (admin Enable-login path), sends invite immediately.
  */
 export function queueInviteAfterPlaceholderUpgrade(
   user: User,
-  logContext?: { syncLogId?: string; facilityId?: string },
+  logContext?: { syncLogId?: string; facilityId?: string; syncSettings?: FMSProviderConfig['syncSettings'] | null },
 ): void {
   if (isPlaceholderUser(user)) return;
-  void import('@/services/first-time-user.service')
-    .then(({ FirstTimeUserService }) => FirstTimeUserService.getInstance().sendInvite(user))
+
+  // Admin Enable-login: always invite (explicit admin action bypasses FMS policy)
+  if (!logContext?.facilityId) {
+    void import('@/services/first-time-user.service')
+      .then(({ FirstTimeUserService }) => FirstTimeUserService.getInstance().sendInvite(user))
+      .catch((e) => {
+        logger.warn(`[FMS] Failed to send invite after placeholder upgrade for ${user.id}`, {
+          ...logContext,
+          error: e,
+        });
+      });
+    return;
+  }
+
+  void import('@/services/fms/fms-invite-queue.utils')
+    .then(({ queueFmsInviteOrDefer }) =>
+      queueFmsInviteOrDefer(user, {
+        facilityId: logContext.facilityId!,
+        syncSettings: logContext.syncSettings,
+        syncLogId: logContext.syncLogId,
+      }),
+    )
     .catch((e) => {
-      logger.warn(`[FMS] Failed to send invite after placeholder upgrade for ${user.id}`, {
+      logger.warn(`[FMS] Failed to queue invite after placeholder upgrade for ${user.id}`, {
         ...logContext,
         error: e,
       });

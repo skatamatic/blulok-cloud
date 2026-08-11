@@ -51,6 +51,12 @@ const envSchema = Joi.object({
    * Default false until production gateway firmware has parity.
    */
   GATEWAY_DENYLIST_SYNC_ENABLED: Joi.string().valid('true', 'false', '1', '0').default('false'),
+
+  /**
+   * Optional 32+ char (or 64-hex) key for encrypting sensitive system_settings
+   * values (Twilio auth token, SMTP password). When unset, secrets are stored plaintext.
+   */
+  SETTINGS_ENCRYPTION_KEY: Joi.string().min(16).optional().allow('', null),
 }).unknown();
 
 const { error, value: envVars } = envSchema.validate(process.env);
@@ -88,6 +94,8 @@ export interface Config {
     routePassTtlHours: number;
     fallbackIatSkewSeconds: number;
   };
+  /** Optional key for encrypting sensitive system_settings at rest. */
+  settingsEncryptionKey?: string;
 }
 
 export const config: Config = {
@@ -118,4 +126,5 @@ export const config: Config = {
     routePassTtlHours: envVars.ROUTE_PASS_TTL_HOURS,
     fallbackIatSkewSeconds: envVars.FALLBACK_IAT_SKEW_SECONDS,
   },
+  settingsEncryptionKey: envVars.SETTINGS_ENCRYPTION_KEY || undefined,
 };

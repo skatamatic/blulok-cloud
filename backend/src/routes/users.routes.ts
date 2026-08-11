@@ -198,22 +198,30 @@ registerGet(
   
   const paginatedUsers = filteredUsers.slice(offsetNum, offsetNum + limitNum);
 
-  const sanitizedUsers = paginatedUsers.map(user => ({
-    id: user.id,
-    email: user.email,
-    phoneNumber: user.phone_number ?? null,
-    firstName: user.first_name,
-    lastName: user.last_name,
-    role: user.role,
-    isActive: user.is_active,
-    simplifiedUi: Boolean(user.simplified_ui),
-    isPlaceholder: Boolean(user.is_placeholder),
-    lastLogin: user.last_login,
-    createdAt: user.created_at,
-    updatedAt: user.updated_at,
-    facilityNames: user.facility_names ? user.facility_names.split(',') : [],
-    facilityIds: user.facility_ids ? user.facility_ids.split(',') : []
-  }));
+  const { loadInviteStatusForUsers } = await import('@/utils/user-invite-status.utils');
+  const inviteStatusMap = await loadInviteStatusForUsers(paginatedUsers);
+
+  const sanitizedUsers = paginatedUsers.map(user => {
+    const invite = inviteStatusMap.get(user.id);
+    return {
+      id: user.id,
+      email: user.email,
+      phoneNumber: user.phone_number ?? null,
+      firstName: user.first_name,
+      lastName: user.last_name,
+      role: user.role,
+      isActive: user.is_active,
+      simplifiedUi: Boolean(user.simplified_ui),
+      isPlaceholder: Boolean(user.is_placeholder),
+      lastLogin: user.last_login,
+      createdAt: user.created_at,
+      updatedAt: user.updated_at,
+      facilityNames: user.facility_names ? user.facility_names.split(',') : [],
+      facilityIds: user.facility_ids ? user.facility_ids.split(',') : [],
+      inviteStatus: invite?.inviteStatus ?? (user.last_login ? 'active' : 'never_invited'),
+      invitedAt: invite?.invitedAt ?? null,
+    };
+  });
 
   res.json({
     success: true,
@@ -773,6 +781,91 @@ registerPost(
   await FirstTimeUserService.getInstance().sendInvite(user);
   res.json({ success: true, message: 'Invite resent' });
 }));
+
+registerPost(
+  router,
+  '/:id/reset-account',
+  {
+    openApiPath: `${MOUNT}/{id}/reset-account`,
+    tags: ['Users'],
+    summary: 'Reset account auth identity and re-send invite',
+    security: 'bearer',
+    params: userIdParamSchema,
+    responses: {
+      200: usersResponseSchema,
+    },
+  },
+  requireUserManagement,
+  asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+    const { id } = req.params;
+    if (!id) {
+      res.status(400).json({ success: false, message: 'User ID is required' });
+      return;
+    }
+
+    if (id === req.user!.userId) {
+      res.status(400).json({ success: false, message: 'Cannot reset your own account' });
+      return;
+    }
+
+    const user = await UserModel.findById(String(id)) as User | undefined;
+    if (!user) {
+      res.status(404).json({ success: false, message: 'User not found' });
+      return;
+    }
+
+    const hasAccess = await checkFacilityAccess(req, String(id));
+    if (!hasAccess) {
+      res.status(403).json({ success: false, message: 'Access denied to this user' });
+      return;
+    }
+
+    // Same role guards as deactivate
+    if (
+      AuthService.isFacilityAdmin(req.user!.role) &&
+      !FACILITY_ADMIN_CREATABLE_ROLES.includes(user.role as UserRole)
+    ) {
+      res.status(403).json({
+        success: false,
+        message:
+          'Facility admins can only reset tenant, maintenance, or BluLok technician accounts',
+      });
+      return;
+    }
+
+    if (user.role === UserRole.DEV_ADMIN && req.user!.role !== UserRole.DEV_ADMIN) {
+      res.status(403).json({
+        success: false,
+        message: 'Only dev_admin can reset a dev_admin account',
+      });
+      return;
+    }
+
+    const { isPlaceholderUser } = await import('@/services/fms/fms-placeholder-user.utils');
+    if (isPlaceholderUser(user)) {
+      res.status(400).json({
+        success: false,
+        message: 'Cannot reset a placeholder tenant. Add an email or phone first to enable login.',
+      });
+      return;
+    }
+
+    const { AccountResetService } = await import('@/services/account-reset.service');
+    try {
+      const result = await AccountResetService.getInstance().resetAndReinvite(String(id), {
+        performedBy: req.user!.userId,
+        sendInvite: true,
+      });
+      res.json({
+        success: true,
+        message: 'Account reset and invite sent',
+        devicesRevoked: result.devicesRevoked,
+      });
+    } catch (e: any) {
+      res.status(400).json({ success: false, message: e?.message || 'Account reset failed' });
+    }
+  }),
+);
 
 registerPut(
   router,

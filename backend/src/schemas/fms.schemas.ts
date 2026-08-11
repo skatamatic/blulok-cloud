@@ -1,15 +1,41 @@
 import Joi from 'joi';
-import { FMSProviderType } from '@/types/fms.types';
+import { FMSInvitePolicy, FMSProviderType } from '@/types/fms.types';
 import { paginationQuerySchema } from '@/openapi/common-schemas';
 
 const FMS_PROVIDER_TYPES = Object.values(FMSProviderType);
+const FMS_INVITE_POLICIES = Object.values(FMSInvitePolicy);
+
+/** Nested syncSettings validation (kept permissive via unknown(true) for forward-compat). */
+export const fmsSyncSettingsSchema = Joi.object({
+  autoAcceptChanges: Joi.boolean().optional(),
+  autoAcceptWebhookChanges: Joi.boolean().optional(),
+  syncInterval: Joi.number().integer().min(0).optional(),
+  webhookUrl: Joi.string().allow('', null).optional(),
+  webhookAuthMode: Joi.string().valid('hmac', 'none', 'header_secret').optional(),
+  webhookSecret: Joi.string().allow('', null).optional(),
+  webhookAuthHeader: Joi.string().allow('', null).optional(),
+  webhookSignatureHeader: Joi.string().allow('', null).optional(),
+  invitePolicy: Joi.string()
+    .valid(...FMS_INVITE_POLICIES)
+    .optional(),
+}).unknown(true);
+
+export const fmsProviderConfigSchema = Joi.object({
+  providerType: Joi.string().optional(),
+  baseUrl: Joi.string().allow('', null).optional(),
+  apiVersion: Joi.string().allow('', null).optional(),
+  auth: Joi.object().unknown(true).optional(),
+  features: Joi.object().unknown(true).optional(),
+  syncSettings: fmsSyncSettingsSchema.optional(),
+  customSettings: Joi.object().unknown(true).optional(),
+}).unknown(true);
 
 export const createFmsConfigSchema = Joi.object({
   facility_id: Joi.string().uuid().required(),
   provider_type: Joi.string()
     .valid(...FMS_PROVIDER_TYPES)
     .required(),
-  config: Joi.object().unknown(true).required(),
+  config: fmsProviderConfigSchema.required(),
   is_enabled: Joi.boolean().optional(),
 });
 
@@ -17,7 +43,7 @@ export const updateFmsConfigSchema = Joi.object({
   provider_type: Joi.string()
     .valid(...FMS_PROVIDER_TYPES)
     .optional(),
-  config: Joi.object().unknown(true).optional(),
+  config: fmsProviderConfigSchema.optional(),
   is_enabled: Joi.boolean().optional(),
 });
 

@@ -338,9 +338,19 @@ class ApiService {
     return response.data as { success: boolean; message: string; sent?: string[]; errors?: { channel: string; message: string }[]; toEmail?: string; toPhone?: string };
   }
 
+  async testNotificationConnection(payload?: { configOverride?: object }) {
+    const response = await this.api.post('/system-settings/notifications/test-connection', payload || {});
+    return response.data as { success: boolean; message: string };
+  }
+
   async resendUserInvite(userId: string) {
     const response = await this.api.post(`/users/${userId}/resend-invite`);
     return response.data;
+  }
+
+  async resetUserAccount(userId: string) {
+    const response = await this.api.post(`/users/${userId}/reset-account`);
+    return response.data as { success: boolean; message: string; devicesRevoked?: number };
   }
 
   // Facilities Management

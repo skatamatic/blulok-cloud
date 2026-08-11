@@ -86,8 +86,23 @@ All events use the same CloudEvents-style envelope:
 |-------|------------|
 | `autoAcceptWebhookChanges` | Inbound webhook events only |
 | `autoAcceptChanges` | Full / manual sync (and future scheduled sync) |
+| `invitePolicy` | When newly created FMS tenants receive invite SMS/email |
 
 When `autoAcceptWebhookChanges` is unset, it falls back to `autoAcceptChanges` for backward compatibility.
+
+### Tenant invite policy (`config.syncSettings.invitePolicy`)
+
+Controls whether FMS-created (or placeholder-upgraded) tenants automatically receive invite SMS/email. Stored in the facility `fms_configurations.config` JSON — **no migration**.
+
+| Value | Behavior |
+|-------|----------|
+| `none` (default when unset) | Never auto-send. Row recorded in `deferred_user_invites` (`reason=policy_none`). Admins can still invite manually. |
+| `device_equipped` | Auto-send only when the tenant is assigned to a unit that has a BluLok device. Otherwise defer (`reason=awaiting_blulok_device`) until a device is assigned or the tenant is assigned to an equipped unit. |
+| `all` | Auto-send to every non-placeholder tenant with email or phone. |
+
+**Breaking change on deploy:** existing facilities that previously always invited will default to `none` until an admin sets a policy. Configure under Facility → FMS Integration → Tenant invites.
+
+Deferred invites with `awaiting_blulok_device` are resolved by `DeferredInviteListenerService` (subscribes to `tenant:assigned` and `deviceAssigned`). Concurrent handlers claim the deferred row atomically before sending to avoid duplicate invites; a failed send reopens the claim. `deferred_user_invites.user_id` is unique — re-deferring after resolve reopens the existing row. Manual `POST /users/:id/resend-invite` and account reset bypass the policy.
 
 ### Pending review UI
 
@@ -103,7 +118,7 @@ When `autoAcceptWebhookChanges` is unset, it falls back to `autoAcceptChanges` f
 - **Unit status is SoT for occupancy (ledger conflicts)**: Storable can disagree with itself — `units.status` vacant while `ledgers/current` still lists a tenant (sandbox units 101/806). BluLok **trusts unit status** for occupancy. Ledger-driven `tenant_unit_changed` **assign** rows against a vacant/maintenance/reserved unit, and **unassign** rows against a unit still `occupied` by that tenant, are emitted **invalid** with a clear “fix the ledger or unit status in your FMS” message so they cannot flip-flop on successive syncs. Vacant `unit_updated` still applies (and may note the conflicting ledger in `impact_summary`). New `tenant_added` only assigns unitIds whose FMS status is occupied; skipped vacant ledger units get their own blocked assign rows.
 - **Apply failure toasts**: when apply partially or fully fails, toasts summarize counts by failure reason (e.g. “2 unit updates failed: tenant isn't in BluLok yet — create the tenant first”) using structured `errorDetails` from the apply API—no raw FMS UUIDs or change_type dumps. A single shared reason omits the redundant per-reason count. Failed rows stay in the review modal for inspection.
 - **Failure reasons survive reload**: a failed apply writes the reason onto the change row (`markApplyFailed` sets `is_valid = false` + `validation_errors`), so reopening the review queue still explains it instead of showing the row as freshly pending. The card heading reads **This change failed to apply** (vs **Cannot apply this change** for payloads that were never applicable), distinguished by `didFmsChangeFailToApply` — accepted, unapplied, and invalid.
-- **Tenant contact identity / placeholders**: tenants are valid with **email, phone, both, or neither**. When neither is present, sync/apply creates a real `users` row with `is_placeholder=true`, reserved `login_identifier` `fms-ph:{facilityId}:{externalId}`, and no invite. Auth rejects login; UI shows a **No login** badge. When FMS or an admin later adds email/phone, the placeholder is upgraded (`is_placeholder=false`, normal login identity) and a first-time invite is sent. Review impact labels use `placeholder — no login`. Stale pending rows that still carry older “missing email/phone” identity errors are rewritten on read (contact-only errors stripped so the row becomes valid).
+- **Tenant contact identity / placeholders**: tenants are valid with **email, phone, both, or neither**. When neither is present, sync/apply creates a real `users` row with `is_placeholder=true`, reserved `login_identifier` `fms-ph:{facilityId}:{externalId}`, and no invite. Auth rejects login; UI shows a **No login** badge. When FMS or an admin later adds email/phone, the placeholder is upgraded (`is_placeholder=false`, normal login identity) and invite delivery follows **`invitePolicy`** (may send or defer). Review impact labels use `placeholder — no login`. Stale pending rows that still carry older “missing email/phone” identity errors are rewritten on read (contact-only errors stripped so the row becomes valid).
 - **Dismiss changes**: invalid payloads and failed applies can be dismissed individually or in bulk from the review modal (`POST /api/v1/fms/changes/dismiss`). Dismissed changes leave the pending review queue without being applied.
 - **Tenant removal**: applying `tenant_removed` stamps the facility's FMS entity mapping with `metadata.removed_from_fms_at`, removes the user–facility association, and skips re-detection on later syncs. When the tenant reappears in FMS, sync emits a restore/update change (even if profile fields are unchanged), apply clears the stamp, re-adds the facility association, and reactivates the user if they were deactivated by removal.
 - **Inactive but still in FMS**: If an admin deactivates a tenant who remains present in FMS, the next sync emits `tenant_updated` (even without profile diffs), apply restores/reactivates them and updates profile fields as needed.

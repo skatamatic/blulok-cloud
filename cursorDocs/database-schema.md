@@ -57,6 +57,26 @@ CREATE TABLE users (
 - Optional presentation-only `simplified_ui` for facility admins (not an API permission boundary; see [auth.md](./auth.md))
 - `is_placeholder` for FMS tenants synced without email/phone (non-loginable until upgraded; see [fms-webhooks.md](./fms-webhooks.md))
 
+### Deferred User Invites Table
+
+```sql
+CREATE TABLE deferred_user_invites (
+  id VARCHAR(36) PRIMARY KEY DEFAULT (UUID()),
+  user_id VARCHAR(36) NOT NULL UNIQUE,
+  facility_id VARCHAR(36) NOT NULL,
+  reason ENUM('policy_none', 'awaiting_blulok_device') NOT NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  resolved_at TIMESTAMP NULL,
+  resolved_reason VARCHAR(64) NULL,
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+  FOREIGN KEY (facility_id) REFERENCES facilities(id) ON DELETE CASCADE,
+  INDEX idx_deferred_invites_facility (facility_id),
+  INDEX idx_deferred_invites_pending (reason, resolved_at)
+);
+```
+
+**Purpose**: Track FMS tenants not invited at creation because of `invitePolicy=none` or awaiting a BluLok device (`invitePolicy=device_equipped`). Migration `102_create_deferred_user_invites.ts`. See [fms-webhooks.md](./fms-webhooks.md).
+
 ### Facilities Table
 
 ```sql

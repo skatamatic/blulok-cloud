@@ -213,6 +213,19 @@ export class WebSocketService {
 
       const decoded = verify(token, config.jwt.secret) as any;
 
+      const { UserModel } = await import('@/models/user.model');
+      const { AuthService } = await import('@/services/auth.service');
+      const dbUser = await UserModel.findById(decoded.userId);
+      if (!dbUser) {
+        ws.close(1008, 'Authentication failed');
+        return;
+      }
+      const denial = AuthService.getSessionDenialReason(dbUser);
+      if (denial) {
+        ws.close(1008, denial);
+        return;
+      }
+
       const role = decoded.role as UserRole;
       let facilityIds: string[] | undefined;
       if (role !== UserRole.ADMIN && role !== UserRole.DEV_ADMIN) {

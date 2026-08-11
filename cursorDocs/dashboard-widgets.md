@@ -30,6 +30,12 @@
 ## Widget fullscreen (focus mode)
 
 - Some widgets opt in via **`supportsFullscreen: true`** in the widget registry (currently `facility-viewer` and `units-manager`). Entering focus pins **`activePageId`** to the widget’s page; exiting does not remount the page strip (bottom pager hidden while focused).
+
+## User Management widget
+
+- Registry type: **`user-management`** (admin / facility_admin / dev_admin). Medium/large sizes.
+- Searchable user list honoring the global facility selector; each row shows invite status (`never_invited` / `invite_pending` / `active` / `placeholder`) and shared **InviteActions** (Resend Invite or Reset Account & Re-invite).
+- See [auth.md](./auth.md) for the reset-account API.
 - UI: `Widget` header shows a maximize/minimize button when `onFullscreenToggle` is supplied. The widget renders in `FullscreenWidgetView` (`frontend/src/components/Dashboard/FullscreenWidgetView.tsx`) — an in-canvas overlay that takes the full dashboard real estate (the route stays no-scroll). **Page navigator** is hidden while focused.
 - Exit: floating **Back** pill, header minimize, or **Esc**.
 - State: `useDashboardState.focusedWidgetId` (single widget at a time); persisted in `blulok-dashboard-v2` so refresh restores focus. Cleared automatically on page switch and on widget removal.

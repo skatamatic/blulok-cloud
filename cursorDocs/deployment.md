@@ -458,6 +458,8 @@ DB_NAME=blulok_dev
 DB_USER=developer
 DB_PASSWORD=mobile
 JWT_SECRET=dev-jwt-secret-minimum-32-characters
+# Optional: encrypt Twilio/SMTP secrets in system_settings (32+ chars or 64-hex)
+SETTINGS_ENCRYPTION_KEY=
 CORS_ORIGINS=http://localhost:3001
 LOG_LEVEL=debug
 ```
@@ -471,9 +473,12 @@ DB_NAME=blulok_prod
 DB_USER=blulok_user
 # DB_PASSWORD from Secret Manager
 # JWT_SECRET from Secret Manager
+# SETTINGS_ENCRYPTION_KEY from Secret Manager (recommended for Twilio/SMTP secrets)
 CORS_ORIGINS=https://blulok.com,https://app.blulok.com
 LOG_LEVEL=info
 ```
+
+Allow Cloud Run egress to your SMTP host (and Twilio) when outbound email/SMS is enabled. See [notifications-email-config.md](./notifications-email-config.md).
 
 **API documentation on Cloud Run:** `https://<backend-service-url>/api/openapi.json` (always). Swagger UI at `/api/docs` (on by default). The spec is regenerated during `backend/Dockerfile.prod` build — not read from git at runtime.
 

@@ -744,6 +744,50 @@ export class InAppNotificationDispatcher {
 
   }
 
+  /**
+   * Notify facility operators that a user's account was reset and re-invited.
+   */
+  public async notifyUserAccountReset(params: {
+    targetUserId: string;
+    targetName: string;
+    performedBy: string;
+    facilityIds: string[];
+  }): Promise<void> {
+    const audience = InAppNotificationAudienceService.getInstance();
+    const userIdSet = new Set<string>();
+    for (const facilityId of params.facilityIds) {
+      const ids = await audience.resolveFacilityOperators(facilityId, {
+        roles: [UserRole.ADMIN, UserRole.DEV_ADMIN, UserRole.FACILITY_ADMIN],
+      });
+      ids.forEach((id) => userIdSet.add(id));
+    }
+    // Always include global admins even if user has no facility associations
+    if (params.facilityIds.length === 0) {
+      const globals = await audience.resolveGlobalOperators();
+      globals.forEach((id) => userIdSet.add(id));
+    }
+
+    const facilityId = params.facilityIds[0];
+    await this.dispatchToUsers(
+      Array.from(userIdSet),
+      {
+        type: 'user_account_reset',
+        title: 'Account reset',
+        message: `Account for ${params.targetName} was reset and re-invited.`,
+        priority: 'high',
+        referenceType: 'user',
+        referenceId: params.targetUserId,
+        facilityId,
+        metadata: {
+          targetUserId: params.targetUserId,
+          performedBy: params.performedBy,
+        },
+        expiresInDays: 14,
+      },
+      5,
+    );
+  }
+
 }
 
 

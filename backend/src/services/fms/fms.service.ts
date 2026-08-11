@@ -1748,7 +1748,6 @@ export class FMSService {
       const wasPlaceholder = isPlaceholderUser(existingUser);
       const {
         requirePlaceholderUpgradeUpdates,
-        queueInviteAfterPlaceholderUpgrade,
       } = await import('@/services/fms/fms-placeholder-upgrade');
 
       if (wasPlaceholder && preferredIdentifier) {
@@ -1792,12 +1791,7 @@ export class FMSService {
       }
 
       upgradedFromPlaceholder = wasPlaceholder && !isPlaceholderUser(user);
-      if (upgradedFromPlaceholder) {
-        queueInviteAfterPlaceholderUpgrade(user, {
-          syncLogId: change.sync_log_id,
-          facilityId,
-        });
-      }
+      // Invite is queued after unit assignment (see below) so device_equipped can be evaluated
 
     } else {
       // SECURITY: Create user with TENANT role ONLY (FMS never creates admin/maintenance)
@@ -1833,12 +1827,7 @@ export class FMSService {
           requires_password_reset: true,
         }) as any;
 
-        // Trigger first-time invite notification (non-blocking — Twilio can be slow)
-        void import('@/services/first-time-user.service')
-          .then(({ FirstTimeUserService }) => FirstTimeUserService.getInstance().sendInvite(user))
-          .catch((e) => {
-            logger.warn(`[FMS] Failed to send first-time invite for user ${user.id}:`, e);
-          });
+        // Invite is queued after unit assignment (see below) so invitePolicy can be evaluated
 
         logger.info(`[FMS] Created tenant user: ${user.email || user.phone_number} (${user.id}) by ${performedBy}`, {
           fms_sync: true,
@@ -1963,6 +1952,19 @@ export class FMSService {
           skipped: assignResult.skipped,
         });
       }
+    }
+
+    // Evaluate invite policy AFTER unit assignment so device_equipped can be checked.
+    // Only for newly created loginable tenants or placeholder upgrades in this change.
+    const wasNewlyCreatedLoginable =
+      result.accessChanges.usersCreated.includes(user.id) && !isPlaceholderUser(user);
+    if (wasNewlyCreatedLoginable || upgradedFromPlaceholder) {
+      const { queueFmsInviteOrDeferAsync } = await import('@/services/fms/fms-invite-queue.utils');
+      queueFmsInviteOrDeferAsync(user, {
+        facilityId,
+        syncSettings: config?.config?.syncSettings,
+        syncLogId: change.sync_log_id,
+      });
     }
 
     logger.info(`[FMS] Tenant ${user.email} created with ${tenantData.unitIds.length} unit assignment(s)`, {
@@ -2165,16 +2167,17 @@ export class FMSService {
 
     await UserModel.updateById(change.internal_id, profileUpdates as any);
 
+    // Update or create entity mapping for this tenant
+    const config = ctx.config ?? (await this.fmsConfigModel.findByFacilityId(facilityId));
+
     const upgradedUser = await UserModel.findById(change.internal_id) as User;
     if (wasPlaceholder && upgradedUser && !isPlaceholderUser(upgradedUser)) {
       queueInviteAfterPlaceholderUpgrade(upgradedUser, {
         syncLogId: change.sync_log_id,
         facilityId,
+        syncSettings: config?.config?.syncSettings,
       });
     }
-
-    // Update or create entity mapping for this tenant
-    const config = ctx.config ?? (await this.fmsConfigModel.findByFacilityId(facilityId));
     
     if (mapping) {
       // Update existing mapping metadata

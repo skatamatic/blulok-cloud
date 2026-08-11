@@ -1,49 +1,22 @@
-import { SystemSettingsModel } from '@/models/system-settings.model';
-import { NotificationsConfig, SendInviteParams, SendOtpParams, SendPasswordResetParams } from '@/types/notification.types';
+import {
+  NotificationsConfig,
+  SendInviteParams,
+  SendOtpParams,
+  SendPasswordResetParams,
+} from '@/types/notification.types';
 import { logger } from '@/utils/logger';
 import { NotificationDebugService } from './notification-debug.service';
-
-interface SmsProvider {
-  sendSms(to: string, body: string): Promise<void>;
-}
-
-interface EmailProvider {
-  sendEmail(to: string, subject: string, html: string, text?: string): Promise<void>;
-}
-
-class ConsoleSmsProvider implements SmsProvider {
-  async sendSms(to: string, body: string): Promise<void> {
-    console.log(`[ConsoleSMS] -> ${to}: ${body}`);
-  }
-}
-
-class ConsoleEmailProvider implements EmailProvider {
-  async sendEmail(to: string, subject: string, html: string, _text?: string): Promise<void> {
-    console.log(`[ConsoleEmail] -> ${to}: ${subject} | ${html}`);
-  }
-}
-
-class TwilioSmsProvider implements SmsProvider {
-  private client: any;
-  private from: string;
-  constructor(accountSid: string, authToken: string, fromNumber: string) {
-    try {
-      // eslint-disable-next-line @typescript-eslint/no-var-requires
-      const twilio = require('twilio');
-      this.client = twilio(accountSid, authToken);
-      this.from = fromNumber;
-    } catch (_e) {
-      throw new Error('Twilio SDK not installed. Please add dependency if using Twilio.');
-    }
-  }
-  async sendSms(to: string, body: string): Promise<void> {
-    await this.client.messages.create({ from: this.from, to, body });
-  }
-}
+import { NotificationConfigService } from './notification-config.service';
+import { renderTemplate } from './notification-template.renderer';
+import {
+  createEmailProvider,
+  createSmsProvider,
+} from './providers/notification-provider.factory';
+import type { EmailProvider, SmsProvider } from './providers/provider.types';
 
 export class NotificationService {
   private static instance: NotificationService;
-  private settingsModel = new SystemSettingsModel();
+  private configService = NotificationConfigService.getInstance();
 
   private constructor() {}
 
@@ -55,56 +28,37 @@ export class NotificationService {
   }
 
   private async loadConfig(): Promise<NotificationsConfig> {
-    const raw = await this.settingsModel.get('notifications.config');
-    if (!raw) {
-      return {
-        enabledChannels: { sms: true, email: false },
-        defaultProvider: { sms: 'console', email: 'console' },
-        templates: {
-          inviteSms: 'Welcome to BluLok. Tap to get started: {{deeplink}}',
-          otpSms: 'Your verification code is: {{code}}',
-        },
-        deeplinkBaseUrl: 'blulok://',
-      };
-    }
-    try {
-      return JSON.parse(raw) as NotificationsConfig;
-    } catch {
-      return {
-        enabledChannels: { sms: true, email: false },
-        defaultProvider: { sms: 'console', email: 'console' },
-        templates: {
-          inviteSms: 'Welcome to BluLok. Tap to get started: {{deeplink}}',
-          otpSms: 'Your verification code is: {{code}}',
-        },
-        deeplinkBaseUrl: 'blulok://',
-      };
-    }
+    return this.configService.loadConfig();
   }
 
   private getSmsProvider(config: NotificationsConfig): SmsProvider {
-    const provider = config.defaultProvider?.sms || 'console';
-    if (provider === 'twilio') {
-      const tw = config.twilio;
-      if (!tw?.accountSid || !tw.authToken || !tw.fromNumber) {
-        throw new Error('Twilio SMS provider selected but configuration is incomplete');
-      }
-      return new TwilioSmsProvider(tw.accountSid, tw.authToken, tw.fromNumber);
-    }
-    return new ConsoleSmsProvider();
+    return createSmsProvider(config);
   }
 
-  private getEmailProvider(_config: NotificationsConfig): EmailProvider {
-    // Placeholder: extend with real email providers later
-    return new ConsoleEmailProvider();
+  private getEmailProvider(config: NotificationsConfig): EmailProvider {
+    return createEmailProvider(config);
+  }
+
+  public async getConfig(): Promise<NotificationsConfig> {
+    return this.loadConfig();
   }
 
   /**
-   * Get the current notification configuration
-   * Useful for services that need to check enabled channels before sending
+   * Verify the configured email provider can connect (SMTP verify).
    */
-  public async getConfig(): Promise<NotificationsConfig> {
-    return this.loadConfig();
+  public async testEmailConnection(
+    configOverride?: NotificationsConfig,
+  ): Promise<{ ok: boolean; message: string }> {
+    const config = configOverride ?? (await this.loadConfig());
+    try {
+      const provider = this.getEmailProvider(config);
+      if (provider.verifyConnection) {
+        await provider.verifyConnection();
+      }
+      return { ok: true, message: 'Email provider connection verified' };
+    } catch (e: any) {
+      return { ok: false, message: e?.message || 'Email connection failed' };
+    }
   }
 
   public async sendInvite(params: SendInviteParams): Promise<void> {
@@ -112,50 +66,38 @@ export class NotificationService {
     const smsEnabled = config.enabledChannels?.sms !== false;
     const emailEnabled = config.enabledChannels?.email === true;
 
-    // Default templates now support both {{deeplink}} and {{code}}
-    const smsTemplate = config.templates?.inviteSms || 'Welcome to BluLok. Tap to get started: {{deeplink}} Your verification code: {{code}}';
-    const emailTemplate = config.templates?.inviteEmail || 'Welcome to BluLok. Open {{deeplink}}. Your verification code: {{code}}';
+    const smsTemplate =
+      config.templates?.inviteSms ||
+      'Welcome to BluLok. Tap to get started: {{deeplink}} Your verification code: {{code}}';
+    const emailTemplate =
+      config.templates?.inviteEmail ||
+      'Welcome to BluLok. Open {{deeplink}}. Your verification code: {{code}}';
 
-    // Helper to apply template replacements
-    const applyTemplate = (template: string) => {
-      let result = template.replace(/\{\{deeplink\}\}/g, params.deeplink);
-      if (params.code) {
-        result = result.replace(/\{\{code\}\}/g, params.code);
-      } else {
-        // Remove {{code}} placeholder if no code provided
-        result = result.replace(/\{\{code\}\}/g, '');
-      }
-      return result.trim();
-    };
+    const apply = (template: string) =>
+      renderTemplate(template, { deeplink: params.deeplink, code: params.code });
 
-    // Build meta for debug events
     const meta: Record<string, string> = { deeplink: params.deeplink };
-    if (params.code) {
-      meta.code = params.code;
-    }
+    if (params.code) meta.code = params.code;
 
     const debug = NotificationDebugService.getInstance();
-    // When debug test mode is enabled, publish events instead of calling real providers
     if (debug.isEnabled()) {
       const createdAt = new Date();
       if (smsEnabled && params.toPhone) {
-        const body = applyTemplate(smsTemplate);
         debug.publish({
           kind: 'invite',
           delivery: 'sms',
           toPhone: params.toPhone,
-          body,
+          body: apply(smsTemplate),
           meta,
           createdAt,
         });
       }
       if (emailEnabled && params.toEmail) {
-        const html = applyTemplate(emailTemplate);
         debug.publish({
           kind: 'invite',
           delivery: 'email',
           toEmail: params.toEmail,
-          body: html,
+          body: apply(emailTemplate),
           meta,
           createdAt,
         });
@@ -164,16 +106,13 @@ export class NotificationService {
     }
 
     if (smsEnabled && params.toPhone) {
-      const provider = this.getSmsProvider(config);
-      const body = applyTemplate(smsTemplate);
-      await provider.sendSms(params.toPhone, body);
+      await this.getSmsProvider(config).sendSms(params.toPhone, apply(smsTemplate));
     }
 
     if (emailEnabled && params.toEmail) {
-      const provider = this.getEmailProvider(config);
       const subject = config.templates?.inviteEmailSubject || 'Your BluLok Invitation';
-      const html = applyTemplate(emailTemplate);
-      await provider.sendEmail(params.toEmail, subject, html, html);
+      const html = apply(emailTemplate);
+      await this.getEmailProvider(config).sendEmail(params.toEmail, subject, html, html);
     }
   }
 
@@ -181,17 +120,17 @@ export class NotificationService {
     const config = await this.loadConfig();
     const smsEnabled = config.enabledChannels?.sms !== false;
     const emailEnabled = config.enabledChannels?.email === true;
-    
+
     const smsTemplate = config.templates?.otpSms || 'Your verification code is: {{code}}';
     const emailTemplate = config.templates?.otpEmail || 'Your verification code is: {{code}}';
     const emailSubject = config.templates?.otpEmailSubject || 'Your Verification Code';
+    const body = renderTemplate(smsTemplate, { code: params.code });
+    const html = renderTemplate(emailTemplate, { code: params.code });
 
     const debug = NotificationDebugService.getInstance();
     if (debug.isEnabled()) {
       const createdAt = new Date();
-      // Use configured channels - prefer SMS if enabled, else email
       if (smsEnabled && params.toPhone) {
-        const body = smsTemplate.replace('{{code}}', params.code);
         debug.publish({
           kind: 'otp',
           delivery: 'sms',
@@ -203,7 +142,6 @@ export class NotificationService {
         return;
       }
       if (emailEnabled && params.toEmail) {
-        const html = emailTemplate.replace('{{code}}', params.code);
         debug.publish({
           kind: 'otp',
           delivery: 'email',
@@ -214,9 +152,7 @@ export class NotificationService {
         });
         return;
       }
-      // Fallback if no channel enabled but destination provided
       if (params.toPhone) {
-        const body = smsTemplate.replace('{{code}}', params.code);
         debug.publish({
           kind: 'otp',
           delivery: 'sms',
@@ -228,7 +164,6 @@ export class NotificationService {
         return;
       }
       if (params.toEmail) {
-        const html = emailTemplate.replace('{{code}}', params.code);
         debug.publish({
           kind: 'otp',
           delivery: 'email',
@@ -241,103 +176,85 @@ export class NotificationService {
       }
     }
 
-    // Use configured channels - prefer SMS if enabled, else email
     if (smsEnabled && params.toPhone) {
-      const provider = this.getSmsProvider(config);
-      const body = smsTemplate.replace('{{code}}', params.code);
-      await provider.sendSms(params.toPhone, body);
+      await this.getSmsProvider(config).sendSms(params.toPhone, body);
       return;
     }
     if (emailEnabled && params.toEmail) {
-      const provider = this.getEmailProvider(config);
-      const html = emailTemplate.replace('{{code}}', params.code);
-      await provider.sendEmail(params.toEmail, emailSubject, html, html);
+      await this.getEmailProvider(config).sendEmail(params.toEmail, emailSubject, html, html);
       return;
     }
-    // Fallback: if specific channel requested but not enabled, try anyway
     if (params.toPhone) {
-      const provider = this.getSmsProvider(config);
-      const body = smsTemplate.replace('{{code}}', params.code);
-      await provider.sendSms(params.toPhone, body);
+      await this.getSmsProvider(config).sendSms(params.toPhone, body);
       return;
     }
     if (params.toEmail) {
-      const provider = this.getEmailProvider(config);
-      const html = emailTemplate.replace('{{code}}', params.code);
-      await provider.sendEmail(params.toEmail, emailSubject, html, html);
+      await this.getEmailProvider(config).sendEmail(params.toEmail, emailSubject, html, html);
       return;
     }
     throw new Error('sendOtp requires toPhone or toEmail');
   }
 
-  /**
-   * Send password reset notification with deeplink (similar to invite flow)
-   */
   public async sendPasswordReset(params: SendPasswordResetParams): Promise<void> {
     const config = await this.loadConfig();
     const smsEnabled = config.enabledChannels?.sms !== false;
     const emailEnabled = config.enabledChannels?.email === true;
 
-    // Build deeplink with token
-    // Base URL should be clean (e.g., blulok:// or https://app.blulok.com/)
-    // Append reset-password path: blulok://reset-password?token=...
-    let baseUrl = config.deeplinkBaseUrl || 'blulok://';
-    
-    // For HTTP/HTTPS URLs, ensure trailing slash; for custom schemes (blulok://), no slash needed
-    if (baseUrl.match(/^https?:\/\//) && !baseUrl.endsWith('/')) {
-      baseUrl = `${baseUrl}/`;
-    }
-    
+    const baseUrl = this.configService.normalizeDeeplinkBase(
+      config.deeplinkBaseUrl || 'blulok://',
+    );
     const deeplink = `${baseUrl}reset-password?token=${encodeURIComponent(params.token)}`;
 
-    const smsTemplate = config.templates?.passwordResetSms || 'Reset your BluLok password: {{deeplink}}';
-    const emailTemplate = config.templates?.passwordResetEmail || '<p>Click to reset your password: <a href="{{deeplink}}">{{deeplink}}</a></p>';
-    const emailSubject = config.templates?.passwordResetEmailSubject || 'Reset Your BluLok Password';
+    const smsTemplate =
+      config.templates?.passwordResetSms || 'Reset your BluLok password: {{deeplink}}';
+    const emailTemplate =
+      config.templates?.passwordResetEmail ||
+      '<p>Click to reset your password: <a href="{{deeplink}}">{{deeplink}}</a></p>';
+    const emailSubject =
+      config.templates?.passwordResetEmailSubject || 'Reset Your BluLok Password';
+
+    const smsBody = renderTemplate(smsTemplate, { deeplink });
+    const emailHtml = renderTemplate(emailTemplate, { deeplink });
 
     const debug = NotificationDebugService.getInstance();
     if (debug.isEnabled()) {
       const createdAt = new Date();
       if (smsEnabled && params.toPhone) {
-        const body = smsTemplate.replace(/\{\{deeplink\}\}/g, deeplink);
         debug.publish({
           kind: 'password_reset',
           delivery: 'sms',
           toPhone: params.toPhone,
-          body,
+          body: smsBody,
           meta: { token: params.token, deeplink },
           createdAt,
         });
       }
       if (emailEnabled && params.toEmail) {
-        const html = emailTemplate.replace(/\{\{deeplink\}\}/g, deeplink);
         debug.publish({
           kind: 'password_reset',
           delivery: 'email',
           toEmail: params.toEmail,
-          body: html,
+          body: emailHtml,
           meta: { token: params.token, deeplink },
           createdAt,
         });
       }
-      // If neither channel enabled but destination provided, use fallback
       if (!smsEnabled && !emailEnabled) {
         if (params.toPhone) {
-          const body = smsTemplate.replace(/\{\{deeplink\}\}/g, deeplink);
           debug.publish({
             kind: 'password_reset',
             delivery: 'sms',
             toPhone: params.toPhone,
-            body,
+            body: smsBody,
             meta: { token: params.token, deeplink },
             createdAt,
           });
         } else if (params.toEmail) {
-          const html = emailTemplate.replace(/\{\{deeplink\}\}/g, deeplink);
           debug.publish({
             kind: 'password_reset',
             delivery: 'email',
             toEmail: params.toEmail,
-            body: html,
+            body: emailHtml,
             meta: { token: params.token, deeplink },
             createdAt,
           });
@@ -346,51 +263,44 @@ export class NotificationService {
       return;
     }
 
-    // Send via real providers
     if (smsEnabled && params.toPhone) {
-      const provider = this.getSmsProvider(config);
-      const body = smsTemplate.replace(/\{\{deeplink\}\}/g, deeplink);
-      await provider.sendSms(params.toPhone, body);
+      await this.getSmsProvider(config).sendSms(params.toPhone, smsBody);
     }
-
     if (emailEnabled && params.toEmail) {
-      const provider = this.getEmailProvider(config);
-      const html = emailTemplate.replace(/\{\{deeplink\}\}/g, deeplink);
-      await provider.sendEmail(params.toEmail, emailSubject, html, html);
+      await this.getEmailProvider(config).sendEmail(
+        params.toEmail,
+        emailSubject,
+        emailHtml,
+        emailHtml,
+      );
     }
-
-    // Fallback if no channel enabled
     if (!smsEnabled && !emailEnabled) {
       if (params.toPhone) {
-        const provider = this.getSmsProvider(config);
-        const body = smsTemplate.replace(/\{\{deeplink\}\}/g, deeplink);
-        await provider.sendSms(params.toPhone, body);
+        await this.getSmsProvider(config).sendSms(params.toPhone, smsBody);
       } else if (params.toEmail) {
-        const provider = this.getEmailProvider(config);
-        const html = emailTemplate.replace(/\{\{deeplink\}\}/g, deeplink);
-        await provider.sendEmail(params.toEmail, emailSubject, html, html);
+        await this.getEmailProvider(config).sendEmail(
+          params.toEmail,
+          emailSubject,
+          emailHtml,
+          emailHtml,
+        );
       } else {
         throw new Error('sendPasswordReset requires toPhone or toEmail');
       }
     }
   }
 
-  /**
-   * Send one test message per template and channel configured.
-   * Prefixes content with 'TEST - ' so recipients can identify non-production messages.
-   */
   public async sendTestNotifications(
     params: { toEmail?: string; toPhone?: string },
-    configOverride?: NotificationsConfig
+    configOverride?: NotificationsConfig,
   ): Promise<{ sent: string[]; errors: { channel: string; message: string }[] }> {
-    const config = configOverride ?? await this.loadConfig();
+    const config = configOverride ?? (await this.loadConfig());
     const sent: string[] = [];
     const errors: { channel: string; message: string }[] = [];
 
     const smsEnabled = config.enabledChannels?.sms !== false;
     const emailEnabled = config.enabledChannels?.email === true;
 
-    // Prepare providers when needed (gracefully skip if provider not available)
     let smsProvider: SmsProvider | undefined;
     if (smsEnabled) {
       try {
@@ -398,45 +308,55 @@ export class NotificationService {
       } catch (e: any) {
         logger.warn(`Notifications: SMS provider unavailable: ${e?.message || e}`);
         errors.push({ channel: 'sms', message: e?.message || 'SMS provider unavailable' });
-        smsProvider = undefined;
       }
     }
-    const emailProvider = emailEnabled ? this.getEmailProvider(config) : undefined;
 
-    // INVITE
-    let baseUrl = config.deeplinkBaseUrl || 'blulok://';
-    
-    // For HTTP/HTTPS URLs, ensure trailing slash; for custom schemes (blulok://), no slash needed
-    if (baseUrl.match(/^https?:\/\//) && !baseUrl.endsWith('/')) {
-      baseUrl = `${baseUrl}/`;
+    let emailProvider: EmailProvider | undefined;
+    if (emailEnabled) {
+      try {
+        emailProvider = this.getEmailProvider(config);
+      } catch (e: any) {
+        logger.warn(`Notifications: Email provider unavailable: ${e?.message || e}`);
+        errors.push({ channel: 'email', message: e?.message || 'Email provider unavailable' });
+      }
     }
-    
+
+    const baseUrl = this.configService.normalizeDeeplinkBase(
+      config.deeplinkBaseUrl || 'blulok://',
+    );
     const deeplink = `${baseUrl}invite?test=1`;
-    const inviteSmsTpl = config.templates?.inviteSms || 'Welcome to BluLok. Tap to get started: {{deeplink}}';
-    const inviteEmailTpl = config.templates?.inviteEmail || 'Welcome to BluLok. Open {{deeplink}}';
+    const inviteSmsTpl =
+      config.templates?.inviteSms || 'Welcome to BluLok. Tap to get started: {{deeplink}}';
+    const inviteEmailTpl =
+      config.templates?.inviteEmail || 'Welcome to BluLok. Open {{deeplink}}';
     const inviteEmailSubject = config.templates?.inviteEmailSubject || 'Your BluLok Invitation';
 
     if (smsProvider && params.toPhone) {
       try {
-        await smsProvider.sendSms(params.toPhone, `TEST - ` + inviteSmsTpl.replace('{{deeplink}}', deeplink));
+        await smsProvider.sendSms(
+          params.toPhone,
+          `TEST - ${renderTemplate(inviteSmsTpl, { deeplink })}`,
+        );
         sent.push('sms_invite');
       } catch (e: any) {
         logger.error(`Notifications: Failed to send SMS invite: ${e?.message || e}`);
         errors.push({ channel: 'sms_invite', message: e?.message || 'Failed to send SMS invite' });
       }
     }
-    if (emailEnabled && params.toEmail) {
+    if (emailProvider && params.toEmail) {
       try {
-        const html = `TEST - ` + inviteEmailTpl.replace('{{deeplink}}', deeplink);
-        await emailProvider!.sendEmail(params.toEmail, `TEST - ${inviteEmailSubject}`, html, html);
+        const html = `TEST - ${renderTemplate(inviteEmailTpl, { deeplink })}`;
+        await emailProvider.sendEmail(params.toEmail, `TEST - ${inviteEmailSubject}`, html, html);
         sent.push('email_invite');
       } catch (e: any) {
         logger.error(`Notifications: Failed to send Email invite: ${e?.message || e}`);
-        errors.push({ channel: 'email_invite', message: e?.message || 'Failed to send Email invite' });
+        errors.push({
+          channel: 'email_invite',
+          message: e?.message || 'Failed to send Email invite',
+        });
       }
     }
 
-    // OTP
     const otpCode = '123456 TEST';
     const otpSmsTpl = config.templates?.otpSms || 'Your verification code is: {{code}}';
     const otpEmailTpl = config.templates?.otpEmail || 'Your verification code is: {{code}}';
@@ -444,17 +364,20 @@ export class NotificationService {
 
     if (smsProvider && params.toPhone) {
       try {
-        await smsProvider.sendSms(params.toPhone, `TEST - ` + otpSmsTpl.replace('{{code}}', otpCode));
+        await smsProvider.sendSms(
+          params.toPhone,
+          `TEST - ${renderTemplate(otpSmsTpl, { code: otpCode })}`,
+        );
         sent.push('sms_otp');
       } catch (e: any) {
         logger.error(`Notifications: Failed to send SMS OTP: ${e?.message || e}`);
         errors.push({ channel: 'sms_otp', message: e?.message || 'Failed to send SMS OTP' });
       }
     }
-    if (emailEnabled && params.toEmail) {
+    if (emailProvider && params.toEmail) {
       try {
-        const html = `TEST - ` + otpEmailTpl.replace('{{code}}', otpCode);
-        await emailProvider!.sendEmail(params.toEmail, `TEST - ${otpEmailSubject}`, html, html);
+        const html = `TEST - ${renderTemplate(otpEmailTpl, { code: otpCode })}`;
+        await emailProvider.sendEmail(params.toEmail, `TEST - ${otpEmailSubject}`, html, html);
         sent.push('email_otp');
       } catch (e: any) {
         logger.error(`Notifications: Failed to send Email OTP: ${e?.message || e}`);
@@ -465,5 +388,3 @@ export class NotificationService {
     return { sent, errors };
   }
 }
-
-

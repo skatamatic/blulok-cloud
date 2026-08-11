@@ -27,6 +27,7 @@ import {
   DetailsTabNav,
 } from '@/components/Common/DetailsPageLayout';
 import { PlaceholderUserBadge } from '@/components/UserManagement/PlaceholderUserBadge';
+import { InviteActions } from '@/components/UserManagement/InviteActions';
 import { formatDateTime, buildLocalDateRangeQuery } from '@/utils/datetime.utils';
 import { formatUserContactSubtitle } from '@/utils/userDisplay.utils';
 
@@ -1444,27 +1445,21 @@ export default function UserDetailsPage() {
                       </div>
                     )}
                   </div>
-                  {!userDetails.lastLogin && !userDetails.isPlaceholder && (
-                    <button
-                      onClick={async () => {
-                        try {
-                          const response = await apiService.resendUserInvite(userId!);
-                          if (response.success) {
-                            addToast({ type: 'success', title: 'Invite resent successfully' });
-                          } else {
-                            addToast({ type: 'error', title: 'Failed to resend invite' });
-                          }
-                        } catch (error) {
-                          console.error('Failed to resend invite:', error);
-                          addToast({ type: 'error', title: 'An error occurred while resending invite' });
-                        }
-                      }}
-                      className="inline-flex items-center px-4 py-2 bg-primary-600 text-white rounded-lg hover:bg-primary-700 transition-colors"
-                    >
-                      <PaperAirplaneIcon className="h-4 w-4 mr-2" />
-                      Resend Invite
-                    </button>
-                  )}
+                  </div>
+                  <InviteActions
+                    user={{
+                      id: userId!,
+                      firstName: userDetails.firstName,
+                      lastName: userDetails.lastName,
+                      email: userDetails.email,
+                      phoneNumber: userDetails.phoneNumber,
+                      lastLogin: userDetails.lastLogin,
+                      isPlaceholder: userDetails.isPlaceholder,
+                    }}
+                    onComplete={() => {
+                      void loadUserDetails();
+                    }}
+                  />
                 </div>
 
                 <div className="border-t border-gray-200 dark:border-gray-700 pt-6">
@@ -1474,8 +1469,8 @@ export default function UserDetailsPage() {
                       {userDetails.isPlaceholder
                         ? 'Placeholder tenants cannot receive invites until an email or phone is added (Edit → Enable login).'
                         : userDetails.lastLogin
-                          ? 'This user has already set up their account. Invites cannot be resent for active accounts.'
-                          : 'Invites are sent automatically when users are created via FMS sync. The resend button invalidates any previous invites and sends a new one.'}
+                          ? 'This user has completed setup. Use Reset Account & Re-invite if they lost their phone, forgot their password, or uninstalled the app.'
+                          : 'Invites may be suppressed by FMS invite policy. Resend invalidates previous invites and sends a new one.'}
                     </span>
                   </div>
                 </div>

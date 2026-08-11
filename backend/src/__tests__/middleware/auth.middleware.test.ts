@@ -154,4 +154,43 @@ describe('authenticateToken facility hydration', () => {
 
     expect(applyFacilityScope(req)).toBeUndefined();
   });
+
+  it('rejects tokens when the account requires password reset (e.g. after account reset)', async () => {
+    const { UserModel } = await import('@/models/user.model');
+    const token = AuthService.generateToken(
+      {
+        id: 'tenant-1',
+        email: 'tenant@test.com',
+        first_name: 'Tenant',
+        last_name: 'User',
+        role: UserRole.TENANT,
+        password_hash: 'x',
+        is_active: true,
+        created_at: new Date(),
+        updated_at: new Date(),
+      } as any,
+      [],
+    );
+
+    (UserModel.findById as jest.Mock).mockResolvedValueOnce({
+      id: 'tenant-1',
+      is_active: true,
+      requires_password_reset: true,
+    });
+
+    const req = {
+      headers: { authorization: `Bearer ${token}` },
+    } as AuthenticatedRequest;
+
+    let middlewareError: any;
+    await new Promise<void>((resolve) => {
+      authenticateToken(req, res, (err) => {
+        middlewareError = err;
+        resolve();
+      });
+    });
+
+    expect(middlewareError?.statusCode || middlewareError?.status).toBe(401);
+    expect(String(middlewareError?.message || '')).toMatch(/re-authentication/i);
+  });
 });

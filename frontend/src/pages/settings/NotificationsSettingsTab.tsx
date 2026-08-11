@@ -3,34 +3,41 @@ import { apiService } from '@/services/api.service';
 import { useToast } from '@/contexts/ToastContext';
 import { NotificationsConfig } from '@/types/notification.types';
 import {
-  DevicePhoneMobileIcon,
-  EnvelopeIcon,
   ExclamationTriangleIcon,
-  EyeIcon,
-  EyeSlashIcon,
   ShieldCheckIcon,
-  LinkIcon,
 } from '@heroicons/react/24/outline';
-import { Modal, ModalBody, ModalFooter, ModalHeader } from '@/components/Modal/Modal';
+import { ChannelToggles } from './notifications/ChannelToggles';
+import { SmsProviderSection } from './notifications/SmsProviderSection';
+import { EmailProviderSection } from './notifications/EmailProviderSection';
+import { MessageTemplatesSection } from './notifications/MessageTemplatesSection';
+import { DeeplinkSection } from './notifications/DeeplinkSection';
+import { TestNotificationsModal } from './notifications/TestNotificationsModal';
+import { useConfigPathUpdater } from './notifications/SecretField';
+import { isNotificationConfigValid } from './notifications/notification-settings.validation';
+
+const DEFAULT_CONFIG: NotificationsConfig = {
+  enabledChannels: { sms: true, email: false },
+  defaultProvider: { sms: 'console', email: 'console' },
+  templates: {
+    inviteSms: 'Welcome to BluLok. Tap to get started: {{deeplink}} Your verification code: {{code}}',
+    otpSms: 'Your verification code is: {{code}}',
+  },
+  deeplinkBaseUrl: 'blulok://',
+};
 
 export default function NotificationsSettingsTab() {
   const { addToast } = useToast();
-  const [config, setConfig] = useState<NotificationsConfig>({
-    enabledChannels: { sms: true, email: false },
-    defaultProvider: { sms: 'console', email: 'console' },
-    templates: {
-      inviteSms: 'Welcome to BluLok. Tap to get started: {{deeplink}} Your verification code: {{code}}',
-      otpSms: 'Your verification code is: {{code}}',
-    },
-    deeplinkBaseUrl: 'blulok://invite',
-  });
+  const [config, setConfig] = useState<NotificationsConfig>(DEFAULT_CONFIG);
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const [isTesting, setIsTesting] = useState(false);
-  const [showApiKey, setShowApiKey] = useState(false);
+  const [isTestingConnection, setIsTestingConnection] = useState(false);
   const [showTestModal, setShowTestModal] = useState(false);
   const [testToEmail, setTestToEmail] = useState('');
   const [testToPhone, setTestToPhone] = useState('');
+
+  const updateConfig = useConfigPathUpdater(setConfig);
+  const canSave = isNotificationConfigValid(config);
 
   useEffect(() => {
     loadSettings();
@@ -52,11 +59,14 @@ export default function NotificationsSettingsTab() {
   };
 
   const handleSave = async () => {
+    if (!canSave) return;
     setIsSaving(true);
     try {
       const response = await apiService.updateNotificationSettings(config);
       if (response.success) {
         addToast({ type: 'success', title: 'Notification settings updated successfully' });
+        // Reload so masked secrets come back from the API
+        await loadSettings();
       } else {
         addToast({ type: 'error', title: 'Failed to update notification settings' });
       }
@@ -123,21 +133,21 @@ export default function NotificationsSettingsTab() {
     }
   };
 
-  const updateConfig = (path: string, value: unknown) => {
-    setConfig((prev: NotificationsConfig) => {
-      const newConfig = { ...prev };
-      const keys = path.split('.');
-      let current: Record<string, unknown> = newConfig as unknown as Record<string, unknown>;
-      for (let i = 0; i < keys.length - 1; i++) {
-        const next = current[keys[i]];
-        if (!next || typeof next !== 'object') {
-          current[keys[i]] = {};
-        }
-        current = current[keys[i]] as Record<string, unknown>;
+  const handleTestConnection = async () => {
+    setIsTestingConnection(true);
+    try {
+      const resp = await apiService.testNotificationConnection({ configOverride: config });
+      if (resp.success) {
+        addToast({ type: 'success', title: 'SMTP connection verified', message: resp.message });
+      } else {
+        addToast({ type: 'error', title: 'SMTP connection failed', message: resp.message });
       }
-      current[keys[keys.length - 1]] = value;
-      return newConfig;
-    });
+    } catch (e: unknown) {
+      const message = e instanceof Error ? e.message : 'Unknown error';
+      addToast({ type: 'error', title: 'SMTP connection failed', message });
+    } finally {
+      setIsTestingConnection(false);
+    }
   };
 
   if (isLoading) {
@@ -151,171 +161,49 @@ export default function NotificationsSettingsTab() {
 
   return (
     <div className="space-y-6">
-      {/* Channel Configuration */}
-      <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6">
-        <h2 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">Communication Channels</h2>
-        <div className="space-y-4">
-          <div className="flex items-center">
-            <input type="checkbox" id="sms-enabled" checked={config.enabledChannels?.sms !== false} onChange={(e) => updateConfig('enabledChannels.sms', e.target.checked)} className="h-4 w-4 text-primary-600 focus:ring-primary-500 border-gray-300 dark:border-gray-600 rounded" />
-            <label htmlFor="sms-enabled" className="ml-2 flex items-center text-sm text-gray-700 dark:text-gray-300">
-              <DevicePhoneMobileIcon className="h-4 w-4 mr-1 text-primary-500" /> Enable SMS notifications
-            </label>
-          </div>
-          <div className="flex items-center">
-            <input type="checkbox" id="email-enabled" checked={config.enabledChannels?.email === true} onChange={(e) => updateConfig('enabledChannels.email', e.target.checked)} className="h-4 w-4 text-primary-600 focus:ring-primary-500 border-gray-300 dark:border-gray-600 rounded" />
-            <label htmlFor="email-enabled" className="ml-2 flex items-center text-sm text-gray-700 dark:text-gray-300">
-              <EnvelopeIcon className="h-4 w-4 mr-1 text-primary-500" /> Enable email notifications
-            </label>
-          </div>
-        </div>
-      </div>
+      <ChannelToggles config={config} onChange={updateConfig} />
+      <SmsProviderSection config={config} onChange={updateConfig} />
+      <EmailProviderSection
+        config={config}
+        onChange={updateConfig}
+        onTestConnection={handleTestConnection}
+        isTestingConnection={isTestingConnection}
+      />
+      <MessageTemplatesSection config={config} onChange={updateConfig} />
+      <DeeplinkSection config={config} onChange={updateConfig} />
 
-      {/* SMS Provider */}
-      {config.enabledChannels?.sms && (
-        <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6">
-          <h2 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">SMS Provider Settings</h2>
-          <div className="space-y-4">
-            <div>
-              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">SMS Provider</label>
-              <select value={config.defaultProvider?.sms || 'console'} onChange={(e) => updateConfig('defaultProvider.sms', e.target.value)} className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white">
-                <option value="console">Console (Development)</option>
-                <option value="twilio">Twilio</option>
-              </select>
-            </div>
-            {config.defaultProvider?.sms === 'twilio' && (
-              <div className="space-y-4 border-t border-gray-200 dark:border-gray-700 pt-4">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Twilio Account SID</label>
-                  <input type="text" value={config.twilio?.accountSid || ''} onChange={(e) => updateConfig('twilio.accountSid', e.target.value)} placeholder="ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white" />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Twilio Auth Token</label>
-                  <div className="relative">
-                    <input type={showApiKey ? 'text' : 'password'} value={config.twilio?.authToken || ''} onChange={(e) => updateConfig('twilio.authToken', e.target.value)} placeholder="xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" className="w-full pr-10 px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white" />
-                    <button type="button" onClick={() => setShowApiKey(!showApiKey)} className="absolute inset-y-0 right-0 pr-3 flex items-center text-gray-400 hover:text-gray-600 dark:hover:text-gray-300">
-                      {showApiKey ? <EyeSlashIcon className="h-4 w-4" /> : <EyeIcon className="h-4 w-4" />}
-                    </button>
-                  </div>
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">From Phone Number</label>
-                  <input type="text" value={config.twilio?.fromNumber || ''} onChange={(e) => updateConfig('twilio.fromNumber', e.target.value)} placeholder="+15551234567" className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white" />
-                  <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">Must be a Twilio-verified phone number</p>
-                </div>
-              </div>
-            )}
-          </div>
-        </div>
-      )}
-
-      {/* Templates */}
-      <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6">
-        <h2 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">Message Templates</h2>
-        <div className="space-y-6">
-          {config.enabledChannels?.sms && (
-            <>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">SMS Invite Template</label>
-                <textarea value={config.templates?.inviteSms || ''} onChange={(e) => updateConfig('templates.inviteSms', e.target.value)} rows={2} className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white" placeholder="Welcome to BluLok. Tap to get started: {{deeplink}} Your verification code: {{code}}" />
-                <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">Use {'{{deeplink}}'} for the invitation link and {'{{code}}'} for the 6-digit verification code</p>
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">SMS OTP Template</label>
-                <textarea value={config.templates?.otpSms || ''} onChange={(e) => updateConfig('templates.otpSms', e.target.value)} rows={2} className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white" placeholder="Your verification code is: {{code}}" />
-                <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">Use {'{{code}}'} placeholder for the 6-digit verification code</p>
-              </div>
-            </>
-          )}
-          {config.enabledChannels?.email && (
-            <>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Email Invite Subject</label>
-                <input type="text" value={config.templates?.inviteEmailSubject || 'Your BluLok Invitation'} onChange={(e) => updateConfig('templates.inviteEmailSubject', e.target.value)} className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white" />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Email Invite Template</label>
-                <textarea value={config.templates?.inviteEmail || ''} onChange={(e) => updateConfig('templates.inviteEmail', e.target.value)} rows={3} className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white" placeholder="Welcome to BluLok. Click the link below to get started: {{deeplink}} Your verification code: {{code}}" />
-                <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">Use {'{{deeplink}}'} for the invitation link and {'{{code}}'} for the 6-digit verification code</p>
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Email OTP Subject</label>
-                <input type="text" value={config.templates?.otpEmailSubject || 'Your Verification Code'} onChange={(e) => updateConfig('templates.otpEmailSubject', e.target.value)} className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white" />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Email OTP Template</label>
-                <textarea value={config.templates?.otpEmail || ''} onChange={(e) => updateConfig('templates.otpEmail', e.target.value)} rows={3} className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white" placeholder="Your verification code is: {{code}}" />
-                <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">Use {'{{code}}'} placeholder for the 6-digit verification code</p>
-              </div>
-            </>
-          )}
-
-          {/* Password Reset Templates */}
-          <div className="border-t border-gray-200 dark:border-gray-700 pt-6 mt-6">
-            <h3 className="text-md font-medium text-gray-900 dark:text-white mb-4">Password Reset Templates</h3>
-            {config.enabledChannels?.sms && (
-              <div className="mb-4">
-                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">SMS Password Reset Template</label>
-                <textarea value={config.templates?.passwordResetSms || ''} onChange={(e) => updateConfig('templates.passwordResetSms', e.target.value)} rows={2} className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white" placeholder="Reset your BluLok password: {{deeplink}}" />
-                <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">Use {'{{deeplink}}'} placeholder for the password reset link</p>
-              </div>
-            )}
-            {config.enabledChannels?.email && (
-              <>
-                <div className="mb-4">
-                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Email Password Reset Subject</label>
-                  <input type="text" value={config.templates?.passwordResetEmailSubject || 'Reset Your BluLok Password'} onChange={(e) => updateConfig('templates.passwordResetEmailSubject', e.target.value)} className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white" />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Email Password Reset Template</label>
-                  <textarea value={config.templates?.passwordResetEmail || ''} onChange={(e) => updateConfig('templates.passwordResetEmail', e.target.value)} rows={3} className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white" placeholder="<p>Click to reset your password: <a href='{{deeplink}}'>{{deeplink}}</a></p>" />
-                  <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">Use {'{{deeplink}}'} placeholder for the password reset link</p>
-                </div>
-              </>
-            )}
-          </div>
-        </div>
-      </div>
-
-      {/* Deeplink Configuration */}
-      <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6">
-        <h2 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">App Integration</h2>
-        <div className="space-y-4">
-          <div>
-            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Deeplink Base URL</label>
-            <div className="relative">
-              <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                <LinkIcon className="h-4 w-4 text-gray-400" />
-              </div>
-              <input type="text" value={config.deeplinkBaseUrl || ''} onChange={(e) => updateConfig('deeplinkBaseUrl', e.target.value)} placeholder="blulok://invite" className="w-full pl-10 px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white" />
-            </div>
-            <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">URL scheme for mobile app deep linking.</p>
-          </div>
-        </div>
-      </div>
-
-      {/* Security Notice */}
       <div className="bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-lg p-4">
         <div className="flex">
           <ExclamationTriangleIcon className="h-5 w-5 text-yellow-400" />
           <div className="ml-3">
             <h3 className="text-sm font-medium text-yellow-800 dark:text-yellow-200">Security Considerations</h3>
             <div className="mt-2 text-sm text-yellow-700 dark:text-yellow-300">
-              <p>SMS and email notifications contain sensitive information. Ensure your provider credentials are securely stored and regularly rotated.</p>
+              <p>
+                SMS and email notifications contain sensitive information. Provider credentials are encrypted at rest
+                when <code className="text-xs">SETTINGS_ENCRYPTION_KEY</code> is configured. Rotate credentials regularly.
+              </p>
             </div>
           </div>
         </div>
       </div>
 
-      {/* Save */}
       <div className="flex justify-end gap-3">
-        <button onClick={openTestModal} disabled={isTesting} className="inline-flex items-center px-6 py-3 bg-gray-600 text-white rounded-lg hover:bg-gray-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
+        <button
+          onClick={openTestModal}
+          disabled={isTesting || (!config.enabledChannels?.sms && !config.enabledChannels?.email)}
+          className="inline-flex items-center px-6 py-3 bg-gray-600 text-white rounded-lg hover:bg-gray-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+        >
           {isTesting ? (
             <><div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2" /> Sending Tests...</>
           ) : (
             <><ShieldCheckIcon className="h-4 w-4 mr-2" /> Send Test Notifications</>
           )}
         </button>
-        <button onClick={handleSave} disabled={isSaving} className="inline-flex items-center px-6 py-3 bg-primary-600 text-white rounded-lg hover:bg-primary-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
+        <button
+          onClick={handleSave}
+          disabled={isSaving || !canSave}
+          className="inline-flex items-center px-6 py-3 bg-primary-600 text-white rounded-lg hover:bg-primary-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+        >
           {isSaving ? (
             <><div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2" /> Saving...</>
           ) : (
@@ -324,35 +212,17 @@ export default function NotificationsSettingsTab() {
         </button>
       </div>
 
-      {/* Test Notifications Modal */}
-      <Modal isOpen={showTestModal} onClose={() => !isTesting && setShowTestModal(false)} size="md">
-        <ModalHeader>
-          <h3 className="text-lg font-semibold text-gray-900 dark:text-white">Send Test Notifications</h3>
-          <p className="mt-1 text-sm text-gray-600 dark:text-gray-400">Specify recipient addresses to receive test messages.</p>
-        </ModalHeader>
-        <ModalBody>
-          <div className="space-y-4">
-            {config.enabledChannels?.email && (
-              <div>
-                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">To Email</label>
-                <input type="email" value={testToEmail} onChange={(e) => setTestToEmail(e.target.value)} placeholder="you@example.com" className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white" />
-              </div>
-            )}
-            {config.enabledChannels?.sms !== false && (
-              <div>
-                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">To Phone (E.164)</label>
-                <input type="tel" value={testToPhone} onChange={(e) => setTestToPhone(e.target.value)} placeholder="+15551234567" className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white" />
-              </div>
-            )}
-          </div>
-        </ModalBody>
-        <ModalFooter>
-          <button type="button" onClick={() => setShowTestModal(false)} disabled={isTesting} className="btn-secondary">Cancel</button>
-          <button type="button" onClick={confirmSendTests} disabled={isTesting} className="inline-flex items-center justify-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed transition-colors duration-200">
-            {isTesting ? 'Sending...' : 'Send Tests'}
-          </button>
-        </ModalFooter>
-      </Modal>
+      <TestNotificationsModal
+        isOpen={showTestModal}
+        onClose={() => setShowTestModal(false)}
+        config={config}
+        testToEmail={testToEmail}
+        testToPhone={testToPhone}
+        onEmailChange={setTestToEmail}
+        onPhoneChange={setTestToPhone}
+        onConfirm={confirmSendTests}
+        isTesting={isTesting}
+      />
     </div>
   );
 }

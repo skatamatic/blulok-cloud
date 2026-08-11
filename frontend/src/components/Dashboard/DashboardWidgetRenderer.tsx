@@ -19,6 +19,7 @@ import { LockStatusWidget } from '@/components/Widget/LockStatusWidget';
 import { FacilityViewerWidget } from '@/components/Widget/FacilityViewerWidget';
 import { DailyAccessCodesWidget } from '@/components/Widget/DailyAccessCodesWidget';
 import { UnitsManagerWidget } from '@/components/Widget/UnitsManagerWidget';
+import { UserManagementWidget } from '@/components/Widget/UserManagementWidget';
 import { WidgetSize, DEFAULT_FACILITY_VIEWER_CONFIG, type FacilityViewerWidgetConfig } from '@/types/widget.types';
 import {
   normalizeGroundPreset,
@@ -213,6 +214,13 @@ export const DashboardWidgetRenderer = memo(function DashboardWidgetRenderer({
           {...commonProps}
           facilityFilter={effectiveFacilityId}
           gridSize={gridSize}
+        />
+      );
+    case 'user-management':
+      return (
+        <UserManagementWidget
+          {...commonProps}
+          facilityFilter={effectiveFacilityId}
         />
       );
     case 'facility-viewer': {

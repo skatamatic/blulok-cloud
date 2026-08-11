@@ -288,6 +288,14 @@ registerPost(
         return;
       }
 
+      if (user.requires_password_reset) {
+        res.status(401).json({
+          success: false,
+          message: 'Account requires re-authentication',
+        });
+        return;
+      }
+
       let facilityIds: string[] = [];
       if (AuthService.isFacilityScoped(user.role as UserRole)) {
         facilityIds = await FacilityAccessService.getUserFacilityIds(user.id, user.role as UserRole);
