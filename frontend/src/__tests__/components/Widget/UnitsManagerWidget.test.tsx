@@ -204,7 +204,7 @@ describe('UnitsManagerWidget', () => {
     await waitFor(() => {
       expect(screen.getByRole('button', { name: /^Unlock$/i })).toBeInTheDocument();
     });
-    expect(mockGetUnitAccessHistory).toHaveBeenCalledWith('unit-1', { limit: 5 });
+    expect(mockGetUnitAccessHistory).toHaveBeenCalledWith('unit-1', { limit: 5, view: 'raw' });
   });
 
   it('shows disabled unlock when unit has no device', async () => {

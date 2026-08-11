@@ -1490,10 +1490,13 @@ jest.mock('../models/user.model', () => {
         return Promise.resolve(user || undefined);
       }),
       create: jest.fn().mockImplementation((data: any) => {
-        // Check for duplicate email
-        const existingUser = Array.from(mockUsers.values()).find(u => u.email === data.email);
-        if (existingUser) {
-          return Promise.reject(new Error('Email already exists'));
+        // Check for duplicate email (ignore null/empty — placeholders and phone-only users share that)
+        const email = typeof data.email === 'string' ? data.email.trim() : '';
+        if (email) {
+          const existingUser = Array.from(mockUsers.values()).find(u => u.email === data.email);
+          if (existingUser) {
+            return Promise.reject(new Error('Email already exists'));
+          }
         }
         
         const newUser = {

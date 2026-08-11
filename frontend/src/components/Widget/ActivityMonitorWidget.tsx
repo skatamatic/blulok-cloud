@@ -32,6 +32,11 @@ import {
   getAccessUserDisplay,
 } from '@/utils/access-history-display.utils';
 import { formatRelativeTime } from '@/utils/datetime.utils';
+import { UNIDENTIFIED_USER_LABEL } from '@/utils/access-session-display.utils';
+
+function isIdentifiedUserName(userName: string): boolean {
+  return userName !== '—' && userName !== UNIDENTIFIED_USER_LABEL;
+}
 
 interface ActivityLogEntry {
   id: string;
@@ -100,12 +105,12 @@ const transformAccessLogToActivity = (log: AccessLog): ActivityLogEntry => {
 
   switch (log.action) {
     case 'unlock':
-      message = userName !== '—'
+      message = isIdentifiedUserName(userName)
         ? `Unit ${unitNumber} unlocked by ${userName}`
         : `Unit ${unitNumber} unlocked (${formatAccessMethod(log.method)})`;
       break;
     case 'lock':
-      message = userName !== '—'
+      message = isIdentifiedUserName(userName)
         ? `Unit ${unitNumber} locked by ${userName}`
         : `Unit ${unitNumber} locked (${formatAccessMethod(log.method)})`;
       break;
@@ -115,7 +120,7 @@ const transformAccessLogToActivity = (log: AccessLog): ActivityLogEntry => {
     case 'unlock_attempt':
     case 'access_denied':
       message = `Unlock attempt denied at ${unitNumber}`;
-      if (userName !== '—') {
+      if (isIdentifiedUserName(userName)) {
         message += ` for ${userName}`;
       }
       if (failureDetail) {
@@ -124,7 +129,7 @@ const transformAccessLogToActivity = (log: AccessLog): ActivityLogEntry => {
       break;
     case 'lock_attempt':
       message = `Lock attempt failed at ${unitNumber}`;
-      if (userName !== '—') {
+      if (isIdentifiedUserName(userName)) {
         message += ` by ${userName}`;
       }
       if (failureDetail) {

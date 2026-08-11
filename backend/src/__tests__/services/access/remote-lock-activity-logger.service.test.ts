@@ -43,7 +43,7 @@ describe('RemoteLockActivityLogger', () => {
         expect.objectContaining({
           activityType: 'access_attempt',
           title: 'Remote Access Granted',
-          result: 'success',
+          result: 'pending',
           metadata: expect.objectContaining({
             action: 'remote_access_granted',
             method: 'admin_remote',

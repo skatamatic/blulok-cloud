@@ -133,8 +133,8 @@ describe('gateway panel tabs', () => {
 });
 
 describe('user panel tabs', () => {
-  it('defines session and devices with session as default', () => {
-    expect(USER_PANEL_TABS.map((t) => t.id)).toEqual(['session', 'devices']);
+  it('defines session, devices, and app with session as default', () => {
+    expect(USER_PANEL_TABS.map((t) => t.id)).toEqual(['session', 'devices', 'app']);
     expect(readUserPanelTab()).toBe('session');
   });
 });
@@ -183,11 +183,11 @@ describe('behavior defaults', () => {
     expect(DEFAULT_BEHAVIOR.liveStateSync).toBe(true);
   });
 
-  it('normalizeBehavior fills missing fields from defaults without forcing overrides', () => {
+  it('normalizeBehavior fills missing fields and keeps reconnect/ping/live-sync always on', () => {
     expect(normalizeBehavior({ autoReconnect: false }).commandLatencyMs).toBe(0);
-    expect(normalizeBehavior({ autoReconnect: false }).autoReconnect).toBe(false);
-    expect(normalizeBehavior({ respondToPing: false }).respondToPing).toBe(false);
-    expect(normalizeBehavior({ liveStateSync: false }).liveStateSync).toBe(false);
+    expect(normalizeBehavior({ autoReconnect: false }).autoReconnect).toBe(true);
+    expect(normalizeBehavior({ respondToPing: false }).respondToPing).toBe(true);
+    expect(normalizeBehavior({ liveStateSync: false }).liveStateSync).toBe(true);
     expect(normalizeBehavior({}).liveStateSync).toBe(true);
     expect(normalizeBehavior({ autoLockResponse: false }).lockUnlockMode).toBe('apply-only');
     expect(normalizeBehavior({ autoLockResponse: true }).lockUnlockMode).toBe('accept');

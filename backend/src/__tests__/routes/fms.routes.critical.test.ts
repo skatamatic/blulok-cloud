@@ -566,8 +566,9 @@ describe('FMS routes — critical paths', () => {
       expect(response.body.changes).toHaveLength(1);
       const ch = response.body.changes[0];
       expect(Array.isArray(ch.validation_errors)).toBe(true);
-      expect(ch.validation_errors.some((e: string) => /email/i.test(e) && /phone/i.test(e))).toBe(true);
+      // Missing email+phone is allowed (placeholder tenant); names are still required.
       expect(ch.validation_errors.some((e: string) => /first name/i.test(e))).toBe(true);
+      expect(ch.validation_errors.some((e: string) => /last name/i.test(e))).toBe(true);
     });
 
     it('returns 404 when sync log missing', async () => {

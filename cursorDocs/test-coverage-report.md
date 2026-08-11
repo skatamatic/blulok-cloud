@@ -31,33 +31,52 @@ Jest’s **global line %** = `covered lines ÷ all lines in collectCoverageFrom`
 
 Run: `npm run test:coverage:areas` in `backend/` and `frontend/` (prefer `--maxWorkers=2` on constrained machines).
 
-**Last measured:** 2026-08-04 (post hang-fix remasure; `jest --coverage --maxWorkers=2 --forceExit`).
+**Last measured:** 2026-08-11 (`jest --coverage --coverageReporters=json-summary --maxWorkers=2`).
 
 ### Backend (from `coverage/coverage-summary.json` total)
 
 | Metric | Coverage |
 |--------|------------|
-| **Lines** | **82.3%** (17727 / 21538) |
-| Statements | 80.95% |
-| Functions | 81.34% |
-| Branches | 66.32% |
+| **Lines** | **81.57%** (18433 / 22597) |
+| Statements | 80.17% |
+| Functions | 80.51% |
+| Branches | 64.94% |
 
-**Target:** **>80%** global lines — **MET** (was 74.59% earlier the same day; ~+7.7 pts).
+**Target:** **>80%** global lines — **MET**.
 
-**Strong buckets:** `services/gateway` ~81%, `routes` ~81%, `services/subscriptions` ~78%, `utils` ~82%, `access-code.service.ts` ~87%.
+Vs 2026-08-04 (82.3% / 17727 of 21538): covered lines are up, but the instrumented denominator grew by ~1,059 so headline % eased ~0.7 pts.
 
-**Still below ~80% (examples):** `app-websocket.service.ts` (~68%), `units.service.ts` (~70%), `middleware` (~73%), `firmware` (~77%), `subscriptions` (~78%), `events` (~79%).
+**Strong buckets:** `schemas` ~97%, `utils` ~82%, `services/gateway` ~81%, `services/access` ~82%, `access-code.service.ts` ~87%.
 
-### Frontend (from prior remasure same day)
+**Still below ~80% (examples):** `routes` (~80%), `app-websocket.service.ts` (~68%), `units.service.ts` (~71%), `middleware` (~73%), `firmware` (~77%), `subscriptions` (~77%).
+
+**This run:** 330 / 335 suites passed at measurement time (7 failed, 4 skipped). Those failures were subsequently fixed (stale assertions + phone-invite mock).
+
+### Frontend (from `coverage/coverage-summary.json` total)
 
 | Metric | Coverage |
 |--------|------------|
-| **Lines** | **72.21%** (13165 / 18230) |
-| Statements | 70.04% |
-| Functions | 61.04% |
-| Branches | 56.56% |
+| **Lines** | **72.06%** (13696 / 19005) |
+| Statements | 69.82% |
+| Functions | 61.05% |
+| Branches | 56.27% |
 
 **Target:** **70%** lines — **MET**.
+
+Vs 2026-08-04 (72.21% / 13165 of 18230): covered lines up; denominator +775; headline essentially flat.
+
+**This run:** 308 / 311 suites passed at measurement time (3 failed). Those failures were subsequently fixed.
+
+### Gateway simulator (Vitest v8, included trees only)
+
+| Metric | Coverage |
+|--------|------------|
+| **Lines** | **82.27%** (7050 / 8569) |
+| Statements | 82.27% |
+| Functions | 87.14% |
+| Branches | 75.43% |
+
+Configured global threshold is **88%** lines — **not met**. `src/main` is the drag (78.7%); `src/renderer/utils` and `src/protocol` are above 91%.
 ### Backend testing note: `AuthService` in `setup-mocks.ts`
 
 `src/__tests__/setup-mocks.ts` replaces **`AuthService`** with a lightweight stub for most suites (so route tests don’t exercise the real implementation). **`auth.service.test.ts`** and the `login-key-generation` / `login-app-device` suites opt into the real implementation via `jest.mock('@/services/auth.service', () => jest.requireActual(...))` or `jest.unmock(...)`.

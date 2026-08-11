@@ -268,7 +268,7 @@ describe('FMSService ledger webhook occupancy companion unit_updated', () => {
     );
   });
 
-  it('blocks the companion unit_updated when the moving-in tenant cannot be created', async () => {
+  it('allows the companion unit_updated when the moving-in tenant will be a placeholder', async () => {
     findByExternalId.mockImplementation((_fac: string, entityType: string, externalId: string) => {
       if (entityType === 'unit') {
         return Promise.resolve({ id: 'map-u', internal_id: 'unit-1', external_id: externalId });
@@ -311,8 +311,56 @@ describe('FMSService ledger webhook occupancy companion unit_updated', () => {
     expect(changeCreate).toHaveBeenCalledWith(
       expect.objectContaining({
         change_type: FMSChangeType.UNIT_UPDATED,
+        is_valid: true,
+      }),
+    );
+  });
+
+  it('blocks the companion unit_updated when the moving-in tenant has no name', async () => {
+    findByExternalId.mockImplementation((_fac: string, entityType: string, externalId: string) => {
+      if (entityType === 'unit') {
+        return Promise.resolve({ id: 'map-u', internal_id: 'unit-1', external_id: externalId });
+      }
+      return Promise.resolve(null);
+    });
+    jest.spyOn(StoredgeProvider.prototype, 'fetchTenant').mockResolvedValue({
+      externalId: 'ext-tenant',
+      email: null,
+      phone: undefined,
+      firstName: '',
+      lastName: '',
+      unitIds: ['ext-unit'],
+      status: 'active',
+    });
+    unitFindById.mockResolvedValue({
+      id: 'unit-1',
+      facility_id: facilityId,
+      unit_number: '908',
+      status: 'available',
+      unit_type: 'Small',
+    });
+    fetchUnitSpy.mockResolvedValue({
+      externalId: 'ext-unit',
+      unitNumber: '908',
+      unitType: 'Small',
+      status: 'occupied',
+      tenantId: 'ext-tenant',
+    });
+
+    const envelope = ledgerEnvelope(
+      'evt-move-in-nameless',
+      'com.storedge.ledger.moved-in.v1',
+      'ext-tenant',
+      'ext-unit',
+    );
+    const raw = Buffer.from(JSON.stringify(envelope));
+    await FMSService.getInstance().handleWebhookEvent(facilityId, raw, webhookHeaders(raw));
+
+    expect(changeCreate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        change_type: FMSChangeType.UNIT_UPDATED,
         is_valid: false,
-        validation_errors: [expect.stringContaining('Lucien Robel')],
+        validation_errors: [expect.stringMatching(/cannot be created|first or last name/i)],
       }),
     );
   });

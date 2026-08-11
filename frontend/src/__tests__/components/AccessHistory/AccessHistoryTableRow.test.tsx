@@ -161,6 +161,6 @@ describe('AccessHistoryTableRow', () => {
     );
 
     const row = container.querySelector('tr');
-    expect(row).toHaveClass('border-amber-700');
+    expect(row?.className).toMatch(/bg-amber-50/);
   });
 });

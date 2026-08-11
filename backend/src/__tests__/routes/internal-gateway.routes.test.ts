@@ -68,6 +68,13 @@ jest.mock('@/services/websocket.service', () => ({
   },
 }));
 
+const ingestManyMock = jest.fn().mockResolvedValue([{ id: 'activity-1' }]);
+jest.mock('@/services/access/access-event-ingestion.service', () => ({
+  AccessEventIngestionService: jest.fn().mockImplementation(() => ({
+    ingestMany: (...args: unknown[]) => ingestManyMock(...args),
+  })),
+}));
+
 jest.mock('@/services/device-sync.service', () => {
   const syncGatewayDevicesMock = jest.fn().mockResolvedValue(undefined);
   const updateDeviceStatusesMock = jest.fn().mockResolvedValue(undefined);
