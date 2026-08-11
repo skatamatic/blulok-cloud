@@ -35,11 +35,12 @@ import { useGlobalFacility } from '@/contexts/GlobalFacilityContext';
 import { useAuth } from '@/contexts/AuthContext';
 import { resolveLockTimeoutMsForUnit } from '@/utils/facilityLockTimeout.utils';
 import { useLockDeviceRealtime } from '@/hooks/useLockDeviceRealtime';
-import { AccessHistoryCompactRow, type AccessHistoryCompactRowLog } from '@/components/AccessHistory/AccessHistoryCompactRow';
+import { AccessHistoryCompactSessionRow } from '@/components/AccessHistory/AccessHistoryCompactSessionRow';
 import { PlaceholderUserBadge } from '@/components/UserManagement/PlaceholderUserBadge';
 import { InviteActions } from '@/components/UserManagement/InviteActions';
 import { formatRelativeWithExact, RELATIVE_UNITS_ACTIVITY_OPTS } from '@/utils/datetime.utils';
 import { formatUserContactSubtitle } from '@/utils/userDisplay.utils';
+import { AccessSession } from '@/types/access-session.types';
 import {
   mergeUnitRowsFromDeviceSnapshots,
   type LockDeviceSnapshot,
@@ -84,7 +85,7 @@ interface UnitRow {
   tenant_phone?: string | null;
 }
 
-type AccessLogEntry = AccessHistoryCompactRowLog;
+type RecentAccessSession = AccessSession;
 
 export interface UnitsManagerWidgetProps {
   id: string;
@@ -698,29 +699,29 @@ const ExpandedDetails: React.FC<{
   onTenantInviteComplete?: () => void;
 }> = ({ unit, isSubmitting, onUnlock, canManageTenantInvites = false, onTenantInviteComplete }) => {
   const navigate = useNavigate();
-  const [logs, setLogs] = useState<AccessLogEntry[] | null>(null);
-  const [logsError, setLogsError] = useState<string | null>(null);
-  const [logsLoading, setLogsLoading] = useState(false);
+  const [sessions, setSessions] = useState<RecentAccessSession[] | null>(null);
+  const [sessionsError, setSessionsError] = useState<string | null>(null);
+  const [sessionsLoading, setSessionsLoading] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
-    setLogsLoading(true);
-    setLogsError(null);
+    setSessionsLoading(true);
+    setSessionsError(null);
     apiService
-      .getUnitAccessHistory(unit.id, { limit: 5, view: 'raw' })
+      .getAccessSessions({ unit_id: unit.id, limit: 5 })
       .then((res) => {
         if (cancelled) return;
-        const arr = (res?.logs ?? res?.data ?? []) as AccessLogEntry[];
-        setLogs(Array.isArray(arr) ? arr : []);
+        const arr = (res?.sessions ?? res?.logs ?? []) as RecentAccessSession[];
+        setSessions(Array.isArray(arr) ? arr : []);
       })
       .catch((err: unknown) => {
         if (cancelled) return;
-        const msg = err instanceof Error ? err.message : 'Failed to load access log';
-        setLogsError(msg);
-        setLogs([]);
+        const msg = err instanceof Error ? err.message : 'Failed to load access sessions';
+        setSessionsError(msg);
+        setSessions([]);
       })
       .finally(() => {
-        if (!cancelled) setLogsLoading(false);
+        if (!cancelled) setSessionsLoading(false);
       });
     return () => {
       cancelled = true;
@@ -764,7 +765,7 @@ const ExpandedDetails: React.FC<{
           />
 
           <div className={ACCESS_HISTORY_DETAIL_CARD_CLASS}>
-            {logsLoading ? (
+            {sessionsLoading ? (
               <ul className="space-y-1.5">
                 {[0, 1, 2].map((i) => (
                   <li
@@ -773,20 +774,20 @@ const ExpandedDetails: React.FC<{
                   />
                 ))}
               </ul>
-            ) : logsError ? (
-              <p className={`${TYPE.meta} text-rose-500`}>{logsError}</p>
-            ) : logs && logs.length > 0 ? (
+            ) : sessionsError ? (
+              <p className={`${TYPE.meta} text-rose-500`}>{sessionsError}</p>
+            ) : sessions && sessions.length > 0 ? (
               <ul className="space-y-1.5">
-                {logs.slice(0, 5).map((log, i) => (
-                  <AccessHistoryCompactRow
-                    key={log.id ?? `${log.occurred_at ?? log.created_at}-${i}`}
-                    log={log}
+                {sessions.slice(0, 5).map((session, i) => (
+                  <AccessHistoryCompactSessionRow
+                    key={session.id}
+                    session={session}
                     index={i}
                   />
                 ))}
               </ul>
             ) : (
-              <p className={TYPE.meta}>No recent events.</p>
+              <p className={TYPE.meta}>No recent access sessions.</p>
             )}
           </div>
         </div>

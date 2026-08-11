@@ -1,5 +1,6 @@
 /**
- * Access session projection from GET /api/v1/access-history (default view).
+ * Access session projection from GET /api/v1/access-sessions
+ * (legacy transitional: GET /access-history?view=sessions).
  * Mirrors backend AccessSessionRecord.
  */
 

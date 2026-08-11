@@ -142,8 +142,9 @@ Within each tier, highest **`priority`** wins. Assigned layouts are read-only fo
 - **Quick filters** (toolbar, not persisted): **Occupied**, **Unoccupied**, **Unlocked**, and **Low batt** toggle like radio buttons — mutually exclusive, deselectable to show all. Occupied/unoccupied match unit `status` (`occupied` / `available`). Low batt includes low/critical levels (&lt;30%), `low_battery` device status, and unknown battery. Empty filter state shows a contextual message plus “Show all units”.
 - **Sort**: unit name (default, natural) or last access — click column headers to sort; click again to reverse.
 - Search matches unit number, facility, tenant name/email, and **device serial**.
-- Expanding a row (one at a time) uses a **3-column** panel with **inline section links** (same style as Recent access “View all”): unit details, view all activity, view tenant (`/users/:id/details`), device details. **Remote unlock** remains the only primary button in the device column.
-- **View all** activity → `/access-history?unit_id=:id&facility_id=:facilityId` (when known). `AccessHistoryPage` reads `unit_id` / `facility_id` from the query string, pre-fills filters, expands the filter panel, and fetches scoped logs.
+- Expanding a row (one at a time) uses a **3-column** panel with **inline section links** (same style as Recent access “View all”): unit details, view all activity, view tenant (`/users/:id/details`), device details. **Remote unlock** remains the only primary button in the device column. Tenant column hosts Resend invite / Reset account when the viewer can manage users.
+- **Recent access** loads **`GET /access-sessions?unit_id=:id&limit=5`** and renders compact **session** rows (title + live outcome status + user + time) — no expandable event timeline.
+- **View all** activity → `/access-history?unit_id=:id&facility_id=:facilityId` (when known). `AccessHistoryPage` reads `unit_id` / `facility_id` from the query string, pre-fills filters, expands the filter panel, and fetches scoped sessions.
 - RBAC: visible to admin / dev_admin / facility_admin / maintenance.
 - Animations: `framer-motion` `layout` transitions, spring lock-icon morph, height-auto expand, list stagger.
 
