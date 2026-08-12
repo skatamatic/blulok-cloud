@@ -13,7 +13,8 @@ import type { Knex } from 'knex';
  * Access Control Model:
  * - DEV_ADMIN, ADMIN: Global access to all facilities
  * - FACILITY_ADMIN: Explicit user_facility_associations rows
- * - TENANT, MAINTENANCE: Active unit_assignments and key_sharing (not association rows alone)
+ * - TENANT, MAINTENANCE: user_facility_associations ∪ active unit_assignments ∪ active key_sharing
+ *   (facility visibility / API scope — device and route-pass entitlement remain assignment/share-gated)
  * - ZTP gateway principals (`ztp:{gatewayId}`): scoped to the live bound facility on that gateway row
  */
 export class FacilityAccessService {
@@ -173,19 +174,27 @@ export class FacilityAccessService {
     }
   }
 
-  /** Live facility IDs for tenants/maintenance from unit assignments and active key shares. */
+  /**
+   * Live facility IDs for tenants/maintenance:
+   * admin-selected associations ∪ unit assignments ∪ active key shares.
+   */
   static async getTenantMaintenanceFacilityIds(userId: string): Promise<string[]> {
     const db = DatabaseService.getInstance().connection;
-    const [unitFacilityRows, sharedFacilityRows] = await Promise.all([
+    const [associationIds, unitFacilityRows, sharedFacilityRows] = await Promise.all([
+      UserFacilityAssociationModel.getUserFacilityIds(userId),
       this.queryAssignmentFacilityIds(db, userId),
       this.queryKeyShareFacilityIds(db, userId),
     ]);
     return Array.from(
-      new Set([...unitFacilityRows, ...sharedFacilityRows].filter(Boolean))
+      new Set([...associationIds, ...unitFacilityRows, ...sharedFacilityRows].filter(Boolean))
     );
   }
 
   private static async tenantHasFacilityAccess(userId: string, facilityId: string): Promise<boolean> {
+    if (await UserFacilityAssociationModel.hasAccessToFacility(userId, facilityId)) {
+      return true;
+    }
+
     const db = DatabaseService.getInstance().connection;
     const now = new Date();
 

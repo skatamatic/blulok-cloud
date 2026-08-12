@@ -106,16 +106,29 @@ describe('FacilityAccessService', () => {
       expect(mockGetIds).not.toHaveBeenCalled();
     });
 
-    it('returns unit and key-share facilities for tenants (not association rows)', async () => {
+    it('returns association facilities alone for tenants with no unit or share', async () => {
+      mockDbQueries({});
+      mockGetIds.mockResolvedValueOnce(['fac-from-assoc']);
+
+      await expect(
+        FacilityAccessService.getUserFacilityIds('tenant-1', UserRole.TENANT)
+      ).resolves.toEqual(['fac-from-assoc']);
+      expect(mockGetIds).toHaveBeenCalledWith('tenant-1');
+    });
+
+    it('unions associations with unit and key-share facilities for tenants', async () => {
       mockDbQueries({
         assignmentFacilityIds: ['fac-from-unit'],
         keyShareFacilityIds: ['fac-from-share'],
       });
+      mockGetIds.mockResolvedValueOnce(['fac-from-assoc', 'fac-from-unit']);
 
       await expect(
         FacilityAccessService.getUserFacilityIds('tenant-1', UserRole.TENANT)
-      ).resolves.toEqual(expect.arrayContaining(['fac-from-unit', 'fac-from-share']));
-      expect(mockGetIds).not.toHaveBeenCalled();
+      ).resolves.toEqual(
+        expect.arrayContaining(['fac-from-assoc', 'fac-from-unit', 'fac-from-share'])
+      );
+      expect(mockGetIds).toHaveBeenCalledWith('tenant-1');
     });
 
     it('propagates errors from the association model for facility admins', async () => {
@@ -151,16 +164,27 @@ describe('FacilityAccessService', () => {
       expect(mockHasAccess).not.toHaveBeenCalled();
     });
 
-    it('checks unit/key-share access for tenants instead of associations', async () => {
-      mockDbQueries({ assignmentExists: true });
+    it('allows tenants via association without unit or key-share', async () => {
+      mockDbQueries({ assignmentExists: false, keyShareExists: false });
+      mockHasAccess.mockResolvedValueOnce(true);
       await expect(
         FacilityAccessService.hasAccessToFacility('tenant-1', UserRole.TENANT, 'fac-1')
       ).resolves.toBe(true);
-      expect(mockHasAccess).not.toHaveBeenCalled();
+      expect(mockHasAccess).toHaveBeenCalledWith('tenant-1', 'fac-1');
     });
 
-    it('returns false for tenants with no unit or key-share access', async () => {
+    it('allows tenants via unit assignment when association is absent', async () => {
+      mockDbQueries({ assignmentExists: true });
+      mockHasAccess.mockResolvedValueOnce(false);
+      await expect(
+        FacilityAccessService.hasAccessToFacility('tenant-1', UserRole.TENANT, 'fac-1')
+      ).resolves.toBe(true);
+      expect(mockHasAccess).toHaveBeenCalledWith('tenant-1', 'fac-1');
+    });
+
+    it('returns false for tenants with no association, unit, or key-share access', async () => {
       mockDbQueries({ assignmentExists: false, keyShareExists: false });
+      mockHasAccess.mockResolvedValueOnce(false);
       await expect(
         FacilityAccessService.hasAccessToFacility('tenant-1', UserRole.TENANT, 'fac-removed')
       ).resolves.toBe(false);
@@ -189,11 +213,12 @@ describe('FacilityAccessService', () => {
       });
     });
 
-    it('returns tenant facilities from assignments for tenants', async () => {
+    it('returns tenant facilities from associations and assignments', async () => {
       mockDbQueries({ assignmentFacilityIds: ['fac-unit'] });
+      mockGetIds.mockResolvedValueOnce(['fac-assoc']);
       await expect(FacilityAccessService.getUserScope('t1', UserRole.TENANT)).resolves.toEqual({
         type: 'facility_limited',
-        facilityIds: ['fac-unit'],
+        facilityIds: expect.arrayContaining(['fac-assoc', 'fac-unit']),
       });
     });
   });

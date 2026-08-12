@@ -230,7 +230,8 @@ JWT `facilityIds` are a **login snapshot only**. The backend **never** uses raw 
 | Layer | Behavior |
 |-------|----------|
 | **REST** | `authenticateToken` replaces `req.user.facilityIds` on every request via `FacilityAccessService` |
-| **Facility resolution** | `facility_admin` → `user_facility_associations`; `tenant` / `maintenance` → active `unit_assignments` + `key_sharing` |
+| **Facility resolution** | `facility_admin` → `user_facility_associations`; `tenant` / `maintenance` → `user_facility_associations` ∪ active `unit_assignments` ∪ `key_sharing` |
+| **Device / route-pass entitlement** | Still gated by unit assignment or active key share — facility association alone does not grant lock audiences |
 | **Dashboard WebSocket** | Loads scope at connect; refreshes on heartbeat and on association changes (`scope_update` message) |
 | **Gateway WebSocket** | `facility_admin` AUTH checks live DB access, not JWT |
 | **Frontend UI** | `GlobalFacilityContext` (`GET /facilities`) and `GET /auth/profile` — not JWT decode |
