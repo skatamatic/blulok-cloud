@@ -497,7 +497,7 @@ export default function UserManagementPage() {
       <AddUserModal
         isOpen={showCreateModal}
         onClose={() => setShowCreateModal(false)}
-        onSuccess={() => fetchUsers(currentPage)}
+        onSuccess={() => void fetchUsers(currentPage, 'refresh')}
       />
     </div>
   );
