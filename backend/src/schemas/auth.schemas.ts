@@ -33,12 +33,25 @@ export const inviteAcceptSchema = Joi.object({
   token: Joi.string().required(),
 });
 
+/**
+ * Optional profile fields on invite endpoints.
+ * Clients often send `firstName: ""` / `null` when the profile step is skipped;
+ * treat those as absent so a named account is not blocked by empty placeholders.
+ */
+const optionalInviteName = Joi.string()
+  .trim()
+  .empty(['', null])
+  .min(1)
+  .max(100)
+  .optional();
+const optionalInviteEmail = Joi.string().trim().empty(['', null]).email().optional();
+
 export const inviteRequestOtpSchema = Joi.object({
   token: Joi.string().required(),
   phone: Joi.string().optional(),
-  email: Joi.string().email().optional(),
-  firstName: Joi.string().trim().min(1).max(100).optional(),
-  lastName: Joi.string().trim().min(1).max(100).optional(),
+  email: optionalInviteEmail,
+  firstName: optionalInviteName,
+  lastName: optionalInviteName,
 });
 
 export const inviteVerifyOtpSchema = Joi.object({
@@ -50,9 +63,9 @@ export const inviteSetPasswordSchema = Joi.object({
   token: Joi.string().required(),
   otp: Joi.string().pattern(/^\d{6}$/).required(),
   newPassword: passwordField,
-  firstName: Joi.string().trim().min(1).max(100).optional(),
-  lastName: Joi.string().trim().min(1).max(100).optional(),
-  email: Joi.string().email().optional(),
+  firstName: optionalInviteName,
+  lastName: optionalInviteName,
+  email: optionalInviteEmail,
 });
 
 export const forgotPasswordRequestSchema = Joi.object({

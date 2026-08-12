@@ -839,5 +839,31 @@ describe('Auth Routes', () => {
       expect(res.body.success).toBe(true);
       expect(setPasswordMock).toHaveBeenCalled();
     });
+
+    it('POST /api/v1/auth/invite/set-password ignores empty firstName/lastName placeholders', async () => {
+      setPasswordMock.mockResolvedValueOnce(undefined);
+      const res = await require('supertest')(appForInvite)
+        .post('/api/v1/auth/invite/set-password')
+        .send({
+          token: 'tok',
+          otp: '123456',
+          newPassword: 'Strong!Pass1',
+          firstName: '',
+          lastName: '',
+          email: '',
+        })
+        .expect(200);
+      expect(res.body.success).toBe(true);
+      expect(setPasswordMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          token: 'tok',
+          otp: '123456',
+          newPassword: 'Strong!Pass1',
+          firstName: undefined,
+          lastName: undefined,
+          email: undefined,
+        }),
+      );
+    });
   });
 });
