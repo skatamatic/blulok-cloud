@@ -249,6 +249,11 @@ jest.mock('@/services/auth.service', () => ({
       }
       return null;
     }),
+    getSessionDenialReason: jest.fn().mockImplementation((user: { is_active?: boolean; requires_password_reset?: boolean }) => {
+      if (user && user.is_active === false) return 'Account is deactivated';
+      if (user && user.requires_password_reset) return 'Account requires re-authentication';
+      return null;
+    }),
     isFacilityScoped: jest.fn().mockImplementation((role: string) => {
       return !['admin', 'dev_admin'].includes(role);
     }),

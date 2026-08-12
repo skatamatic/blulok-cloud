@@ -677,7 +677,7 @@ registerPost(
 
     const { KeySharingService } = await import('@/services/key-sharing.service');
     const svc = KeySharingService.getInstance();
-    const { shareId } = await svc.inviteByPhone({
+    const { shareId, inviteWarning } = await svc.inviteByPhone({
       unitId: unit_id,
       phoneE164,
       accessLevel: access_level,
@@ -686,7 +686,11 @@ registerPost(
       primaryTenantIdFallback: user.role === UserRole.TENANT ? user.userId : undefined,
     });
 
-    res.status(200).json({ success: true, share_id: shareId });
+    res.status(200).json({
+      success: true,
+      share_id: shareId,
+      ...(inviteWarning ? { invite_sent: false, invite_warning: inviteWarning } : {}),
+    });
   } catch (error: any) {
     logger.error('Error processing key share invite:', error);
     res.status(500).json({ success: false, message: 'Failed to process invite' });

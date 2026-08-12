@@ -25,6 +25,24 @@ const createMockQuery = (config: { rows?: any[]; reject?: boolean } = {}) => {
   return chain;
 };
 
+const stubRestores: (() => void)[] = [];
+
+/**
+ * Make `UserModel.findById` answer with `row` for that row's id and defer to the
+ * shared mock store for everything else, so the auth middleware still resolves
+ * the requester. Restoring by hand is required because `jest.spyOn` on an
+ * already-mocked function leaves it implementation-less after `mockRestore`.
+ */
+const stubUserRow = (findById: jest.Mock, row: { id: string } & Record<string, unknown>) => {
+  const previous = findById.getMockImplementation();
+  findById.mockImplementation((id: string) =>
+    id === row.id ? Promise.resolve(row) : previous?.(id),
+  );
+  stubRestores.push(() => {
+    if (previous) findById.mockImplementation(previous);
+  });
+};
+
 const createMockKnex = (tables: Record<string, { rows?: any[]; reject?: boolean }> = {}) => {
   const fn: any = (tableName: string) => {
     const entry = tables[tableName] ?? tables.default ?? { rows: [] };
@@ -44,6 +62,10 @@ describe('Users Routes', () => {
 
   beforeEach(() => {
     testData = createMockTestData();
+  });
+
+  afterEach(() => {
+    while (stubRestores.length > 0) stubRestores.pop()!();
   });
 
   describe('Authentication Requirements', () => {
@@ -723,7 +745,9 @@ describe('Users Routes', () => {
 
     it('should return 400 when clearing contact on a placeholder without replacement', async () => {
       const { UserModel } = await import('@/models/user.model');
-      (UserModel.findById as jest.Mock).mockResolvedValueOnce({
+      // Must be keyed by id: the auth middleware also looks the requester up,
+      // so a one-shot mock would be spent before the route ever runs.
+      stubUserRow(UserModel.findById as jest.Mock, {
         id: 'placeholder-tenant-1',
         email: null,
         phone_number: null,
@@ -766,8 +790,7 @@ describe('Users Routes', () => {
         created_at: new Date(),
         updated_at: new Date(),
       };
-      const originalFindById = UserModel.findById as jest.Mock;
-      originalFindById.mockResolvedValueOnce(placeholderRow);
+      stubUserRow(UserModel.findById as jest.Mock, placeholderRow);
 
       const response = await request(app)
         .post('/api/v1/users/placeholder-tenant-1/resend-invite')
@@ -1020,12 +1043,10 @@ describe('Users Routes', () => {
 
   describe('GET /api/v1/users/:id/details - Get User Details', () => {
     let getInstanceSpy: jest.SpyInstance;
-    let userModelSpy: jest.SpyInstance;
     let listDevicesSpy: jest.SpyInstance;
 
     afterEach(() => {
       getInstanceSpy?.mockRestore();
-      userModelSpy?.mockRestore();
       listDevicesSpy?.mockRestore();
     });
 
@@ -1088,7 +1109,7 @@ describe('Users Routes', () => {
       });
 
       getInstanceSpy = jest.spyOn(DatabaseService, 'getInstance').mockReturnValue({ connection: mockDb } as any);
-      userModelSpy = jest.spyOn(UserModel, 'findById').mockResolvedValue(baseUser as any);
+      stubUserRow(UserModel.findById as jest.Mock, baseUser as any);
       listDevicesSpy = jest.spyOn(UserDeviceModel.prototype, 'listByUser').mockResolvedValue([baseDevice] as any);
 
       const response = await request(app)
@@ -1134,7 +1155,7 @@ describe('Users Routes', () => {
       });
 
       getInstanceSpy = jest.spyOn(DatabaseService, 'getInstance').mockReturnValue({ connection: mockDb } as any);
-      userModelSpy = jest.spyOn(UserModel, 'findById').mockResolvedValue(baseUser as any);
+      stubUserRow(UserModel.findById as jest.Mock, baseUser as any);
       listDevicesSpy = jest.spyOn(UserDeviceModel.prototype, 'listByUser').mockResolvedValue([baseDevice] as any);
 
       const response = await request(app)

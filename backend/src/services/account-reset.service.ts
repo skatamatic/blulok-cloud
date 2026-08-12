@@ -38,7 +38,12 @@ export class AccountResetService {
   public async resetAndReinvite(
     userId: string,
     options: { performedBy: string; sendInvite?: boolean; actorName?: string },
-  ): Promise<{ user: User; devicesRevoked: number }> {
+  ): Promise<{
+    user: User;
+    devicesRevoked: number;
+    inviteSent: boolean;
+    inviteWarning?: string;
+  }> {
     const user = (await UserModel.findById(userId)) as User | undefined;
     if (!user) {
       throw new Error('User not found');
@@ -134,12 +139,35 @@ export class AccountResetService {
 
     const refreshed = (await UserModel.findById(userId)) as User;
 
+    // The identity wipe is already committed, so a failed invite must not read as
+    // "nothing happened" — report it so the operator retries delivery instead of
+    // leaving the user locked out silently.
+    let inviteSent = false;
+    let inviteWarning: string | undefined;
+
     if (options.sendInvite !== false) {
       const { FirstTimeUserService } = await import('@/services/first-time-user.service');
-      await FirstTimeUserService.getInstance().sendInvite(refreshed);
+      try {
+        const dispatch = await FirstTimeUserService.getInstance().sendInvite(refreshed);
+        inviteSent = dispatch.delivered.length > 0;
+        if (dispatch.warning) inviteWarning = dispatch.warning;
+        if (!inviteSent) {
+          inviteWarning =
+            'Account was reset, but no invite could be sent (no reachable contact). Add an email or phone, then use Resend invite.';
+        }
+      } catch (e) {
+        logger.error(`Account reset for ${userId} succeeded but invite delivery failed`, e);
+        inviteWarning =
+          'Account was reset, but the invite could not be sent. Check Settings → Notifications, then use Resend invite.';
+      }
     }
 
-    return { user: refreshed, devicesRevoked };
+    return {
+      user: refreshed,
+      devicesRevoked,
+      inviteSent,
+      ...(inviteWarning ? { inviteWarning } : {}),
+    };
   }
 
   private async getUserFacilityIds(userId: string): Promise<string[]> {

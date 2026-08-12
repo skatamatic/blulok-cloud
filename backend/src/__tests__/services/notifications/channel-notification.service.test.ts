@@ -122,7 +122,9 @@ describe('Channel NotificationService (SMS/Email)', () => {
   describe('sendOtp', () => {
     it('throws when no destination is provided', async () => {
       getMock.mockResolvedValue(null);
-      await expect(service.sendOtp({ code: '123456' } as any)).rejects.toThrow(/requires toPhone or toEmail/);
+      await expect(service.sendOtp({ code: '123456' } as any)).rejects.toThrow(
+        /no phone number or email address/,
+      );
     });
 
     it('sends OTP SMS in normal mode', async () => {
@@ -176,7 +178,7 @@ describe('Channel NotificationService (SMS/Email)', () => {
       );
       await expect(
         service.sendPasswordReset({ token: 'x' } as any)
-      ).rejects.toThrow(/requires toPhone or toEmail/);
+      ).rejects.toThrow(/no phone number or email address/);
     });
   });
 

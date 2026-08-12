@@ -1,4 +1,4 @@
-import { useState, useCallback, type Dispatch, type SetStateAction } from 'react';
+import { useState, useCallback, useRef, type Dispatch, type SetStateAction } from 'react';
 import { EyeIcon, EyeSlashIcon } from '@heroicons/react/24/outline';
 import { SECRET_MASK } from '@/types/notification.types';
 
@@ -18,6 +18,9 @@ interface SecretFieldProps {
 export function SecretField({ id, label, value, onChange, placeholder, helpText }: SecretFieldProps) {
   const [show, setShow] = useState(false);
   const isMasked = value === SECRET_MASK;
+  // Remember that a secret is stored, so clearing the box can be restored to "unchanged".
+  const hadStoredSecret = useRef(isMasked);
+  if (isMasked) hadStoredSecret.current = true;
 
   return (
     <div>
@@ -31,6 +34,11 @@ export function SecretField({ id, label, value, onChange, placeholder, helpText 
           value={value || ''}
           onFocus={() => {
             if (isMasked) onChange('');
+          }}
+          onBlur={(e) => {
+            // Leaving the field empty means "unchanged" — restore the sentinel so the
+            // UI matches what the API does, instead of looking like the secret was cleared.
+            if (e.target.value === '' && hadStoredSecret.current) onChange(SECRET_MASK);
           }}
           onChange={(e) => onChange(e.target.value)}
           placeholder={isMasked ? 'Leave blank to keep existing' : placeholder}

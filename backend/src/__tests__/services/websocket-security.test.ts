@@ -52,6 +52,7 @@ jest.mock('@/services/app-realtime.hub', () => ({
 }));
 
 import { FacilityAccessService } from '@/services/facility-access.service';
+import { UserModel } from '@/models/user.model';
 
 describe('WebSocket Security Tests', () => {
   let wsService: WebSocketService;
@@ -107,6 +108,13 @@ describe('WebSocket Security Tests', () => {
     }
     (WebSocketService as any).instance = undefined;
     wsService = WebSocketService.getInstance();
+
+    // handleConnection re-checks the session against the DB, so every ad-hoc
+    // user id used below has to resolve to an active account.
+    (UserModel.findById as jest.Mock).mockImplementation((id: string) =>
+      Promise.resolve({ id, is_active: true, requires_password_reset: false }),
+    );
+
     
     mockWebSocket = {
       readyState: WebSocket.OPEN,
@@ -190,7 +198,7 @@ describe('WebSocket Security Tests', () => {
     });
 
     it('should allow ADMIN to subscribe to general_stats', async () => {
-      wsService['handleConnection'](mockWebSocket, mockReq);
+      await wsService['handleConnection'](mockWebSocket, mockReq);
       
       const subscriptionMessage = {
         type: 'subscription',
@@ -310,7 +318,7 @@ describe('WebSocket Security Tests', () => {
         role: UserRole.ADMIN
       });
 
-      wsService['handleConnection'](mockWebSocket, adminReq);
+      await wsService['handleConnection'](mockWebSocket, adminReq);
       
       const subscriptionMessage = {
         type: 'subscription',
@@ -339,7 +347,7 @@ describe('WebSocket Security Tests', () => {
         role: UserRole.DEV_ADMIN
       });
 
-      wsService['handleConnection'](mockWebSocket, devAdminReq);
+      await wsService['handleConnection'](mockWebSocket, devAdminReq);
       
       const subscriptionMessage = {
         type: 'subscription',
@@ -357,7 +365,7 @@ describe('WebSocket Security Tests', () => {
     let validToken: string;
     let mockReq: any;
 
-    beforeEach(() => {
+    beforeEach(async () => {
       const jwt = require('jsonwebtoken');
       validToken = jwt.sign(
         { userId: 'test-user', role: UserRole.ADMIN },
@@ -374,7 +382,7 @@ describe('WebSocket Security Tests', () => {
         role: UserRole.ADMIN
       });
 
-      wsService['handleConnection'](mockWebSocket, mockReq);
+      await wsService['handleConnection'](mockWebSocket, mockReq);
     });
 
     it('should reject malformed JSON messages', async () => {

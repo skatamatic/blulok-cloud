@@ -10,7 +10,14 @@ const mockInvites = {
 };
 
 const mockNotifications = {
-  sendInvite: jest.fn().mockResolvedValue(undefined),
+  sendInvite: jest
+    .fn()
+    .mockResolvedValue({ delivered: ['SMS'], errors: [], usedDisabledChannelFallback: false }),
+  getConfig: jest.fn().mockResolvedValue({
+    enabledChannels: { sms: true, email: true },
+    defaultProvider: { sms: 'console', email: 'console' },
+    templates: {},
+  }),
 };
 
 const mockOtps = {
@@ -78,6 +85,16 @@ describe('FirstTimeUserService', () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+    mockNotifications.sendInvite.mockResolvedValue({
+      delivered: ['SMS'],
+      errors: [],
+      usedDisabledChannelFallback: false,
+    });
+    mockNotifications.getConfig.mockResolvedValue({
+      enabledChannels: { sms: true, email: true },
+      defaultProvider: { sms: 'console', email: 'console' },
+      templates: {},
+    });
   });
 
   test('sendInvite creates invite and dispatches notification with deeplink containing token and phone', async () => {

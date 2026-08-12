@@ -445,7 +445,9 @@ describe('Auth Routes', () => {
       expect(response.body).not.toHaveProperty('token');
     });
 
-    it('should return 404 for non-existent user', async () => {
+    // The auth middleware re-checks the session against the DB, so a token for a
+    // missing or deactivated account is rejected before the route runs.
+    it('should reject a token whose user no longer exists', async () => {
       // Create a token for a user that doesn't exist
       const jwt = require('jsonwebtoken');
       const { config } = require('@/config/environment');
@@ -465,14 +467,13 @@ describe('Auth Routes', () => {
       const response = await request(app)
         .post('/api/v1/auth/refresh-token')
         .set('Authorization', `Bearer ${fakeUserToken}`)
-        .expect(404);
+        .expect(401);
 
       expect(response.body.success).toBe(false);
-      expect(response.body.message).toContain('not found');
       expect(response.body).not.toHaveProperty('token');
     });
 
-    it('should return 403 for inactive user account', async () => {
+    it('should reject a token for a deactivated account', async () => {
       const findByIdMock = UserModel.findById as jest.Mock;
       findByIdMock.mockResolvedValueOnce({
         id: 'tenant-1',
@@ -486,9 +487,9 @@ describe('Auth Routes', () => {
       const response = await request(app)
         .post('/api/v1/auth/refresh-token')
         .set('Authorization', `Bearer ${testData.users.tenant.token}`)
-        .expect(403);
+        .expect(401);
 
-      expectForbidden(response);
+      expectUnauthorized(response);
       expect(response.body.message).toMatch(/deactivat/i);
     });
 

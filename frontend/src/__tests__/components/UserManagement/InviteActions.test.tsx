@@ -12,13 +12,20 @@ jest.mock('@/services/api.service', () => ({
   },
 }));
 
+const addToast = jest.fn();
 jest.mock('@/contexts/ToastContext', () => ({
-  useToast: () => ({ addToast: jest.fn() }),
+  useToast: () => ({ addToast }),
 }));
 
 describe('InviteActions', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    (apiService.resendUserInvite as jest.Mock).mockResolvedValue({ success: true });
+    (apiService.resetUserAccount as jest.Mock).mockResolvedValue({
+      success: true,
+      message: 'ok',
+      inviteSent: true,
+    });
   });
 
   it('shows resend for users who have not logged in', () => {
@@ -77,6 +84,65 @@ describe('InviteActions', () => {
       />,
     );
     expect(screen.getByRole('button', { name: /Reset account/i })).toBeInTheDocument();
+  });
+
+  it('warns instead of celebrating when only one invite channel delivered', async () => {
+    (apiService.resendUserInvite as jest.Mock).mockResolvedValue({
+      success: true,
+      message: 'Invite resent via SMS',
+      inviteSent: true,
+      inviteWarning: 'Invite sent via SMS, but email delivery failed.',
+    });
+
+    render(
+      <InviteActions
+        user={{ id: 'u1', firstName: 'A', lastName: 'B', lastLogin: null, isPlaceholder: false }}
+      />,
+    );
+    fireEvent.click(screen.getByRole('button', { name: /Resend Invite/i }));
+    const confirmButtons = screen.getAllByRole('button', { name: /Resend invite/i });
+    fireEvent.click(confirmButtons[confirmButtons.length - 1]!);
+
+    await waitFor(() => {
+      expect(addToast).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: 'warning',
+          message: 'Invite sent via SMS, but email delivery failed.',
+        }),
+      );
+    });
+  });
+
+  it('flags a reset whose invite never reached the user', async () => {
+    (apiService.resetUserAccount as jest.Mock).mockResolvedValue({
+      success: true,
+      message: 'Account reset, but the invite was not delivered',
+      inviteSent: false,
+      inviteWarning: 'Account was reset, but the invite could not be sent.',
+    });
+
+    render(
+      <InviteActions
+        user={{
+          id: 'u1',
+          firstName: 'A',
+          lastName: 'B',
+          lastLogin: '2024-01-01',
+          isPlaceholder: false,
+        }}
+      />,
+    );
+    fireEvent.click(screen.getByRole('button', { name: /Reset Account/i }));
+    fireEvent.click(screen.getByRole('button', { name: /Reset & Re-invite/i }));
+
+    await waitFor(() => {
+      expect(addToast).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: 'warning',
+          title: expect.stringContaining('invite not delivered'),
+        }),
+      );
+    });
   });
 
   it('disables invites for placeholders', () => {

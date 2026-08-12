@@ -7,6 +7,7 @@ import {
   expectUnauthorized,
   expectSuccess,
   expectBadRequest,
+  stubSessionUser,
 } from '@/__tests__/utils/mock-test-helpers';
 
 const mockGetCodesForUser = jest.fn().mockResolvedValue([]);
@@ -141,6 +142,9 @@ describe('Access Codes Routes', () => {
   });
 
   it('forbids unsupported role on /app/my', async () => {
+    // The auth middleware resolves the account before role checks run.
+    const restoreSession = stubSessionUser('viewer-1', { role: 'viewer' });
+
     const unsupportedRoleToken = AuthService.generateToken({
       id: 'viewer-1',
       email: 'viewer@test.com',
@@ -156,6 +160,7 @@ describe('Access Codes Routes', () => {
       .get('/api/v1/access-codes/app/my')
       .set('Authorization', `Bearer ${unsupportedRoleToken}`);
     expectForbidden(response);
+    restoreSession();
   });
 
   it('forwards optional facility_id on /app/my', async () => {

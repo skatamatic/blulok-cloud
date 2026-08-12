@@ -66,7 +66,8 @@ export function queueFmsInviteOrDeferAsync(
   ctx: QueueFmsInviteContext,
 ): void {
   void queueFmsInviteOrDefer(user, ctx).catch((e) => {
-    logger.warn(`[FMS] Failed to queue invite for user ${user.id}`, {
+    // Delivery failures land here and are not retried, so they need to be visible.
+    logger.error(`[FMS] Failed to queue invite for user ${user.id}`, {
       facilityId: ctx.facilityId,
       syncLogId: ctx.syncLogId,
       error: e,

@@ -163,6 +163,62 @@ describe('System Settings Routes', () => {
       expect(mockSettingsModel.set).toHaveBeenCalled();
     });
 
+    it.each(['javascript:alert(1)', 'data:text/html,x', 'http://evil.example.com/'])(
+      'rejects unsafe deeplink base %s',
+      async (deeplinkBaseUrl) => {
+        const response = await request(app)
+          .put('/api/v1/system-settings/notifications')
+          .set('Authorization', `Bearer ${testData.users.devAdmin.token}`)
+          .send({ deeplinkBaseUrl })
+          .expect(400);
+
+        expectBadRequest(response);
+        expect(mockSettingsModel.set).not.toHaveBeenCalled();
+      },
+    );
+
+    it('accepts the app scheme and https deeplink bases', async () => {
+      for (const deeplinkBaseUrl of ['blulok://', 'https://app.blulok.com/']) {
+        await request(app)
+          .put('/api/v1/system-settings/notifications')
+          .set('Authorization', `Bearer ${testData.users.devAdmin.token}`)
+          .send({ deeplinkBaseUrl })
+          .expect(200);
+      }
+    });
+
+    it('keeps stored provider sections when only one field is submitted', async () => {
+      mockSettingsModel.get.mockResolvedValue(
+        JSON.stringify({
+          enabledChannels: { sms: true, email: true },
+          defaultProvider: { sms: 'twilio', email: 'smtp' },
+          twilio: { accountSid: 'AC1', authToken: 'enc:v1:a:b:c', fromNumber: '+15550000000' },
+          smtp: { host: 'smtp.example.com', fromEmail: 'a@b.com' },
+          templates: { inviteSms: 'stored template' },
+        }),
+      );
+
+      await request(app)
+        .put('/api/v1/system-settings/notifications')
+        .set('Authorization', `Bearer ${testData.users.devAdmin.token}`)
+        .send({ deeplinkBaseUrl: 'blulok://' })
+        .expect(200);
+
+      const saved = JSON.parse(
+        (mockSettingsModel.set as jest.Mock).mock.calls.find(
+          (c) => c[0] === 'notifications.config',
+        )![1],
+      );
+      expect(saved.twilio).toEqual({
+        accountSid: 'AC1',
+        authToken: 'enc:v1:a:b:c',
+        fromNumber: '+15550000000',
+      });
+      expect(saved.smtp.host).toBe('smtp.example.com');
+      expect(saved.templates.inviteSms).toBe('stored template');
+      expect(saved.enabledChannels).toEqual({ sms: true, email: true });
+    });
+
     it('allows partial enabledChannels (e.g., just sms without email)', async () => {
       const notificationConfig = {
         enabledChannels: { sms: true },

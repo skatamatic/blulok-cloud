@@ -345,12 +345,23 @@ class ApiService {
 
   async resendUserInvite(userId: string) {
     const response = await this.api.post(`/users/${userId}/resend-invite`);
-    return response.data;
+    return response.data as {
+      success: boolean;
+      message: string;
+      inviteSent?: boolean;
+      inviteWarning?: string;
+    };
   }
 
   async resetUserAccount(userId: string) {
     const response = await this.api.post(`/users/${userId}/reset-account`);
-    return response.data as { success: boolean; message: string; devicesRevoked?: number };
+    return response.data as {
+      success: boolean;
+      message: string;
+      devicesRevoked?: number;
+      inviteSent?: boolean;
+      inviteWarning?: string;
+    };
   }
 
   // Facilities Management

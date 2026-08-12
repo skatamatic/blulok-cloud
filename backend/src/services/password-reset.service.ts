@@ -99,42 +99,23 @@ export class PasswordResetService {
       expires_at: this.db.raw('DATE_ADD(UTC_TIMESTAMP(), INTERVAL ? MINUTE)', [TOKEN_EXPIRY_MINUTES]),
     });
 
-    // Get notification config to determine delivery method
-    const notificationConfig = await this.notifications.getConfig();
-    const smsEnabled = notificationConfig.enabledChannels?.sms !== false;
-    const emailEnabled = notificationConfig.enabledChannels?.email === true;
-
-    // Determine delivery method based on what user has and what's enabled
-    let deliveryMethod: 'sms' | 'email';
-    let toPhone: string | undefined;
-    let toEmail: string | undefined;
-
-    if (smsEnabled && user.phone_number) {
-      deliveryMethod = 'sms';
-      toPhone = user.phone_number;
-    } else if (emailEnabled && user.email) {
-      deliveryMethod = 'email';
-      toEmail = user.email;
-    } else if (user.phone_number) {
-      // Fallback to phone even if SMS not explicitly enabled
-      deliveryMethod = 'sms';
-      toPhone = user.phone_number;
-    } else if (user.email) {
-      // Fallback to email
-      deliveryMethod = 'email';
-      toEmail = user.email;
-    } else {
+    if (!user.phone_number && !user.email) {
       throw new Error('No valid contact method available for this user');
     }
 
-    // Send password reset notification with deeplink
-    await this.notifications.sendPasswordReset({
+    // Hand both contacts to the notification service: it owns channel selection
+    // (enabled channels first, fallback to any reachable contact) and throws
+    // rather than silently delivering nothing.
+    const outcome = await this.notifications.sendPasswordReset({
       token,
-      toPhone,
-      toEmail,
+      toPhone: user.phone_number || undefined,
+      toEmail: user.email || undefined,
     });
 
-    logger.info(`Password reset token sent via ${deliveryMethod} for user ${user.id}`);
+    const deliveryMethod: 'sms' | 'email' = outcome.delivered.includes('SMS') ? 'sms' : 'email';
+    logger.info(
+      `Password reset token sent via ${outcome.delivered.join(', ')} for user ${user.id}`,
+    );
     return { success: true, expiresAt, deliveryMethod };
   }
 

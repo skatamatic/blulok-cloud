@@ -5,6 +5,7 @@ import request from 'supertest';
 import { createApp } from '@/app';
 import { DatabaseService } from '@/services/database.service';
 import { GatewayEventsService } from '@/services/gateway/gateway-events.service';
+import { stubSessionUser } from '@/__tests__/utils/mock-test-helpers';
 
 const buildToken = (role = 'dev_admin') => {
   const header = Buffer.from(JSON.stringify({ alg: 'HS256', typ: 'JWT' })).toString('base64');
@@ -20,6 +21,10 @@ describe('Ops Key Rotation Route', () => {
 
   beforeEach(() => {
     systemSettingsRow = null;
+
+    // The auth middleware re-checks the session against the DB, so the token's
+    // synthetic user has to resolve to an active account.
+    stubSessionUser('dev-admin', { role: 'dev_admin' });
 
     const systemSettingsTable = () => {
       const query: any = {

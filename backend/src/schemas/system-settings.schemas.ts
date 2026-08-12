@@ -1,4 +1,8 @@
 import Joi from 'joi';
+import {
+  DEEPLINK_BASE_HELP,
+  isAllowedDeeplinkBase,
+} from '@/services/notifications/deeplink.utils';
 
 export const updateSystemSettingsBodySchema = Joi.object({
   'security.max_devices_per_user': Joi.number().integer().min(0).max(250).optional(),
@@ -43,7 +47,16 @@ export const notificationsConfigBodySchema = Joi.object({
     passwordResetEmail: Joi.string().allow(null, '').optional(),
     passwordResetEmailSubject: Joi.string().allow(null, '').optional(),
   }).unknown(true).optional().allow(null),
-  deeplinkBaseUrl: Joi.string().allow(null, '').optional(),
+  deeplinkBaseUrl: Joi.string()
+    .allow(null, '')
+    .optional()
+    .custom((value, helpers) => {
+      if (typeof value === 'string' && !isAllowedDeeplinkBase(value)) {
+        return helpers.error('any.invalid');
+      }
+      return value;
+    })
+    .messages({ 'any.invalid': DEEPLINK_BASE_HELP }),
 }).unknown(true).min(1);
 
 export const notificationsTestBodySchema = Joi.object({

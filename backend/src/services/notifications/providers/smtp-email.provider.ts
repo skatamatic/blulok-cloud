@@ -9,6 +9,16 @@ import {
 } from './smtp-verify.utils';
 
 /**
+ * Quote the display name and strip CR/LF plus quote characters so an admin-set
+ * From name cannot inject extra headers or break out of the address.
+ */
+export function buildFromHeader(fromName: string | undefined, fromEmail: string): string {
+  const address = fromEmail.replace(/[\r\n]/g, '').trim();
+  const name = (fromName || '').replace(/[\r\n"\\<>]/g, '').trim();
+  return name ? `"${name}" <${address}>` : address;
+}
+
+/**
  * Production SMTP email provider via nodemailer.
  */
 export class SmtpEmailProvider implements EmailProvider {
@@ -47,9 +57,7 @@ export class SmtpEmailProvider implements EmailProvider {
     }
 
     this.transporter = nodemailer.createTransport(transportOptions);
-    this.from = smtp.fromName
-      ? `"${smtp.fromName}" <${smtp.fromEmail}>`
-      : smtp.fromEmail;
+    this.from = buildFromHeader(smtp.fromName, smtp.fromEmail);
     this.replyTo = smtp.replyTo;
   }
 

@@ -18,6 +18,7 @@ import { NotificationConfigService } from '@/services/notifications/notification
 import {
   maskNotificationSecrets,
   prepareNotificationsConfigForSave,
+  redactNotificationSecretsForLog,
   resolveConfigOverrideSecrets,
 } from '@/services/notifications/notification-secrets.utils';
 import { UserModel, User } from '@/models/user.model';
@@ -26,6 +27,7 @@ import { registerGet, registerPost, registerPut } from '@/openapi/register-route
 import {
   updateSystemSettingsBodySchema,
   notificationsConfigBodySchema,
+  notificationsTestBodySchema,
   notificationsTestConnectionBodySchema,
 } from '@/schemas/system-settings.schemas';
 
@@ -155,7 +157,10 @@ registerPut(
       return;
     }
 
-    logger.debug('Notification settings update request:', JSON.stringify(req.body, null, 2));
+    logger.debug(
+      'Notification settings update request:',
+      JSON.stringify(redactNotificationSecretsForLog(req.body), null, 2),
+    );
 
     const { error, value } = notificationsConfigBodySchema.validate(req.body, {
       abortEarly: false,
@@ -196,6 +201,7 @@ registerPost(
     tags: ['System'],
     summary: 'Send test notifications',
     security: 'bearer',
+    body: notificationsTestBodySchema,
   },
   authenticateToken as any,
   asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {

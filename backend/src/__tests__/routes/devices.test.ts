@@ -1,6 +1,6 @@
 import request from 'supertest';
 import { createApp } from '@/app';
-import { createMockTestData, MockTestData, expectUnauthorized, expectForbidden, expectSuccess, expectBadRequest } from '@/__tests__/utils/mock-test-helpers';
+import { createMockTestData, MockTestData, expectUnauthorized, expectForbidden, expectSuccess, expectBadRequest, stubSessionUser } from '@/__tests__/utils/mock-test-helpers';
 import { DatabaseService } from '@/services/database.service';
 import { DevicesService } from '@/services/devices.service';
 import { AuthService } from '@/services/auth.service';
@@ -3277,6 +3277,7 @@ describe('Devices Routes', () => {
       });
 
       it('returns empty list when facility-scoped user has no facilities', async () => {
+        const restoreSession = stubSessionUser('orphan-fa', { role: UserRole.FACILITY_ADMIN });
         const orphanToken = AuthService.generateToken(
           {
             id: 'orphan-fa',
@@ -3294,6 +3295,7 @@ describe('Devices Routes', () => {
           .expect(200);
 
         expect(response.body).toMatchObject({ devices: [], total: 0 });
+        restoreSession();
       });
     });
 
@@ -3383,6 +3385,7 @@ describe('Devices Routes', () => {
       });
 
       it('returns empty unassigned list when facility-scoped user has no facilities', async () => {
+        const restoreSession = stubSessionUser('orphan-fa-2', { role: UserRole.FACILITY_ADMIN });
         const orphanToken = AuthService.generateToken(
           {
             id: 'orphan-fa-2',
@@ -3400,6 +3403,7 @@ describe('Devices Routes', () => {
           .expect(200);
 
         expect(response.body).toMatchObject({ success: true, devices: [], total: 0 });
+        restoreSession();
       });
 
       it('rolls back access-control create when default group assignment fails', async () => {

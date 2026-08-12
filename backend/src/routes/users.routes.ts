@@ -718,8 +718,13 @@ registerPost(
     try {
       const created = await UserModel.findById(newUserId) as User | undefined;
       if (created) {
-        await FirstTimeUserService.getInstance().sendInvite(created);
-        inviteSent = true;
+        const dispatch = await FirstTimeUserService.getInstance().sendInvite(created);
+        inviteSent = dispatch.delivered.length > 0;
+        if (dispatch.warning) inviteWarning = dispatch.warning;
+        if (!inviteSent) {
+          inviteWarning =
+            'User was created but no invite was sent — the account has no reachable phone or email.';
+        }
       }
     } catch (e) {
       logger.error(
@@ -778,8 +783,20 @@ registerPost(
     return;
   }
 
-  await FirstTimeUserService.getInstance().sendInvite(user);
-  res.json({ success: true, message: 'Invite resent' });
+  const dispatch = await FirstTimeUserService.getInstance().sendInvite(user);
+  if (dispatch.delivered.length === 0) {
+    res.status(400).json({
+      success: false,
+      message: 'No invite was sent — this account has no reachable phone or email.',
+    });
+    return;
+  }
+  res.json({
+    success: true,
+    message: `Invite resent via ${dispatch.delivered.join(', ')}`,
+    inviteSent: true,
+    ...(dispatch.warning ? { inviteWarning: dispatch.warning } : {}),
+  });
 }));
 
 registerPost(
@@ -858,11 +875,18 @@ registerPost(
       });
       res.json({
         success: true,
-        message: 'Account reset and invite sent',
+        message: result.inviteSent
+          ? 'Account reset and invite sent'
+          : 'Account reset, but the invite was not delivered',
         devicesRevoked: result.devicesRevoked,
+        inviteSent: result.inviteSent,
+        ...(result.inviteWarning ? { inviteWarning: result.inviteWarning } : {}),
       });
     } catch (e: any) {
-      res.status(400).json({ success: false, message: e?.message || 'Account reset failed' });
+      // Preserve delivery/operational status codes instead of collapsing to 400
+      res
+        .status(typeof e?.statusCode === 'number' ? e.statusCode : 400)
+        .json({ success: false, message: e?.message || 'Account reset failed' });
     }
   }),
 );

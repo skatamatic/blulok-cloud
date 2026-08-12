@@ -4,7 +4,18 @@ import { User, UserModel } from '@/models/user.model';
 import { OTPService } from '@/services/otp.service';
 import { logger } from '@/utils/logger';
 import { DatabaseService } from '@/services/database.service';
+import { describeDelivery } from '@/services/notifications/notification-delivery';
+import type { NotificationDeliveryChannel } from '@/services/notifications/notification-delivery-error.utils';
 import bcrypt from 'bcrypt';
+
+/** Outcome of an invite dispatch, so callers can report partial delivery. */
+export interface InviteDispatchResult {
+  delivered: NotificationDeliveryChannel[];
+  /** Present when one channel succeeded and another failed. */
+  warning?: string;
+  /** Set when no invite was attempted (placeholder or contactless account). */
+  skipped?: 'placeholder' | 'no_contact';
+}
 
 export class FirstTimeUserService {
   private static instance: FirstTimeUserService;
@@ -24,16 +35,19 @@ export class FirstTimeUserService {
    * Create and send an invitation to a newly created user.
    * Generates both the invite token AND the OTP in one step, sending a single
    * notification containing both the deeplink and verification code.
+   *
+   * Throws when nothing could be delivered; returns a `warning` when one channel
+   * failed but another succeeded, so callers never report a silent no-op.
    */
-  public async sendInvite(user: User): Promise<void> {
+  public async sendInvite(user: User): Promise<InviteDispatchResult> {
     const { isPlaceholderUser } = await import('@/services/fms/fms-placeholder-user.utils');
     if (isPlaceholderUser(user)) {
       logger.info(`Skipping invite for FMS placeholder user ${user.id} (no login identity)`);
-      return;
+      return { delivered: [], skipped: 'placeholder' };
     }
     if (!user.email && !user.phone_number) {
       logger.warn(`Skipping invite for user ${user.id}: no email or phone`);
-      return;
+      return { delivered: [], skipped: 'no_contact' };
     }
 
     const { token, inviteId } = await this.invites.createInvite(user.id);
@@ -57,14 +71,15 @@ export class FirstTimeUserService {
     });
 
     // Send single invite notification with both deeplink and OTP code
-    await this.notifications.sendInvite({
+    const outcome = await this.notifications.sendInvite({
       toPhone: user.phone_number || undefined,
       toEmail: user.email || undefined,
       deeplink,
       code,
     });
 
-    // Clear any FMS deferred-invite bookkeeping (manual/admin invite wins)
+    // Clear any FMS deferred-invite bookkeeping (manual/admin invite wins).
+    // Only reached once at least one channel delivered — sendInvite throws otherwise.
     try {
       const { DeferredInviteService } = await import(
         '@/services/notifications/deferred-invite.service'
@@ -74,7 +89,15 @@ export class FirstTimeUserService {
       logger.warn(`Failed to resolve deferred invite for user ${user.id}`, e);
     }
 
-    logger.info(`Invite with OTP sent to user ${user.id} via ${delivery}`);
+    logger.info(`Invite with OTP sent to user ${user.id} via ${describeDelivery(outcome)}`);
+
+    const result: InviteDispatchResult = { delivered: outcome.delivered };
+    if (outcome.errors.length > 0) {
+      result.warning = `Invite sent via ${describeDelivery(outcome)}, but ${outcome.errors
+        .map((e) => e.channel)
+        .join(' and ')} delivery failed.`;
+    }
+    return result;
   }
 
   /**
@@ -140,8 +163,13 @@ export class FirstTimeUserService {
       }
     }
 
-    // Validate contact matches stored user contact; prefer phone if user has phone
-    const hasPhone = !!user.phone_number;
+    // Prefer phone, but fall back to email when SMS is disabled and email is on —
+    // otherwise the code would be "sent" on a channel the admin turned off.
+    const config = await this.notifications.getConfig();
+    const smsEnabled = config.enabledChannels?.sms !== false;
+    const emailEnabled = config.enabledChannels?.email === true;
+    const emailIsBetter = !smsEnabled && emailEnabled && !!user.email;
+    const hasPhone = !!user.phone_number && !emailIsBetter;
     if (hasPhone) {
       if (!params.phone) throw new Error('Phone is required');
       if (!this.phoneMatches(user.phone_number!, params.phone)) throw new Error('Phone does not match');

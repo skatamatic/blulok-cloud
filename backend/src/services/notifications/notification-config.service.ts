@@ -1,5 +1,6 @@
 import { SystemSettingsModel } from '@/models/system-settings.model';
 import type { NotificationsConfig } from '@/types/notification.types';
+import { logger } from '@/utils/logger';
 import { decryptSecret } from '@/utils/settings-secret.util';
 
 const DEFAULT_CONFIG: NotificationsConfig = {
@@ -34,12 +35,20 @@ export class NotificationConfigService {
   public async loadConfig(): Promise<NotificationsConfig> {
     const raw = await this.settingsModel.get('notifications.config');
     if (!raw) return this.getDefaultConfig();
+    let parsed: NotificationsConfig;
     try {
-      const parsed = JSON.parse(raw) as NotificationsConfig;
-      return this.decryptSecretsInConfig(parsed);
-    } catch {
+      parsed = JSON.parse(raw) as NotificationsConfig;
+    } catch (e) {
+      // Falling back here silently switches every channel to the console provider,
+      // so make the reason obvious in logs.
+      logger.error(
+        'Notifications: stored notifications.config is not valid JSON; using defaults ' +
+          '(all sends go to the console provider until this is re-saved)',
+        e,
+      );
       return this.getDefaultConfig();
     }
+    return this.decryptSecretsInConfig(parsed);
   }
 
   /**
@@ -64,18 +73,35 @@ export class NotificationConfigService {
     return result;
   }
 
+  /**
+   * A bad key or corrupt ciphertext blanks only that secret. The provider factory
+   * then rejects the incomplete config with an actionable error, instead of the
+   * whole config collapsing to defaults and quietly "sending" to the console.
+   */
+  private decryptOrBlank(value: string, label: string): string {
+    try {
+      return decryptSecret(value);
+    } catch (e) {
+      logger.error(
+        `Notifications: failed to decrypt ${label}; check SETTINGS_ENCRYPTION_KEY and re-save the secret`,
+        e,
+      );
+      return '';
+    }
+  }
+
   private decryptSecretsInConfig(config: NotificationsConfig): NotificationsConfig {
     const next = { ...config };
     if (next.twilio?.authToken) {
       next.twilio = {
         ...next.twilio,
-        authToken: decryptSecret(next.twilio.authToken),
+        authToken: this.decryptOrBlank(next.twilio.authToken, 'Twilio auth token'),
       };
     }
     if (next.smtp?.password) {
       next.smtp = {
         ...next.smtp,
-        password: decryptSecret(next.smtp.password),
+        password: this.decryptOrBlank(next.smtp.password, 'SMTP password'),
       };
     }
     return next;

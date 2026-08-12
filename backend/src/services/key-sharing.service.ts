@@ -44,9 +44,12 @@ export class KeySharingService {
     expiresAt?: Date | null;
     grantedBy: string;
     primaryTenantIdFallback?: string;
-  }): Promise<{ shareId: string; invitee: User; createdUser: boolean; }>
+  }): Promise<{ shareId: string; invitee: User; createdUser: boolean; inviteWarning?: string; }>
   {
     const { unitId, phoneE164, accessLevel, expiresAt, grantedBy, primaryTenantIdFallback } = params;
+    // Share creation must not be rolled back by a failed SMS, but the caller has
+    // to know the invitee never received a code.
+    let inviteWarning: string | undefined;
 
     // Find or create invitee by phone
     let invitee = await UserModel.findByPhone(phoneE164);
@@ -91,9 +94,12 @@ export class KeySharingService {
       }
 
       try {
-        await FirstTimeUserService.getInstance().sendInvite(invitee);
+        const dispatch = await FirstTimeUserService.getInstance().sendInvite(invitee);
+        if (dispatch.warning) inviteWarning = dispatch.warning;
       } catch (e) {
         logger.error('Failed to dispatch invite SMS', e);
+        inviteWarning =
+          'Access was shared, but the invite could not be sent. Use Resend invite once notification settings are fixed.';
       }
     }
 
@@ -211,14 +217,17 @@ export class KeySharingService {
     // so they receive the same SMS/OTP flow as cloud-created invites.
     if (!createdUser && invitee && invitee.requires_password_reset) {
       try {
-        await FirstTimeUserService.getInstance().sendInvite(invitee);
+        const dispatch = await FirstTimeUserService.getInstance().sendInvite(invitee);
+        if (dispatch.warning) inviteWarning = dispatch.warning;
       } catch (e) {
         logger.error('Failed to dispatch invite SMS for existing invitee', e);
+        inviteWarning =
+          'Access was shared, but the invite could not be sent. Use Resend invite once notification settings are fixed.';
       }
     }
 
     this.notifyKeySharingChanged(unitId);
-    return { shareId, invitee, createdUser };
+    return { shareId, invitee, createdUser, ...(inviteWarning ? { inviteWarning } : {}) };
   }
 
   private async resolveFacilityIdForUnit(unitId: string): Promise<string | undefined> {

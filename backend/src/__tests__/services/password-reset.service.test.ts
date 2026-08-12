@@ -66,7 +66,9 @@ describe('PasswordResetService', () => {
         templates: {},
         deeplinkBaseUrl: 'blulok://',
       }),
-      sendPasswordReset: jest.fn().mockResolvedValue(undefined),
+      sendPasswordReset: jest
+        .fn()
+        .mockResolvedValue({ delivered: ['SMS'], errors: [], usedDisabledChannelFallback: false }),
     } as any;
 
     (NotificationService.getInstance as jest.Mock).mockReturnValue(mockNotificationService);
@@ -109,11 +111,10 @@ describe('PasswordResetService', () => {
 
     it('should send email when SMS is disabled but email is enabled', async () => {
       (UserModel.findByEmail as jest.Mock).mockResolvedValue({ ...mockUser, phone_number: null });
-      mockNotificationService.getConfig.mockResolvedValue({
-        enabledChannels: { sms: false, email: true },
-        defaultProvider: { sms: 'console', email: 'console' },
-        templates: {},
-        deeplinkBaseUrl: 'blulok://',
+      (mockNotificationService.sendPasswordReset as jest.Mock).mockResolvedValue({
+        delivered: ['email'],
+        errors: [],
+        usedDisabledChannelFallback: false,
       });
 
       const result = await service.requestReset({ email: 'test@example.com' });
@@ -123,6 +124,30 @@ describe('PasswordResetService', () => {
         expect.objectContaining({
           toEmail: mockUser.email,
         })
+      );
+    });
+
+    it('passes both contacts so the notification service owns channel selection', async () => {
+      (UserModel.findByEmail as jest.Mock).mockResolvedValue(mockUser);
+
+      await service.requestReset({ email: 'test@example.com' });
+
+      expect(mockNotificationService.sendPasswordReset).toHaveBeenCalledWith(
+        expect.objectContaining({
+          toPhone: mockUser.phone_number,
+          toEmail: mockUser.email,
+        })
+      );
+    });
+
+    it('propagates delivery failure instead of reporting a successful reset', async () => {
+      (UserModel.findByEmail as jest.Mock).mockResolvedValue(mockUser);
+      (mockNotificationService.sendPasswordReset as jest.Mock).mockRejectedValue(
+        new Error('Failed to send text.'),
+      );
+
+      await expect(service.requestReset({ email: 'test@example.com' })).rejects.toThrow(
+        'Failed to send text.',
       );
     });
 

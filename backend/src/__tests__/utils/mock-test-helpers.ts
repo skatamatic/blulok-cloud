@@ -1,5 +1,30 @@
 import { UserRole } from '../../types/auth.types';
 import { AuthService } from '../../services/auth.service';
+import { UserModel } from '../../models/user.model';
+
+/**
+ * Let the auth middleware's session lookup resolve a user id that is not in the
+ * shared mock store — needed whenever a test mints its own token. Other ids keep
+ * using the store, so the requester and the target can both be resolved.
+ *
+ * Returns a restore function; `jest.spyOn` is unusable here because restoring a
+ * spy over an already-mocked function leaves it without an implementation.
+ */
+export function stubSessionUser(
+  id: string,
+  overrides: Record<string, unknown> = {},
+): () => void {
+  const findById = UserModel.findById as jest.Mock;
+  const previous = findById.getMockImplementation();
+  findById.mockImplementation((lookupId: string) =>
+    lookupId === id
+      ? Promise.resolve({ id, is_active: true, ...overrides })
+      : previous?.(lookupId),
+  );
+  return () => {
+    if (previous) findById.mockImplementation(previous);
+  };
+}
 
 export interface MockTestUser {
   id: string;

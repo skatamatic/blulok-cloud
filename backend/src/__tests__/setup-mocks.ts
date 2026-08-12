@@ -1404,6 +1404,18 @@ jest.mock('../models/user.model', () => {
       updated_at: new Date('2024-01-01'),
     },
     {
+      id: 'facility2-admin-1',
+      email: 'facility2admin@test.com',
+      login_identifier: 'facility2admin@test.com',
+      password_hash: 'hashed-password',
+      first_name: 'Facility2',
+      last_name: 'Admin',
+      role: 'facility_admin',
+      is_active: true,
+      created_at: new Date('2024-01-01'),
+      updated_at: new Date('2024-01-01'),
+    },
+    {
       id: 'facility-admin-1',
       email: 'facilityadmin@test.com',
       login_identifier: 'facilityadmin@test.com',
@@ -1481,9 +1493,19 @@ jest.mock('../models/user.model', () => {
     },
   ];
   
-  defaultUsers.forEach(user => mockUsers.set(user.id, { ...user, is_placeholder: user.is_placeholder ?? false }));
-  
+  const seedDefaultUsers = (): void => {
+    mockUsers.clear();
+    defaultUsers.forEach(user =>
+      mockUsers.set(user.id, { ...user, is_placeholder: user.is_placeholder ?? false }),
+    );
+  };
+
+  seedDefaultUsers();
+
   return {
+    // Tests deactivate and mutate these rows; without a reset the next test
+    // authenticating as that user gets a 401 from the session denial check.
+    __resetMockUsers: seedDefaultUsers,
     UserModel: {
       findById: jest.fn().mockImplementation((id: string) => {
         const user = mockUsers.get(id);
@@ -2425,6 +2447,7 @@ jest.mock('googleapis', () => {
 // Global test setup
 beforeEach(() => {
   resetMocks();
+  (require('../models/user.model') as { __resetMockUsers?: () => void }).__resetMockUsers?.();
 });
 
 // Global test teardown

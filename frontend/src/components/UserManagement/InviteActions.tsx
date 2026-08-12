@@ -72,7 +72,11 @@ export function InviteActions({
     try {
       const response = await apiService.resendUserInvite(user.id);
       if (response.success) {
-        addToast({ type: 'success', title: 'Invite resent successfully' });
+        addToast(
+          response.inviteWarning
+            ? { type: 'warning', title: 'Invite partly delivered', message: response.inviteWarning }
+            : { type: 'success', title: 'Invite resent successfully', message: response.message },
+        );
         setShowResendModal(false);
         onComplete?.();
       } else {
@@ -99,11 +103,21 @@ export function InviteActions({
     try {
       const response = await apiService.resetUserAccount(user.id);
       if (response.success) {
-        addToast({
-          type: 'success',
-          title: 'Account reset',
-          message: response.message || 'Invite sent',
-        });
+        // The reset itself always committed; a delivery failure means the user is
+        // locked out until someone resends, so it must not read as a plain success.
+        addToast(
+          response.inviteWarning
+            ? {
+                type: 'warning',
+                title: 'Account reset — invite not delivered',
+                message: response.inviteWarning,
+              }
+            : {
+                type: 'success',
+                title: 'Account reset',
+                message: response.message || 'Invite sent',
+              },
+        );
         setShowResetModal(false);
         onComplete?.();
       } else {

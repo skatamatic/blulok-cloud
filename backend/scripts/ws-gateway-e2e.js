@@ -8956,6 +8956,265 @@ async function run() {
       throw new Error('Used token should not be reusable');
     }
     ok('Used token correctly rejected');
+
+    // -----------------------------------------------------------------
+    // Notification delivery stack: settings persistence, channel policy,
+    // and the invite / reset paths that depend on them.
+    // -----------------------------------------------------------------
+    heading('Notification Delivery Stack');
+    {
+      const notifAuth = { headers: authHeaders(token) };
+      const SECRET_MASK = '••••••';
+      const notifUserIds = [];
+
+      const getNotifSettings = async () => {
+        const res = await axios.get(`${API_BASE}/system-settings/notifications`, notifAuth);
+        if (!res.data?.success) throw new Error('Failed to read notification settings');
+        return res.data.config || {};
+      };
+      const putNotifSettings = (body) =>
+        axios
+          .put(`${API_BASE}/system-settings/notifications`, body, notifAuth)
+          .catch((err) => err.response);
+      const expectPutOk = async (body, label) => {
+        const res = await putNotifSettings(body);
+        if (res?.status !== 200) {
+          throw new Error(`${label} failed: ${res?.status} ${JSON.stringify(res?.data)}`);
+        }
+      };
+
+      const settingsBefore = await getNotifSettings();
+      const originalChannels = {
+        sms: settingsBefore.enabledChannels?.sms !== false,
+        email: settingsBefore.enabledChannels?.email === true,
+      };
+      const originalProviders = {
+        sms: settingsBefore.defaultProvider?.sms || 'console',
+        email: settingsBefore.defaultProvider?.email || 'console',
+      };
+      const originalDeeplink = settingsBefore.deeplinkBaseUrl || 'blulok://';
+
+      try {
+        step('Seeding SMS + email settings with secrets');
+        await expectPutOk(
+          {
+            enabledChannels: { sms: true, email: true },
+            defaultProvider: { sms: 'console', email: 'console' },
+            twilio: {
+              accountSid: 'ACe2e',
+              authToken: 'e2e-twilio-secret',
+              fromNumber: '+15550000000',
+            },
+            smtp: {
+              host: 'smtp.e2e.local',
+              port: 587,
+              username: 'e2e',
+              password: 'e2e-smtp-secret',
+              fromEmail: 'e2e@blulok.test',
+              fromName: 'BluLok E2E',
+            },
+            deeplinkBaseUrl: originalDeeplink,
+          },
+          'Seeding notification settings',
+        );
+
+        const seeded = await getNotifSettings();
+        if (seeded.twilio?.authToken !== SECRET_MASK) {
+          throw new Error('Twilio auth token should be masked in GET');
+        }
+        if (seeded.smtp?.password !== SECRET_MASK) {
+          throw new Error('SMTP password should be masked in GET');
+        }
+        ok('Secrets persisted and returned masked');
+
+        step('Partial update keeps sections that were not submitted');
+        await expectPutOk({ deeplinkBaseUrl: originalDeeplink }, 'Partial deeplink update');
+        const afterPartial = await getNotifSettings();
+        if (afterPartial.twilio?.accountSid !== 'ACe2e') {
+          throw new Error('Partial PUT dropped the twilio section');
+        }
+        if (afterPartial.smtp?.host !== 'smtp.e2e.local') {
+          throw new Error('Partial PUT dropped the smtp section');
+        }
+        if (afterPartial.smtp?.fromName !== 'BluLok E2E') {
+          throw new Error('Partial PUT dropped smtp.fromName');
+        }
+        if (afterPartial.enabledChannels?.email !== true) {
+          throw new Error('Partial PUT dropped enabledChannels.email');
+        }
+        if (afterPartial.twilio?.authToken !== SECRET_MASK) {
+          throw new Error('Partial PUT wiped the stored twilio secret');
+        }
+        ok('Partial update preserved twilio / smtp / enabledChannels and secrets');
+
+        step('Blank secret field means "keep existing"');
+        await expectPutOk(
+          { smtp: { ...afterPartial.smtp, password: '', fromName: 'BluLok E2E v2' } },
+          'Blank-secret save',
+        );
+        const afterBlank = await getNotifSettings();
+        if (afterBlank.smtp?.password !== SECRET_MASK) {
+          throw new Error('Blank password cleared the stored SMTP secret');
+        }
+        if (afterBlank.smtp?.fromName !== 'BluLok E2E v2') {
+          throw new Error('Blank-secret save did not apply the other field changes');
+        }
+        ok('Blank secret kept the stored credential while applying other edits');
+
+        step('Deeplink base URL allowlist rejects unsafe schemes');
+        for (const badBase of ['javascript:alert(1)', 'http://evil.example.com/']) {
+          const rejected = await putNotifSettings({ deeplinkBaseUrl: badBase });
+          if (rejected?.status !== 400) {
+            throw new Error(
+              `Expected 400 for deeplink base "${badBase}", got ${rejected?.status}`,
+            );
+          }
+        }
+        ok('Rejected javascript: and non-loopback http: deeplink bases');
+
+        step('Test notifications cover invite, OTP and password reset on both channels');
+        const testSend = await axios
+          .post(
+            `${API_BASE}/system-settings/notifications/test`,
+            { toEmail: 'e2e-notify@example.com', toPhone: '+15550001234' },
+            notifAuth,
+          )
+          .catch((err) => err.response);
+        if (testSend?.status !== 200) {
+          throw new Error(
+            `Test notification send failed: ${testSend?.status} ${JSON.stringify(testSend?.data)}`,
+          );
+        }
+        const sentChannels = testSend.data?.sent || [];
+        for (const expected of [
+          'sms_invite',
+          'email_invite',
+          'sms_otp',
+          'email_otp',
+          'sms_password_reset',
+          'email_password_reset',
+        ]) {
+          if (!sentChannels.includes(expected)) {
+            throw new Error(
+              `Test send missing ${expected} (got ${JSON.stringify(sentChannels)})`,
+            );
+          }
+        }
+        ok(`Test notifications dispatched on all ${sentChannels.length} channels`);
+
+        // --- Real invite delivery through the dev notifications socket ---
+        await ensureNotificationsWs(token);
+
+        const stamp = Date.now();
+        const dualEmail = `e2e-notify-dual-${stamp}@example.com`;
+        const dualPhone = `+1555${String(stamp).slice(-7)}`;
+        const dualUserId = await createUser(token, dualEmail, 'tenant', facilityId);
+        notifUserIds.push(dualUserId);
+        await axios.put(
+          `${API_BASE}/users/${dualUserId}`,
+          { phoneNumber: dualPhone },
+          notifAuth,
+        );
+
+        step('Invite reaches SMS and email when both channels are enabled');
+        notificationEvents.length = 0;
+        const dualResend = await axios
+          .post(`${API_BASE}/users/${dualUserId}/resend-invite`, {}, notifAuth)
+          .catch((err) => err.response);
+        if (dualResend?.status !== 200 || !dualResend.data?.success) {
+          throw new Error(
+            `Resend invite failed: ${dualResend?.status} ${JSON.stringify(dualResend?.data)}`,
+          );
+        }
+        const smsInvite = await waitForNotification(
+          (e) => e.kind === 'invite' && e.delivery === 'sms' && e.toPhone === dualPhone,
+        );
+        const emailInvite = await waitForNotification(
+          (e) => e.kind === 'invite' && e.delivery === 'email' && e.toEmail === dualEmail,
+        );
+        for (const [label, evt] of [['SMS', smsInvite], ['email', emailInvite]]) {
+          const body = String(evt.body || '');
+          if (body.includes('{{')) {
+            throw new Error(`${label} invite has unsubstituted template variables: ${body}`);
+          }
+          if (!evt.meta?.code) throw new Error(`${label} invite is missing the OTP code`);
+          if (!body.includes(evt.meta.code)) {
+            throw new Error(`${label} invite body does not contain the verification code`);
+          }
+        }
+        ok('Invite delivered on both channels with all template variables substituted');
+
+        step('Reset account reports whether the new invite was delivered');
+        notificationEvents.length = 0;
+        const resetAcc = await axios
+          .post(`${API_BASE}/users/${dualUserId}/reset-account`, {}, notifAuth)
+          .catch((err) => err.response);
+        if (resetAcc?.status !== 200) {
+          throw new Error(
+            `Reset account failed: ${resetAcc?.status} ${JSON.stringify(resetAcc?.data)}`,
+          );
+        }
+        if (resetAcc.data?.inviteSent !== true) {
+          throw new Error(
+            `Reset account should report inviteSent=true, got ${JSON.stringify(resetAcc.data)}`,
+          );
+        }
+        await waitForNotification((e) => e.kind === 'invite' && e.toPhone === dualPhone);
+        ok('Reset account re-invited the user and reported delivery explicitly');
+
+        step('Email-only user is still reached when the email channel is disabled');
+        await expectPutOk({ enabledChannels: { sms: true, email: false } }, 'Disable email channel');
+        const emailOnly = `e2e-notify-emailonly-${stamp}@example.com`;
+        const emailOnlyId = await createUser(token, emailOnly, 'tenant', facilityId);
+        notifUserIds.push(emailOnlyId);
+        notificationEvents.length = 0;
+        const fallbackResend = await axios
+          .post(`${API_BASE}/users/${emailOnlyId}/resend-invite`, {}, notifAuth)
+          .catch((err) => err.response);
+        if (fallbackResend?.status !== 200) {
+          throw new Error(
+            `Email-only resend invite failed: ${fallbackResend?.status} ${JSON.stringify(fallbackResend?.data)}`,
+          );
+        }
+        const fallbackInvite = await waitForNotification(
+          (e) => e.kind === 'invite' && e.toEmail === emailOnly,
+        );
+        if (fallbackInvite.delivery !== 'email') {
+          throw new Error(`Expected email fallback delivery, got ${fallbackInvite.delivery}`);
+        }
+        ok('Disabled-channel fallback delivered the invite instead of silently skipping it');
+
+        step('Password reset reaches an email-only user with SMS-only channels');
+        notificationEvents.length = 0;
+        const resetReq = await axios
+          .post(`${API_BASE}/auth/forgot-password/request`, { email: emailOnly })
+          .catch((err) => err.response);
+        if (resetReq?.status !== 200) {
+          throw new Error(
+            `Password reset request failed: ${resetReq?.status} ${JSON.stringify(resetReq?.data)}`,
+          );
+        }
+        const resetNotif = await waitForNotification(
+          (e) => e.kind === 'password_reset' && e.toEmail === emailOnly,
+        );
+        if (!resetNotif.meta?.token) {
+          throw new Error('Password reset notification is missing its token');
+        }
+        ok('Password reset delivered by email even though only SMS was enabled');
+      } finally {
+        // Restore the settings other sections rely on, then drop the scratch users
+        await putNotifSettings({
+          enabledChannels: originalChannels,
+          defaultProvider: originalProviders,
+          deeplinkBaseUrl: originalDeeplink,
+        });
+        for (const userId of notifUserIds) {
+          await hardDeleteUser(token, userId).catch(() => {});
+        }
+        info('Notification settings restored');
+      }
+    }
+
     // Schedule Management Tests
     heading('Schedule Management');
     step('Testing schedule creation and management');
