@@ -39,7 +39,8 @@ export const updateUserSchema = Joi.object({
   email: Joi.string().email().allow('', null).optional(),
   phoneNumber: Joi.string().trim().allow('', null).optional(),
   role: Joi.string().valid(...Object.values(UserRole)).optional(),
-  isActive: Joi.boolean().optional(),
+  // MySQL TINYINT(1) can round-trip as 0/1; accept those as well as true/false.
+  isActive: Joi.boolean().truthy(1).falsy(0).optional(),
   /** Presentation-only; only ADMIN/DEV_ADMIN may set (enforced in route) */
   simplifiedUi: Joi.boolean().optional(),
 });

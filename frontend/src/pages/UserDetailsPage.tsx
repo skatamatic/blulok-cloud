@@ -158,7 +158,6 @@ export default function UserDetailsPage() {
     email: '',
     phoneNumber: '',
     role: '' as UserRole | '',
-    isActive: true,
     simplifiedUi: false,
   });
   const [togglingSimplifiedUi, setTogglingSimplifiedUi] = useState(false);
@@ -449,7 +448,6 @@ export default function UserDetailsPage() {
         lastName: editForm.lastName,
         phoneNumber: editForm.phoneNumber.trim() === '' ? '' : editForm.phoneNumber.trim(),
         role: editForm.role,
-        isActive: editForm.isActive,
       };
       if (userDetails.isPlaceholder) {
         payload.email = editForm.email.trim() === '' ? '' : editForm.email.trim().toLowerCase();
@@ -676,7 +674,6 @@ export default function UserDetailsPage() {
                     email: userDetails.email || '',
                     phoneNumber: userDetails.phoneNumber || '',
                     role: userDetails.role,
-                    isActive: userDetails.isActive,
                     simplifiedUi: Boolean(userDetails.simplifiedUi),
                   });
                   setActiveTab('edit');
@@ -746,7 +743,6 @@ export default function UserDetailsPage() {
                           email: userDetails.email || '',
                           phoneNumber: userDetails.phoneNumber || '',
                           role: userDetails.role,
-                          isActive: userDetails.isActive,
                           simplifiedUi: Boolean(userDetails.simplifiedUi),
                         });
                         setActiveTab('edit');
@@ -1255,17 +1251,6 @@ export default function UserDetailsPage() {
                       </>
                     )}
                   </select>
-                </div>
-                <div>
-                  <label className="flex items-center space-x-2">
-                    <input
-                      type="checkbox"
-                      checked={editForm.isActive}
-                      onChange={(e) => setEditForm({ ...editForm, isActive: e.target.checked })}
-                      className="h-4 w-4 text-primary-600 focus:ring-primary-500 border-gray-300 dark:border-gray-600 rounded"
-                    />
-                    <span className="text-sm font-medium text-gray-700 dark:text-gray-300">Active</span>
-                  </label>
                 </div>
                 {canSetSimplifiedUi && editForm.role === UserRole.FACILITY_ADMIN && (
                   <div className="rounded-lg border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900/30 p-4">

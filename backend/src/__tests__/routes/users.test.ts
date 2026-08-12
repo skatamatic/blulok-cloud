@@ -653,6 +653,17 @@ describe('Users Routes', () => {
       expectBadRequest(response);
     });
 
+    it('accepts numeric isActive from MySQL TINYINT round-trips', async () => {
+      const response = await request(app)
+        .put(`/api/v1/users/${testData.users.tenant.id}`)
+        .set('Authorization', `Bearer ${testData.users.admin.token}`)
+        .send({ firstName: 'Updated', isActive: 1 })
+        .expect(200);
+
+      expectSuccess(response);
+      expect(typeof response.body.user.isActive).toBe('boolean');
+    });
+
     it('should return 400 for invalid role', async () => {
       const response = await request(app)
         .put(`/api/v1/users/${testData.users.tenant.id}`)

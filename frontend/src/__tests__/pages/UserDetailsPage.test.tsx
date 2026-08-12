@@ -771,6 +771,40 @@ describe('UserDetailsPage', () => {
       });
       expect(screen.queryByRole('switch', { name: 'Simplified UI' })).not.toBeInTheDocument();
     });
+
+    it('saves profile fields without an Active checkbox or isActive payload', async () => {
+      mockApiService.updateUser = jest.fn().mockResolvedValue({ success: true, user: mockUserDetails });
+
+      renderUserDetailsPage();
+
+      await waitFor(() => {
+        expect(screen.getByText('Edit')).toBeInTheDocument();
+      });
+      fireEvent.click(screen.getByText('Edit'));
+
+      await waitFor(() => {
+        expect(screen.getByText('Edit User')).toBeInTheDocument();
+      });
+      expect(screen.queryByRole('checkbox', { name: /active/i })).not.toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'Deactivate' })).toBeInTheDocument();
+
+      fireEvent.click(screen.getByRole('button', { name: 'Save Changes' }));
+
+      await waitFor(() => {
+        expect(mockApiService.updateUser).toHaveBeenCalledWith(
+          'test-user-id',
+          expect.not.objectContaining({ isActive: expect.anything() }),
+        );
+      });
+      expect(mockApiService.updateUser).toHaveBeenCalledWith(
+        'test-user-id',
+        expect.objectContaining({
+          firstName: 'John',
+          lastName: 'Doe',
+          role: UserRole.TENANT,
+        }),
+      );
+    });
   });
 
   describe('FMS placeholder tenants', () => {
