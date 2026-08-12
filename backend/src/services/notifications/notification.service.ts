@@ -103,6 +103,8 @@ export class NotificationService {
     const meta: Record<string, string> = { deeplink: params.deeplink };
     if (params.code) meta.code = params.code;
 
+    // Deliver on every enabled channel that has a recipient (same as settings test).
+    // Product copy still describes SMS-first when only one contact exists.
     const debug = NotificationDebugService.getInstance();
     if (debug.isEnabled()) {
       const createdAt = new Date();
@@ -363,17 +365,23 @@ export class NotificationService {
       config.deeplinkBaseUrl || 'blulok://',
     );
     const deeplink = `${baseUrl}invite?test=1`;
+    // Same sample code for invite + OTP so {{code}} substitutes in invite templates
+    // the same way real invites do (sendInvite passes deeplink + code).
+    const testCode = '123456';
+    const inviteVars = { deeplink, code: testCode };
     const inviteSmsTpl =
-      config.templates?.inviteSms || 'Welcome to BluLok. Tap to get started: {{deeplink}}';
+      config.templates?.inviteSms ||
+      'Welcome to BluLok. Tap to get started: {{deeplink}} Your verification code: {{code}}';
     const inviteEmailTpl =
-      config.templates?.inviteEmail || 'Welcome to BluLok. Open {{deeplink}}';
+      config.templates?.inviteEmail ||
+      'Welcome to BluLok. Open {{deeplink}}. Your verification code: {{code}}';
     const inviteEmailSubject = config.templates?.inviteEmailSubject || 'Your BluLok Invitation';
 
     if (smsProvider && params.toPhone) {
       try {
         await smsProvider.sendSms(
           params.toPhone,
-          `TEST - ${renderTemplate(inviteSmsTpl, { deeplink })}`,
+          `TEST - ${renderTemplate(inviteSmsTpl, inviteVars)}`,
         );
         sent.push('sms_invite');
       } catch (e: any) {
@@ -383,7 +391,7 @@ export class NotificationService {
     }
     if (emailProvider && params.toEmail) {
       try {
-        const html = `TEST - ${renderTemplate(inviteEmailTpl, { deeplink })}`;
+        const html = `TEST - ${renderTemplate(inviteEmailTpl, inviteVars)}`;
         await emailProvider.sendEmail(params.toEmail, `TEST - ${inviteEmailSubject}`, html, html);
         sent.push('email_invite');
       } catch (e: any) {
@@ -395,7 +403,6 @@ export class NotificationService {
       }
     }
 
-    const otpCode = '123456 TEST';
     const otpSmsTpl = config.templates?.otpSms || 'Your verification code is: {{code}}';
     const otpEmailTpl = config.templates?.otpEmail || 'Your verification code is: {{code}}';
     const otpEmailSubject = config.templates?.otpEmailSubject || 'Your Verification Code';
@@ -404,7 +411,7 @@ export class NotificationService {
       try {
         await smsProvider.sendSms(
           params.toPhone,
-          `TEST - ${renderTemplate(otpSmsTpl, { code: otpCode })}`,
+          `TEST - ${renderTemplate(otpSmsTpl, { code: testCode })}`,
         );
         sent.push('sms_otp');
       } catch (e: any) {
@@ -414,7 +421,7 @@ export class NotificationService {
     }
     if (emailProvider && params.toEmail) {
       try {
-        const html = `TEST - ${renderTemplate(otpEmailTpl, { code: otpCode })}`;
+        const html = `TEST - ${renderTemplate(otpEmailTpl, { code: testCode })}`;
         await emailProvider.sendEmail(params.toEmail, `TEST - ${otpEmailSubject}`, html, html);
         sent.push('email_otp');
       } catch (e: any) {

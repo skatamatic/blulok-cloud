@@ -206,7 +206,12 @@ describe('Channel NotificationService (SMS/Email)', () => {
         {
           enabledChannels: { sms: true, email: true },
           defaultProvider: { sms: 'console', email: 'console' },
-          templates: {},
+          templates: {
+            inviteSms: 'Invite {{deeplink}} code {{code}}',
+            inviteEmail: 'Invite email {{deeplink}} code {{code}}',
+            otpSms: 'OTP {{code}}',
+            otpEmail: 'OTP email {{code}}',
+          },
           deeplinkBaseUrl: 'blulok://',
         } as any
       );
@@ -215,6 +220,10 @@ describe('Channel NotificationService (SMS/Email)', () => {
       expect(result.sent).toContain('sms_otp');
       expect(result.sent).toContain('email_invite');
       expect(result.sent).toContain('email_otp');
+
+      const logged = log.mock.calls.map((c) => String(c[0])).join('\n');
+      expect(logged).toContain('code 123456');
+      expect(logged).not.toContain('{{code}}');
       log.mockRestore();
     });
   });

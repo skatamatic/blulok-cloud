@@ -193,8 +193,8 @@ export function EmailSetupFields({
             {isTestingConnection ? 'Testing…' : 'Test SMTP connection'}
           </button>
           <p className="text-xs text-gray-500 dark:text-gray-400">
-            Checks login and whether the server accepts your From address (auth-only checks miss
-            553 sender rejections).
+            Connection probe only — does not send a message. Use <span className="font-medium">Send test
+            notifications</span> below to deliver TEST invite/OTP email and SMS.
           </p>
         </div>
       ) : null}

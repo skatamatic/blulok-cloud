@@ -26,6 +26,7 @@ const DEFAULT_CONFIG: NotificationsConfig = {
 export default function NotificationsSettingsTab() {
   const { addToast } = useToast();
   const [config, setConfig] = useState<NotificationsConfig>(DEFAULT_CONFIG);
+  const [savedConfigJson, setSavedConfigJson] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const [isTesting, setIsTesting] = useState(false);
@@ -40,6 +41,8 @@ export default function NotificationsSettingsTab() {
   const canSave = isNotificationConfigValid(config);
   const smsEnabled = config.enabledChannels?.sms !== false;
   const emailEnabled = config.enabledChannels?.email === true;
+  const hasUnsavedChanges =
+    savedConfigJson !== null && JSON.stringify(config) !== savedConfigJson;
 
   useEffect(() => {
     void loadSettings();
@@ -51,6 +54,7 @@ export default function NotificationsSettingsTab() {
       const response = await apiService.getNotificationSettings();
       if (response.success) {
         setConfig(response.config);
+        setSavedConfigJson(JSON.stringify(response.config));
       }
     } catch (error) {
       console.error('Failed to load notification settings:', error);
@@ -105,20 +109,31 @@ export default function NotificationsSettingsTab() {
       if (testToPhone) setCookie('blulok_test_to_phone', testToPhone);
 
       const payload: { toEmail?: string; toPhone?: string; configOverride?: NotificationsConfig } = {};
-      if (config.enabledChannels?.email && testToEmail) payload.toEmail = testToEmail;
-      if (config.enabledChannels?.sms !== false && testToPhone) payload.toPhone = testToPhone;
+      if (config.enabledChannels?.email && testToEmail.trim()) payload.toEmail = testToEmail.trim();
+      if (config.enabledChannels?.sms !== false && testToPhone.trim()) {
+        payload.toPhone = testToPhone.trim();
+      }
       payload.configOverride = config;
 
       const resp = await apiService.sendTestNotifications(payload);
       const errorDetails = Array.isArray(resp.errors) && resp.errors.length
         ? `Errors: ${resp.errors.map((e: { channel: string; message: string }) => `${e.channel}: ${e.message}`).join('; ')}`
         : '';
+      const unsavedNote = hasUnsavedChanges
+        ? 'Using unsaved form settings — Save before expecting the same channels on real invites.'
+        : undefined;
+      const consoleSmsNote =
+        (config.defaultProvider?.sms || 'console') === 'console' && payload.toPhone
+          ? 'SMS provider is Console (server log only).'
+          : undefined;
 
       if (resp.success) {
         const details = [
           resp.sent?.length ? `Sent: ${resp.sent.join(', ')}` : undefined,
           resp.toEmail ? `Email: ${resp.toEmail}` : (payload.toEmail ? `Email: ${payload.toEmail}` : undefined),
           resp.toPhone ? `Phone: ${resp.toPhone}` : (payload.toPhone ? `Phone: ${payload.toPhone}` : undefined),
+          consoleSmsNote,
+          unsavedNote,
           errorDetails || undefined,
         ].filter(Boolean).join(' | ');
         addToast({ type: 'success', title: 'Test notifications result', message: details });

@@ -41,6 +41,11 @@ jest.mock('@/services/api.service', () => {
   };
 });
 
+async function fillTestRecipients() {
+  await userEvent.type(screen.getByPlaceholderText('you@example.com'), 'test@example.com');
+  await userEvent.type(screen.getByPlaceholderText('+15551234567'), '+15551234567');
+}
+
 describe('NotificationSettingsPage - Send Test Notifications', () => {
   beforeEach(() => {
     jest.clearAllMocks();
@@ -57,16 +62,18 @@ describe('NotificationSettingsPage - Send Test Notifications', () => {
 
     render(<NotificationSettingsPage />);
 
-    // Wait for settings to load
     await waitFor(() => {
       expect(apiService.getNotificationSettings).toHaveBeenCalled();
     });
 
-    // Click "Send Test Notifications"
     const openBtn = await screen.findByRole('button', { name: /send test notifications/i });
     await userEvent.click(openBtn);
 
     const confirmBtn = await screen.findByRole('button', { name: /send tests/i });
+    expect(confirmBtn).toBeDisabled();
+
+    await fillTestRecipients();
+    expect(confirmBtn).toBeEnabled();
     await userEvent.click(confirmBtn);
 
     await waitFor(() => {
@@ -90,7 +97,6 @@ describe('NotificationSettingsPage - Send Test Notifications', () => {
 
     render(<NotificationSettingsPage />);
 
-    // Wait for settings to load
     await waitFor(() => {
       expect(apiService.getNotificationSettings).toHaveBeenCalled();
     });
@@ -98,6 +104,7 @@ describe('NotificationSettingsPage - Send Test Notifications', () => {
     const openBtn = await screen.findByRole('button', { name: /send test notifications/i });
     await userEvent.click(openBtn);
 
+    await fillTestRecipients();
     const confirmBtn = await screen.findByRole('button', { name: /send tests/i });
     await userEvent.click(confirmBtn);
 
@@ -112,5 +119,3 @@ describe('NotificationSettingsPage - Send Test Notifications', () => {
     });
   });
 });
-
-

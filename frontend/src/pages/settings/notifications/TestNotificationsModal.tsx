@@ -24,19 +24,29 @@ export function TestNotificationsModal({
   onConfirm,
   isTesting,
 }: TestNotificationsModalProps) {
+  const emailOn = config.enabledChannels?.email === true;
+  const smsOn = config.enabledChannels?.sms !== false;
+  const smsProvider = config.defaultProvider?.sms || 'console';
+  const emailMissing = emailOn && !testToEmail.trim();
+  const phoneMissing = smsOn && !testToPhone.trim();
+  const canSend = !emailMissing && !phoneMissing;
+
   return (
     <Modal isOpen={isOpen} onClose={() => !isTesting && onClose()} size="md">
       <ModalHeader>
         <h3 className="text-lg font-semibold text-gray-900 dark:text-white">Send Test Notifications</h3>
         <p className="mt-1 text-sm text-gray-600 dark:text-gray-400">
-          Specify recipient addresses to receive test messages.
+          Sends a TEST invite and TEST OTP on each enabled channel. Use a real phone number in E.164
+          form (e.g. +15551234567) to verify SMS delivery.
         </p>
       </ModalHeader>
       <ModalBody>
         <div className="space-y-4">
-          {config.enabledChannels?.email && (
+          {emailOn && (
             <div>
-              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">To Email</label>
+              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                To Email <span className="text-red-500">*</span>
+              </label>
               <input
                 type="email"
                 value={testToEmail}
@@ -46,9 +56,11 @@ export function TestNotificationsModal({
               />
             </div>
           )}
-          {config.enabledChannels?.sms !== false && (
+          {smsOn && (
             <div>
-              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">To Phone (E.164)</label>
+              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                To Phone (E.164) <span className="text-red-500">*</span>
+              </label>
               <input
                 type="tel"
                 value={testToPhone}
@@ -56,7 +68,22 @@ export function TestNotificationsModal({
                 placeholder="+15551234567"
                 className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
               />
+              {smsProvider === 'console' && (
+                <p className="mt-1.5 text-xs text-amber-700 dark:text-amber-300">
+                  SMS provider is Console — test texts are logged on the server only, not delivered to
+                  a handset. Switch to Twilio and Save settings to receive real SMS.
+                </p>
+              )}
             </div>
+          )}
+          {(emailMissing || phoneMissing) && (
+            <p className="text-sm text-amber-700 dark:text-amber-300">
+              {emailMissing && phoneMissing
+                ? 'Enter both an email and a phone number to test each enabled channel.'
+                : emailMissing
+                  ? 'Enter an email address to test the email channel.'
+                  : 'Enter a phone number to test the SMS channel.'}
+            </p>
           )}
         </div>
       </ModalBody>
@@ -67,7 +94,7 @@ export function TestNotificationsModal({
         <button
           type="button"
           onClick={onConfirm}
-          disabled={isTesting}
+          disabled={isTesting || !canSend}
           className="inline-flex items-center justify-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed transition-colors duration-200"
         >
           {isTesting ? 'Sending...' : 'Send Tests'}

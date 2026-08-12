@@ -23,7 +23,7 @@ interface AddUserFormData {
   role: UserRole;
   /** Omit password — user completes first-time login / invite flow */
   skipPassword: boolean;
-  /** After create, send invite (SMS if phone set, else email when enabled). Only when skip password. */
+  /** After create, send invite (SMS and/or email for each enabled channel with a contact). Only when skip password. */
   sendInvite: boolean;
 }
 
@@ -528,7 +528,7 @@ export const AddUserModal: React.FC<AddUserModalProps> = ({
                         Send invite SMS or email now
                       </span>
                       <span className="block text-xs text-gray-500 dark:text-gray-400 mt-0.5">
-                        Sends the invite link and verification code. SMS if phone is set; otherwise email (when enabled in system settings). Uncheck to skip — use &quot;Resend invite&quot; on the user later.
+                        Sends the invite link and verification code on each enabled channel that has a contact (SMS and/or email). Uncheck to skip — use &quot;Resend invite&quot; on the user later.
                       </span>
                     </span>
                   </label>

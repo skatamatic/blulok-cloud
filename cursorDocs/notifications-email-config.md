@@ -45,8 +45,9 @@ Prefer `notifications.config.deeplinkBaseUrl`. On save, the route also writes th
 - Setup pane: provider selection + Twilio / SMTP fields (SMTP includes **Test connection**).
 - Messages pane: invite / OTP / password-reset copy for that channel only.
 - Shared **deeplink base** strip below the hubs; compact credentials callout; sticky **Send test** / **Save**.
+- **Send test notifications** requires a recipient for each enabled channel (email and/or E.164 phone). It uses the live form as `configOverride` (including unsaved edits) and sends TEST invite + OTP on every enabled channel. Invite templates receive a sample `{{code}}` the same way real invites do.
+- **Test SMTP connection** only probes login + From; it does not send a message.
 - Save is disabled until required provider fields are complete.
-- See `backend/src/services/notifications/` for providers, template renderer, and config service.
 
 ### Troubleshooting
 
@@ -54,5 +55,7 @@ Prefer `notifications.config.deeplinkBaseUrl`. On save, the route also writes th
 |---------|----------------|
 | `553 … Sender address rejected: not owned by user …` | **From email** is not an address the SMTP username may send as. Set From to the mailbox / allowed alias for that login (often the same as Username), then Save and **Test SMTP connection** (probes MAIL FROM, not just login). |
 | Test SMTP says OK but invites fail | Older builds only ran auth `verify()`. Current test also probes the From address; redeploy if the button still only checks login. |
+| Settings test reaches SMS+email but real invites only email | **Send test** uses the live form (`configOverride`), including unsaved toggles/providers. **Save settings** first. Also confirm the invitee has a phone number if you expect SMS, and that SMS provider is **Twilio** (Console only logs on the server). |
+| Test invite SMS/email still shows `{{code}}` | Fixed: test invite rendering now passes a sample code like real invites. Redeploy if you still see the placeholder. |
 | Invite / reset returns friendly “Failed to send email/text… check settings” | Delivery failed (SMTP/Twilio). Full provider text is logged server-side only; fix Settings → Notifications and retry. |
 | `reference_id` / `ER_DATA_TOO_LONG` on backend_error alerts | Fixed by hashing long API paths before insert; full path remains in notification metadata. |
