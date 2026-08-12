@@ -263,7 +263,7 @@ registerPost(
   {
     openApiPath: `${MOUNT}/notifications/test-connection`,
     tags: ['System'],
-    summary: 'Verify email provider connection (SMTP)',
+    summary: 'Verify SMTP login and that From address is accepted',
     security: 'bearer',
     body: notificationsTestConnectionBodySchema,
   },

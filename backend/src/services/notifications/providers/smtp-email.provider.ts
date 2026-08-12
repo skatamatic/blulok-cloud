@@ -1,6 +1,12 @@
 import type { Transporter } from 'nodemailer';
 import type { SmtpConfig } from '@/types/notification.types';
 import type { EmailProvider } from './provider.types';
+import {
+  extractSmtpEmailAddress,
+  isSmtpRecipientRejected,
+  isSmtpSenderRejected,
+  SMTP_FROM_PROBE_SINK,
+} from './smtp-verify.utils';
 
 /**
  * Production SMTP email provider via nodemailer.
@@ -58,7 +64,44 @@ export class SmtpEmailProvider implements EmailProvider {
     });
   }
 
+  /**
+   * 1) Login / TLS (nodemailer verify)
+   * 2) MAIL FROM probe — send toward an undeliverable sink and classify the error.
+   *    Auth-only verify misses "From not owned by SMTP user" (553), which breaks invites.
+   */
   async verifyConnection(): Promise<void> {
     await this.transporter.verify();
+    await this.verifyFromAddressAccepted();
+  }
+
+  private async verifyFromAddressAccepted(): Promise<void> {
+    const fromAddr = extractSmtpEmailAddress(this.from);
+    try {
+      await this.transporter.sendMail({
+        from: this.from,
+        to: SMTP_FROM_PROBE_SINK,
+        subject: 'BluLok SMTP From-address probe',
+        text: 'BluLok connection test probe — discard if received.',
+        ...(this.replyTo ? { replyTo: this.replyTo } : {}),
+      });
+      // Unusual: sink accepted. From was clearly allowed.
+      return;
+    } catch (e: unknown) {
+      const message = e instanceof Error ? e.message : String(e);
+      if (isSmtpSenderRejected(message)) {
+        throw new Error(
+          `SMTP login succeeded, but From address "${fromAddr}" was rejected. ` +
+            `Set From email to an address this SMTP user may send as (often the same as Username). ` +
+            `Server: ${message}`,
+        );
+      }
+      if (isSmtpRecipientRejected(message)) {
+        // Expected — MAIL FROM accepted, undeliverable RCPT rejected.
+        return;
+      }
+      throw new Error(
+        `SMTP From-address check failed for "${fromAddr}": ${message}`,
+      );
+    }
   }
 }

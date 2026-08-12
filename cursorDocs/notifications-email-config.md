@@ -33,7 +33,7 @@ Twilio `authToken` and SMTP `password` are encrypted with AES-256-GCM when `SETT
 | GET | `/api/v1/system-settings/notifications` | Load config (secrets masked) |
 | PUT | `/api/v1/system-settings/notifications` | Save config (encrypt secrets) |
 | POST | `/api/v1/system-settings/notifications/test` | Send TEST invite/OTP messages |
-| POST | `/api/v1/system-settings/notifications/test-connection` | SMTP `transporter.verify()` |
+| POST | `/api/v1/system-settings/notifications/test-connection` | SMTP login **and** From-address probe (not auth-only `verify()`) |
 
 ### Deeplink base
 
@@ -41,7 +41,18 @@ Prefer `notifications.config.deeplinkBaseUrl`. On save, the route also writes th
 
 ### UI behavior
 
-- SMS / email provider sections and templates show only when that channel is enabled.
-- SMTP fields show only when email provider is `smtp`.
+- **Channel hubs**: SMS and Email sit side-by-side. Each hub has an enable toggle and **Setup | Messages** tabs so provider credentials and templates never stack in one scroll.
+- Setup pane: provider selection + Twilio / SMTP fields (SMTP includes **Test connection**).
+- Messages pane: invite / OTP / password-reset copy for that channel only.
+- Shared **deeplink base** strip below the hubs; compact credentials callout; sticky **Send test** / **Save**.
 - Save is disabled until required provider fields are complete.
 - See `backend/src/services/notifications/` for providers, template renderer, and config service.
+
+### Troubleshooting
+
+| Symptom | Likely cause |
+|---------|----------------|
+| `553 … Sender address rejected: not owned by user …` | **From email** is not an address the SMTP username may send as. Set From to the mailbox / allowed alias for that login (often the same as Username), then Save and **Test SMTP connection** (probes MAIL FROM, not just login). |
+| Test SMTP says OK but invites fail | Older builds only ran auth `verify()`. Current test also probes the From address; redeploy if the button still only checks login. |
+| Invite / reset returns friendly “Failed to send email/text… check settings” | Delivery failed (SMTP/Twilio). Full provider text is logged server-side only; fix Settings → Notifications and retry. |
+| `reference_id` / `ER_DATA_TOO_LONG` on backend_error alerts | Fixed by hashing long API paths before insert; full path remains in notification metadata. |

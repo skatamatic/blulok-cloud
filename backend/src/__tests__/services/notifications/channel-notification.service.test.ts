@@ -4,6 +4,7 @@
  */
 import { NotificationService as ChannelNotificationService } from '@/services/notifications/notification.service';
 import { NotificationDebugService } from '@/services/notifications/notification-debug.service';
+import { NotificationConfigService } from '@/services/notifications/notification-config.service';
 import { SystemSettingsModel } from '@/models/system-settings.model';
 
 jest.mock('@/models/system-settings.model');
@@ -16,6 +17,7 @@ describe('Channel NotificationService (SMS/Email)', () => {
     jest.clearAllMocks();
     (ChannelNotificationService as unknown as { instance?: ChannelNotificationService }).instance = undefined;
     (NotificationDebugService as unknown as { instance?: NotificationDebugService }).instance = undefined;
+    (NotificationConfigService as unknown as { instance?: NotificationConfigService }).instance = undefined;
 
     getMock = jest.fn();
     (SystemSettingsModel as jest.MockedClass<typeof SystemSettingsModel>).mockImplementation(
@@ -99,7 +101,7 @@ describe('Channel NotificationService (SMS/Email)', () => {
       log.mockRestore();
     });
 
-    it('throws when Twilio is selected but credentials are missing', async () => {
+    it('throws a calm SMS settings message when Twilio config is incomplete', async () => {
       getMock.mockResolvedValue(
         JSON.stringify({
           enabledChannels: { sms: true, email: false },
@@ -110,7 +112,10 @@ describe('Channel NotificationService (SMS/Email)', () => {
 
       await expect(
         service.sendInvite({ toPhone: '+15550001', deeplink: 'blulok://x' })
-      ).rejects.toThrow(/Twilio SMS provider selected but configuration is incomplete/i);
+      ).rejects.toMatchObject({
+        statusCode: 502,
+        message: expect.stringMatching(/Failed to send text\. Check your SMS settings/i),
+      });
     });
   });
 

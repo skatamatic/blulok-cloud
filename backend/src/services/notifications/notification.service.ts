@@ -5,6 +5,7 @@ import {
   SendPasswordResetParams,
 } from '@/types/notification.types';
 import { logger } from '@/utils/logger';
+import { AppError } from '@/middleware/error.middleware';
 import { NotificationDebugService } from './notification-debug.service';
 import { NotificationConfigService } from './notification-config.service';
 import { renderTemplate } from './notification-template.renderer';
@@ -13,6 +14,10 @@ import {
   createSmsProvider,
 } from './providers/notification-provider.factory';
 import type { EmailProvider, SmsProvider } from './providers/provider.types';
+import {
+  throwNotificationDeliveryError,
+  type NotificationDeliveryChannel,
+} from './notification-delivery-error.utils';
 
 export class NotificationService {
   private static instance: NotificationService;
@@ -39,12 +44,28 @@ export class NotificationService {
     return createEmailProvider(config);
   }
 
+  /**
+   * Map provider transport failures to operational 502s with a calm UI message.
+   * Technical SMTP/Twilio detail is logged only.
+   */
+  private async deliver(
+    channel: NotificationDeliveryChannel,
+    action: () => Promise<void>,
+  ): Promise<void> {
+    try {
+      await action();
+    } catch (e: unknown) {
+      if (e instanceof AppError) throw e;
+      throwNotificationDeliveryError(channel, e);
+    }
+  }
+
   public async getConfig(): Promise<NotificationsConfig> {
     return this.loadConfig();
   }
 
   /**
-   * Verify the configured email provider can connect (SMTP verify).
+   * Verify the configured email provider can connect (SMTP verify + From probe).
    */
   public async testEmailConnection(
     configOverride?: NotificationsConfig,
@@ -55,7 +76,10 @@ export class NotificationService {
       if (provider.verifyConnection) {
         await provider.verifyConnection();
       }
-      return { ok: true, message: 'Email provider connection verified' };
+      return {
+        ok: true,
+        message: 'SMTP login OK and From address accepted by the server',
+      };
     } catch (e: any) {
       return { ok: false, message: e?.message || 'Email connection failed' };
     }
@@ -106,13 +130,17 @@ export class NotificationService {
     }
 
     if (smsEnabled && params.toPhone) {
-      await this.getSmsProvider(config).sendSms(params.toPhone, apply(smsTemplate));
+      await this.deliver('SMS', () =>
+        this.getSmsProvider(config).sendSms(params.toPhone!, apply(smsTemplate)),
+      );
     }
 
     if (emailEnabled && params.toEmail) {
       const subject = config.templates?.inviteEmailSubject || 'Your BluLok Invitation';
       const html = apply(emailTemplate);
-      await this.getEmailProvider(config).sendEmail(params.toEmail, subject, html, html);
+      await this.deliver('email', () =>
+        this.getEmailProvider(config).sendEmail(params.toEmail!, subject, html, html),
+      );
     }
   }
 
@@ -177,19 +205,23 @@ export class NotificationService {
     }
 
     if (smsEnabled && params.toPhone) {
-      await this.getSmsProvider(config).sendSms(params.toPhone, body);
+      await this.deliver('SMS', () => this.getSmsProvider(config).sendSms(params.toPhone!, body));
       return;
     }
     if (emailEnabled && params.toEmail) {
-      await this.getEmailProvider(config).sendEmail(params.toEmail, emailSubject, html, html);
+      await this.deliver('email', () =>
+        this.getEmailProvider(config).sendEmail(params.toEmail!, emailSubject, html, html),
+      );
       return;
     }
     if (params.toPhone) {
-      await this.getSmsProvider(config).sendSms(params.toPhone, body);
+      await this.deliver('SMS', () => this.getSmsProvider(config).sendSms(params.toPhone!, body));
       return;
     }
     if (params.toEmail) {
-      await this.getEmailProvider(config).sendEmail(params.toEmail, emailSubject, html, html);
+      await this.deliver('email', () =>
+        this.getEmailProvider(config).sendEmail(params.toEmail!, emailSubject, html, html),
+      );
       return;
     }
     throw new Error('sendOtp requires toPhone or toEmail');
@@ -264,25 +296,31 @@ export class NotificationService {
     }
 
     if (smsEnabled && params.toPhone) {
-      await this.getSmsProvider(config).sendSms(params.toPhone, smsBody);
+      await this.deliver('SMS', () => this.getSmsProvider(config).sendSms(params.toPhone!, smsBody));
     }
     if (emailEnabled && params.toEmail) {
-      await this.getEmailProvider(config).sendEmail(
-        params.toEmail,
-        emailSubject,
-        emailHtml,
-        emailHtml,
+      await this.deliver('email', () =>
+        this.getEmailProvider(config).sendEmail(
+          params.toEmail!,
+          emailSubject,
+          emailHtml,
+          emailHtml,
+        ),
       );
     }
     if (!smsEnabled && !emailEnabled) {
       if (params.toPhone) {
-        await this.getSmsProvider(config).sendSms(params.toPhone, smsBody);
+        await this.deliver('SMS', () =>
+          this.getSmsProvider(config).sendSms(params.toPhone!, smsBody),
+        );
       } else if (params.toEmail) {
-        await this.getEmailProvider(config).sendEmail(
-          params.toEmail,
-          emailSubject,
-          emailHtml,
-          emailHtml,
+        await this.deliver('email', () =>
+          this.getEmailProvider(config).sendEmail(
+            params.toEmail!,
+            emailSubject,
+            emailHtml,
+            emailHtml,
+          ),
         );
       } else {
         throw new Error('sendPasswordReset requires toPhone or toEmail');

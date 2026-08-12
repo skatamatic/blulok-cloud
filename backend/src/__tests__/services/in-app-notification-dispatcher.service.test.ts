@@ -42,8 +42,27 @@ describe('InAppNotificationDispatcher', () => {
     expect(mockResolveDevAdmins).toHaveBeenCalled();
     expect(mockResolveGlobal).not.toHaveBeenCalled();
     expect(mockCreate).toHaveBeenCalledWith(
-      expect.objectContaining({ type: 'backend_error', userId: 'dev-admin-1' }),
+      expect.objectContaining({
+        type: 'backend_error',
+        userId: 'dev-admin-1',
+        referenceId: '/api/test',
+      }),
     );
+  });
+
+  it('hashes long API paths for backend_error referenceId (varchar 36)', async () => {
+    const { createHash } = await import('crypto');
+    const path = '/api/v1/users/0dcbd690-d60c-4383-9ecb-e3417e5f15aa/resend-invite';
+    const expected = createHash('sha256').update(path).digest('hex').slice(0, 32);
+    const dispatcher = InAppNotificationDispatcher.getInstance();
+    await dispatcher.notifyBackendError('Critical', 'SMTP failed', { path });
+    expect(mockCreate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        referenceId: expected,
+        metadata: expect.objectContaining({ path }),
+      }),
+    );
+    expect(expected.length).toBeLessThanOrEqual(36);
   });
 
   it('fans out inventory duplicate serial alerts to facility operator roles', async () => {

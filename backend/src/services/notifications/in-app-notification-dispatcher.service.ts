@@ -12,6 +12,7 @@ import { UserRole } from '@/types/auth.types';
 import type { DeviceSyncKind } from '@/types/gateway-device-sync.types';
 
 import { logger } from '@/utils/logger';
+import { capNotificationReferenceId } from '@/services/notifications/notification-reference-id.utils';
 
 
 
@@ -658,7 +659,10 @@ export class InAppNotificationDispatcher {
 
       referenceType: 'backend',
 
-      referenceId: typeof metadata?.path === 'string' ? metadata.path : undefined,
+      referenceId:
+        typeof metadata?.path === 'string'
+          ? capNotificationReferenceId(metadata.path)
+          : undefined,
 
       metadata,
 

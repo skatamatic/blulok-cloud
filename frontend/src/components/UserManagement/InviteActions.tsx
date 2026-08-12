@@ -4,6 +4,7 @@ import { apiService } from '@/services/api.service';
 import { useToast } from '@/contexts/ToastContext';
 import { ConfirmModal } from '@/components/Modal/ConfirmModal';
 import { ResetAccountConfirmModal } from './ResetAccountConfirmModal';
+import { getApiErrorMessage } from '@/utils/apiError.utils';
 
 export interface InviteActionsUser {
   id: string;
@@ -12,9 +13,9 @@ export interface InviteActionsUser {
   email?: string | null;
   phoneNumber?: string | null;
   lastLogin?: string | Date | null;
-  isPlaceholder?: boolean;
   /** When set, preferred over lastLogin for choosing Resend vs Reset */
   inviteStatus?: 'never_invited' | 'invite_pending' | 'active' | 'placeholder';
+  isPlaceholder?: boolean;
 }
 
 interface InviteActionsProps {
@@ -75,11 +76,19 @@ export function InviteActions({
         setShowResendModal(false);
         onComplete?.();
       } else {
-        addToast({ type: 'error', title: 'Failed to resend invite' });
+        addToast({
+          type: 'error',
+          title: 'Failed to resend invite',
+          message: typeof response.message === 'string' ? response.message : undefined,
+        });
       }
-    } catch (error) {
+    } catch (error: unknown) {
       console.error('Failed to resend invite:', error);
-      addToast({ type: 'error', title: 'An error occurred while resending invite' });
+      addToast({
+        type: 'error',
+        title: 'Failed to resend invite',
+        message: getApiErrorMessage(error, 'Check notification settings and try again.'),
+      });
     } finally {
       setBusy(false);
     }
@@ -101,8 +110,12 @@ export function InviteActions({
         addToast({ type: 'error', title: 'Failed to reset account', message: response.message });
       }
     } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : 'Unknown error';
-      addToast({ type: 'error', title: 'Failed to reset account', message });
+      console.error('Failed to reset account:', error);
+      addToast({
+        type: 'error',
+        title: 'Failed to reset account',
+        message: getApiErrorMessage(error, 'Check notification settings and try again.'),
+      });
     } finally {
       setBusy(false);
     }

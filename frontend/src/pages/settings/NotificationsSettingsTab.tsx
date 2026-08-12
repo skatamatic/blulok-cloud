@@ -2,14 +2,12 @@ import { useState, useEffect } from 'react';
 import { apiService } from '@/services/api.service';
 import { useToast } from '@/contexts/ToastContext';
 import { NotificationsConfig } from '@/types/notification.types';
-import {
-  ExclamationTriangleIcon,
-  ShieldCheckIcon,
-} from '@heroicons/react/24/outline';
-import { ChannelToggles } from './notifications/ChannelToggles';
-import { SmsProviderSection } from './notifications/SmsProviderSection';
-import { EmailProviderSection } from './notifications/EmailProviderSection';
-import { MessageTemplatesSection } from './notifications/MessageTemplatesSection';
+import { ExclamationTriangleIcon, ShieldCheckIcon } from '@heroicons/react/24/outline';
+import { ChannelHub, type ChannelHubPane } from './notifications/ChannelHub';
+import { SmsSetupFields } from './notifications/SmsSetupFields';
+import { EmailSetupFields } from './notifications/EmailSetupFields';
+import { SmsMessageFields } from './notifications/SmsMessageFields';
+import { EmailMessageFields } from './notifications/EmailMessageFields';
 import { DeeplinkSection } from './notifications/DeeplinkSection';
 import { TestNotificationsModal } from './notifications/TestNotificationsModal';
 import { useConfigPathUpdater } from './notifications/SecretField';
@@ -35,12 +33,16 @@ export default function NotificationsSettingsTab() {
   const [showTestModal, setShowTestModal] = useState(false);
   const [testToEmail, setTestToEmail] = useState('');
   const [testToPhone, setTestToPhone] = useState('');
+  const [smsPane, setSmsPane] = useState<ChannelHubPane>('setup');
+  const [emailPane, setEmailPane] = useState<ChannelHubPane>('setup');
 
   const updateConfig = useConfigPathUpdater(setConfig);
   const canSave = isNotificationConfigValid(config);
+  const smsEnabled = config.enabledChannels?.sms !== false;
+  const emailEnabled = config.enabledChannels?.email === true;
 
   useEffect(() => {
-    loadSettings();
+    void loadSettings();
   }, []);
 
   const loadSettings = async () => {
@@ -65,7 +67,6 @@ export default function NotificationsSettingsTab() {
       const response = await apiService.updateNotificationSettings(config);
       if (response.success) {
         addToast({ type: 'success', title: 'Notification settings updated successfully' });
-        // Reload so masked secrets come back from the API
         await loadSettings();
       } else {
         addToast({ type: 'error', title: 'Failed to update notification settings' });
@@ -153,61 +154,97 @@ export default function NotificationsSettingsTab() {
   if (isLoading) {
     return (
       <div className="flex items-center justify-center py-12">
-        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary-600" />
+        <div className="h-8 w-8 animate-spin rounded-full border-b-2 border-primary-600" />
         <span className="ml-3 text-gray-600 dark:text-gray-400">Loading notification settings...</span>
       </div>
     );
   }
 
   return (
-    <div className="space-y-6">
-      <ChannelToggles config={config} onChange={updateConfig} />
-      <SmsProviderSection config={config} onChange={updateConfig} />
-      <EmailProviderSection
-        config={config}
-        onChange={updateConfig}
-        onTestConnection={handleTestConnection}
-        isTestingConnection={isTestingConnection}
-      />
-      <MessageTemplatesSection config={config} onChange={updateConfig} />
-      <DeeplinkSection config={config} onChange={updateConfig} />
-
-      <div className="bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-lg p-4">
-        <div className="flex">
-          <ExclamationTriangleIcon className="h-5 w-5 text-yellow-400" />
-          <div className="ml-3">
-            <h3 className="text-sm font-medium text-yellow-800 dark:text-yellow-200">Security Considerations</h3>
-            <div className="mt-2 text-sm text-yellow-700 dark:text-yellow-300">
-              <p>
-                SMS and email notifications contain sensitive information. Provider credentials are encrypted at rest
-                when <code className="text-xs">SETTINGS_ENCRYPTION_KEY</code> is configured. Rotate credentials regularly.
-              </p>
-            </div>
-          </div>
-        </div>
+    <div className="space-y-5">
+      <div>
+        <h2 className="text-sm font-semibold text-gray-900 dark:text-white">Delivery channels</h2>
+        <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
+          Enable a channel, then use Setup for the provider and Messages for invite / OTP / reset
+          copy.
+        </p>
       </div>
 
-      <div className="flex justify-end gap-3">
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2 lg:items-start">
+        <ChannelHub
+          title="SMS"
+          enabled={smsEnabled}
+          onEnabledChange={(on) => updateConfig('enabledChannels.sms', on)}
+          pane={smsPane}
+          onPaneChange={setSmsPane}
+          offHint="Channel off — enable to configure Twilio (or console) delivery and SMS copy."
+          setup={<SmsSetupFields config={config} onChange={updateConfig} />}
+          messages={<SmsMessageFields config={config} onChange={updateConfig} />}
+        />
+        <ChannelHub
+          title="Email"
+          enabled={emailEnabled}
+          onEnabledChange={(on) => updateConfig('enabledChannels.email', on)}
+          pane={emailPane}
+          onPaneChange={setEmailPane}
+          offHint="Channel off — enable to configure SMTP (or console) delivery and email copy."
+          setup={
+            <EmailSetupFields
+              config={config}
+              onChange={updateConfig}
+              onTestConnection={() => void handleTestConnection()}
+              isTestingConnection={isTestingConnection}
+            />
+          }
+          messages={<EmailMessageFields config={config} onChange={updateConfig} />}
+        />
+      </div>
+
+      <DeeplinkSection config={config} onChange={updateConfig} />
+
+      <div className="flex gap-3 rounded-lg border border-amber-200 bg-amber-50/80 p-3 dark:border-amber-900/40 dark:bg-amber-950/20">
+        <ExclamationTriangleIcon className="h-5 w-5 shrink-0 text-amber-500" />
+        <p className="text-sm text-amber-800 dark:text-amber-200">
+          Invite codes and reset links are sensitive. Provider credentials encrypt at rest when{' '}
+          <code className="text-xs">SETTINGS_ENCRYPTION_KEY</code> is set — rotate them regularly.
+        </p>
+      </div>
+
+      <div className="sticky bottom-0 z-10 flex justify-end gap-3 border-t border-gray-200 bg-white/95 py-3 backdrop-blur-sm dark:border-gray-700 dark:bg-gray-900/95">
         <button
+          type="button"
           onClick={openTestModal}
-          disabled={isTesting || (!config.enabledChannels?.sms && !config.enabledChannels?.email)}
-          className="inline-flex items-center px-6 py-3 bg-gray-600 text-white rounded-lg hover:bg-gray-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+          disabled={isTesting || (!smsEnabled && !emailEnabled)}
+          className="btn-secondary inline-flex items-center disabled:cursor-not-allowed disabled:opacity-50"
         >
           {isTesting ? (
-            <><div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2" /> Sending Tests...</>
+            <>
+              <span className="mr-2 h-4 w-4 animate-spin rounded-full border-b-2 border-current" />
+              Sending tests…
+            </>
           ) : (
-            <><ShieldCheckIcon className="h-4 w-4 mr-2" /> Send Test Notifications</>
+            <>
+              <ShieldCheckIcon className="mr-2 h-4 w-4" />
+              Send test notifications
+            </>
           )}
         </button>
         <button
-          onClick={handleSave}
+          type="button"
+          onClick={() => void handleSave()}
           disabled={isSaving || !canSave}
-          className="inline-flex items-center px-6 py-3 bg-primary-600 text-white rounded-lg hover:bg-primary-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+          className="btn-primary inline-flex items-center disabled:cursor-not-allowed disabled:opacity-50"
         >
           {isSaving ? (
-            <><div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2" /> Saving...</>
+            <>
+              <span className="mr-2 h-4 w-4 animate-spin rounded-full border-b-2 border-white" />
+              Saving…
+            </>
           ) : (
-            <><ShieldCheckIcon className="h-4 w-4 mr-2" /> Save Settings</>
+            <>
+              <ShieldCheckIcon className="mr-2 h-4 w-4" />
+              Save settings
+            </>
           )}
         </button>
       </div>
