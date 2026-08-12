@@ -1019,7 +1019,9 @@ export const UnitsManagerWidget: React.FC<UnitsManagerWidgetProps> = ({
         setError(msg);
       }
     } finally {
-      if (reqId === reqIdRef.current && !options?.background) setLoading(false);
+      // Winning request must clear the skeleton even if it was a background refresh
+      // that superseded an in-flight foreground fetch (otherwise loading stays true).
+      if (reqId === reqIdRef.current) setLoading(false);
     }
   }, [facilityFilter]);
 

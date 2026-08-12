@@ -101,7 +101,9 @@ export const LockStatusWidget: React.FC<LockStatusWidgetProps> = ({
         setError('Failed to load units');
       }
     } finally {
-      if (requestId === fetchRequestIdRef.current && !opts?.background) {
+      // Winning request must clear loading even if it was a background refresh that
+      // superseded an in-flight foreground fetch (otherwise the widget stays spinning).
+      if (requestId === fetchRequestIdRef.current) {
         setLoading(false);
       }
     }
