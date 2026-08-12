@@ -15,6 +15,7 @@ export const notificationsConfigBodySchema = Joi.object({
     sms: Joi.boolean().allow(null).optional(),
     email: Joi.boolean().allow(null).optional(),
   }).unknown(true).optional().allow(null),
+  channelPreference: Joi.string().valid('both', 'prefer_sms', 'prefer_email').optional(),
   defaultProvider: Joi.object({
     sms: Joi.string().valid('twilio', 'console').allow(null).optional(),
     email: Joi.string().valid('console', 'smtp').allow(null).optional(),

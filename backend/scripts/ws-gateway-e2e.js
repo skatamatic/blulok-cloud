@@ -8993,12 +8993,14 @@ async function run() {
         email: settingsBefore.defaultProvider?.email || 'console',
       };
       const originalDeeplink = settingsBefore.deeplinkBaseUrl || 'blulok://';
+      const originalPreference = settingsBefore.channelPreference || 'both';
 
       try {
         step('Seeding SMS + email settings with secrets');
         await expectPutOk(
           {
             enabledChannels: { sms: true, email: true },
+            channelPreference: 'both',
             defaultProvider: { sms: 'console', email: 'console' },
             twilio: {
               accountSid: 'ACe2e',
@@ -9041,6 +9043,9 @@ async function run() {
         }
         if (afterPartial.enabledChannels?.email !== true) {
           throw new Error('Partial PUT dropped enabledChannels.email');
+        }
+        if (afterPartial.channelPreference !== 'both') {
+          throw new Error('Partial PUT dropped channelPreference');
         }
         if (afterPartial.twilio?.authToken !== SECRET_MASK) {
           throw new Error('Partial PUT wiped the stored twilio secret');
@@ -9103,6 +9108,14 @@ async function run() {
         ok(`Test notifications dispatched on all ${sentChannels.length} channels`);
 
         // --- Real invite delivery through the dev notifications socket ---
+        // Force a fresh watcher: dashboard WS idle-timeouts at 15s, and this
+        // section runs after password-reset + settings seeding.
+        try {
+          notificationsWsRef.current?.terminate();
+        } catch {
+          /* ignore */
+        }
+        notificationsWsRef.current = null;
         await ensureNotificationsWs(token);
 
         const stamp = Date.now();
@@ -9144,7 +9157,50 @@ async function run() {
         }
         ok('Invite delivered on both channels with all template variables substituted');
 
+        step('Prefer SMS sends only SMS when both contacts exist');
+        await ensureNotificationsWs(token);
+        await expectPutOk({ channelPreference: 'prefer_sms' }, 'Prefer SMS');
+        notificationEvents.length = 0;
+        const preferSmsResend = await axios
+          .post(`${API_BASE}/users/${dualUserId}/resend-invite`, {}, notifAuth)
+          .catch((err) => err.response);
+        if (preferSmsResend?.status !== 200 || !preferSmsResend.data?.success) {
+          throw new Error(
+            `Prefer-SMS resend failed: ${preferSmsResend?.status} ${JSON.stringify(preferSmsResend?.data)}`,
+          );
+        }
+        await waitForNotification(
+          (e) => e.kind === 'invite' && e.delivery === 'sms' && e.toPhone === dualPhone,
+        );
+        if (notificationEvents.some((e) => e.kind === 'invite' && e.delivery === 'email')) {
+          throw new Error('Prefer SMS still delivered email');
+        }
+        ok('Prefer SMS delivered SMS only');
+
+        step('Prefer email sends only email when both contacts exist');
+        await ensureNotificationsWs(token);
+        await expectPutOk({ channelPreference: 'prefer_email' }, 'Prefer email');
+        notificationEvents.length = 0;
+        const preferEmailResend = await axios
+          .post(`${API_BASE}/users/${dualUserId}/resend-invite`, {}, notifAuth)
+          .catch((err) => err.response);
+        if (preferEmailResend?.status !== 200 || !preferEmailResend.data?.success) {
+          throw new Error(
+            `Prefer-email resend failed: ${preferEmailResend?.status} ${JSON.stringify(preferEmailResend?.data)}`,
+          );
+        }
+        await waitForNotification(
+          (e) => e.kind === 'invite' && e.delivery === 'email' && e.toEmail === dualEmail,
+        );
+        if (notificationEvents.some((e) => e.kind === 'invite' && e.delivery === 'sms')) {
+          throw new Error('Prefer email still delivered SMS');
+        }
+        ok('Prefer email delivered email only');
+
+        await expectPutOk({ channelPreference: 'both' }, 'Restore both preference');
+
         step('Reset account reports whether the new invite was delivered');
+        await ensureNotificationsWs(token);
         notificationEvents.length = 0;
         const resetAcc = await axios
           .post(`${API_BASE}/users/${dualUserId}/reset-account`, {}, notifAuth)
@@ -9162,51 +9218,46 @@ async function run() {
         await waitForNotification((e) => e.kind === 'invite' && e.toPhone === dualPhone);
         ok('Reset account re-invited the user and reported delivery explicitly');
 
-        step('Email-only user is still reached when the email channel is disabled');
+        step('Email-only user is not emailed when the email channel is disabled');
         await expectPutOk({ enabledChannels: { sms: true, email: false } }, 'Disable email channel');
         const emailOnly = `e2e-notify-emailonly-${stamp}@example.com`;
         const emailOnlyId = await createUser(token, emailOnly, 'tenant', facilityId);
         notifUserIds.push(emailOnlyId);
         notificationEvents.length = 0;
-        const fallbackResend = await axios
+        const disabledResend = await axios
           .post(`${API_BASE}/users/${emailOnlyId}/resend-invite`, {}, notifAuth)
           .catch((err) => err.response);
-        if (fallbackResend?.status !== 200) {
+        if (disabledResend?.status !== 400) {
           throw new Error(
-            `Email-only resend invite failed: ${fallbackResend?.status} ${JSON.stringify(fallbackResend?.data)}`,
+            `Expected 400 when email is disabled for an email-only user, got ${disabledResend?.status} ${JSON.stringify(disabledResend?.data)}`,
           );
         }
-        const fallbackInvite = await waitForNotification(
-          (e) => e.kind === 'invite' && e.toEmail === emailOnly,
-        );
-        if (fallbackInvite.delivery !== 'email') {
-          throw new Error(`Expected email fallback delivery, got ${fallbackInvite.delivery}`);
+        if (notificationEvents.some((e) => e.kind === 'invite')) {
+          throw new Error('Disabled email channel still delivered an invite');
         }
-        ok('Disabled-channel fallback delivered the invite instead of silently skipping it');
+        ok('Disabled email channel did not fall back for an email-only user');
 
-        step('Password reset reaches an email-only user with SMS-only channels');
+        step('Password reset does not email when only SMS is enabled');
         notificationEvents.length = 0;
         const resetReq = await axios
           .post(`${API_BASE}/auth/forgot-password/request`, { email: emailOnly })
           .catch((err) => err.response);
-        if (resetReq?.status !== 200) {
+        if (resetReq?.status !== 400) {
           throw new Error(
-            `Password reset request failed: ${resetReq?.status} ${JSON.stringify(resetReq?.data)}`,
+            `Expected 400 password reset when email is disabled, got ${resetReq?.status} ${JSON.stringify(resetReq?.data)}`,
           );
         }
-        const resetNotif = await waitForNotification(
-          (e) => e.kind === 'password_reset' && e.toEmail === emailOnly,
-        );
-        if (!resetNotif.meta?.token) {
-          throw new Error('Password reset notification is missing its token');
+        if (notificationEvents.some((e) => e.kind === 'password_reset')) {
+          throw new Error('Password reset still sent email with the channel disabled');
         }
-        ok('Password reset delivered by email even though only SMS was enabled');
+        ok('Password reset respected the disabled email channel');
       } finally {
         // Restore the settings other sections rely on, then drop the scratch users
         await putNotifSettings({
           enabledChannels: originalChannels,
           defaultProvider: originalProviders,
           deeplinkBaseUrl: originalDeeplink,
+          channelPreference: originalPreference,
         });
         for (const userId of notifUserIds) {
           await hardDeleteUser(token, userId).catch(() => {});

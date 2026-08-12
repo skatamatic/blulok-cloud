@@ -16,6 +16,7 @@ import {
 import type { EmailProvider, SmsProvider } from './providers/provider.types';
 import {
   deliverAcrossChannels,
+  normalizeChannelPreference,
   type NotificationChannelPlan,
   type NotificationDeliveryOutcome,
 } from './notification-delivery';
@@ -82,10 +83,10 @@ export class NotificationService {
   }
 
   /**
-   * One delivery policy for every outbound message: send on each enabled
-   * channel that has a recipient, falling back to a disabled channel rather
-   * than silently skipping a contactable account. Debug mode swaps the
-   * provider call for a debug event but keeps the same channel selection.
+   * One delivery policy for every outbound message: only enabled channels,
+   * then the admin's preference when both SMS and email can reach the
+   * account. Debug mode swaps the provider call for a debug event but keeps
+   * the same channel selection.
    */
   private buildChannelPlans(
     config: NotificationsConfig,
@@ -169,6 +170,7 @@ export class NotificationService {
         emailHtml: apply(emailTemplate),
         meta,
       }),
+      normalizeChannelPreference(config.channelPreference),
     );
   }
 
@@ -189,6 +191,7 @@ export class NotificationService {
         emailHtml: renderTemplate(emailTemplate, { code: params.code }),
         meta: { code: params.code },
       }),
+      normalizeChannelPreference(config.channelPreference),
     );
   }
 
@@ -220,6 +223,7 @@ export class NotificationService {
         emailHtml: renderTemplate(emailTemplate, { deeplink }),
         meta: { token: params.token, deeplink },
       }),
+      normalizeChannelPreference(config.channelPreference),
     );
   }
 

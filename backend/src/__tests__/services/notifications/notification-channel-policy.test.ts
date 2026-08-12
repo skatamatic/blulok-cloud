@@ -1,7 +1,7 @@
 /**
  * End-to-end channel policy for the outbound notification service:
- * every enabled channel with a contact receives the message, a disabled-only
- * contact still gets reached, and nothing ever reports success silently.
+ * only enabled channels are used, dual-channel preference is honored, and
+ * nothing ever reports success silently.
  */
 
 let storedConfig: Record<string, unknown> = {};
@@ -74,8 +74,53 @@ describe('NotificationService channel policy', () => {
       expect(sendEmail.mock.calls[0][2]).not.toContain('{{code}}');
     });
 
-    it('still reaches an email-only user when the email channel is disabled', async () => {
+    it('does not send email when the email channel is disabled', async () => {
       setConfig({ enabledChannels: { sms: true, email: false } });
+
+      await expect(
+        service.sendInvite({
+          toEmail: 'user@example.com',
+          deeplink: 'blulok://invite?token=abc',
+        }),
+      ).rejects.toMatchObject({
+        statusCode: 400,
+        message: expect.stringMatching(/no enabled notification channel/i),
+      });
+
+      expect(sendEmail).not.toHaveBeenCalled();
+      expect(sendSms).not.toHaveBeenCalled();
+    });
+
+    it('sends only SMS when preference is prefer_sms and both contacts exist', async () => {
+      setConfig({ channelPreference: 'prefer_sms' });
+
+      const outcome = await service.sendInvite({
+        toPhone: '+15550001111',
+        toEmail: 'user@example.com',
+        deeplink: 'blulok://invite?token=abc',
+      });
+
+      expect(outcome.delivered).toEqual(['SMS']);
+      expect(sendSms).toHaveBeenCalledTimes(1);
+      expect(sendEmail).not.toHaveBeenCalled();
+    });
+
+    it('sends only email when preference is prefer_email and both contacts exist', async () => {
+      setConfig({ channelPreference: 'prefer_email' });
+
+      const outcome = await service.sendInvite({
+        toPhone: '+15550001111',
+        toEmail: 'user@example.com',
+        deeplink: 'blulok://invite?token=abc',
+      });
+
+      expect(outcome.delivered).toEqual(['email']);
+      expect(sendEmail).toHaveBeenCalledTimes(1);
+      expect(sendSms).not.toHaveBeenCalled();
+    });
+
+    it('falls back to email when prefer_sms but the account has no phone', async () => {
+      setConfig({ channelPreference: 'prefer_sms' });
 
       const outcome = await service.sendInvite({
         toEmail: 'user@example.com',
@@ -83,7 +128,6 @@ describe('NotificationService channel policy', () => {
       });
 
       expect(outcome.delivered).toEqual(['email']);
-      expect(outcome.usedDisabledChannelFallback).toBe(true);
       expect(sendEmail).toHaveBeenCalledTimes(1);
     });
 
@@ -124,18 +168,32 @@ describe('NotificationService channel policy', () => {
   });
 
   describe('sendPasswordReset', () => {
-    it('reaches an email-only user even when only SMS is enabled', async () => {
+    it('does not email an email-only user when only SMS is enabled', async () => {
       setConfig({ enabledChannels: { sms: true, email: false } });
 
+      await expect(
+        service.sendPasswordReset({
+          toEmail: 'user@example.com',
+          token: 'reset-token',
+        }),
+      ).rejects.toMatchObject({ statusCode: 400 });
+
+      expect(sendEmail).not.toHaveBeenCalled();
+    });
+
+    it('respects prefer_email for password reset', async () => {
+      setConfig({ channelPreference: 'prefer_email' });
+
       const outcome = await service.sendPasswordReset({
+        toPhone: '+15550001111',
         toEmail: 'user@example.com',
         token: 'reset-token',
       });
 
       expect(outcome.delivered).toEqual(['email']);
-      expect(sendEmail).toHaveBeenCalledTimes(1);
       const html = sendEmail.mock.calls[0][2] as string;
       expect(html).toContain('reset-password?token=reset-token');
+      expect(sendSms).not.toHaveBeenCalled();
     });
 
     it('uses both channels for a user with a phone and an email', async () => {
@@ -166,6 +224,7 @@ describe('NotificationService channel policy', () => {
 
   describe('sendTestNotifications', () => {
     it('covers invite, OTP and password reset on both channels', async () => {
+      setConfig({ channelPreference: 'prefer_sms' });
       const result = await service.sendTestNotifications({
         toPhone: '+15550001111',
         toEmail: 'user@example.com',

@@ -19,6 +19,8 @@ export interface TwilioConfig {
 export type SmtpEncryption = 'none' | 'starttls' | 'tls';
 export type SmtpAuthMode = 'none' | 'plain' | 'login';
 
+export type NotificationChannelPreference = 'both' | 'prefer_sms' | 'prefer_email';
+
 export interface SmtpConfig {
   host: string;
   port: number;
@@ -37,6 +39,7 @@ export interface NotificationsConfig {
     sms: boolean;
     email: boolean;
   };
+  channelPreference?: NotificationChannelPreference;
   defaultProvider: {
     sms: 'twilio' | 'console';
     email: 'console' | 'smtp';

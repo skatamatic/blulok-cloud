@@ -22,6 +22,9 @@ export interface TwilioConfig {
 export type SmtpEncryption = 'none' | 'starttls' | 'tls';
 export type SmtpAuthMode = 'none' | 'plain' | 'login';
 
+/** How to choose among enabled channels that can both reach the account. */
+export type NotificationChannelPreference = 'both' | 'prefer_sms' | 'prefer_email';
+
 export interface SmtpConfig {
   host: string;
   port: number;
@@ -41,6 +44,11 @@ export interface NotificationsConfig {
     sms: boolean;
     email: boolean;
   };
+  /**
+   * When both SMS and email are enabled and the account has both contacts.
+   * Ignored when only one channel is on. Default: both.
+   */
+  channelPreference?: NotificationChannelPreference;
   defaultProvider: {
     sms: 'twilio' | 'console';
     email: 'console' | 'smtp';

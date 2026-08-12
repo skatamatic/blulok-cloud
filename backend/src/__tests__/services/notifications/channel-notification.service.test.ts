@@ -135,7 +135,7 @@ describe('Channel NotificationService (SMS/Email)', () => {
       log.mockRestore();
     });
 
-    it('covers debug OTP fallback when SMS path skipped', async () => {
+    it('does not send OTP on a disabled channel even in debug mode', async () => {
       getMock.mockResolvedValue(
         JSON.stringify({
           enabledChannels: { sms: false, email: false },
@@ -147,9 +147,10 @@ describe('Channel NotificationService (SMS/Email)', () => {
       const handler = jest.fn();
       debug.subscribe(handler);
 
-      await service.sendOtp({ toPhone: '+1', code: '111222' });
-
-      expect(handler.mock.calls.length).toBeGreaterThan(0);
+      await expect(service.sendOtp({ toPhone: '+1', code: '111222' })).rejects.toThrow(
+        /no enabled notification channel/,
+      );
+      expect(handler).not.toHaveBeenCalled();
     });
   });
 

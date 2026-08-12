@@ -104,8 +104,7 @@ export class PasswordResetService {
     }
 
     // Hand both contacts to the notification service: it owns channel selection
-    // (enabled channels first, fallback to any reachable contact) and throws
-    // rather than silently delivering nothing.
+    // (enabled channels + preference) and throws rather than delivering nothing.
     const outcome = await this.notifications.sendPasswordReset({
       token,
       toPhone: user.phone_number || undefined,

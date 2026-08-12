@@ -68,7 +68,7 @@ describe('PasswordResetService', () => {
       }),
       sendPasswordReset: jest
         .fn()
-        .mockResolvedValue({ delivered: ['SMS'], errors: [], usedDisabledChannelFallback: false }),
+        .mockResolvedValue({ delivered: ['SMS'], errors: [] }),
     } as any;
 
     (NotificationService.getInstance as jest.Mock).mockReturnValue(mockNotificationService);
@@ -114,7 +114,6 @@ describe('PasswordResetService', () => {
       (mockNotificationService.sendPasswordReset as jest.Mock).mockResolvedValue({
         delivered: ['email'],
         errors: [],
-        usedDisabledChannelFallback: false,
       });
 
       const result = await service.requestReset({ email: 'test@example.com' });

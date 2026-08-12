@@ -5,6 +5,7 @@ import { decryptSecret } from '@/utils/settings-secret.util';
 
 const DEFAULT_CONFIG: NotificationsConfig = {
   enabledChannels: { sms: true, email: false },
+  channelPreference: 'both',
   defaultProvider: { sms: 'console', email: 'console' },
   templates: {
     inviteSms: 'Welcome to BluLok. Tap to get started: {{deeplink}} Your verification code: {{code}}',

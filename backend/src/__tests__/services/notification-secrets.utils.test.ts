@@ -91,6 +91,20 @@ describe('notification-secrets.utils', () => {
       expect(merged.enabledChannels).toEqual({ sms: true, email: true });
     });
 
+    it('keeps channelPreference when it is omitted from the payload', () => {
+      const stored = prepareNotificationsConfigForSave(
+        { ...baseConfig(), channelPreference: 'prefer_email' },
+        null,
+      );
+
+      const merged = prepareNotificationsConfigForSave(
+        { deeplinkBaseUrl: 'blulok://' } as NotificationsConfig,
+        JSON.stringify(stored),
+      );
+
+      expect(merged.channelPreference).toBe('prefer_email');
+    });
+
     it('merges a partial section instead of replacing it', () => {
       const stored = prepareNotificationsConfigForSave(baseConfig(), null);
 

@@ -1,5 +1,6 @@
 import {
   deliverAcrossChannels,
+  normalizeChannelPreference,
   selectDeliveryChannels,
 } from '@/services/notifications/notification-delivery';
 import { AppError } from '@/middleware/error.middleware';
@@ -15,19 +16,31 @@ const plan = (
   send: () => Promise<void> = async () => {},
 ) => ({ channel, enabled, recipient, send });
 
+describe('normalizeChannelPreference', () => {
+  it('defaults unknown values to both', () => {
+    expect(normalizeChannelPreference(undefined)).toBe('both');
+    expect(normalizeChannelPreference('nope')).toBe('both');
+  });
+
+  it('keeps valid preferences', () => {
+    expect(normalizeChannelPreference('prefer_sms')).toBe('prefer_sms');
+    expect(normalizeChannelPreference('prefer_email')).toBe('prefer_email');
+    expect(normalizeChannelPreference('both')).toBe('both');
+  });
+});
+
 describe('selectDeliveryChannels', () => {
-  it('uses every enabled channel that has a recipient', () => {
-    const { targets, usedDisabledChannelFallback } = selectDeliveryChannels([
+  it('uses every enabled channel that has a recipient when preference is both', () => {
+    const targets = selectDeliveryChannels([
       plan('SMS', true, '+15550001111'),
       plan('email', true, 'a@b.com'),
     ]);
 
     expect(targets.map((t) => t.channel)).toEqual(['SMS', 'email']);
-    expect(usedDisabledChannelFallback).toBe(false);
   });
 
   it('ignores enabled channels with no recipient', () => {
-    const { targets } = selectDeliveryChannels([
+    const targets = selectDeliveryChannels([
       plan('SMS', true, undefined),
       plan('email', true, 'a@b.com'),
     ]);
@@ -35,24 +48,49 @@ describe('selectDeliveryChannels', () => {
     expect(targets.map((t) => t.channel)).toEqual(['email']);
   });
 
-  it('falls back to a disabled channel rather than reaching nobody', () => {
-    const { targets, usedDisabledChannelFallback } = selectDeliveryChannels([
+  it('never falls back to a disabled channel', () => {
+    const targets = selectDeliveryChannels([
       plan('SMS', true, undefined),
       plan('email', false, 'a@b.com'),
     ]);
 
+    expect(targets).toEqual([]);
+  });
+
+  it('prefers SMS when both channels are reachable', () => {
+    const targets = selectDeliveryChannels(
+      [plan('SMS', true, '+15550001111'), plan('email', true, 'a@b.com')],
+      'prefer_sms',
+    );
+
+    expect(targets.map((t) => t.channel)).toEqual(['SMS']);
+  });
+
+  it('prefers email when both channels are reachable', () => {
+    const targets = selectDeliveryChannels(
+      [plan('SMS', true, '+15550001111'), plan('email', true, 'a@b.com')],
+      'prefer_email',
+    );
+
     expect(targets.map((t) => t.channel)).toEqual(['email']);
-    expect(usedDisabledChannelFallback).toBe(true);
+  });
+
+  it('uses the other enabled channel when the preferred one has no recipient', () => {
+    const targets = selectDeliveryChannels(
+      [plan('SMS', true, undefined), plan('email', true, 'a@b.com')],
+      'prefer_sms',
+    );
+
+    expect(targets.map((t) => t.channel)).toEqual(['email']);
   });
 
   it('reports no targets when the account has no contact at all', () => {
-    const { targets, usedDisabledChannelFallback } = selectDeliveryChannels([
+    const targets = selectDeliveryChannels([
       plan('SMS', true, undefined),
       plan('email', true, undefined),
     ]);
 
     expect(targets).toEqual([]);
-    expect(usedDisabledChannelFallback).toBe(false);
   });
 });
 
@@ -83,7 +121,6 @@ describe('deliverAcrossChannels', () => {
     expect(outcome.delivered).toEqual(['SMS']);
     expect(outcome.errors).toHaveLength(1);
     expect(outcome.errors[0]!.channel).toBe('email');
-    // Provider detail stays in logs, not in the client-facing message
     expect(outcome.errors[0]!.message).not.toContain('550');
   });
 
@@ -111,5 +148,51 @@ describe('deliverAcrossChannels', () => {
     ).rejects.toBeInstanceOf(AppError);
 
     expect(sms).not.toHaveBeenCalled();
+  });
+
+  it('throws a 400 when the only contact sits on a disabled channel', async () => {
+    const email = jest.fn();
+
+    await expect(
+      deliverAcrossChannels('invite', [
+        plan('SMS', true, undefined),
+        plan('email', false, 'a@b.com', email),
+      ]),
+    ).rejects.toMatchObject({
+      statusCode: 400,
+      message: expect.stringMatching(/no enabled notification channel/i),
+    });
+
+    expect(email).not.toHaveBeenCalled();
+  });
+
+  it('sends only SMS when preference is prefer_sms', async () => {
+    const sms = jest.fn().mockResolvedValue(undefined);
+    const email = jest.fn().mockResolvedValue(undefined);
+
+    const outcome = await deliverAcrossChannels(
+      'invite',
+      [plan('SMS', true, '+15550001111', sms), plan('email', true, 'a@b.com', email)],
+      'prefer_sms',
+    );
+
+    expect(sms).toHaveBeenCalledTimes(1);
+    expect(email).not.toHaveBeenCalled();
+    expect(outcome.delivered).toEqual(['SMS']);
+  });
+
+  it('sends only email when preference is prefer_email', async () => {
+    const sms = jest.fn().mockResolvedValue(undefined);
+    const email = jest.fn().mockResolvedValue(undefined);
+
+    const outcome = await deliverAcrossChannels(
+      'OTP',
+      [plan('SMS', true, '+15550001111', sms), plan('email', true, 'a@b.com', email)],
+      'prefer_email',
+    );
+
+    expect(email).toHaveBeenCalledTimes(1);
+    expect(sms).not.toHaveBeenCalled();
+    expect(outcome.delivered).toEqual(['email']);
   });
 });

@@ -9,12 +9,14 @@ import { EmailSetupFields } from './notifications/EmailSetupFields';
 import { SmsMessageFields } from './notifications/SmsMessageFields';
 import { EmailMessageFields } from './notifications/EmailMessageFields';
 import { DeeplinkSection } from './notifications/DeeplinkSection';
+import { ChannelPreferenceSection } from './notifications/ChannelPreferenceSection';
 import { TestNotificationsModal } from './notifications/TestNotificationsModal';
 import { useConfigPathUpdater } from './notifications/SecretField';
 import { isNotificationConfigValid } from './notifications/notification-settings.validation';
 
 const DEFAULT_CONFIG: NotificationsConfig = {
   enabledChannels: { sms: true, email: false },
+  channelPreference: 'both',
   defaultProvider: { sms: 'console', email: 'console' },
   templates: {
     inviteSms: 'Welcome to BluLok. Tap to get started: {{deeplink}} Your verification code: {{code}}',
@@ -181,7 +183,7 @@ export default function NotificationsSettingsTab() {
         <h2 className="text-sm font-semibold text-gray-900 dark:text-white">Delivery channels</h2>
         <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
           Enable a channel, then use Setup for the provider and Messages for invite / OTP / reset
-          copy.
+          copy. A disabled channel is never used, even if it is the only way to reach someone.
         </p>
       </div>
 
@@ -214,6 +216,12 @@ export default function NotificationsSettingsTab() {
           messages={<EmailMessageFields config={config} onChange={updateConfig} />}
         />
       </div>
+
+      <ChannelPreferenceSection
+        config={config}
+        visible={smsEnabled && emailEnabled}
+        onChange={updateConfig}
+      />
 
       <DeeplinkSection config={config} onChange={updateConfig} />
 

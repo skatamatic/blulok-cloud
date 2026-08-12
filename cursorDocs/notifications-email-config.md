@@ -15,10 +15,12 @@ Config key: `system_settings.notifications.config` (`NotificationsConfig`).
 
 `NotificationService` owns channel selection for invites, OTPs and password resets. Callers pass **both** contacts and never pre-pick a channel. `notification-delivery.ts` then applies:
 
-1. Send on **every enabled channel that has a recipient** — a user with a phone and an email receives both.
-2. If no enabled channel has a recipient, **fall back to any channel that does** and log a warning. An email-only account still gets invited when email is toggled off; a contactable user is never silently skipped.
+1. **Disabled channels are never used.** If email is off, no email is sent — even when the account has no phone. A `400` explains that no enabled channel can reach them.
+2. **`channelPreference`** (`both` | `prefer_sms` | `prefer_email`) applies only when **both** channels are enabled and the account has both contacts. Default is `both`. Prefer modes use the other enabled channel when the preferred contact is missing.
 3. Channels are attempted **independently**. A failing email cannot discard an SMS that already went out, because retrying would invalidate the token the user just received.
-4. If nothing was delivered, **throw**: `400` when the account has no phone or email, `502` when every channel failed. Nothing reports success without delivering.
+4. If nothing was delivered, **throw**: `400` when there is no phone/email or only disabled channels can reach them, `502` when every selected channel failed. Nothing reports success without delivering.
+
+Settings → Notifications shows the preference control only when SMS and email are both on. Test sends still cover every enabled channel so you can verify each provider.
 
 Partial delivery returns a `warning` up the stack. `POST /users`, `POST /users/:id/resend-invite`, `POST /users/:id/reset-account` and the key-share invite all return `inviteSent` plus `inviteWarning`, and the UI shows a warning toast rather than a plain success.
 
@@ -43,7 +45,7 @@ If a stored secret cannot be decrypted (wrong or missing `SETTINGS_ENCRYPTION_KE
 
 ### Partial saves
 
-`PUT` merges into the stored config rather than replacing it. Sections omitted from the payload (`enabledChannels`, `defaultProvider`, `twilio`, `smtp`, `templates`) keep their stored values, and a partially supplied section is merged key-by-key. Saving just `deeplinkBaseUrl` cannot wipe SMTP credentials.
+`PUT` merges into the stored config rather than replacing it. Sections omitted from the payload (`enabledChannels`, `channelPreference`, `defaultProvider`, `twilio`, `smtp`, `templates`) keep their stored values, and a partially supplied section is merged key-by-key. Saving just `deeplinkBaseUrl` cannot wipe SMTP credentials.
 
 ### Deeplink allowlist
 
@@ -79,7 +81,8 @@ Prefer `notifications.config.deeplinkBaseUrl`. On save, the route also writes th
 |---------|----------------|
 | `553 … Sender address rejected: not owned by user …` | **From email** is not an address the SMTP username may send as. Set From to the mailbox / allowed alias for that login (often the same as Username), then Save and **Test SMTP connection** (probes MAIL FROM, not just login). |
 | Test SMTP says OK but invites fail | Older builds only ran auth `verify()`. Current test also probes the From address; redeploy if the button still only checks login. |
-| Settings test reaches SMS+email but real invites only email | **Send test** uses the live form (`configOverride`), including unsaved toggles/providers. **Save settings** first. Also confirm the invitee has a phone number if you expect SMS, and that SMS provider is **Twilio** (Console only logs on the server). |
+| Settings test reaches SMS+email but real invites only email | **Send test** uses the live form (`configOverride`), including unsaved toggles/providers. **Save settings** first. Also confirm the invitee has a phone number if you expect SMS, that SMS provider is **Twilio** (Console only logs on the server), and that **channel preference** is not Prefer email. |
+| Email-only user was still emailed after I turned email off | Fixed: disabled channels are never used as a fallback. Enable email, or add a phone and keep SMS on. |
 | Test invite SMS/email still shows `{{code}}` | Fixed: test invite rendering now passes a sample code like real invites. Redeploy if you still see the placeholder. |
 | Invite / reset returns friendly “Failed to send email/text… check settings” | Every channel failed (502). Full provider text is logged server-side only; fix Settings → Notifications and retry. |
 | “Invite partly delivered” warning toast | One channel succeeded and another failed. The user has a usable invite — do **not** resend blindly, since that invalidates the token they already received. Fix the failing channel first. |
@@ -92,12 +95,13 @@ Prefer `notifications.config.deeplinkBaseUrl`. On save, the route also writes th
 
 | Area | Test |
 |------|------|
-| Channel selection, fallback, partial success | `backend/src/__tests__/services/notifications/notification-delivery.test.ts` |
+| Channel selection, preference, no disabled fallback | `backend/src/__tests__/services/notifications/notification-delivery.test.ts` |
 | Invite / OTP / reset / test-send policy end to end | `backend/src/__tests__/services/notifications/notification-channel-policy.test.ts` |
 | Partial saves, blank secrets, log redaction | `backend/src/__tests__/services/notification-secrets.utils.test.ts` |
 | Deeplink allowlist | `backend/src/__tests__/services/notifications/deeplink.utils.test.ts` |
 | SMTP From header injection | `backend/src/__tests__/services/notifications/smtp-from-header.test.ts` |
 | Settings route validation and merge behaviour | `backend/src/__tests__/routes/system-settings.routes.test.ts` |
 | Masked-secret input behaviour | `frontend/src/__tests__/pages/settings/SecretField.test.tsx` |
+| Channel preference UI | `frontend/src/__tests__/pages/settings/ChannelPreferenceSection.test.tsx` |
 | Partial-delivery warnings in the admin UI | `frontend/src/__tests__/components/UserManagement/InviteActions.test.tsx` |
 | Live settings → invite → reset flow | `backend/npm run ws:e2e` — **Notification Delivery Stack** section |

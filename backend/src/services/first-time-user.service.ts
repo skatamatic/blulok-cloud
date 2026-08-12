@@ -163,27 +163,42 @@ export class FirstTimeUserService {
       }
     }
 
-    // Prefer phone, but fall back to email when SMS is disabled and email is on —
-    // otherwise the code would be "sent" on a channel the admin turned off.
     const config = await this.notifications.getConfig();
     const smsEnabled = config.enabledChannels?.sms !== false;
     const emailEnabled = config.enabledChannels?.email === true;
-    const emailIsBetter = !smsEnabled && emailEnabled && !!user.email;
-    const hasPhone = !!user.phone_number && !emailIsBetter;
-    if (hasPhone) {
-      if (!params.phone) throw new Error('Phone is required');
-      if (!this.phoneMatches(user.phone_number!, params.phone)) throw new Error('Phone does not match');
-      const res = await this.otps.sendOtp({ userId: user.id, inviteId: invite.id, delivery: 'sms', toPhone: user.phone_number! });
+
+    if (params.phone) {
+      if (!smsEnabled) throw new Error('SMS notifications are disabled');
+      if (!user.phone_number || !this.phoneMatches(user.phone_number, params.phone)) {
+        throw new Error('Phone does not match');
+      }
+      const res = await this.otps.sendOtp({
+        userId: user.id,
+        inviteId: invite.id,
+        delivery: 'sms',
+        toPhone: user.phone_number,
+      });
       logger.info(`OTP sent via sms for invite ${invite.id} user ${user.id}`);
       return { expiresAt: res.expiresAt, userId: user.id, inviteId: invite.id };
-    } else {
+    }
+
+    if (params.email) {
+      if (!emailEnabled) throw new Error('Email notifications are disabled');
       if (!user.email) throw new Error('No delivery method available');
-      if (!params.email) throw new Error('Email is required');
       if (user.email.toLowerCase() !== params.email.toLowerCase()) throw new Error('Email does not match');
-      const res = await this.otps.sendOtp({ userId: user.id, inviteId: invite.id, delivery: 'email', toEmail: user.email });
+      const res = await this.otps.sendOtp({
+        userId: user.id,
+        inviteId: invite.id,
+        delivery: 'email',
+        toEmail: user.email,
+      });
       logger.info(`OTP sent via email for invite ${invite.id} user ${user.id}`);
       return { expiresAt: res.expiresAt, userId: user.id, inviteId: invite.id };
     }
+
+    if (smsEnabled && user.phone_number) throw new Error('Phone is required');
+    if (emailEnabled && user.email) throw new Error('Email is required');
+    throw new Error('No delivery method available');
   }
 
   /** Verify OTP for the invite */

@@ -12,7 +12,7 @@ const mockInvites = {
 const mockNotifications = {
   sendInvite: jest
     .fn()
-    .mockResolvedValue({ delivered: ['SMS'], errors: [], usedDisabledChannelFallback: false }),
+    .mockResolvedValue({ delivered: ['SMS'], errors: [] }),
   getConfig: jest.fn().mockResolvedValue({
     enabledChannels: { sms: true, email: true },
     defaultProvider: { sms: 'console', email: 'console' },
@@ -88,7 +88,6 @@ describe('FirstTimeUserService', () => {
     mockNotifications.sendInvite.mockResolvedValue({
       delivered: ['SMS'],
       errors: [],
-      usedDisabledChannelFallback: false,
     });
     mockNotifications.getConfig.mockResolvedValue({
       enabledChannels: { sms: true, email: true },
@@ -217,6 +216,29 @@ describe('FirstTimeUserService', () => {
     });
     expect(res.userId).toBe(user.id);
     expect(res.inviteId).toBe(invite.id);
+  });
+
+  test('requestOtp with phone fails when SMS is disabled', async () => {
+    mockNotifications.getConfig.mockResolvedValue({
+      enabledChannels: { sms: false, email: true },
+      defaultProvider: { sms: 'console', email: 'console' },
+      templates: {},
+    });
+    const user = {
+      id: 'user-sms-off',
+      phone_number: '+15550001235',
+      email: 'tenant@example.com',
+      first_name: 'John',
+      last_name: 'Smith',
+    };
+    mockInvites.findActiveInviteByToken.mockResolvedValue({ id: 'invite-x', user_id: user.id });
+    const { UserModel } = require('@/models/user.model');
+    UserModel.findById.mockResolvedValue(user);
+
+    await expect(svc.requestOtp({ token: 'token-123', phone: '+15550001235' })).rejects.toThrow(
+      /SMS notifications are disabled/,
+    );
+    expect(mockOtps.sendOtp).not.toHaveBeenCalled();
   });
 
   test('requestOtp requires first and last name when user profile is empty', async () => {

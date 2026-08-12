@@ -219,6 +219,27 @@ describe('System Settings Routes', () => {
       expect(saved.enabledChannels).toEqual({ sms: true, email: true });
     });
 
+    it('accepts channelPreference values', async () => {
+      for (const channelPreference of ['both', 'prefer_sms', 'prefer_email'] as const) {
+        await request(app)
+          .put('/api/v1/system-settings/notifications')
+          .set('Authorization', `Bearer ${testData.users.devAdmin.token}`)
+          .send({ channelPreference })
+          .expect(200);
+      }
+    });
+
+    it('rejects an unknown channelPreference', async () => {
+      const response = await request(app)
+        .put('/api/v1/system-settings/notifications')
+        .set('Authorization', `Bearer ${testData.users.devAdmin.token}`)
+        .send({ channelPreference: 'sms_only' })
+        .expect(400);
+
+      expectBadRequest(response);
+      expect(mockSettingsModel.set).not.toHaveBeenCalled();
+    });
+
     it('allows partial enabledChannels (e.g., just sms without email)', async () => {
       const notificationConfig = {
         enabledChannels: { sms: true },

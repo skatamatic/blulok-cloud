@@ -23,6 +23,7 @@ jest.mock('@/services/api.service', () => {
         success: true,
         config: {
           enabledChannels: { sms: true, email: true },
+          channelPreference: 'both',
           defaultProvider: { sms: 'console', email: 'console' },
           templates: {
             inviteSms: 'Welcome to BluLok. Tap to get started: {{deeplink}}',
@@ -65,6 +66,8 @@ describe('NotificationSettingsPage - Send Test Notifications', () => {
     await waitFor(() => {
       expect(apiService.getNotificationSettings).toHaveBeenCalled();
     });
+
+    expect(await screen.findByLabelText('Channel preference')).toBeInTheDocument();
 
     const openBtn = await screen.findByRole('button', { name: /send test notifications/i });
     await userEvent.click(openBtn);
