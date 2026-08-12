@@ -8,7 +8,7 @@ import { ToastProvider } from '@/contexts/ToastContext';
 import { DropdownProvider } from '@/contexts/DropdownContext';
 
 const mockGetUnits = jest.fn();
-const mockGetUnitAccessHistory = jest.fn();
+const mockGetAccessSessions = jest.fn();
 const mockUpdateLockStatus = jest.fn();
 const mockNavigate = jest.fn();
 
@@ -20,7 +20,7 @@ jest.mock('react-router-dom', () => ({
 jest.mock('@/services/api.service', () => ({
   apiService: {
     getUnits: (...args: unknown[]) => mockGetUnits(...args),
-    getUnitAccessHistory: (...args: unknown[]) => mockGetUnitAccessHistory(...args),
+    getAccessSessions: (...args: unknown[]) => mockGetAccessSessions(...args),
     updateLockStatus: (...args: unknown[]) => mockUpdateLockStatus(...args),
   },
 }));
@@ -45,6 +45,7 @@ jest.mock('@/contexts/AuthContext', () => ({
     },
     login: jest.fn(),
     logout: jest.fn(),
+    canManageUsers: () => true,
   }),
 }));
 
@@ -145,7 +146,7 @@ describe('UnitsManagerWidget', () => {
       facilities: [{ id: 'fac-1', name: 'Riverside', lock_command_timeout_sec: 10 }],
     });
     mockGetUnits.mockResolvedValue(sampleUnits);
-    mockGetUnitAccessHistory.mockResolvedValue({ logs: [] });
+    mockGetAccessSessions.mockResolvedValue({ sessions: [] });
     mockUpdateLockStatus.mockResolvedValue({ success: true });
   });
 
@@ -204,7 +205,7 @@ describe('UnitsManagerWidget', () => {
     await waitFor(() => {
       expect(screen.getByRole('button', { name: /^Unlock$/i })).toBeInTheDocument();
     });
-    expect(mockGetUnitAccessHistory).toHaveBeenCalledWith('unit-1', { limit: 5, view: 'raw' });
+    expect(mockGetAccessSessions).toHaveBeenCalledWith({ unit_id: 'unit-1', limit: 5 });
   });
 
   it('shows disabled unlock when unit has no device', async () => {

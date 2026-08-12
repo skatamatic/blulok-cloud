@@ -882,12 +882,19 @@ describe('Users Routes', () => {
     });
 
     it('should allow dev admin to resend invite', async () => {
+      const { FirstTimeUserService } = await import('@/services/first-time-user.service');
+      const sendInviteSpy = jest
+        .spyOn(FirstTimeUserService.getInstance(), 'sendInvite')
+        .mockResolvedValue({ delivered: ['email'] });
+
       const response = await request(app)
         .post(`/api/v1/users/${testData.users.tenant.id}/resend-invite`)
         .set('Authorization', `Bearer ${testData.users.devAdmin.token}`)
         .expect(200);
 
       expectSuccess(response);
+      expect(sendInviteSpy).toHaveBeenCalled();
+      sendInviteSpy.mockRestore();
     });
   });
 
