@@ -390,6 +390,7 @@ describe('FirstTimeUserService', () => {
       first_name: 'John',
       last_name: 'Doe',
       email: 'john@example.com',
+      phone_number: '+15551234567',
     };
     const invite = { id: 'invite-accept-1', user_id: user.id };
 
@@ -405,6 +406,7 @@ describe('FirstTimeUserService', () => {
     expect(result.profile.first_name).toBe('John');
     expect(result.profile.last_name).toBe('Doe');
     expect(result.profile.email).toBe('john@example.com');
+    expect(result.profile.phone_number).toBe('+15551234567');
     expect(result.missing_fields).toEqual([]);
   });
 
@@ -414,6 +416,7 @@ describe('FirstTimeUserService', () => {
       first_name: '',
       last_name: null,
       email: null,
+      phone_number: null,
     };
     const invite = { id: 'invite-accept-2', user_id: user.id };
 
@@ -424,6 +427,7 @@ describe('FirstTimeUserService', () => {
     const result = await svc.acceptInvite({ token: 'token-accept-2' });
 
     expect(result.needs_profile).toBe(true);
+    expect(result.profile.phone_number).toBeNull();
     expect(result.missing_fields).toContain('first_name');
     expect(result.missing_fields).toContain('last_name');
   });

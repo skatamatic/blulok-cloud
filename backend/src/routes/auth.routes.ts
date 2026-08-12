@@ -335,7 +335,7 @@ registerPost(
   {
     openApiPath: `${MOUNT}/invite/accept`,
     tags: ['Auth'],
-    summary: 'Validate invite token and return profile info',
+    summary: 'Validate invite token and return profile info (name, email, phone)',
     security: 'none',
     body: inviteAcceptSchema,
   },

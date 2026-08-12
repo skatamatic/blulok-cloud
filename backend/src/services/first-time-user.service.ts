@@ -218,12 +218,17 @@ export class FirstTimeUserService {
    * Accept an invite by token. This validates the invite and returns profile info.
    * Does NOT consume the invite - that happens in setPassword.
    * - needs_profile: whether the user needs to provide first/last name
-   * - profile: known profile fields (first_name, last_name, email)
+   * - profile: known profile fields (first_name, last_name, email, phone_number)
    * - missing_fields: list of fields that need to be provided
    */
   public async acceptInvite(params: { token: string }): Promise<{
     needs_profile: boolean;
-    profile: { first_name: string | null; last_name: string | null; email: string | null };
+    profile: {
+      first_name: string | null;
+      last_name: string | null;
+      email: string | null;
+      phone_number: string | null;
+    };
     missing_fields: string[];
   }> {
     const invite = await this.invites.findActiveInviteByToken(params.token);
@@ -253,6 +258,7 @@ export class FirstTimeUserService {
         first_name: user.first_name || null,
         last_name: user.last_name || null,
         email: user.email || null,
+        phone_number: user.phone_number || null,
       },
       missing_fields,
     };
