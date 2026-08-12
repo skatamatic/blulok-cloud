@@ -148,4 +148,76 @@ describe('UserManagementPage', () => {
       );
     });
   });
+
+  it('clears the skeleton when a refresh supersedes the initial load', async () => {
+    let resolveFirst!: (value: unknown) => void;
+    let resolveSecond!: (value: unknown) => void;
+
+    mockGetUsers
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            resolveFirst = resolve;
+          }),
+      )
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            resolveSecond = resolve;
+          }),
+      );
+
+    mockUseGlobalFacility.mockReturnValue({
+      selectedFacilityId: '__ALL_FACILITIES__',
+      isLoading: false,
+    });
+
+    const { rerender } = render(
+      <MemoryRouter>
+        <UserManagementPage />
+      </MemoryRouter>
+    );
+
+    await waitFor(() => {
+      expect(mockGetUsers).toHaveBeenCalledTimes(1);
+    });
+
+    // Facility scope settles to a specific facility → debounced refresh after first paint.
+    mockUseGlobalFacility.mockReturnValue({
+      selectedFacilityId: 'fac-after-setup',
+      isLoading: false,
+    });
+    rerender(
+      <MemoryRouter>
+        <UserManagementPage />
+      </MemoryRouter>
+    );
+
+    await waitFor(() => {
+      expect(mockGetUsers).toHaveBeenCalledTimes(2);
+    });
+
+    resolveSecond({
+      success: true,
+      users: [{ ...baseUser, id: 'user-2', firstName: 'Grace', lastName: 'Hopper' }],
+      total: 1,
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText('Grace Hopper')).toBeInTheDocument();
+    });
+
+    // Stale initial response must not resurrect the skeleton.
+    resolveFirst({
+      success: true,
+      users: [baseUser],
+      total: 1,
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText('Grace Hopper')).toBeInTheDocument();
+    });
+    expect(screen.queryByText('Ada Lovelace')).not.toBeInTheDocument();
+    expect(document.querySelectorAll('tr.animate-pulse')).toHaveLength(0);
+  });
 });

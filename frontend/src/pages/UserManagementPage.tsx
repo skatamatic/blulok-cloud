@@ -52,16 +52,21 @@ export default function UserManagementPage() {
   const { selectedFacilityId, isLoading: isFacilityLoading } = useGlobalFacility();
   const [filtersExpanded, setFiltersExpanded] = useState(false);
   const latestRequestIdRef = useRef(0);
-  const hasInitializedRef = useRef(false);
+  const hasLoadedOnceRef = useRef(false);
+  const fetchUsersRef = useRef<(page: number, mode: 'initial' | 'refresh') => Promise<void>>(
+    async () => undefined,
+  );
 
-  const fetchUsers = useCallback(async (page: number, isInitialLoad = false) => {
+  const fetchUsers = useCallback(async (page: number, mode: 'initial' | 'refresh') => {
     if (isFacilityLoading) {
       return;
     }
 
     const requestId = ++latestRequestIdRef.current;
+    const showFullSkeleton = mode === 'initial' || !hasLoadedOnceRef.current;
+
     try {
-      if (isInitialLoad) {
+      if (showFullSkeleton) {
         setLoading(true);
       } else {
         setSearchLoading(true);
@@ -73,16 +78,21 @@ export default function UserManagementPage() {
       const response = await apiService.getUsers({
         search: search || undefined,
         role: roleFilter || undefined,
-        facility: selectedFacilityId && selectedFacilityId !== ALL_FACILITIES_ID ? selectedFacilityId : undefined,
+        facility:
+          selectedFacilityId && selectedFacilityId !== ALL_FACILITIES_ID
+            ? selectedFacilityId
+            : undefined,
         sortBy,
         sortOrder,
         limit,
         offset,
       });
+
+      if (requestId !== latestRequestIdRef.current) {
+        return;
+      }
+
       if (response.success) {
-        if (requestId !== latestRequestIdRef.current) {
-          return;
-        }
         setUsers(response.users);
         setTotal(response.total || 0);
         setTotalPages(Math.ceil((response.total || 0) / limit));
@@ -90,57 +100,52 @@ export default function UserManagementPage() {
       } else {
         setError('Failed to fetch users');
       }
-    } catch (err) {
+    } catch {
       if (requestId !== latestRequestIdRef.current) {
         return;
       }
       setError('Error fetching users');
     } finally {
+      // Always clear both flags for the winning request. A superseded "initial"
+      // fetch used to skip setLoading(false) while the newer refresh only cleared
+      // searchLoading — leaving the table stuck on skeletons (Facility Setup → Users).
       if (requestId === latestRequestIdRef.current) {
-        if (isInitialLoad) {
-          setLoading(false);
-        } else {
-          setSearchLoading(false);
-        }
+        hasLoadedOnceRef.current = true;
+        setLoading(false);
+        setSearchLoading(false);
       }
     }
   }, [search, roleFilter, selectedFacilityId, sortBy, sortOrder, isFacilityLoading]);
 
-  // Initial load
+  fetchUsersRef.current = fetchUsers;
+
+  // Initial load once facility scope is ready (single request — no debounce twin).
   useEffect(() => {
-    if (isFacilityLoading) {
+    if (isFacilityLoading || hasLoadedOnceRef.current) {
       return;
     }
-    if (hasInitializedRef.current) {
-      return;
-    }
-    hasInitializedRef.current = true;
-    fetchUsers(currentPage, true);
+    void fetchUsers(currentPage, 'initial');
   }, [currentPage, fetchUsers, isFacilityLoading]);
 
-  // Debounced fetch for search/filter changes
+  // Debounced refetch when filters / facility selection change (after first load).
   useEffect(() => {
-    if (isFacilityLoading) {
-      return;
-    }
-    if (!hasInitializedRef.current) {
+    if (isFacilityLoading || !hasLoadedOnceRef.current) {
       return;
     }
     const timer = setTimeout(() => {
-      setCurrentPage(1); // Reset to first page when filters change
-      fetchUsers(1, false);
+      setCurrentPage(1);
+      void fetchUsersRef.current(1, 'refresh');
     }, 300);
 
     return () => clearTimeout(timer);
-  }, [search, roleFilter, selectedFacilityId, sortBy, sortOrder, fetchUsers, isFacilityLoading]);
-
+  }, [search, roleFilter, selectedFacilityId, sortBy, sortOrder, isFacilityLoading]);
 
   // Handle highlighting when page loads
   useHighlight(users, (user) => user.id, (id) => generateHighlightId('user', id));
 
   const handlePageChange = (page: number) => {
     setCurrentPage(page);
-    fetchUsers(page, false);
+    void fetchUsers(page, 'refresh');
   };
 
   const formatRoleName = (role: UserRole): string => {
