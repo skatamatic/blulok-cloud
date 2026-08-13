@@ -375,7 +375,9 @@ Subscribe on the **operator** `/ws` channel (not `/ws/gateway`):
 
 Facility → Gateway → **Session trace** (same `canManageGateway` gate as Gateway Logs).
 
-`GET /api/v1/gateways/:id/session-trace?user_id=&device_id=&unit_id=` returns a copy-pasteable snapshot: live pending/open sessions, recent sessions, raw `activity_logs` (access/lock/unlock) with unit/device/user joins, in-memory pending lock commands plus durable `cloud_remote` pending sessions, current lock state, lookup maps, and this process’s correlator decision ring. Duplicate-device session clusters are highlighted in `debug.sessions_sharing_device`.
+`GET /api/v1/gateways/:id/session-trace?user_id=&device_id=&unit_id=` returns a copy-pasteable snapshot: live pending/open sessions, recent sessions, raw `activity_logs` (access/lock/unlock) with unit/device/user joins, in-memory pending lock commands plus durable `cloud_remote` pending sessions, current lock state, lookup maps, and this process’s correlator decision ring. `debug.sessions_sharing_device` remains in the dump for duplicate-device clusters; the UI does **not** render that raw list.
+
+The Session trace tab uses a compact status strip (device-lock counts or the selected unit’s lock, pending, live, history) and a workspace with **Sessions**, **Events**, and **NDJSON** views. Lock status is never shown as a gateway-level Locked/Unlocked. Sessions and event/state cards include historical rows from the snapshot, not only the live WebSocket tail. NDJSON is pretty-printed event objects (oldest first); new live events append at the end. **Autoscroll** is on by default and can be toggled off (scrolling up also pauses it). Time range is client-side with progressive disclosure (Anytime, then after and/or before date+time). Events and NDJSON filter by event time; a session is included when its interval overlaps and is shown whole. Removing the unit chip clears the user filter, not the time range. Copy dump is the snapshot plus live events, not the filtered workspace view. It does not wrap filters or a woven collection. See [`access-sessions.md`](./access-sessions.md).
 
 Dashboard WebSocket:
 

@@ -19,6 +19,14 @@ import {
   lookupUsersToFilterUsers,
   traceRowMatchesUser,
 } from '@/utils/access-session-trace-dump.utils';
+import {
+  EMPTY_TRACE_TIME_FILTER,
+  eventMatchesTraceTimeFilter,
+  formatTraceTimeFilterChip,
+  instantMatchesTraceTimeFilter,
+  rawEventMatchesTraceTimeFilter,
+  sessionMatchesTraceTimeFilter,
+} from '@/utils/access-session-trace-time-filter.utils';
 import type {
   AccessSessionTraceEvent,
   AccessSessionTraceFilterState,
@@ -26,18 +34,26 @@ import type {
   AccessSessionTraceSnapshot,
 } from '@/types/access-session-trace.types';
 import {
-  ClusterBanner,
-  LockStateTable,
-  PendingAttributionTable,
-  SessionMiniTable,
-  TraceEventStream,
+  PendingAttributionList,
   TraceFilterField,
+  TraceStatusStrip,
+  TraceWorkspace,
 } from './GatewaySessionTracePanels';
+import { TraceTimeRangeFilter } from './TraceTimeRangeFilter';
+import {
+  buildTraceEventLog,
+  buildWovenTraceItems,
+  countLiveDeviceOverlaps,
+  eventsToNdjson,
+  mergeTraceSessions,
+  type TraceWorkspaceMode,
+} from '@/utils/access-session-trace-view.utils';
 
 const LIVE_EVENT_CAP = 200;
 const EMPTY_FILTERS: AccessSessionTraceFilterState = {
   user_id: '',
   unit_id: '',
+  ...EMPTY_TRACE_TIME_FILTER,
 };
 
 interface GatewaySessionTraceTabProps {
@@ -63,6 +79,7 @@ export function GatewaySessionTraceTab({
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  const [workspaceMode, setWorkspaceMode] = useState<TraceWorkspaceMode>('sessions');
   const filtersRef = useRef(filters);
   filtersRef.current = filters;
 
@@ -160,25 +177,72 @@ export function GatewaySessionTraceTab({
   }, [filters.unit_id, snapshot]);
 
   const visibleLiveSessions = useMemo(
-    () => (snapshot?.live_sessions || []).filter((row) => traceRowMatchesUser(row, filters.user_id)),
-    [snapshot, filters.user_id],
+    () =>
+      (snapshot?.live_sessions || []).filter(
+        (row) => traceRowMatchesUser(row, filters.user_id) && sessionMatchesTraceTimeFilter(row, filters),
+      ),
+    [snapshot, filters],
   );
   const visibleRecentSessions = useMemo(
-    () => (snapshot?.recent_sessions || []).filter((row) => traceRowMatchesUser(row, filters.user_id)),
-    [snapshot, filters.user_id],
+    () =>
+      (snapshot?.recent_sessions || []).filter(
+        (row) => traceRowMatchesUser(row, filters.user_id) && sessionMatchesTraceTimeFilter(row, filters),
+      ),
+    [snapshot, filters],
   );
   const visibleRawEvents = useMemo(
-    () => (snapshot?.raw_events || []).filter((row) => traceRowMatchesUser(row, filters.user_id)),
-    [snapshot, filters.user_id],
+    () =>
+      (snapshot?.raw_events || []).filter(
+        (row) => traceRowMatchesUser(row, filters.user_id) && rawEventMatchesTraceTimeFilter(row, filters),
+      ),
+    [snapshot, filters],
   );
   const visiblePending = useMemo(
     () => (snapshot?.pending_attributions || []).filter((row) => traceRowMatchesUser(row, filters.user_id)),
     [snapshot, filters.user_id],
   );
   const visibleLiveEvents = useMemo(
-    () => liveEvents.filter((event) => eventMatchesClientFilters(event, filters)),
+    () =>
+      liveEvents.filter(
+        (event) => eventMatchesClientFilters(event, filters) && eventMatchesTraceTimeFilter(event, filters),
+      ),
     [liveEvents, filters],
   );
+  const visibleCorrelatorDecisions = useMemo(
+    () =>
+      (snapshot?.correlator_decisions || []).filter(
+        (event) => eventMatchesClientFilters(event, filters) && eventMatchesTraceTimeFilter(event, filters),
+      ),
+    [snapshot, filters],
+  );
+  const sessionCards = useMemo(
+    () => mergeTraceSessions(visibleLiveSessions, visibleRecentSessions),
+    [visibleLiveSessions, visibleRecentSessions],
+  );
+  const wovenItems = useMemo(
+    () =>
+      buildWovenTraceItems({
+        liveEvents: visibleLiveEvents,
+        correlatorDecisions: visibleCorrelatorDecisions,
+        rawEvents: visibleRawEvents,
+        lockStates,
+        capturedAt: snapshot?.captured_at || new Date().toISOString(),
+        lookups,
+      }).filter(
+        (item) => item.kind !== 'lock_state' || instantMatchesTraceTimeFilter(item.at, filters),
+      ),
+    [visibleLiveEvents, visibleCorrelatorDecisions, visibleRawEvents, lockStates, snapshot, lookups, filters],
+  );
+  const eventNdjson = useMemo(() => {
+    const events = buildTraceEventLog({
+      liveEvents: visibleLiveEvents,
+      correlatorDecisions: visibleCorrelatorDecisions,
+      rawEvents: visibleRawEvents,
+    });
+    return eventsToNdjson(events);
+  }, [visibleLiveEvents, visibleCorrelatorDecisions, visibleRawEvents]);
+  const liveOverlaps = useMemo(() => countLiveDeviceOverlaps(visibleLiveSessions), [visibleLiveSessions]);
+  const historySessionCount = sessionCards.filter((row) => !row.isLive).length;
 
   const clearAllFilters = useCallback(() => {
     setFilters(EMPTY_FILTERS);
@@ -193,7 +257,11 @@ export function GatewaySessionTraceTab({
       items.push({
         id: 'unit',
         label: `Unit: ${unitLabel || unitNumber || filters.unit_id}`,
-        onRemove: clearAllFilters,
+        onRemove: () => {
+          setFilters((prev) => ({ ...prev, unit_id: '', user_id: '' }));
+          setUnitLabel('');
+          setUserLabel('');
+        },
       });
     }
     if (filters.user_id) {
@@ -207,11 +275,19 @@ export function GatewaySessionTraceTab({
         },
       });
     }
+    const timeLabel = formatTraceTimeFilterChip(filters);
+    if (timeLabel) {
+      items.push({
+        id: 'time',
+        label: timeLabel,
+        onRemove: () => setFilters((prev) => ({ ...prev, ...EMPTY_TRACE_TIME_FILTER })),
+      });
+    }
     return items;
-  }, [clearAllFilters, filters.unit_id, filters.user_id, lookups, unitLabel, userLabel]);
+  }, [filters, lookups, unitLabel, userLabel]);
 
   const copyDump = async () => {
-    const text = buildAccessSessionTraceDump({ snapshot, liveEvents: visibleLiveEvents, lockStates });
+    const text = buildAccessSessionTraceDump({ snapshot, liveEvents, lockStates });
     try {
       await navigator.clipboard.writeText(text);
       setCopied(true);
@@ -232,7 +308,7 @@ export function GatewaySessionTraceTab({
           <div>
             <h3 className="text-base font-semibold text-gray-900 dark:text-white">Session trace</h3>
             <p className="mt-0.5 text-sm text-gray-600 dark:text-gray-400">
-              Live correlator decisions, raw access events, pending attributions, and lock state — copy a dump to debug duplicate history rows.
+              Live and historical sessions, correlator events, and lock state — copy a dump to debug duplicate history rows.
             </p>
           </div>
         </div>
@@ -259,12 +335,17 @@ export function GatewaySessionTraceTab({
       </div>
 
       <div className="flex flex-col gap-3 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 p-3">
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
+        <TraceTimeRangeFilter
+          after={filters.time_after}
+          before={filters.time_before}
+          onAfterChange={(time_after) => setFilters((prev) => ({ ...prev, time_after }))}
+          onBeforeChange={(time_before) => setFilters((prev) => ({ ...prev, time_before }))}
+        >
           <TraceFilterField label="Unit">
             <UnitFilter
               value={filters.unit_id}
               onChange={(unit_id) => {
-                setFilters({ unit_id, user_id: '' });
+                setFilters((prev) => ({ ...prev, unit_id, user_id: '' }));
                 setUserLabel('');
               }}
               onDisplayLabelChange={setUnitLabel}
@@ -291,7 +372,7 @@ export function GatewaySessionTraceTab({
               className="w-full min-w-0"
             />
           </TraceFilterField>
-        </div>
+        </TraceTimeRangeFilter>
         <AppliedFilterBar filters={appliedFilters} onClearAll={clearAllFilters} />
       </div>
 
@@ -308,53 +389,24 @@ export function GatewaySessionTraceTab({
         </div>
       ) : (
         <>
-          {snapshot && <ClusterBanner clusters={snapshot.debug?.sessions_sharing_device} />}
-
-          <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
-            <section className="rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 p-4">
-              <h4 className="text-sm font-semibold text-gray-900 dark:text-white">Live lock state</h4>
-              <p className="mt-0.5 mb-3 text-[11px] text-gray-500">devices/state as currently stored, updated live.</p>
-              <LockStateTable devices={lockStates} lookups={lookups} />
-            </section>
-
-            <section className="rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 p-4">
-              <h4 className="text-sm font-semibold text-gray-900 dark:text-white">Pending attributions</h4>
-              <p className="mt-0.5 mb-3 text-[11px] text-gray-500">
-                In-memory lock commands on this instance + durable cloud_remote pending sessions.
-              </p>
-              <PendingAttributionTable rows={visiblePending} lookups={lookups} />
-            </section>
-          </div>
-
-          <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
-            <section className="rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 p-4">
-              <h4 className="text-sm font-semibold text-gray-900 dark:text-white">Live sessions</h4>
-              <p className="mt-0.5 mb-3 text-[11px] text-gray-500">pending + open right now.</p>
-              <SessionMiniTable rows={visibleLiveSessions} lookups={lookups} />
-            </section>
-
-            <section className="rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 p-4 max-h-[36rem] overflow-y-auto">
-              <h4 className="text-sm font-semibold text-gray-900 dark:text-white">Live event stream</h4>
-              <p className="mt-0.5 mb-3 text-[11px] text-gray-500">
-                Correlator decisions and raw access/lock/unlock rows. Expand JSON for the full payload.
-              </p>
-              <TraceEventStream events={visibleLiveEvents} lookups={lookups} />
-            </section>
-          </div>
-
-          <section className="rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 p-4">
-            <h4 className="text-sm font-semibold text-gray-900 dark:text-white">Recent sessions</h4>
-            <p className="mt-0.5 mb-3 text-[11px] text-gray-500">Newest first, including closed / timed out / denied.</p>
-            <SessionMiniTable rows={visibleRecentSessions} lookups={lookups} />
-          </section>
-
-          <section className="rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 p-4">
-            <h4 className="text-sm font-semibold text-gray-900 dark:text-white">Raw activity_logs</h4>
-            <p className="mt-0.5 mb-3 text-[11px] text-gray-500">
-              access_attempt / lock / unlock with enrichment. Expand JSON for metadata.
-            </p>
-            <SessionMiniTable rows={visibleRawEvents} lookups={lookups} />
-          </section>
+          <TraceStatusStrip
+            lockStates={lockStates}
+            pendingCount={visiblePending.length}
+            liveSessionCount={visibleLiveSessions.length}
+            historySessionCount={historySessionCount}
+            liveOverlaps={liveOverlaps}
+          />
+          <PendingAttributionList rows={visiblePending} lookups={lookups} />
+          <TraceWorkspace
+            mode={workspaceMode}
+            onModeChange={setWorkspaceMode}
+            sessionCount={sessionCards.length}
+            eventCount={wovenItems.length}
+            sessions={sessionCards}
+            events={wovenItems}
+            ndjson={eventNdjson}
+            lookups={lookups}
+          />
         </>
       )}
     </div>

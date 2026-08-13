@@ -1,38 +1,19 @@
-import { useState, type ReactNode } from 'react';
-import { ChevronRightIcon } from '@heroicons/react/24/outline';
-import { motion } from 'framer-motion';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import type {
-  AccessSessionTraceEvent,
   AccessSessionTraceLookupDevice,
   AccessSessionTracePendingAttribution,
-  AccessSessionTraceRow,
   AccessSessionTraceSnapshot,
 } from '@/types/access-session-trace.types';
 import { formatTraceLookup } from '@/utils/access-session-trace-dump.utils';
 import { formatDateTime } from '@/utils/datetime.utils';
-
-function JsonBlock({ value }: { value: unknown }) {
-  const [expanded, setExpanded] = useState(false);
-  return (
-    <div>
-      <button
-        type="button"
-        onClick={() => setExpanded((v) => !v)}
-        className="inline-flex items-center gap-1 text-[11px] font-medium text-[#147FD4] hover:underline"
-      >
-        <motion.span animate={{ rotate: expanded ? 90 : 0 }} transition={{ duration: 0.15 }}>
-          <ChevronRightIcon className="h-3.5 w-3.5" />
-        </motion.span>
-        {expanded ? 'Hide JSON' : 'JSON'}
-      </button>
-      {expanded && (
-        <pre className="mt-2 max-h-72 overflow-auto rounded-lg bg-gray-50 dark:bg-gray-900/70 border border-gray-200 dark:border-gray-700 px-3 py-2 text-[11px] font-mono text-gray-800 dark:text-gray-200">
-          {JSON.stringify(value, null, 2)}
-        </pre>
-      )}
-    </div>
-  );
-}
+import { SegmentedTabs } from '@/components/Common/SegmentedTabs';
+import type {
+  TraceSessionCardRow,
+  TraceWovenItem,
+  TraceWovenKind,
+  TraceWorkspaceMode,
+} from '@/utils/access-session-trace-view.utils';
+import { lockStatusStrip } from '@/utils/access-session-trace-view.utils';
 
 function Pill({
   label,
@@ -63,10 +44,10 @@ function stateTone(state?: string): 'blue' | 'green' | 'amber' | 'rose' | 'gray'
   return 'gray';
 }
 
-function lockTone(status?: string | null): 'green' | 'amber' | 'rose' | 'gray' {
-  if (status === 'locked') return 'green';
-  if (status === 'unlocked' || status === 'unlocking' || status === 'locking') return 'amber';
-  if (status === 'error') return 'rose';
+function wovenTone(kind: TraceWovenKind): 'blue' | 'green' | 'amber' | 'rose' | 'gray' {
+  if (kind === 'lock_unlock_event') return 'green';
+  if (kind === 'correlator_decision') return 'blue';
+  if (kind === 'lock_state') return 'amber';
   return 'gray';
 }
 
@@ -87,82 +68,74 @@ export function TraceFilterField({
   );
 }
 
-export function LockStateTable({
-  devices,
-  lookups,
+export function TraceStatusStrip({
+  lockStates,
+  pendingCount,
+  liveSessionCount,
+  historySessionCount,
+  liveOverlaps,
 }: {
-  devices: AccessSessionTraceLookupDevice[];
-  lookups?: AccessSessionTraceSnapshot['lookups'];
+  lockStates: AccessSessionTraceLookupDevice[];
+  pendingCount: number;
+  liveSessionCount: number;
+  historySessionCount: number;
+  liveOverlaps: number;
 }) {
-  if (devices.length === 0) {
-    return <p className="text-sm text-gray-500 dark:text-gray-400">No devices on this gateway.</p>;
-  }
+  const lockStrip = lockStatusStrip(lockStates);
+  const stats = [
+    { label: lockStrip.label, value: lockStrip.value },
+    { label: 'Pending', value: String(pendingCount) },
+    { label: 'Live sessions', value: String(liveSessionCount) },
+    { label: 'History', value: String(historySessionCount) },
+  ];
+
   return (
-    <div className="overflow-x-auto">
-      <table className="min-w-full text-left text-xs">
-        <thead className="text-[11px] uppercase tracking-wide text-gray-500 dark:text-gray-400">
-          <tr>
-            <th className="py-1.5 pr-3 font-medium">Device / unit</th>
-            <th className="py-1.5 pr-3 font-medium">Lock</th>
-            <th className="py-1.5 pr-3 font-medium">Status</th>
-            <th className="py-1.5 font-medium">IDs</th>
-          </tr>
-        </thead>
-        <tbody>
-          {devices.map((device) => (
-            <tr key={device.id} className="border-t border-gray-100 dark:border-gray-800">
-              <td className="py-1.5 pr-3">
-                <div className="font-medium text-gray-900 dark:text-white">
-                  {device.unit_number
-                    ? `Unit ${device.unit_number}`
-                    : device.name || device.serial || formatTraceLookup(lookups, 'device', device.id)}
-                </div>
-                <div className="text-[11px] text-gray-500">{device.device_type}</div>
-              </td>
-              <td className="py-1.5 pr-3">
-                <Pill label={device.lock_status || 'unknown'} tone={lockTone(device.lock_status)} />
-              </td>
-              <td className="py-1.5 pr-3 text-gray-700 dark:text-gray-300">{device.device_status || '—'}</td>
-              <td className="py-1.5 font-mono text-[10px] text-gray-500 break-all">{device.id}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+    <div className="space-y-2">
+      <div className="grid grid-cols-2 gap-2 lg:grid-cols-4">
+        {stats.map((stat) => (
+          <div
+            key={stat.label}
+            className="rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 dark:border-gray-700 dark:bg-gray-900/40"
+          >
+            <div className="text-[10px] font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
+              {stat.label}
+            </div>
+            <div className="mt-0.5 truncate text-sm font-semibold text-gray-900 dark:text-white">{stat.value}</div>
+          </div>
+        ))}
+      </div>
+      {liveOverlaps > 0 && (
+        <p className="text-xs text-amber-800 dark:text-amber-200">
+          {liveOverlaps} device{liveOverlaps === 1 ? '' : 's'} currently have more than one live session.
+        </p>
+      )}
     </div>
   );
 }
 
-export function PendingAttributionTable({
+export function PendingAttributionList({
   rows,
   lookups,
 }: {
   rows: AccessSessionTracePendingAttribution[];
   lookups?: AccessSessionTraceSnapshot['lookups'];
 }) {
-  if (rows.length === 0) {
-    return <p className="text-sm text-gray-500 dark:text-gray-400">No pending attributions.</p>;
-  }
+  if (rows.length === 0) return null;
   return (
-    <div className="space-y-2">
+    <div className="space-y-1.5">
       {rows.map((row) => (
         <div
           key={`${row.source}-${row.device_id}-${row.command_id}`}
-          className="rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800/60 px-3 py-2"
+          className="flex flex-wrap items-center gap-2 rounded-lg border border-gray-200 px-3 py-1.5 text-xs dark:border-gray-700"
         >
-          <div className="flex flex-wrap items-center gap-2">
-            <Pill label={row.source} tone={row.source === 'memory' ? 'amber' : 'blue'} />
-            <Pill label={row.requested_status} tone="gray" />
-            <span className="text-xs text-gray-800 dark:text-gray-200">
-              {formatTraceLookup(lookups, 'device', row.device_id)}
-            </span>
-          </div>
-          <div className="mt-1 text-[11px] text-gray-500 dark:text-gray-400">
-            {row.initiator
-              ? `${row.initiator.userName} (${row.initiator.role}) · ${row.initiator.userId}`
-              : 'No initiator'}
-            {row.session_id ? ` · session ${row.session_id}` : ''}
-          </div>
-          <div className="mt-1 font-mono text-[10px] text-gray-500 break-all">cmd {row.command_id}</div>
+          <Pill label={row.source} tone={row.source === 'memory' ? 'amber' : 'blue'} />
+          <Pill label={row.requested_status} tone="gray" />
+          <span className="text-gray-800 dark:text-gray-200">
+            {formatTraceLookup(lookups, 'device', row.device_id)}
+          </span>
+          <span className="text-[11px] text-gray-500">
+            {row.initiator ? row.initiator.userName : 'No initiator'}
+          </span>
         </div>
       ))}
     </div>
@@ -173,20 +146,21 @@ export function SessionMiniTable({
   rows,
   lookups,
 }: {
-  rows: AccessSessionTraceRow[];
+  rows: TraceSessionCardRow[];
   lookups?: AccessSessionTraceSnapshot['lookups'];
 }) {
   if (rows.length === 0) {
-    return <p className="text-sm text-gray-500 dark:text-gray-400">None.</p>;
+    return <p className="text-sm text-gray-500 dark:text-gray-400">No sessions match the current filters.</p>;
   }
   return (
     <div className="space-y-2">
       {rows.map((row) => (
         <div
           key={row.id}
-          className="rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800/60 px-3 py-2"
+          className="rounded-lg border border-gray-200 bg-white px-3 py-2 dark:border-gray-700 dark:bg-gray-800/60"
         >
           <div className="flex flex-wrap items-center gap-2">
+            {row.isLive && <Pill label="live" tone="blue" />}
             <Pill label={String(row.state || 'unknown')} tone={stateTone(String(row.state))} />
             <span className="text-xs font-medium text-gray-900 dark:text-white">
               {row.unit_number ? `Unit ${row.unit_number}` : formatTraceLookup(lookups, 'device', row.device_id)}
@@ -200,77 +174,141 @@ export function SessionMiniTable({
             {row.started_at ? ` · ${formatDateTime(row.started_at) || row.started_at}` : ''}
             {typeof row.attempt_count === 'number' ? ` · attempts ${row.attempt_count}` : ''}
           </div>
-          <div className="mt-1 font-mono text-[10px] text-gray-500 break-all">{row.id}</div>
-          <JsonBlock value={row} />
         </div>
       ))}
     </div>
   );
 }
 
-export function TraceEventStream({
-  events,
-  lookups,
+export function WovenEventCards({
+  items,
 }: {
-  events: AccessSessionTraceEvent[];
-  lookups?: AccessSessionTraceSnapshot['lookups'];
+  items: TraceWovenItem[];
 }) {
-  if (events.length === 0) {
-    return (
-      <p className="text-sm text-gray-500 dark:text-gray-400">
-        Waiting for correlator decisions and access events…
-      </p>
-    );
+  if (items.length === 0) {
+    return <p className="text-sm text-gray-500 dark:text-gray-400">No events or lock state for these filters.</p>;
   }
   return (
     <div className="space-y-2">
-      {events.map((event) => (
+      {items.map((item) => (
         <div
-          key={event.id}
-          className="rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800/60 px-3 py-2"
+          key={item.id}
+          className="rounded-lg border border-gray-200 bg-white px-3 py-2 dark:border-gray-700 dark:bg-gray-800/60"
         >
           <div className="flex flex-wrap items-center gap-2">
-            <Pill
-              label={event.kind.replace(/_/g, ' ')}
-              tone={event.kind === 'correlator_decision' ? 'blue' : event.kind === 'lock_unlock_event' ? 'green' : 'gray'}
-            />
-            {event.decision && <Pill label={event.decision} tone="amber" />}
-            {event.hook && <span className="text-[11px] text-gray-500">{event.hook}</span>}
+            {item.source === 'live' && <Pill label="live" tone="blue" />}
+            <Pill label={item.kind.replace(/_/g, ' ')} tone={wovenTone(item.kind)} />
+            <span className="text-xs font-medium text-gray-900 dark:text-white">{item.title}</span>
             <span className="ml-auto text-[11px] tabular-nums text-gray-500">
-              {formatDateTime(event.at) || event.at}
+              {formatDateTime(item.at) || item.at || '—'}
             </span>
           </div>
-          <div className="mt-1 text-[11px] text-gray-600 dark:text-gray-400">
-            {formatTraceLookup(lookups, 'device', event.device_id)}
-            {' · '}
-            {formatTraceLookup(lookups, 'user', event.user_id)}
-            {event.session_id ? ` · session ${event.session_id.slice(0, 8)}` : ''}
-          </div>
-          <JsonBlock value={event} />
+          {item.detail && (
+            <div className="mt-1 text-[11px] text-gray-600 dark:text-gray-400">{item.detail}</div>
+          )}
         </div>
       ))}
     </div>
   );
 }
 
-export function ClusterBanner({
-  clusters,
-}: {
-  clusters: AccessSessionTraceSnapshot['debug']['sessions_sharing_device'];
-}) {
-  if (!clusters?.length) return null;
+const NDJSON_NEAR_BOTTOM_PX = 32;
+
+export function EventNdjsonPane({ ndjson }: { ndjson: string }) {
+  const scrollerRef = useRef<HTMLPreElement>(null);
+  const [autoScroll, setAutoScroll] = useState(true);
+
+  useEffect(() => {
+    if (!autoScroll) return;
+    const node = scrollerRef.current;
+    if (!node) return;
+    node.scrollTop = node.scrollHeight;
+  }, [ndjson, autoScroll]);
+
   return (
-    <div className="rounded-lg border border-amber-300/60 bg-amber-50 dark:bg-amber-950/30 dark:border-amber-700/50 px-3 py-2">
-      <p className="text-xs font-semibold text-amber-800 dark:text-amber-200">
-        Multiple sessions on the same device
-      </p>
-      <ul className="mt-1 space-y-1 text-[11px] font-mono text-amber-900 dark:text-amber-100">
-        {clusters.map((cluster) => (
-          <li key={cluster.device_id}>
-            {cluster.device_id.slice(0, 8)}… · {cluster.states.join(', ')} · {cluster.session_ids.length} rows
-          </li>
-        ))}
-      </ul>
+    <div className="space-y-1.5">
+      <div className="flex items-center justify-between gap-2">
+        <p className="text-[11px] text-gray-500 dark:text-gray-400">Pretty-printed · oldest first</p>
+        <button
+          type="button"
+          aria-pressed={autoScroll}
+          onClick={() => setAutoScroll((on) => !on)}
+          className={`rounded-md px-2 py-1 text-[11px] font-semibold transition-colors duration-150 ${
+            autoScroll
+              ? 'bg-[#147FD4]/10 text-[#147FD4] ring-1 ring-[#147FD4]/30'
+              : 'bg-gray-100 text-gray-600 hover:bg-gray-200 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600'
+          }`}
+        >
+          Autoscroll
+        </button>
+      </div>
+      <pre
+        ref={scrollerRef}
+        onScroll={() => {
+          const node = scrollerRef.current;
+          if (!node || !autoScroll) return;
+          const distanceFromBottom = node.scrollHeight - node.scrollTop - node.clientHeight;
+          if (distanceFromBottom > NDJSON_NEAR_BOTTOM_PX) setAutoScroll(false);
+        }}
+        className="max-h-[36rem] overflow-auto rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-[11px] font-mono leading-relaxed text-gray-800 dark:border-gray-700 dark:bg-gray-900/70 dark:text-gray-200"
+      >
+        {ndjson || 'No events match the current filters.'}
+      </pre>
     </div>
+  );
+}
+
+export function TraceWorkspace({
+  mode,
+  onModeChange,
+  sessionCount,
+  eventCount,
+  sessions,
+  events,
+  ndjson,
+  lookups,
+}: {
+  mode: TraceWorkspaceMode;
+  onModeChange: (mode: TraceWorkspaceMode) => void;
+  sessionCount: number;
+  eventCount: number;
+  sessions: TraceSessionCardRow[];
+  events: TraceWovenItem[];
+  ndjson: string;
+  lookups?: AccessSessionTraceSnapshot['lookups'];
+}) {
+  return (
+    <section className="rounded-lg border border-gray-200 bg-white p-4 dark:border-gray-700 dark:bg-gray-800">
+      <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <h4 className="text-sm font-semibold text-gray-900 dark:text-white">Workspace</h4>
+          <p className="mt-0.5 text-[11px] text-gray-500">
+            Live and historical. Session cards, event/state cards, or a pretty-printed event log that appends live.
+          </p>
+        </div>
+        <SegmentedTabs
+          size="sm"
+          ariaLabel="Session trace workspace"
+          activeTab={mode}
+          onChange={(key) => onModeChange(key as TraceWorkspaceMode)}
+          tabs={[
+            { key: 'sessions', label: 'Sessions', count: sessionCount },
+            { key: 'events', label: 'Events', count: eventCount },
+            { key: 'json', label: 'NDJSON' },
+          ]}
+        />
+      </div>
+      {mode === 'sessions' && (
+        <div className="max-h-[36rem] overflow-y-auto">
+          <SessionMiniTable rows={sessions} lookups={lookups} />
+        </div>
+      )}
+      {mode === 'events' && (
+        <div className="max-h-[36rem] overflow-y-auto">
+          <WovenEventCards items={events} />
+        </div>
+      )}
+      {mode === 'json' && <EventNdjsonPane ndjson={ndjson} />}
+    </section>
   );
 }

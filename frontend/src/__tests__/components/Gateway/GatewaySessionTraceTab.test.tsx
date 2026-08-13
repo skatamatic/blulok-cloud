@@ -2,6 +2,7 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { GatewaySessionTraceTab } from '@/components/Gateway/GatewaySessionTraceTab';
 import { apiService } from '@/services/api.service';
+import { isoToDatetimeLocal } from '@/utils/datetime.utils';
 
 const mockSubscribe = jest.fn(() => 'sub-trace-1');
 const mockUnsubscribe = jest.fn();
@@ -98,8 +99,40 @@ const snapshot = {
       started_at: '2026-08-12T19:21:00.000Z',
     },
   ],
-  recent_sessions: [],
-  raw_events: [],
+  recent_sessions: [
+    {
+      id: 's-closed',
+      state: 'closed',
+      method: 'mobile_key',
+      origin: 'on_site',
+      unit_number: '102',
+      actor_name: 'Tester One',
+      device_id: 'dev-1',
+      started_at: '2026-08-12T18:00:00.000Z',
+      closed_at: '2026-08-12T19:30:00.000Z',
+    },
+    {
+      id: 's-old',
+      state: 'timed_out',
+      method: 'keypad',
+      origin: 'on_site',
+      unit_number: '108',
+      device_id: 'dev-2',
+      started_at: '2026-08-12T17:00:00.000Z',
+      closed_at: '2026-08-12T17:10:00.000Z',
+    },
+  ],
+  raw_events: [
+    {
+      id: 'act-1',
+      activity_type: 'unlock',
+      title: 'Unlocked',
+      occurred_at: '2026-08-12T18:00:01.000Z',
+      device_id: 'dev-1',
+      unit_number: '102',
+      actor_name: 'Tester One',
+    },
+  ],
   pending_attributions: [],
   lock_states: [
     {
@@ -123,7 +156,14 @@ const snapshot = {
     pending_memory_count: 0,
     pending_durable_count: 0,
     correlator_ring_count: 0,
-    sessions_sharing_device: [],
+    sessions_sharing_device: [
+      {
+        device_id: '823bf2ab-aaaa-bbbb-cccc-dddddddddddd',
+        session_ids: Array.from({ length: 5 }, (_, i) => `sess-${i}`),
+        states: ['closed', 'closed', 'failed', 'timed_out', 'closed'],
+        started_at: [],
+      },
+    ],
   },
 };
 
@@ -157,8 +197,14 @@ describe('GatewaySessionTraceTab', () => {
       );
     });
     expect((await screen.findAllByText(/Unit 102/)).length).toBeGreaterThan(0);
-    expect(screen.getByText(/Tester One/)).toBeInTheDocument();
+    expect(screen.getAllByText(/Tester One/).length).toBeGreaterThan(0);
     expect(screen.getByText('Live')).toBeInTheDocument();
+    expect(screen.queryByText('Recent sessions')).not.toBeInTheDocument();
+    expect(screen.queryByText('Multiple sessions on the same device')).not.toBeInTheDocument();
+    expect(screen.queryByText('Gateway')).not.toBeInTheDocument();
+    expect(screen.queryByText('Device locks')).not.toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: /sessions/i })).toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: /ndjson/i })).toBeInTheDocument();
     expect(screen.getByLabelText('Unit')).toHaveAttribute('data-facility', 'fac-1');
     expect(screen.queryByLabelText('Device')).not.toBeInTheDocument();
     expect(screen.getByLabelText('User')).toHaveAttribute('data-facility', 'fac-1');
@@ -248,5 +294,120 @@ describe('GatewaySessionTraceTab', () => {
     expect(screen.queryByText('Unit: 102')).not.toBeInTheDocument();
     expect(screen.queryByText('User: Tester One')).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Clear all' })).not.toBeInTheDocument();
+  });
+
+  it('switches between session cards, event/state cards, and NDJSON', async () => {
+    const user = userEvent.setup();
+    render(<GatewaySessionTraceTab gatewayId="gw-1" facilityId="fac-1" liveEnabled />);
+
+    expect(await screen.findByText('pending')).toBeInTheDocument();
+    expect(screen.getByText('closed')).toBeInTheDocument();
+    expect(screen.getByText('timed_out')).toBeInTheDocument();
+
+    await user.click(screen.getByRole('tab', { name: /events/i }));
+    expect(await screen.findByText('Unlocked')).toBeInTheDocument();
+    expect(screen.getByText('locked · online')).toBeInTheDocument();
+
+    await user.click(screen.getByRole('tab', { name: /ndjson/i }));
+    expect(await screen.findByText(/"kind":\s*"lock_unlock_event"/)).toBeInTheDocument();
+    expect(screen.queryByText(/"woven"/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/"filters"/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/"kind":"lock_state"/)).not.toBeInTheDocument();
+
+    const autoscroll = screen.getByRole('button', { name: 'Autoscroll' });
+    expect(autoscroll).toHaveAttribute('aria-pressed', 'true');
+    await user.click(autoscroll);
+    expect(autoscroll).toHaveAttribute('aria-pressed', 'false');
+  });
+
+  it('filters events and NDJSON by time while keeping overlapping sessions whole', async () => {
+    const user = userEvent.setup();
+    render(<GatewaySessionTraceTab gatewayId="gw-1" facilityId="fac-1" liveEnabled />);
+
+    expect(await screen.findByText('timed_out')).toBeInTheDocument();
+    expect(screen.getByText('pending')).toBeInTheDocument();
+    expect(screen.getByText('closed')).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: /time filter, anytime/i }));
+    await user.click(screen.getByRole('button', { name: 'After a time' }));
+    const afterLocal = isoToDatetimeLocal('2026-08-12T19:00:00.000Z');
+    const [afterDate, afterTime] = afterLocal.split('T');
+    fireEvent.change(screen.getByLabelText('After date'), { target: { value: afterDate } });
+    fireEvent.change(screen.getByLabelText('After time'), { target: { value: afterTime } });
+
+    expect(await screen.findByRole('button', { name: /Remove After:/ })).toBeInTheDocument();
+    expect(screen.queryByText('timed_out')).not.toBeInTheDocument();
+    expect(screen.getByText('pending')).toBeInTheDocument();
+    expect(screen.getByText('closed')).toBeInTheDocument();
+
+    await user.click(screen.getByRole('tab', { name: /events/i }));
+    expect(screen.queryByText('Unlocked')).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole('tab', { name: /ndjson/i }));
+    expect(screen.queryByText(/"kind":\s*"lock_unlock_event"/)).not.toBeInTheDocument();
+    expect(screen.getByText('No events match the current filters.')).toBeInTheDocument();
+
+    const writeText = jest.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, 'clipboard', {
+      value: { writeText },
+      configurable: true,
+    });
+    await user.click(screen.getByRole('button', { name: /copy dump/i }));
+    await waitFor(() => {
+      expect(writeText).toHaveBeenCalled();
+    });
+    const dumped = writeText.mock.calls[0][0] as string;
+    expect(dumped).toContain('s-old');
+    expect(dumped).toContain('act-1');
+  });
+
+  it('keeps the time range when the unit chip is removed', async () => {
+    const user = userEvent.setup();
+    render(<GatewaySessionTraceTab gatewayId="gw-1" facilityId="fac-1" liveEnabled />);
+
+    expect(await screen.findByText('pending')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: /time filter, anytime/i }));
+    await user.click(screen.getByRole('button', { name: 'After a time' }));
+    const afterLocal = isoToDatetimeLocal('2026-08-12T19:00:00.000Z');
+    const [afterDate, afterTime] = afterLocal.split('T');
+    fireEvent.change(screen.getByLabelText('After date'), { target: { value: afterDate } });
+    fireEvent.change(screen.getByLabelText('After time'), { target: { value: afterTime } });
+    expect(await screen.findByRole('button', { name: /Remove After:/ })).toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText('Unit'), { target: { value: 'unit-1' } });
+    expect(await screen.findByText('Unit: 102')).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Remove Unit: 102' }));
+    expect(screen.queryByText('Unit: 102')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Remove After:/ })).toBeInTheDocument();
+  });
+
+  it('returns the time panel to Anytime choices when the time chip is removed', async () => {
+    const user = userEvent.setup();
+    render(<GatewaySessionTraceTab gatewayId="gw-1" facilityId="fac-1" liveEnabled />);
+
+    expect(await screen.findByText('pending')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: /time filter, anytime/i }));
+    await user.click(screen.getByRole('button', { name: 'After a time' }));
+    const afterLocal = isoToDatetimeLocal('2026-08-12T19:00:00.000Z');
+    const [afterDate, afterTime] = afterLocal.split('T');
+    fireEvent.change(screen.getByLabelText('After date'), { target: { value: afterDate } });
+    fireEvent.change(screen.getByLabelText('After time'), { target: { value: afterTime } });
+
+    await user.click(await screen.findByRole('button', { name: /Remove After:/ }));
+    expect(screen.getByRole('button', { name: 'After a time' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Before a time' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Between two times' })).toBeInTheDocument();
+  });
+
+  it('discloses from and to pickers when between two times is chosen', async () => {
+    const user = userEvent.setup();
+    render(<GatewaySessionTraceTab gatewayId="gw-1" facilityId="fac-1" liveEnabled />);
+
+    expect(await screen.findByText('pending')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: /time filter, anytime/i }));
+    await user.click(screen.getByRole('button', { name: 'Between two times' }));
+    expect(screen.getByLabelText('From date')).toBeInTheDocument();
+    expect(screen.getByLabelText('To date')).toBeInTheDocument();
   });
 });

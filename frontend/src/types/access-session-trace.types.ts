@@ -138,4 +138,8 @@ export interface AccessSessionTraceResponse {
 export interface AccessSessionTraceFilterState {
   user_id: string;
   unit_id: string;
+  /** Local `YYYY-MM-DDTHH:mm[:ss]` after bound; empty = open-ended. */
+  time_after: string;
+  /** Local `YYYY-MM-DDTHH:mm[:ss]` before bound; empty = open-ended. */
+  time_before: string;
 }
