@@ -39,10 +39,12 @@ describe('UnitFilter', () => {
     const onChange = jest.fn();
     const user = userEvent.setup();
 
-    render(<UnitFilter value="" onChange={onChange} placeholder="Search units..." />);
+    render(<UnitFilter value="" onChange={onChange} placeholder="Search units..." facilityId="fac-7" />);
 
     await waitFor(() => {
-      expect(mockGetUnits).toHaveBeenCalled();
+      expect(mockGetUnits).toHaveBeenCalledWith(
+        expect.objectContaining({ facility_id: 'fac-7' }),
+      );
     });
 
     const input = screen.getByPlaceholderText('Search units...');
@@ -95,5 +97,28 @@ describe('UnitFilter', () => {
     await waitFor(() => {
       expect(screen.getByText(/no units available/i)).toBeInTheDocument();
     });
+  });
+
+  it('clears the selection via All units when allowEmpty is set', async () => {
+    const onChange = jest.fn();
+    const user = userEvent.setup();
+
+    render(
+      <UnitFilter
+        value="unit-1"
+        onChange={onChange}
+        allowEmpty
+        emptyLabel="All units"
+        facilityId="fac-7"
+      />,
+    );
+
+    await waitFor(() => {
+      expect(mockGetUnits).toHaveBeenCalled();
+    });
+
+    await user.click(screen.getByPlaceholderText('Search units...'));
+    await user.click(await screen.findByRole('button', { name: /all units/i }));
+    expect(onChange).toHaveBeenCalledWith('');
   });
 });

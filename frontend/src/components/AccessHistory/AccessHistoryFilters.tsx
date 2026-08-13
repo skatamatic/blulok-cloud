@@ -1,5 +1,4 @@
 import { ExpandableFilters } from '@/components/Common/ExpandableFilters';
-import { UnitFilter } from '@/components/Common/UnitFilter';
 import {
   filterDateFieldLabelClass,
   filterDateRangeGridClass,
@@ -278,25 +277,19 @@ export function AccessHistoryFilters({
           onDisplayLabelChange: onSetUserFilterLabel,
           onSelect: (value: string) => onFilterChange('user_id', value || undefined),
           placeholder: 'Search users...',
+          facilityId: selectedFacilityId,
         },
         {
           title: 'Unit',
           icon: <HomeIcon className="h-4 w-4" />,
-          type: 'custom',
+          type: 'unit',
           options: [],
           selected: filters.unit_id || '',
           selectedLabel: unitFilterLabel,
-          onSelect: () => {},
-          customContent: (
-            <UnitFilter
-              value={filters.unit_id || ''}
-              onChange={(unitId) => onFilterChange('unit_id', unitId || undefined)}
-              onDisplayLabelChange={onSetUnitFilterLabel}
-              placeholder="Search units..."
-              facilityId={selectedFacilityId}
-              className="w-full min-w-0"
-            />
-          ),
+          onDisplayLabelChange: onSetUnitFilterLabel,
+          onSelect: (value: string) => onFilterChange('unit_id', value || undefined),
+          placeholder: 'Search units...',
+          facilityId: selectedFacilityId,
         },
         ...(getCurrentDateRangeSelection() === 'custom'
           ? [

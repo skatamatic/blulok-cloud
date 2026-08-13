@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { GatewaySessionTraceTab } from '@/components/Gateway/GatewaySessionTraceTab';
 import { apiService } from '@/services/api.service';
@@ -24,6 +24,59 @@ jest.mock('@/services/api.service', () => ({
   apiService: {
     getGatewaySessionTrace: jest.fn(),
   },
+}));
+
+jest.mock('@/components/Common/UnitFilter', () => ({
+  UnitFilter: ({
+    facilityId,
+    placeholder,
+    onChange,
+    onDisplayLabelChange,
+  }: {
+    facilityId?: string;
+    placeholder?: string;
+    onChange: (value: string) => void;
+    onDisplayLabelChange?: (label: string) => void;
+  }) => (
+    <input
+      aria-label="Unit"
+      data-facility={facilityId}
+      placeholder={placeholder}
+      onChange={(e) => {
+        const unitId = e.target.value;
+        onChange(unitId);
+        onDisplayLabelChange?.(unitId === 'unit-1' ? '102' : unitId);
+      }}
+    />
+  ),
+}));
+
+jest.mock('@/components/Common/UserFilter', () => ({
+  UserFilter: ({
+    facilityId,
+    placeholder,
+    allowedUsers,
+    onChange,
+    onDisplayLabelChange,
+  }: {
+    facilityId?: string;
+    placeholder?: string;
+    allowedUsers?: Array<{ id: string }>;
+    onChange: (value: string) => void;
+    onDisplayLabelChange?: (label: string) => void;
+  }) => (
+    <input
+      aria-label="User"
+      data-facility={facilityId}
+      data-allowed={allowedUsers ? allowedUsers.map((user) => user.id).join(',') : 'all'}
+      placeholder={placeholder}
+      onChange={(e) => {
+        const userId = e.target.value;
+        onChange(userId);
+        onDisplayLabelChange?.(userId === 'u1' ? 'Tester One' : userId);
+      }}
+    />
+  ),
 }));
 
 const snapshot = {
@@ -81,11 +134,16 @@ describe('GatewaySessionTraceTab', () => {
       value: { writeText: jest.fn().mockResolvedValue(undefined) },
       configurable: true,
     });
-    (apiService.getGatewaySessionTrace as jest.Mock).mockResolvedValue({
-      success: true,
-      snapshot,
-    });
-    mockSubscribe.mockReturnValueOnce('sub-trace-1').mockReturnValueOnce('sub-status-1');
+    (apiService.getGatewaySessionTrace as jest.Mock).mockImplementation((_id, params?: { unit_id?: string }) =>
+      Promise.resolve({
+        success: true,
+        snapshot: {
+          ...snapshot,
+          filters: { ...snapshot.filters, unit_id: params?.unit_id },
+        },
+      }),
+    );
+    mockSubscribe.mockReturnValue('sub-trace-1');
   });
 
   it('loads snapshot, shows live session, and copies dump', async () => {
@@ -101,6 +159,10 @@ describe('GatewaySessionTraceTab', () => {
     expect((await screen.findAllByText(/Unit 102/)).length).toBeGreaterThan(0);
     expect(screen.getByText(/Tester One/)).toBeInTheDocument();
     expect(screen.getByText('Live')).toBeInTheDocument();
+    expect(screen.getByLabelText('Unit')).toHaveAttribute('data-facility', 'fac-1');
+    expect(screen.queryByLabelText('Device')).not.toBeInTheDocument();
+    expect(screen.getByLabelText('User')).toHaveAttribute('data-facility', 'fac-1');
+    expect(screen.getByLabelText('User')).toHaveAttribute('data-allowed', 'all');
     expect(mockSubscribe).toHaveBeenCalledWith(
       'access_session_trace',
       expect.any(Function),
@@ -117,5 +179,74 @@ describe('GatewaySessionTraceTab', () => {
     const dumped = (navigator.clipboard.writeText as jest.Mock).mock.calls[0][0] as string;
     expect(dumped).toContain('"s1"');
     expect(dumped).toContain('Tester One');
+  });
+
+  it('scopes the user list to actors on the selected unit', async () => {
+    render(<GatewaySessionTraceTab gatewayId="gw-1" facilityId="fac-1" liveEnabled />);
+
+    await waitFor(() => {
+      expect(apiService.getGatewaySessionTrace).toHaveBeenCalled();
+    });
+    expect(screen.getByLabelText('User')).toHaveAttribute('data-allowed', 'all');
+
+    fireEvent.change(screen.getByLabelText('Unit'), { target: { value: 'unit-1' } });
+
+    await waitFor(() => {
+      expect(apiService.getGatewaySessionTrace).toHaveBeenCalledWith(
+        'gw-1',
+        expect.objectContaining({ unit_id: 'unit-1' }),
+      );
+    });
+    await waitFor(() => {
+      expect(screen.getByLabelText('User')).toHaveAttribute('data-allowed', 'u1');
+    });
+    expect(screen.getByLabelText('User')).toHaveAttribute(
+      'placeholder',
+      'Users with events on this unit...',
+    );
+    expect(screen.getByText('Unit: 102')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Clear all' })).toBeInTheDocument();
+  });
+
+  it('shows dismissible applied-filter chips and clear all', async () => {
+    const user = userEvent.setup();
+    render(<GatewaySessionTraceTab gatewayId="gw-1" facilityId="fac-1" liveEnabled />);
+
+    await waitFor(() => {
+      expect(apiService.getGatewaySessionTrace).toHaveBeenCalled();
+    });
+    expect(screen.queryByText('Clear all')).not.toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText('Unit'), { target: { value: 'unit-1' } });
+    expect(await screen.findByText('Unit: 102')).toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText('User'), { target: { value: 'u1' } });
+    expect(await screen.findByText('User: Tester One')).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Remove User: Tester One' }));
+    expect(screen.queryByText('User: Tester One')).not.toBeInTheDocument();
+    expect(screen.getByText('Unit: 102')).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Clear all' }));
+    expect(screen.queryByText('Unit: 102')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Clear all' })).not.toBeInTheDocument();
+  });
+
+  it('clears the user filter when the unit chip is removed', async () => {
+    const user = userEvent.setup();
+    render(<GatewaySessionTraceTab gatewayId="gw-1" facilityId="fac-1" liveEnabled />);
+
+    await waitFor(() => {
+      expect(apiService.getGatewaySessionTrace).toHaveBeenCalled();
+    });
+
+    fireEvent.change(screen.getByLabelText('Unit'), { target: { value: 'unit-1' } });
+    fireEvent.change(screen.getByLabelText('User'), { target: { value: 'u1' } });
+    expect(await screen.findByText('User: Tester One')).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Remove Unit: 102' }));
+    expect(screen.queryByText('Unit: 102')).not.toBeInTheDocument();
+    expect(screen.queryByText('User: Tester One')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Clear all' })).not.toBeInTheDocument();
   });
 });

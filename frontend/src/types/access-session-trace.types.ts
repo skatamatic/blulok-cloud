@@ -137,6 +137,5 @@ export interface AccessSessionTraceResponse {
 
 export interface AccessSessionTraceFilterState {
   user_id: string;
-  device_id: string;
   unit_id: string;
 }

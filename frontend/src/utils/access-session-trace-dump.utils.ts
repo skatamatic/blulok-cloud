@@ -45,10 +45,32 @@ export function formatTraceLookup(
 
 export function eventMatchesClientFilters(
   event: AccessSessionTraceEvent,
-  filters: { user_id: string; device_id: string; unit_id: string },
+  filters: { user_id: string; unit_id: string; device_id?: string },
 ): boolean {
   if (filters.device_id && event.device_id && event.device_id !== filters.device_id) return false;
   if (filters.unit_id && event.unit_id && event.unit_id !== filters.unit_id) return false;
   if (filters.user_id && event.user_id && event.user_id !== filters.user_id) return false;
   return true;
+}
+
+export function lookupUsersToFilterUsers(
+  users: AccessSessionTraceSnapshot['lookups']['users'] | undefined,
+): Array<{ id: string; name?: string | null; email?: string | null }> {
+  return Object.values(users || {}).map((user) => ({
+    id: user.id,
+    name: user.name,
+    email: user.email,
+  }));
+}
+
+export function traceRowMatchesUser(
+  row: {
+    actor_id?: string | null;
+    user_id?: string | null;
+    initiator?: { userId?: string };
+  },
+  userId: string,
+): boolean {
+  if (!userId) return true;
+  return row.actor_id === userId || row.user_id === userId || row.initiator?.userId === userId;
 }

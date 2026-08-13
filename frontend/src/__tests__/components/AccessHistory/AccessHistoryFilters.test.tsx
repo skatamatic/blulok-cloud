@@ -10,11 +10,22 @@ import {
 import { ThemeProvider } from '@/contexts/ThemeContext';
 
 jest.mock('@/components/Common/UnitFilter', () => ({
-  UnitFilter: jest.fn(({ onChange, placeholder }) => (
+  UnitFilter: jest.fn(({ onChange, placeholder, facilityId }) => (
     <input
       data-testid="unit-filter"
+      data-facility={facilityId}
       placeholder={placeholder}
       onChange={(e) => onChange(e.target.value)}
+    />
+  )),
+}));
+
+jest.mock('@/components/Common/UserFilter', () => ({
+  UserFilter: jest.fn(({ placeholder, facilityId }) => (
+    <input
+      data-testid="user-filter"
+      data-facility={facilityId}
+      placeholder={placeholder}
     />
   )),
 }));
@@ -113,5 +124,7 @@ describe('AccessHistoryFilters', () => {
     const unitFilter = screen.getByTestId('unit-filter');
     expect(unitFilter).toBeInTheDocument();
     expect(unitFilter).toHaveAttribute('placeholder', 'Search units...');
+    expect(unitFilter).toHaveAttribute('data-facility', selectedFacilityId);
+    expect(screen.getByTestId('user-filter')).toHaveAttribute('data-facility', selectedFacilityId);
   });
 });

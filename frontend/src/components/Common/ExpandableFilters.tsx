@@ -7,6 +7,8 @@ import {
   XMarkIcon,
 } from '@heroicons/react/24/outline';
 import { UserFilter } from './UserFilter';
+import { UnitFilter } from './UnitFilter';
+import { DeviceFilter } from './DeviceFilter';
 import {
   countActiveFilterSections,
   filterBarActionsClass,
@@ -45,7 +47,7 @@ export interface FilterSection {
   options: FilterOption[];
   selected: string;
   onSelect: (key: string) => void;
-  type?: 'toggle' | 'select' | 'search' | 'buttons' | 'user' | 'custom';
+  type?: 'toggle' | 'select' | 'search' | 'buttons' | 'user' | 'unit' | 'device' | 'custom';
   placeholder?: string;
   className?: string;
   customContent?: React.ReactNode;
@@ -53,6 +55,8 @@ export interface FilterSection {
   selectedLabel?: string;
   /** Notified when a combobox filter resolves its display label. */
   onDisplayLabelChange?: (label: string) => void;
+  /** Scopes searchable user/unit/device lists to this facility. */
+  facilityId?: string;
   /** Span full width in the filter panel grid (e.g. tenant picker). */
   fullWidth?: boolean;
   /** Grid span: `full` spans the entire panel row. */
@@ -185,6 +189,37 @@ export const ExpandableFilters: React.FC<ExpandableFiltersProps> = ({
           placeholder={section.placeholder || 'Search users...'}
           className={filterFieldClass}
           onDisplayLabelChange={section.onDisplayLabelChange}
+          facilityId={section.facilityId}
+          allowEmpty
+        />
+      );
+    }
+
+    if (section.type === 'unit') {
+      return (
+        <UnitFilter
+          value={section.selected}
+          onChange={section.onSelect}
+          placeholder={section.placeholder || 'Search units...'}
+          className={filterFieldClass}
+          onDisplayLabelChange={section.onDisplayLabelChange}
+          facilityId={section.facilityId}
+          allowEmpty
+        />
+      );
+    }
+
+    if (section.type === 'device') {
+      return (
+        <DeviceFilter
+          value={section.selected}
+          onChange={section.onSelect}
+          placeholder={section.placeholder || 'Search devices...'}
+          className={filterFieldClass}
+          onDisplayLabelChange={section.onDisplayLabelChange}
+          facilityId={section.facilityId || ''}
+          list="facility"
+          allowEmpty
         />
       );
     }

@@ -9,10 +9,15 @@ import { apiService } from '@/services/api.service';
 import { useWebSocket } from '@/contexts/WebSocketContext';
 import { useToast } from '@/contexts/ToastContext';
 import { Button } from '@/components/Common/Button';
+import { UnitFilter } from '@/components/Common/UnitFilter';
+import { UserFilter } from '@/components/Common/UserFilter';
+import { AppliedFilterBar, type AppliedFilter } from '@/components/Common/AppliedFilterBar';
 import { normalizeDeviceStatusWsPayload } from '@/utils/deviceStatusWs.utils';
 import {
   buildAccessSessionTraceDump,
   eventMatchesClientFilters,
+  lookupUsersToFilterUsers,
+  traceRowMatchesUser,
 } from '@/utils/access-session-trace-dump.utils';
 import type {
   AccessSessionTraceEvent,
@@ -26,13 +31,12 @@ import {
   PendingAttributionTable,
   SessionMiniTable,
   TraceEventStream,
-  TraceSelect,
+  TraceFilterField,
 } from './GatewaySessionTracePanels';
 
 const LIVE_EVENT_CAP = 200;
 const EMPTY_FILTERS: AccessSessionTraceFilterState = {
   user_id: '',
-  device_id: '',
   unit_id: '',
 };
 
@@ -53,6 +57,8 @@ export function GatewaySessionTraceTab({
   const [lockStates, setLockStates] = useState<AccessSessionTraceLookupDevice[]>([]);
   const [liveEvents, setLiveEvents] = useState<AccessSessionTraceEvent[]>([]);
   const [filters, setFilters] = useState<AccessSessionTraceFilterState>(EMPTY_FILTERS);
+  const [unitLabel, setUnitLabel] = useState('');
+  const [userLabel, setUserLabel] = useState('');
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -62,11 +68,9 @@ export function GatewaySessionTraceTab({
 
   const query = useMemo(
     () => ({
-      user_id: filters.user_id || undefined,
-      device_id: filters.device_id || undefined,
       unit_id: filters.unit_id || undefined,
     }),
-    [filters],
+    [filters.unit_id],
   );
 
   const fetchSnapshot = useCallback(
@@ -104,7 +108,7 @@ export function GatewaySessionTraceTab({
       (data: { event?: AccessSessionTraceEvent; status?: string }) => {
         const event = data?.event;
         if (!event) return;
-        if (!eventMatchesClientFilters(event, filtersRef.current)) return;
+        if (!eventMatchesClientFilters(event, { unit_id: filtersRef.current.unit_id, user_id: '' })) return;
         setLiveEvents((prev) => [event, ...prev.filter((row) => row.id !== event.id)].slice(0, LIVE_EVENT_CAP));
       },
       undefined,
@@ -148,8 +152,66 @@ export function GatewaySessionTraceTab({
     };
   }, [subscribe, unsubscribe, liveEnabled, gatewayId, facilityId, query]);
 
+  const lookups = snapshot?.lookups;
+  const eventUsers = useMemo(() => {
+    if (!filters.unit_id) return undefined;
+    if (snapshot?.filters.unit_id !== filters.unit_id) return [];
+    return lookupUsersToFilterUsers(snapshot.lookups.users);
+  }, [filters.unit_id, snapshot]);
+
+  const visibleLiveSessions = useMemo(
+    () => (snapshot?.live_sessions || []).filter((row) => traceRowMatchesUser(row, filters.user_id)),
+    [snapshot, filters.user_id],
+  );
+  const visibleRecentSessions = useMemo(
+    () => (snapshot?.recent_sessions || []).filter((row) => traceRowMatchesUser(row, filters.user_id)),
+    [snapshot, filters.user_id],
+  );
+  const visibleRawEvents = useMemo(
+    () => (snapshot?.raw_events || []).filter((row) => traceRowMatchesUser(row, filters.user_id)),
+    [snapshot, filters.user_id],
+  );
+  const visiblePending = useMemo(
+    () => (snapshot?.pending_attributions || []).filter((row) => traceRowMatchesUser(row, filters.user_id)),
+    [snapshot, filters.user_id],
+  );
+  const visibleLiveEvents = useMemo(
+    () => liveEvents.filter((event) => eventMatchesClientFilters(event, filters)),
+    [liveEvents, filters],
+  );
+
+  const clearAllFilters = useCallback(() => {
+    setFilters(EMPTY_FILTERS);
+    setUnitLabel('');
+    setUserLabel('');
+  }, []);
+
+  const appliedFilters = useMemo(() => {
+    const items: AppliedFilter[] = [];
+    if (filters.unit_id) {
+      const unitNumber = lookups?.units[filters.unit_id]?.unit_number;
+      items.push({
+        id: 'unit',
+        label: `Unit: ${unitLabel || unitNumber || filters.unit_id}`,
+        onRemove: clearAllFilters,
+      });
+    }
+    if (filters.user_id) {
+      const lookupUser = lookups?.users[filters.user_id];
+      items.push({
+        id: 'user',
+        label: `User: ${userLabel || lookupUser?.name || lookupUser?.email || filters.user_id}`,
+        onRemove: () => {
+          setFilters((prev) => ({ ...prev, user_id: '' }));
+          setUserLabel('');
+        },
+      });
+    }
+    return items;
+  }, [clearAllFilters, filters.unit_id, filters.user_id, lookups, unitLabel, userLabel]);
+
   const copyDump = async () => {
-    const text = buildAccessSessionTraceDump({ snapshot, liveEvents, lockStates });
+    const text = buildAccessSessionTraceDump({ snapshot, liveEvents: visibleLiveEvents, lockStates });
     try {
       await navigator.clipboard.writeText(text);
       setCopied(true);
@@ -159,11 +221,6 @@ export function GatewaySessionTraceTab({
       addToast({ type: 'error', title: 'Copy failed', message: 'Could not copy dump' });
     }
   };
-
-  const lookups = snapshot?.lookups;
-  const deviceOptions = Object.values(lookups?.devices || {});
-  const unitOptions = Object.values(lookups?.units || {});
-  const userOptions = Object.values(lookups?.users || {});
 
   return (
     <div className="space-y-4">
@@ -201,37 +258,41 @@ export function GatewaySessionTraceTab({
         </div>
       </div>
 
-      <div className="flex flex-col gap-3 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 p-3 sm:flex-row">
-        <TraceSelect label="Unit" value={filters.unit_id} onChange={(unit_id) => setFilters((f) => ({ ...f, unit_id }))}>
-          <option value="">All units</option>
-          {unitOptions.map((unit) => (
-            <option key={unit.id} value={unit.id}>
-              {unit.unit_number ? `Unit ${unit.unit_number}` : unit.id}
-            </option>
-          ))}
-        </TraceSelect>
-        <TraceSelect
-          label="Device"
-          value={filters.device_id}
-          onChange={(device_id) => setFilters((f) => ({ ...f, device_id }))}
-        >
-          <option value="">All devices</option>
-          {deviceOptions.map((device) => (
-            <option key={device.id} value={device.id}>
-              {device.unit_number
-                ? `Unit ${device.unit_number}`
-                : device.name || device.serial || device.id.slice(0, 8)}
-            </option>
-          ))}
-        </TraceSelect>
-        <TraceSelect label="User" value={filters.user_id} onChange={(user_id) => setFilters((f) => ({ ...f, user_id }))}>
-          <option value="">All users</option>
-          {userOptions.map((user) => (
-            <option key={user.id} value={user.id}>
-              {user.email || user.name || user.id.slice(0, 8)}
-            </option>
-          ))}
-        </TraceSelect>
+      <div className="flex flex-col gap-3 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 p-3">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
+          <TraceFilterField label="Unit">
+            <UnitFilter
+              value={filters.unit_id}
+              onChange={(unit_id) => {
+                setFilters({ unit_id, user_id: '' });
+                setUserLabel('');
+              }}
+              onDisplayLabelChange={setUnitLabel}
+              facilityId={facilityId}
+              placeholder="Search units..."
+              allowEmpty
+              emptyLabel="All units"
+              className="w-full min-w-0"
+            />
+          </TraceFilterField>
+          <TraceFilterField label="User">
+            <UserFilter
+              value={filters.user_id}
+              onChange={(user_id) => setFilters((f) => ({ ...f, user_id }))}
+              onDisplayLabelChange={setUserLabel}
+              facilityId={facilityId}
+              allowedUsers={eventUsers}
+              placeholder={
+                filters.unit_id ? 'Users with events on this unit...' : 'Search users...'
+              }
+              allowEmpty
+              emptyLabel="All users"
+              emptyMessage="No users with events for this unit"
+              className="w-full min-w-0"
+            />
+          </TraceFilterField>
+        </div>
+        <AppliedFilterBar filters={appliedFilters} onClearAll={clearAllFilters} />
       </div>
 
       {error && (
@@ -261,7 +322,7 @@ export function GatewaySessionTraceTab({
               <p className="mt-0.5 mb-3 text-[11px] text-gray-500">
                 In-memory lock commands on this instance + durable cloud_remote pending sessions.
               </p>
-              <PendingAttributionTable rows={snapshot?.pending_attributions || []} lookups={lookups} />
+              <PendingAttributionTable rows={visiblePending} lookups={lookups} />
             </section>
           </div>
 
@@ -269,7 +330,7 @@ export function GatewaySessionTraceTab({
             <section className="rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 p-4">
               <h4 className="text-sm font-semibold text-gray-900 dark:text-white">Live sessions</h4>
               <p className="mt-0.5 mb-3 text-[11px] text-gray-500">pending + open right now.</p>
-              <SessionMiniTable rows={snapshot?.live_sessions || []} lookups={lookups} />
+              <SessionMiniTable rows={visibleLiveSessions} lookups={lookups} />
             </section>
 
             <section className="rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 p-4 max-h-[36rem] overflow-y-auto">
@@ -277,14 +338,14 @@ export function GatewaySessionTraceTab({
               <p className="mt-0.5 mb-3 text-[11px] text-gray-500">
                 Correlator decisions and raw access/lock/unlock rows. Expand JSON for the full payload.
               </p>
-              <TraceEventStream events={liveEvents} lookups={lookups} />
+              <TraceEventStream events={visibleLiveEvents} lookups={lookups} />
             </section>
           </div>
 
           <section className="rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 p-4">
             <h4 className="text-sm font-semibold text-gray-900 dark:text-white">Recent sessions</h4>
             <p className="mt-0.5 mb-3 text-[11px] text-gray-500">Newest first, including closed / timed out / denied.</p>
-            <SessionMiniTable rows={snapshot?.recent_sessions || []} lookups={lookups} />
+            <SessionMiniTable rows={visibleRecentSessions} lookups={lookups} />
           </section>
 
           <section className="rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 p-4">
@@ -292,7 +353,7 @@ export function GatewaySessionTraceTab({
             <p className="mt-0.5 mb-3 text-[11px] text-gray-500">
               access_attempt / lock / unlock with enrichment. Expand JSON for metadata.
             </p>
-            <SessionMiniTable rows={snapshot?.raw_events || []} lookups={lookups} />
+            <SessionMiniTable rows={visibleRawEvents} lookups={lookups} />
           </section>
         </>
       )}

@@ -118,6 +118,7 @@ Configured global threshold is **88%** lines — **not met**. `src/main` is the 
 | **AddUserModal** | `frontend/src/__tests__/components/UserManagement/AddUserModal.test.tsx` |
 | **api.service** (access history, notifications, key sharing, layouts, createUser) | `frontend/src/__tests__/services/api.service.test.ts` |
 | **UnitFilter** | `frontend/src/__tests__/components/Common/UnitFilter.test.tsx` |
+| **AppliedFilterBar** | `frontend/src/__tests__/components/Common/AppliedFilterBar.test.tsx` |
 | **ScheduleEditor** (add / ref / validation / global Always) | `frontend/src/__tests__/components/Schedules/ScheduleEditor.test.tsx` |
 | **api.service** (activity stats, key-sharing CRUD/invite, firmware OTA) | `frontend/src/__tests__/services/api.service.test.ts` |
 | **AddUserModal** (stable auth mock + longer timeout for coverage runs) | `frontend/src/__tests__/components/UserManagement/AddUserModal.test.tsx` |
@@ -127,6 +128,7 @@ Configured global threshold is **88%** lines — **not met**. `src/main` is the 
 | **GatewayService** (lifecycle + commands) | `backend/src/__tests__/services/gateway/gateway-service.test.ts` |
 | **api.service** (auth, users, widgets, system settings, facilities, gateways, commands) | `frontend/src/__tests__/services/api.service.test.ts` |
 | **UserFilter** | `frontend/src/__tests__/components/Common/UserFilter.test.tsx` |
+| **DeviceFilter** | `frontend/src/__tests__/components/Common/DeviceFilter.test.tsx` |
 | **DevicesService** (unit reassignment, network-infra delete/tombstone, infra RBAC) | extended `backend/src/__tests__/services/devices.service.unit.test.ts` |
 | **AccessCodeService** (rotation_hour/minute, empty keypad rotate, outbox offline skip, schedule null vs omitted) | extended `backend/src/__tests__/services/access-code.service.test.ts` |
 | **buildSyncSummaryFromChanges** (exported FMS summary helper) | `frontend/src/__tests__/contexts/buildSyncSummaryFromChanges.test.ts` |

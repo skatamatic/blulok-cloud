@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { HomeIcon } from '@heroicons/react/24/outline';
 import { apiService } from '@/services/api.service';
 import { Unit } from '@/types/facility.types';
+import { FilterComboboxEmptyOption } from '@/components/Common/FilterComboboxEmptyOption';
 import { filterComboboxDropdownClass } from '@/components/Common/list-filters.styles';
 import { useFilterDropdownPortal } from '@/hooks/useFilterDropdownPortal';
 
@@ -14,6 +15,8 @@ interface UnitFilterProps {
   facilityId?: string;
   disabled?: boolean;
   onDisplayLabelChange?: (label: string) => void;
+  allowEmpty?: boolean;
+  emptyLabel?: string;
 }
 
 function formatUnitLabel(unit: Unit): string {
@@ -36,6 +39,8 @@ export const UnitFilter: React.FC<UnitFilterProps> = ({
   facilityId,
   disabled = false,
   onDisplayLabelChange,
+  allowEmpty = false,
+  emptyLabel = 'All units',
 }) => {
   const [isOpen, setIsOpen] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
@@ -198,6 +203,12 @@ export const UnitFilter: React.FC<UnitFilterProps> = ({
     setIsOpen(false);
   };
 
+  const handleClear = () => {
+    applySelectedUnit(null);
+    onChange('');
+    setIsOpen(false);
+  };
+
   const handleInputFocus = () => {
     if (!disabled) {
       setIsOpen(true);
@@ -259,11 +270,16 @@ export const UnitFilter: React.FC<UnitFilterProps> = ({
     >
       {loading ? (
         <div className="px-3 py-2 text-sm text-gray-500 dark:text-gray-400">Loading units...</div>
-      ) : filteredUnits.length === 0 ? (
-        <div className="px-3 py-2 text-sm text-gray-500 dark:text-gray-400">
-          {searchTerm ? 'No units found' : 'No units available'}
-        </div>
       ) : (
+        <>
+          {allowEmpty && (
+            <FilterComboboxEmptyOption label={emptyLabel} onSelect={handleClear} />
+          )}
+          {filteredUnits.length === 0 ? (
+            <div className="px-3 py-2 text-sm text-gray-500 dark:text-gray-400">
+              {searchTerm ? 'No units found' : 'No units available'}
+            </div>
+          ) : (
         <>
           {!searchTerm && (
             <div className="border-b border-gray-200 px-3 py-2 text-xs font-semibold uppercase tracking-wider text-gray-500 dark:border-gray-700 dark:text-gray-400">
@@ -333,6 +349,8 @@ export const UnitFilter: React.FC<UnitFilterProps> = ({
                 </button>
               )}
             </div>
+          )}
+        </>
           )}
         </>
       )}

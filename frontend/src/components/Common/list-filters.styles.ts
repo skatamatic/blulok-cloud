@@ -67,6 +67,17 @@ export const filterCollapsedSummaryClass =
 export const filterCollapsedSummaryPillClass =
   'inline-flex items-center rounded-full bg-primary-50 px-2.5 py-1 text-xs font-medium text-primary-700 ring-1 ring-primary-100 dark:bg-primary-900/30 dark:text-primary-300 dark:ring-primary-900/50';
 
+export const appliedFilterBarClass = 'flex flex-wrap items-center gap-2';
+
+export const appliedFilterChipClass =
+  'inline-flex max-w-full items-center gap-0.5 rounded-full bg-primary-50 py-1 pl-2.5 pr-1 text-xs font-medium text-primary-700 ring-1 ring-primary-100 transition-colors duration-150 dark:bg-primary-900/30 dark:text-primary-300 dark:ring-primary-900/50';
+
+export const appliedFilterChipRemoveClass =
+  'inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-primary-600 transition-colors duration-150 hover:bg-primary-100 hover:text-primary-800 active:bg-primary-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 dark:text-primary-300 dark:hover:bg-primary-900/60 dark:hover:text-primary-100 dark:active:bg-primary-900';
+
+export const appliedFilterClearAllClass =
+  'inline-flex items-center rounded-full px-2.5 py-1 text-xs font-medium text-gray-600 transition-colors duration-150 hover:bg-gray-100 hover:text-gray-900 active:bg-gray-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 dark:text-gray-400 dark:hover:bg-gray-700 dark:hover:text-gray-100 dark:active:bg-gray-600';
+
 const FILTER_CHIP_SELECTED: Record<string, string> = {
   primary:
     'bg-primary-50 text-primary-700 ring-1 ring-primary-200 dark:bg-primary-900/30 dark:text-primary-300 dark:ring-primary-800',

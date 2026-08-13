@@ -97,7 +97,7 @@ Access History page and Access History widget call **`GET /access-sessions`**:
 - Widget (medium+): compact horizontal rows — **unit · method title** left, **status pill** top-right, user · time below; click expands timeline. Small size stays a dense strip without expand.
 - **Needs attention** chip → `state=open` (clears date range so all open locks appear). Auto-selected when `currently_open > 0` until the operator clears it. Rose active pill + banner make the filter obvious.
 - **Raw events** toggle → `GET /access-history?view=raw` (**DEV_ADMIN only**). Everyone else stays on sessions.
-- **Session trace** (Facility → Gateway → Session trace, `canManageGateway`): live lock state, pending attributions, live/recent sessions, raw activity JSON + enrichment lookups, correlator decision stream, filter by unit/device/user, **Copy dump** JSON for debugging duplicate history rows.
+- **Session trace** (Facility → Gateway → Session trace, `canManageGateway`): live lock state, pending attributions, live/recent sessions, raw activity JSON + enrichment lookups, correlator decision stream, **Copy dump** JSON. Filters are searchable **Unit** (`UnitFilter`) and **User** (`UserFilter`). Applied values appear in `AppliedFilterBar` (dismissible chips + **Clear all**). When a unit is selected, the user list is only actors who appear in events/sessions for that unit (from the unit-scoped snapshot lookups) — not every facility user. Removing the unit chip also clears the user filter.
 
 Activity Monitor stays on the raw operational feed (`GET /access-history?view=raw`).
 

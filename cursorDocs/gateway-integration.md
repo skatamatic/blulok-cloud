@@ -383,7 +383,9 @@ Dashboard WebSocket:
 - **Filters:** `{ facility_id, gateway_id?, device_id?, unit_id?, user_id? }`
 - **Updates:** `access_session_trace_update` with `{ event }` (`correlator_decision`, `raw_access_event`, `lock_unlock_event`)
 
-The correlator ring and in-memory pending commands are **local to the Cloud Run instance** that handled the grant/unlock. The UI **Copy dump** button serializes snapshot + live events for debugging Access History duplicates. See [`access-sessions.md`](./access-sessions.md).
+The correlator ring and in-memory pending commands are **local to the Cloud Run instance** that handled the grant/unlock. The UI **Copy dump** button serializes snapshot + live events for debugging Access History duplicates.
+
+Unit and user pickers are the same searchable facility-scoped comboboxes as Access History (`UnitFilter`, `UserFilter`). Applied filters render in `AppliedFilterBar` (chip per filter with remove, plus **Clear all**) rather than option pills under the search fields. When a unit is selected, `UserFilter` is restricted via `allowedUsers` to actors in that unit’s session-trace snapshot (people who actually have events on the unit/device) — not the full facility user directory. See [`access-sessions.md`](./access-sessions.md).
 
 ### Storage
 

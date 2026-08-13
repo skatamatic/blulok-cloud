@@ -70,30 +70,20 @@ function lockTone(status?: string | null): 'green' | 'amber' | 'rose' | 'gray' {
   return 'gray';
 }
 
-export function TraceSelect({
+export function TraceFilterField({
   label,
-  value,
-  onChange,
   children,
 }: {
   label: string;
-  value: string;
-  onChange: (value: string) => void;
   children: ReactNode;
 }) {
   return (
-    <label className="flex min-w-[10rem] flex-1 flex-col gap-1">
+    <div className="flex min-w-[12rem] flex-1 flex-col gap-1">
       <span className="text-[11px] font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">
         {label}
       </span>
-      <select
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        className="rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 px-2.5 py-1.5 text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-[#147FD4]/40"
-      >
-        {children}
-      </select>
-    </label>
+      {children}
+    </div>
   );
 }
 

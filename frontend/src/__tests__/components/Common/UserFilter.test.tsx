@@ -101,6 +101,8 @@ describe('UserFilter', () => {
         expect.objectContaining({
           facility: 'fac-99',
           role: 'tenant',
+          limit: 20,
+          offset: 0,
         })
       );
     });
@@ -152,5 +154,45 @@ describe('UserFilter', () => {
       expect(screen.queryByText(/A One/i)).not.toBeInTheDocument();
     });
     expect(screen.getByText(/B Two/i)).toBeInTheDocument();
+  });
+
+  it('clears the selection via All users when allowEmpty is set', async () => {
+    const onChange = jest.fn();
+    const user = userEvent.setup();
+    render(
+      <UserFilter
+        value="user-1"
+        onChange={onChange}
+        facilityId="fac-99"
+        allowEmpty
+        emptyLabel="All users"
+        placeholder="Search users..."
+      />,
+    );
+
+    await waitFor(() => {
+      expect(mockGetUsers).toHaveBeenCalled();
+    });
+
+    await user.click(screen.getByPlaceholderText('Search users...'));
+    await user.click(await screen.findByRole('button', { name: /all users/i }));
+    expect(onChange).toHaveBeenCalledWith('');
+  });
+
+  it('lists only allowedUsers and does not call getUsers', async () => {
+    const user = userEvent.setup();
+    render(
+      <UserFilter
+        value=""
+        onChange={jest.fn()}
+        allowedUsers={[{ id: 'u1', name: 'Tester One', email: 't1@blulok.com' }]}
+        placeholder="Users with events on this unit..."
+      />,
+    );
+
+    expect(mockGetUsers).not.toHaveBeenCalled();
+    await user.click(screen.getByPlaceholderText('Users with events on this unit...'));
+    expect(await screen.findByText(/Tester One/)).toBeInTheDocument();
+    expect(screen.queryByText(/Taylor Morgan/i)).not.toBeInTheDocument();
   });
 });
