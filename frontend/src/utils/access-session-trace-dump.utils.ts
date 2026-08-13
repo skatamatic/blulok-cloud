@@ -55,11 +55,11 @@ export function eventMatchesClientFilters(
 
 export function lookupUsersToFilterUsers(
   users: AccessSessionTraceSnapshot['lookups']['users'] | undefined,
-): Array<{ id: string; name?: string | null; email?: string | null }> {
+): Array<{ id: string; name?: string; email?: string }> {
   return Object.values(users || {}).map((user) => ({
     id: user.id,
-    name: user.name,
-    email: user.email,
+    name: user.name ?? undefined,
+    email: user.email ?? undefined,
   }));
 }
 
