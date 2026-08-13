@@ -636,5 +636,5 @@ curl -sS -X POST "$API_BASE/api/v1/internal/gateway/access-events" \
 
 - [`gateway-integration.md`](./gateway-integration.md) — WebSocket auth, PROXY tunnel, recovery, telemetry
 - [`gateway-device-inventory-payload.md`](./gateway-device-inventory-payload.md) — `devices/inventory` and `devices/state` field reference
-- [`access-notifications-activity-apis.md`](./access-notifications-activity-apis.md) — operator REST/WebSocket for activity & access history
+- [`access-sessions.md`](./access-sessions.md) — session correlation, Access History, Gateway Session trace dump
 - [`route-pass-jwt.md`](./route-pass-jwt.md) — route pass format validated before `route_pass_*` denial reasons

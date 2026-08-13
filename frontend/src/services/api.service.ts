@@ -526,6 +526,14 @@ class ApiService {
     return response.data;
   }
 
+  async getGatewaySessionTrace(
+    gatewayId: string,
+    params?: { user_id?: string; device_id?: string; unit_id?: string }
+  ): Promise<import('@/types/access-session-trace.types').AccessSessionTraceResponse> {
+    const response = await this.api.get(`/gateways/${gatewayId}/session-trace`, { params });
+    return response.data;
+  }
+
   async getGatewayWsStatus(facilityId: string) {
     const response = await this.api.get(`/gateways/status/${facilityId}`);
     return response.data as { success: boolean; facilityId: string; connected: boolean; lastPongAt?: number };

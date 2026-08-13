@@ -48,6 +48,7 @@ import { asyncHandler } from '../middleware/error.middleware';
 import { GatewayEventsService } from '@/services/gateway/gateway-events.service';
 import { GatewayDeviceSyncLogService } from '@/services/gateway-device-sync-log.service';
 import { GatewayTelemetryLogService } from '@/services/gateway-telemetry-log.service';
+import { AccessSessionTraceService } from '@/services/access/access-session-trace.service';
 import { sanitizePayloadPath } from '@/utils/gateway-telemetry-log.parser';
 import { parseQueryDateFrom, parseQueryDateTo } from '@/utils/datetime.utils';
 import { parseQueryIntClamped, parseQueryInt, queryString } from '@/utils/query-boolean.util';
@@ -69,6 +70,7 @@ import {
   gatewayStatusUpdateSchema,
   gatewayUpdateSchema,
   gatewayTelemetryLogsQuerySchema,
+  gatewaySessionTraceQuerySchema,
   gatewaySyncLogsQuerySchema,
   gatewayRecoveryEventsQuerySchema,
   gatewayResponseSchema,
@@ -793,6 +795,54 @@ registerGet(
     hasMore: offset + logs.length < total,
   });
 }));
+
+// GET /api/gateways/:id/session-trace — correlator + raw event dump for session debugging
+registerGet(
+  router,
+  '/:id/session-trace',
+  {
+    openApiPath: `${MOUNT}/{id}/session-trace`,
+    tags: ['Gateway'],
+    summary: 'Get access-session debug snapshot for a gateway',
+    security: 'bearer',
+    params: gatewayResourceIdParamSchema,
+    query: gatewaySessionTraceQuerySchema,
+    responses: { 200: gatewayResponseSchema },
+  },
+  requireRoles([UserRole.ADMIN, UserRole.DEV_ADMIN, UserRole.FACILITY_ADMIN]),
+  asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+    const user = req.user!;
+    const gatewayId = String(req.params.id);
+    const gateway = await gatewayModel.findById(gatewayId);
+    if (!gateway) {
+      res.status(404).json({ success: false, message: 'Gateway not found' });
+      return;
+    }
+    if (!gateway.facility_id) {
+      res.status(400).json({ success: false, message: 'Gateway is not assigned to a facility' });
+      return;
+    }
+    if (user.role === UserRole.FACILITY_ADMIN && user.facilityIds) {
+      if (!user.facilityIds.includes(gateway.facility_id)) {
+        res.status(403).json({
+          success: false,
+          message: 'Access denied. You can only access gateways in your assigned facilities.',
+        });
+        return;
+      }
+    }
+
+    const snapshot = await AccessSessionTraceService.getInstance().snapshot({
+      facility_id: gateway.facility_id,
+      gateway_id: gatewayId,
+      user_id: queryString(req.query.user_id),
+      device_id: queryString(req.query.device_id),
+      unit_id: queryString(req.query.unit_id),
+    });
+
+    res.json({ success: true, snapshot });
+  }),
+);
 
 // GET /api/gateways/:id/device-sync-logs — inventory sync audit trail (admin / dev_admin only)
 registerGet(

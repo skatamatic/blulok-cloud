@@ -291,6 +291,13 @@ describe('LockCommandService', () => {
       initiator: { userId: 'user-1', userName: 'Admin' },
       requestedStatus: 'locked',
     });
+    expect(svc.listPendingAttributions({ facilityId: 'fac-1', gatewayId: 'gw-1' })).toEqual([
+      expect.objectContaining({
+        source: 'memory',
+        device_id: 'dev-1',
+        requested_status: 'locked',
+      }),
+    ]);
   });
 
   it('expires one-shot pending attribution after attribution TTL', async () => {

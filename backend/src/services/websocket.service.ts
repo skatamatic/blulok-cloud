@@ -7,6 +7,7 @@ import { logger } from '@/utils/logger';
 import { SubscriptionRegistry } from './subscriptions/subscription-registry';
 import { GatewayTelemetryLogService } from './gateway-telemetry-log.service';
 import { GatewayDeviceSyncLogService } from './gateway-device-sync-log.service';
+import { AccessSessionTraceService } from '@/services/access/access-session-trace.service';
 import { FacilityAccessService } from '@/services/facility-access.service';
 
 function readPositiveMs(envName: string, fallback: number): number {
@@ -139,6 +140,7 @@ export class WebSocketService {
     this.subscriptionRegistry = new SubscriptionRegistry();
     GatewayTelemetryLogService.getInstance().setSubscriptionRegistry(this.subscriptionRegistry);
     GatewayDeviceSyncLogService.getInstance().setSubscriptionRegistry(this.subscriptionRegistry);
+    AccessSessionTraceService.getInstance().setSubscriptionRegistry(this.subscriptionRegistry);
     this.startHeartbeat();
     this.startIdleSweep();
   }

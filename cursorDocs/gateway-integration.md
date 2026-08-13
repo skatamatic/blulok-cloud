@@ -371,6 +371,20 @@ Subscribe on the **operator** `/ws` channel (not `/ws/gateway`):
 
     Facility → Gateway → **Gateway Logs** tab (visible when the user can manage the gateway). Live subscription is active only while that tab is open. Ingest accepts at most **500 lines per request**; the UI display caps at **1,000** rows in memory during live tailing.
 
+### Session trace (access correlator debug)
+
+Facility → Gateway → **Session trace** (same `canManageGateway` gate as Gateway Logs).
+
+`GET /api/v1/gateways/:id/session-trace?user_id=&device_id=&unit_id=` returns a copy-pasteable snapshot: live pending/open sessions, recent sessions, raw `activity_logs` (access/lock/unlock) with unit/device/user joins, in-memory pending lock commands plus durable `cloud_remote` pending sessions, current lock state, lookup maps, and this process’s correlator decision ring. Duplicate-device session clusters are highlighted in `debug.sessions_sharing_device`.
+
+Dashboard WebSocket:
+
+- **Type:** `access_session_trace`
+- **Filters:** `{ facility_id, gateway_id?, device_id?, unit_id?, user_id? }`
+- **Updates:** `access_session_trace_update` with `{ event }` (`correlator_decision`, `raw_access_event`, `lock_unlock_event`)
+
+The correlator ring and in-memory pending commands are **local to the Cloud Run instance** that handled the grant/unlock. The UI **Copy dump** button serializes snapshot + live events for debugging Access History duplicates. See [`access-sessions.md`](./access-sessions.md).
+
 ### Storage
 
 Table **`gateway_telemetry_logs`**: `id`, `gateway_id`, `facility_id`, `logged_at`, `payload` (JSON), `source` (default `gateway_ws`), `created_at`. Index `(gateway_id, logged_at DESC)`. Retention trim runs after each ingest batch.

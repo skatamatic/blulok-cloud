@@ -242,6 +242,12 @@ export class AccessSessionModel {
     return this.findById(id);
   }
 
+  /** Drop a session that was created in-process and never linked to activity_logs. */
+  async deleteUnlinked(id: string): Promise<void> {
+    const knex = this.db.connection;
+    await knex('access_sessions').where('id', id).del();
+  }
+
   async findOpenByDevice(deviceId: string): Promise<AccessSession | null> {
     const knex = this.db.connection;
     const row = await knex('access_sessions')

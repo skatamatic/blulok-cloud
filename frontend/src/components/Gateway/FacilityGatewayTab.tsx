@@ -13,6 +13,7 @@ import {
   DocumentTextIcon,
   PencilIcon,
   ArrowRightOnRectangleIcon,
+  ViewfinderCircleIcon,
 } from '@heroicons/react/24/outline';
 import GatewayFirmwareTab from './GatewayFirmwareTab';
 import { useFacilityGatewayRecovery } from '@/hooks/useFacilityGatewayRecovery';
@@ -21,6 +22,7 @@ import RecoveryBlockingBanner from './RecoveryBlockingBanner';
 import { GatewayDeviceSyncHistory } from './GatewayDeviceSyncHistory';
 import { GatewayManualSyncPanel } from './GatewayManualSyncPanel';
 import { GatewayTelemetryLogsTab } from './GatewayTelemetryLogsTab';
+import { GatewaySessionTraceTab } from './GatewaySessionTraceTab';
 import { apiService } from '@/services/api.service';
 import { useToast } from '@/contexts/ToastContext';
 import { usePromptDialog } from '@/hooks/usePromptDialog';
@@ -62,7 +64,7 @@ function FacilityGatewayTab({ facilityId, facilityName, canManageGateway, liveSt
   const [editingGatewayName, setEditingGatewayName] = useState(false);
   const [gatewayNameDraft, setGatewayNameDraft] = useState('');
   const [savingGatewayName, setSavingGatewayName] = useState(false);
-  const [activeTab, setActiveTab] = useState<'overview' | 'sync' | 'inventory-sync' | 'gateway-logs' | 'firmware' | 'swap-recovery' | 'devtools'>('overview');
+  const [activeTab, setActiveTab] = useState<'overview' | 'sync' | 'inventory-sync' | 'gateway-logs' | 'session-trace' | 'firmware' | 'swap-recovery' | 'devtools'>('overview');
 
   // Debug panel state
   const [fallbackJwtInput, setFallbackJwtInput] = useState('');
@@ -319,6 +321,9 @@ function FacilityGatewayTab({ facilityId, facilityName, canManageGateway, liveSt
       : []),
     ...(canManageGateway
       ? [{ id: 'gateway-logs' as const, label: 'Gateway Logs', icon: DocumentTextIcon }]
+      : []),
+    ...(canManageGateway
+      ? [{ id: 'session-trace' as const, label: 'Session trace', icon: ViewfinderCircleIcon }]
       : []),
     { id: 'firmware' as const, label: 'Firmware', icon: CpuChipIcon },
     ...(canManageGateway
@@ -1207,9 +1212,20 @@ function FacilityGatewayTab({ facilityId, facilityName, canManageGateway, liveSt
           />
         )}
         {activeTab === 'gateway-logs' && canManageGateway && !gateway && (
-          <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-8 text-center">
-            <ServerIcon className="h-12 w-12 text-gray-400 mx-auto mb-4" />
-            <p className="text-gray-600 dark:text-gray-400">Bind a gateway via Swap / Recovery to view operational telemetry logs.</p>
+          <div className="rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 p-8 text-center text-sm text-gray-500 dark:text-gray-400">
+            No gateway is assigned to this facility yet.
+          </div>
+        )}
+        {activeTab === 'session-trace' && canManageGateway && gateway && (
+          <GatewaySessionTraceTab
+            gatewayId={gateway.id}
+            facilityId={facilityId}
+            liveEnabled={activeTab === 'session-trace'}
+          />
+        )}
+        {activeTab === 'session-trace' && canManageGateway && !gateway && (
+          <div className="rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 p-8 text-center text-sm text-gray-500 dark:text-gray-400">
+            No gateway is assigned to this facility yet.
           </div>
         )}
         {activeTab === 'firmware' && gateway && (

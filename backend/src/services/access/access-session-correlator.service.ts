@@ -202,6 +202,34 @@ export class AccessSessionCorrelator {
       return updated || pending;
     }
 
+    // Repeat on-site grants (mobile key often fires twice) must not spawn a second
+    // pending that later times out beside the real open/close.
+    if (
+      pending
+      && pending.origin === 'on_site'
+      && isCoalesceableMethod(params.method)
+      && pending.method === params.method
+      && sameActor(pending, params.actor)
+    ) {
+      const expiresAt = new Date(Date.now() + ON_SITE_GRANT_TO_OPEN_TTL_SEC * 1000);
+      const updated = await this.model.update(pending.id, {
+        attempt_count: pending.attempt_count + 1,
+        unit_id: params.unitId || pending.unit_id,
+        gateway_id: params.gatewayId || pending.gateway_id,
+        correlation_id: params.correlationId || pending.correlation_id,
+        expires_at: expiresAt,
+        actor_type: params.actor?.type || pending.actor_type,
+        actor_id: params.actor?.id || pending.actor_id,
+        actor_name: params.actor?.name || pending.actor_name,
+        actor_role: params.actor?.role || pending.actor_role,
+        metadata: this.mergeMetadata(pending.metadata, {
+          ...params.metadata,
+          coalesced_pending_grant: true,
+        }),
+      });
+      return updated || pending;
+    }
+
     // devices/state often arrives before the gateway grant. Upgrade the anonymous
     // local open instead of spawning a pending that will time out beside it.
     if (
@@ -295,25 +323,10 @@ export class AccessSessionCorrelator {
 
     const openedAt = params.occurredAt || new Date();
     if (pending) {
-      const updated = await this.model.update(pending.id, {
-        state: 'open',
-        outcome: 'granted',
-        opened_at: openedAt,
-        expires_at: null,
-        unit_id: params.unitId || pending.unit_id,
-        gateway_id: params.gatewayId || pending.gateway_id,
-        actor_type: params.actor?.type || pending.actor_type,
-        actor_id: params.actor?.id || pending.actor_id,
-        actor_name: params.actor?.name || pending.actor_name,
-        actor_role: params.actor?.role || pending.actor_role,
-        // Keep pending method (admin_remote / mobile_key / …); devices/state often sends local_device.
-        method: resolveUnlockMethod(params.method, pending.method),
-        metadata: this.mergeMetadata(pending.metadata, params.metadata),
-      });
-      return updated || pending;
+      return this.openPendingSession(pending, params, openedAt);
     }
 
-    return this.model.create({
+    const local = await this.model.create({
       facility_id: params.facilityId,
       unit_id: params.unitId,
       device_id: params.deviceId,
@@ -332,6 +345,42 @@ export class AccessSessionCorrelator {
       opened_at: openedAt,
       metadata: params.metadata,
     });
+
+    // Grant insert can commit between the first pending lookup and this create.
+    const racedPending = await this.model.findPendingByDevice(params.deviceId);
+    if (racedPending && racedPending.id !== local.id) {
+      await this.model.deleteUnlinked(local.id);
+      return this.openPendingSession(racedPending, params, openedAt, {
+        unlocked_after_grant_race: true,
+        discarded_local_open_id: local.id,
+      });
+    }
+
+    return local;
+  }
+
+  private async openPendingSession(
+    pending: AccessSession,
+    params: UnlockStateParams,
+    openedAt: Date,
+    extraMeta?: Record<string, unknown>,
+  ): Promise<AccessSession> {
+    const updated = await this.model.update(pending.id, {
+      state: 'open',
+      outcome: 'granted',
+      opened_at: openedAt,
+      expires_at: null,
+      unit_id: params.unitId || pending.unit_id,
+      gateway_id: params.gatewayId || pending.gateway_id,
+      actor_type: params.actor?.type || pending.actor_type,
+      actor_id: params.actor?.id || pending.actor_id,
+      actor_name: params.actor?.name || pending.actor_name,
+      actor_role: params.actor?.role || pending.actor_role,
+      // Keep pending method (admin_remote / mobile_key / …); devices/state often sends local_device.
+      method: resolveUnlockMethod(params.method, pending.method),
+      metadata: this.mergeMetadata(pending.metadata, { ...params.metadata, ...extraMeta }),
+    });
+    return updated || pending;
   }
 
   /**

@@ -38,9 +38,9 @@ Owned by `AccessSessionCorrelator` (`backend/src/services/access/access-session-
 
 1. **Cloud remote unlock issued** → `pending`, `origin: cloud_remote`, `remote_command_id`, `expires_at = now + facility lock_command_timeout_sec` (or 60s one-shot TTL).
 2. **Cloud failure / timeout / mismatch** → same session → `failed` / `timed_out` (no second row).
-3. **Gateway grant** (`app` / `mobile_key` / `keypad` / `route_pass`) → bump `attempt_count` on matching **open** session (same method + actor); else **attach** to pending `cloud_remote` (takes priority over absorb); else **absorb** a recent anonymous `local` / `local_device` open on the same device (unlock-before-grant race, ~60s window) by upgrading method/actor/`origin: on_site`; else create `pending` `origin: on_site` (60s grant→open TTL).
+3. **Gateway grant** (`app` / `mobile_key` / `keypad` / `route_pass`) → bump `attempt_count` on matching **open** session (same method + actor); else **attach** to pending `cloud_remote` (takes priority over absorb); else **coalesce** a repeat grant into an existing **on-site pending** (same method + actor; refresh `expires_at`, `metadata.coalesced_pending_grant`); else **absorb** a recent anonymous `local` / `local_device` open on the same device (unlock-before-grant race, ~60s window) by upgrading method/actor/`origin: on_site`; else create `pending` `origin: on_site` (60s grant→open TTL).
 4. **Gateway denial** → always a new terminal `denied` session.
-5. **`devices/state` → unlocked** → open newest pending (prefer `remote_command_id`); when state reports generic `local_device`/`automatic`, keep the pending method (`admin_remote`, `mobile_key`, `app`, …); else create `origin: local` open session. Same-state unlocked re-reports that match a pending remote command still open that session (no duplicate activity row).
+5. **`devices/state` → unlocked** → open newest pending (prefer `remote_command_id`); when state reports generic `local_device`/`automatic`, keep the pending method (`admin_remote`, `mobile_key`, `app`, …); else create `origin: local` open session. If a pending grant commits between the first pending lookup and that local create, **discard the unlinked local open** and open the pending (`metadata.unlocked_after_grant_race`). Same-state unlocked re-reports that match a pending remote command still open that session (no duplicate activity row).
 6. **`devices/state` → locked** → close newest open unlock session (set duration). Never create a standalone lock row — attach to the latest unlock session on the device, or synthesize a local access closed at lock time if none exists. Same-state locked re-reports still close live open/pending sessions (no synthesize, no duplicate activity row).
 7. **Sweeper** (~30s) → pending past `expires_at` → `timed_out`.
 
@@ -70,6 +70,7 @@ Prefer the dedicated sessions mount for web UI and new app clients. Legacy `/acc
 | `GET /api/v1/access-history` | **Default raw** event `logs[]`. Transitional `view=sessions` still returns sessions + `logs` alias |
 | `GET /api/v1/access-history/:id` | Prefer session detail when id is a session; else raw activity row |
 | `GET /api/v1/access-history/export` | CSV; pass `view=sessions` for session columns (prefer `/access-sessions/export`) |
+| `GET /api/v1/gateways/:id/session-trace` | Debug snapshot: live/recent sessions, raw `activity_logs`, pending attributions (memory + durable), lock state, lookups, correlator ring. Query `user_id` / `device_id` / `unit_id`. Admin / dev_admin / facility_admin. |
 
 Filters (both mounts): facility/unit/user/device/method/date plus `state=open|pending|…` on sessions.
 
@@ -79,6 +80,7 @@ Subscribe `activity` as before:
 
 - `activity_new` — raw enriched `accessLog` (Activity Monitor / raw view; matches `GET /access-history`)
 - `access_session_upsert` — session row + `changed` fields for in-place pending → open → closed updates (Access History UI)
+- `access_session_trace` — correlator decisions + raw access/lock/unlock events for the Gateway **Session trace** tab (`access_session_trace_update`). Facility-scoped; optional `gateway_id` / `device_id` / `unit_id` / `user_id`. Ring is process-local (Cloud Run instance).
 
 ## UI
 
@@ -95,6 +97,7 @@ Access History page and Access History widget call **`GET /access-sessions`**:
 - Widget (medium+): compact horizontal rows — **unit · method title** left, **status pill** top-right, user · time below; click expands timeline. Small size stays a dense strip without expand.
 - **Needs attention** chip → `state=open` (clears date range so all open locks appear). Auto-selected when `currently_open > 0` until the operator clears it. Rose active pill + banner make the filter obvious.
 - **Raw events** toggle → `GET /access-history?view=raw` (**DEV_ADMIN only**). Everyone else stays on sessions.
+- **Session trace** (Facility → Gateway → Session trace, `canManageGateway`): live lock state, pending attributions, live/recent sessions, raw activity JSON + enrichment lookups, correlator decision stream, filter by unit/device/user, **Copy dump** JSON for debugging duplicate history rows.
 
 Activity Monitor stays on the raw operational feed (`GET /access-history?view=raw`).
 

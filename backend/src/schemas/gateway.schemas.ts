@@ -68,6 +68,12 @@ export const gatewayTelemetryLogsQuerySchema = Joi.object({
   source: Joi.string().valid('gateway_ws', 'cloud_system').optional(),
 });
 
+export const gatewaySessionTraceQuerySchema = Joi.object({
+  user_id: Joi.string().uuid().optional(),
+  device_id: Joi.string().uuid().optional(),
+  unit_id: Joi.string().uuid().optional(),
+});
+
 export const gatewaySyncLogsQuerySchema = Joi.object({
   limit: Joi.number().integer().min(1).max(100).optional(),
   offset: Joi.number().integer().min(0).optional(),

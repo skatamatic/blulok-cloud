@@ -16,6 +16,7 @@ import { NotificationSubscriptionManager } from './notification-subscription-man
 import { ActivitySubscriptionManager } from './activity-subscription-manager';
 import { GatewayTelemetryLogSubscriptionManager } from './gateway-telemetry-log-subscription-manager';
 import { GatewayDeviceSyncLogSubscriptionManager } from './gateway-device-sync-log-subscription-manager';
+import { AccessSessionTraceSubscriptionManager } from './access-session-trace-subscription-manager';
 import { FirmwarePushSubscriptionManager } from './firmware-push-subscription-manager';
 import { GatewayRecoverySubscriptionManager } from './gateway-recovery-subscription-manager';
 import { GatewayRecoveryStatusSubscriptionManager } from './gateway-recovery-status-subscription-manager';
@@ -79,6 +80,7 @@ export class SubscriptionRegistry {
     this.registerManager(new GatewayRecoveryStatusSubscriptionManager());
     this.registerManager(new GatewayTelemetryLogSubscriptionManager());
     this.registerManager(new GatewayDeviceSyncLogSubscriptionManager());
+    this.registerManager(new AccessSessionTraceSubscriptionManager());
     this.registerManager(new AccessCodesSubscriptionManager());
     this.registerManager(new AccessCodePushStateSubscriptionManager());
     this.registerManager(new KeySharingSubscriptionManager());

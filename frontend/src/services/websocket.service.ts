@@ -270,6 +270,9 @@ class WebSocketService implements IWebSocketService {
         case 'gateway_telemetry_log_update':
           this.handleGatewayTelemetryLogUpdate(message);
           break;
+        case 'access_session_trace_update':
+          this.handleAccessSessionTraceUpdate(message);
+          break;
         case 'gateway_device_sync_log_update':
           this.handleGatewayDeviceSyncLogUpdate(message);
           break;
@@ -404,6 +407,13 @@ class WebSocketService implements IWebSocketService {
 
   private handleGatewayTelemetryLogUpdate(message: { data?: unknown }): void {
     const handlers = this.messageHandlers.get('gateway_telemetry_logs');
+    if (handlers) {
+      handlers.forEach(handler => handler(message.data));
+    }
+  }
+
+  private handleAccessSessionTraceUpdate(message: { data?: unknown }): void {
+    const handlers = this.messageHandlers.get('access_session_trace');
     if (handlers) {
       handlers.forEach(handler => handler(message.data));
     }

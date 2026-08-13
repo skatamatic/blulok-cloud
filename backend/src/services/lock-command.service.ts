@@ -533,6 +533,65 @@ export class LockCommandService {
   }
 
   /**
+   * In-memory pending remote commands for this process (Cloud Run instance-local).
+   * Used by the gateway Session trace snapshot.
+   */
+  public listPendingAttributions(filters: {
+    facilityId: string;
+    gatewayId?: string;
+    deviceId?: string;
+    unitId?: string;
+    userId?: string;
+    gatewayDeviceIds?: Set<string>;
+  }): Array<{
+    source: 'memory';
+    device_id: string;
+    command_id: string;
+    requested_status: 'locked' | 'unlocked';
+    facility_id: string;
+    gateway_id?: string | null;
+    unit_id?: string | null;
+    initiator?: { userId: string; userName: string; role: string };
+  }> {
+    const rows: Array<{
+      source: 'memory';
+      device_id: string;
+      command_id: string;
+      requested_status: 'locked' | 'unlocked';
+      facility_id: string;
+      gateway_id?: string | null;
+      unit_id?: string | null;
+      initiator?: { userId: string; userName: string; role: string };
+    }> = [];
+
+    for (const [deviceId, pending] of this.pendingCommands.entries()) {
+      if (pending.facilityId !== filters.facilityId) continue;
+      if (filters.gatewayId && pending.gatewayId !== filters.gatewayId) continue;
+      if (filters.deviceId && deviceId !== filters.deviceId) continue;
+      if (filters.unitId && pending.unitId !== filters.unitId) continue;
+      if (filters.userId && pending.initiator?.userId !== filters.userId) continue;
+      if (
+        filters.gatewayDeviceIds
+        && filters.gatewayDeviceIds.size > 0
+        && !filters.gatewayDeviceIds.has(deviceId)
+      ) {
+        continue;
+      }
+      rows.push({
+        source: 'memory',
+        device_id: deviceId,
+        command_id: pending.commandId,
+        requested_status: pending.requestedStatus,
+        facility_id: pending.facilityId,
+        gateway_id: pending.gatewayId,
+        unit_id: pending.unitId,
+        initiator: pending.initiator,
+      });
+    }
+    return rows;
+  }
+
+  /**
    * Prefer in-memory pending (same instance), else durable access_sessions pending row.
    * Used when state sync may land on a different Cloud Run instance than the command.
    */

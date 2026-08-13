@@ -16,6 +16,7 @@ jest.mock('@/models/access-session.model', () => {
   });
 
   class AccessSessionModel {
+    static missPendingOnce = false;
     async create(data: any) {
       const id = `session-${++seq}`;
       const now = data.started_at || new Date();
@@ -59,11 +60,16 @@ jest.mock('@/models/access-session.model', () => {
       return row ? parse(row) : null;
     }
 
-    async update(id: string, data: any) {
+    async update(id: string, data: Record<string, unknown>) {
+      const row = store.find((s) => s.id === id);
+      if (!row) return null;
+      Object.assign(row, data, { updated_at: new Date() });
+      return parse(row);
+    }
+
+    async deleteUnlinked(id: string) {
       const idx = store.findIndex((s) => s.id === id);
-      if (idx < 0) return null;
-      store[idx] = { ...store[idx], ...data, updated_at: new Date() };
-      return parse(store[idx]);
+      if (idx >= 0) store.splice(idx, 1);
     }
 
     async findOpenByDevice(deviceId: string) {
@@ -91,6 +97,10 @@ jest.mock('@/models/access-session.model', () => {
     }
 
     async findPendingByDevice(deviceId: string) {
+      if (AccessSessionModel.missPendingOnce) {
+        AccessSessionModel.missPendingOnce = false;
+        return null;
+      }
       const rows = store
         .filter((s) => s.device_id === deviceId && s.state === 'pending')
         .sort((a, b) => b.started_at.getTime() - a.started_at.getTime());
@@ -113,6 +123,7 @@ jest.mock('@/models/access-session.model', () => {
     static _reset() {
       store.length = 0;
       seq = 0;
+      AccessSessionModel.missPendingOnce = false;
     }
   }
 
@@ -479,5 +490,67 @@ describe('AccessSessionCorrelator', () => {
     expect(granted.id).not.toBe(local.id);
     expect(granted.state).toBe('pending');
     expect(granted.method).toBe('mobile_key');
+  });
+
+  it('coalesces a second on-site grant into the existing pending instead of a duplicate', async () => {
+    const first = await correlator.onGrantAccessEvent({
+      facilityId: 'fac-1',
+      deviceId: 'dev-1',
+      deviceType: 'blulok',
+      method: 'mobile_key',
+      actor: { type: 'user', id: 'u1', name: 'Tester One', role: 'tenant' },
+    });
+    expect(first.state).toBe('pending');
+
+    const second = await correlator.onGrantAccessEvent({
+      facilityId: 'fac-1',
+      deviceId: 'dev-1',
+      deviceType: 'blulok',
+      method: 'mobile_key',
+      actor: { type: 'user', id: 'u1', name: 'Tester One', role: 'tenant' },
+    });
+
+    expect(second.id).toBe(first.id);
+    expect(second.state).toBe('pending');
+    expect(second.attempt_count).toBe(2);
+
+    const opened = await correlator.onDeviceUnlocked({
+      facilityId: 'fac-1',
+      deviceId: 'dev-1',
+      deviceType: 'blulok',
+      method: 'local_device',
+    });
+    expect(opened.id).toBe(first.id);
+    expect(opened.state).toBe('open');
+    expect(opened.method).toBe('mobile_key');
+  });
+
+  it('opens the raced pending grant instead of leaving a local open beside it', async () => {
+    const pending = await correlator.onGrantAccessEvent({
+      facilityId: 'fac-1',
+      deviceId: 'dev-1',
+      deviceType: 'blulok',
+      method: 'mobile_key',
+      actor: { type: 'user', id: 'u1', name: 'Tester One', role: 'tenant' },
+    });
+
+    const modelMod = jest.requireMock('@/models/access-session.model') as {
+      AccessSessionModel: { missPendingOnce: boolean };
+      __store: Array<{ id: string; device_id: string }>;
+    };
+    modelMod.AccessSessionModel.missPendingOnce = true;
+
+    const opened = await correlator.onDeviceUnlocked({
+      facilityId: 'fac-1',
+      deviceId: 'dev-1',
+      deviceType: 'blulok',
+      method: 'local_device',
+    });
+
+    expect(opened.id).toBe(pending.id);
+    expect(opened.state).toBe('open');
+    expect(opened.method).toBe('mobile_key');
+    expect(opened.metadata?.unlocked_after_grant_race).toBe(true);
+    expect(modelMod.__store.filter((s) => s.device_id === 'dev-1')).toHaveLength(1);
   });
 });

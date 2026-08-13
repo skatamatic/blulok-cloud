@@ -435,7 +435,7 @@ Operator **sessions** view shows a single row with lifecycle `pending → open �
 | Inbound | State sync unlock settles pending command | `unlock` | `local_device` + `metadata.correlated_remote` | Same initiator (`initiated_by`) |
 | Local re-lock | Later physical lock (no remote lock product) | `lock` | `local_device` | None (`—`) |
 
-See [`access-sessions.md`](./access-sessions.md) for correlation rules, pending TTL, and WebSocket `access_session_upsert`.  
+See [`access-sessions.md`](./access-sessions.md) for correlation rules, pending TTL, WebSocket `access_session_upsert`, and the Gateway **Session trace** dump (`GET /api/v1/gateways/:id/session-trace`).  
 **App developers migrating off raw history:** [`access-sessions-app-guide.md`](./access-sessions-app-guide.md).
 
 UI session labels: Waiting for unlock → Open now → Closed · duration. Expanded timeline: remote = Requested → Opened → Locked (icons); keypad/app = Unlocked → Locked (no Requested/Granted/Opened split); timeouts Requested → Timed out; pending remotes show Waiting for device to unlock. Occupied-unit override sets `tenant_unlock_override` / `occupied_unit_override` and renders with an amber row wash, Override pill, and reason subtitle (no left accent bar).
