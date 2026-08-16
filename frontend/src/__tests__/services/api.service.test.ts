@@ -1315,4 +1315,190 @@ describe('APIService', () => {
       expect(websocketService.disconnect).not.toHaveBeenCalled();
     });
   });
+
+  describe('coverage lift: devices, dashboards, recovery, access codes', () => {
+    const ok = { data: { success: true } };
+
+    it('covers device inventory and assignment helpers', async () => {
+      mockAxios.get.mockResolvedValue(ok);
+      mockAxios.post.mockResolvedValue(ok);
+      mockAxios.put.mockResolvedValue(ok);
+      mockAxios.delete.mockResolvedValue(ok);
+
+      await apiService.getDevices({ facility_id: 'f1' });
+      await apiService.getBluLokDevice('d1');
+      await apiService.getAccessControlDevice('ac1');
+      await apiService.getFacilityDeviceHierarchy('f1');
+      await apiService.getDeviceDenylist('d1');
+      await apiService.pruneDenylist();
+      await apiService.getUserRoutePassHistory('u1', { limit: 5 });
+      await apiService.createAccessControlDevice({ name: 'x' } as any);
+      await apiService.updateAccessControlDevice('ac1', { name: 'y' } as any);
+      await apiService.updateAccessControlDeviceMetadata('ac1', { label: 'z' } as any);
+      await apiService.updateBluLokDeviceMetadata('d1', { label: 'z' } as any);
+      await apiService.createBluLokDevice({ serial: 's' });
+      await apiService.updateDeviceStatus('blulok', 'd1', 'online');
+      await apiService.getUnassignedDevices('f1');
+      await apiService.assignDeviceToUnit('d1', 'u1');
+      await apiService.unassignDeviceFromUnit('d1');
+      await apiService.removeBluLokDeviceFromCloudInventory('d1');
+      await apiService.removeAccessControlDeviceFromCloudInventory('ac1');
+      await apiService.removeNetworkInfraDeviceFromCloudInventory('n1');
+
+      expect(mockAxios.get).toHaveBeenCalledWith('/devices', { params: { facility_id: 'f1' } });
+      expect(mockAxios.delete).toHaveBeenCalledWith('/devices/blulok/d1');
+    });
+
+    it('covers unit and schedule helpers', async () => {
+      mockAxios.get.mockResolvedValue(ok);
+      mockAxios.post.mockResolvedValue(ok);
+      mockAxios.put.mockResolvedValue(ok);
+      mockAxios.delete.mockResolvedValue(ok);
+
+      await apiService.getUnitDetails('u1');
+      await apiService.getUnit('u1');
+      await apiService.createUnit({ unit_number: '1' });
+      await apiService.updateUnit('u1', { unit_number: '2' });
+      await apiService.setUnitOverlock('u1', true);
+      await apiService.deleteUnit('u1');
+      await apiService.getMyUnits();
+      await apiService.getFacilitySchedules('f1');
+      await apiService.getSchedule('f1', 's1');
+      await apiService.createSchedule('f1', { name: 'Always' });
+      await apiService.updateSchedule('f1', 's1', { name: 'X' });
+      await apiService.getScheduleUsage('f1', 's1');
+      await apiService.deleteSchedule('f1', 's1');
+      await apiService.getUserScheduleForFacility('user-1', 'f1');
+
+      expect(mockAxios.get).toHaveBeenCalledWith('/units/u1');
+      expect(mockAxios.delete).toHaveBeenCalledWith('/units/u1');
+    });
+
+    it('covers device groups and access codes', async () => {
+      mockAxios.get.mockResolvedValue(ok);
+      mockAxios.post.mockResolvedValue(ok);
+      mockAxios.put.mockResolvedValue(ok);
+      mockAxios.delete.mockResolvedValue(ok);
+
+      await apiService.getDeviceGroups('f1', 'zone');
+      await apiService.createDeviceGroup({ facility_id: 'f1', name: 'G' });
+      await apiService.updateDeviceGroup('g1', { name: 'G2' });
+      await apiService.getDeviceGroup('g1');
+      await apiService.getDeviceGroupUsers('g1');
+      await apiService.deleteDeviceGroup('g1');
+      await apiService.addDeviceGroupMember('g1', { deviceId: 'd1', deviceType: 'blulok' });
+      await apiService.removeDeviceGroupMember('g1', 'd1', 'blulok');
+      await apiService.getAccessCodeConfig('f1');
+      await apiService.updateAccessCodeConfig('f1', { enabled: true } as any);
+      await apiService.getAccessCodePushState('f1');
+      await apiService.getAccessCodeGroupConfig('g1');
+      await apiService.updateAccessCodeGroupConfig('g1', {} as any);
+      await apiService.getAccessCodes('f1', 'sched');
+      await apiService.rotateAccessCodes({ facility_id: 'f1' });
+      await apiService.setManualAccessCode({
+        facility_id: 'f1',
+        scope_type: 'device',
+        code: '1234',
+      });
+      await apiService.pushAccessCodesToGateway('f1');
+      await apiService.getMyAccessCodes('f1');
+      await apiService.getAppAccessCodes();
+
+      expect(mockAxios.post).toHaveBeenCalledWith('/access-codes/push/f1', {});
+    });
+
+    it('covers saved dashboards, assignments, and invites', async () => {
+      mockAxios.get.mockResolvedValue(ok);
+      mockAxios.post.mockResolvedValue(ok);
+      mockAxios.put.mockResolvedValue(ok);
+      mockAxios.patch.mockResolvedValue(ok);
+      mockAxios.delete.mockResolvedValue(ok);
+
+      await apiService.saveDashboard([{ id: 'p1', widgets: [] }] as any);
+      await apiService.resetWidgetLayoutDefaults();
+      await apiService.listSavedDashboards();
+      await apiService.createSavedDashboard({ name: 'Ops' });
+      await apiService.updateSavedDashboardSnapshot('sd1');
+      await apiService.renameSavedDashboard('sd1', { name: 'Ops 2' });
+      await apiService.deleteSavedDashboard('sd1');
+      await apiService.loadSavedDashboard('sd1', 'f1');
+      await apiService.listDashboardAssignments();
+      await apiService.createDashboardAssignment({
+        savedDashboardId: 'sd1',
+        scope: 'global',
+        targetRole: 'admin',
+      } as any);
+      await apiService.updateDashboardAssignment('a1', { priority: 2 } as any);
+      await apiService.deleteDashboardAssignment('a1');
+      await apiService.resendUserInvite('u1');
+      await apiService.resetUserAccount('u1');
+      await apiService.sendTestNotifications({ toEmail: 'a@b.com' });
+      await apiService.testNotificationConnection();
+      await apiService.hideAllNotifications('f1');
+      await apiService.getAccessHistoryById('id1');
+      await apiService.getAccessHistoryById('id1', { view: 'raw' });
+
+      expect(mockAxios.post).toHaveBeenCalledWith('/users/u1/reset-account');
+      expect(mockAxios.patch).toHaveBeenCalledWith('/saved-dashboards/sd1', { name: 'Ops 2' });
+    });
+
+    it('covers gateway ops, session trace, recovery, and firmware extras', async () => {
+      mockAxios.get.mockResolvedValue(ok);
+      mockAxios.post.mockResolvedValue(ok);
+      mockAxios.put.mockResolvedValue(ok);
+      mockAxios.delete.mockResolvedValue(ok);
+
+      await apiService.releaseGateway('g1');
+      await apiService.getGatewayDeviceSyncLogs('g1', { limit: 10 });
+      await apiService.getGatewayTelemetryLogs('g1', { limit: 10 });
+      await apiService.getGatewaySessionTrace('g1', { unit_id: 'u1' });
+      await apiService.getGatewayWsStatus('f1');
+      await apiService.pingGatewayDev('f1');
+      await apiService.backfillAccessSessions({ days: 7, dryRun: true });
+      await apiService.requeueDeadCommand('c1');
+      await apiService.getCommandAttempts('c1');
+      await apiService.sendGatewayCommand({
+        facilityId: 'f1',
+        command: 'LOCK',
+        targetDeviceIds: ['d1'],
+      });
+      await apiService.getFirmwareDeliveryCapabilities();
+      await apiService.getFirmwarePushHistory('g1', 'lock', 10, 5);
+      await apiService.cancelFirmwarePush('p1');
+      await apiService.getFirmwarePushEvents('p1', 10, 0, 'progress');
+      await apiService.listFacilityProvisioningFiles('f1', 10, 5);
+      await apiService.prepareFacilityProvisioningUpload('f1', {
+        filename: 'a.bin',
+        size_bytes: 10,
+      });
+      await apiService.completeFacilityProvisioningUpload('f1', {
+        upload_id: 'up1',
+        filename: 'a.bin',
+        size_bytes: 10,
+      });
+      await apiService.deleteFacilityProvisioningFile('f1', 'file1');
+      expect(apiService.getFacilityProvisioningDownloadPath('f1', 'file1')).toContain(
+        'download',
+      );
+
+      await apiService.getGatewayRecoveryStatus('g1');
+      await apiService.getGatewayRecoveryCandidates('f1');
+      await apiService.getGatewayRecoveryInventoryPreview('g1');
+      await apiService.initiateGatewayRecovery('g1', { includeFirmware: true });
+      await apiService.bypassGatewayRecovery('g1', true);
+      await apiService.cancelGatewayRecovery('g1', 'r1');
+      await apiService.getGatewayRecoveryOptions('g1');
+      await apiService.retryGatewayRecovery('g1');
+      await apiService.getGatewayRecoveryEvents('g1', 'r1', 50);
+
+      await apiService.get('/x');
+      await apiService.post('/x', {});
+      await apiService.put('/x', {});
+      await apiService.delete('/x');
+
+      expect(mockAxios.get).toHaveBeenCalledWith('/gateways/g1/session-trace', {
+        params: { unit_id: 'u1' },
+      });
+    });
+  });
 });

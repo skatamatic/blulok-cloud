@@ -31,41 +31,41 @@ Jest’s **global line %** = `covered lines ÷ all lines in collectCoverageFrom`
 
 Run: `npm run test:coverage:areas` in `backend/` and `frontend/` (prefer `--maxWorkers=2` on constrained machines).
 
-**Last measured:** 2026-08-11 (`jest --coverage --coverageReporters=json-summary --maxWorkers=2`).
+**Last measured:** 2026-08-16 (`jest --coverage --coverageReporters=json-summary --maxWorkers=2`). Rank script: `node scripts/rank-coverage-gaps.mjs`.
 
 ### Backend (from `coverage/coverage-summary.json` total)
 
 | Metric | Coverage |
 |--------|------------|
-| **Lines** | **81.57%** (18433 / 22597) |
-| Statements | 80.17% |
-| Functions | 80.51% |
-| Branches | 64.94% |
+| **Lines** | **80.93%** (18929 / 23389) |
+| Statements | (see HTML report) |
+| Functions | (see HTML report) |
+| Branches | **64.04%** |
 
 **Target:** **>80%** global lines — **MET**.
 
-Vs 2026-08-04 (82.3% / 17727 of 21538): covered lines are up, but the instrumented denominator grew by ~1,059 so headline % eased ~0.7 pts.
+Vs 2026-08-11 (81.57% / 18433 of 22597): covered lines up (+496); denominator +792; headline eased ~0.6 pts.
 
-**Strong buckets:** `schemas` ~97%, `utils` ~82%, `services/gateway` ~81%, `services/access` ~82%, `access-code.service.ts` ~87%.
+**Strong buckets:** `utils` ~80%, `services/gateway` ~81%, `access-code.service.ts` ~87%, many leaf services ≥90%.
 
-**Still below ~80% (examples):** `routes` (~80%), `app-websocket.service.ts` (~68%), `units.service.ts` (~71%), `middleware` (~73%), `firmware` (~77%), `subscriptions` (~77%).
+**Still below ~80% (examples):** `routes` (~78.5%), `app-websocket.service.ts` (~68%), `units.service.ts` (~71%), `middleware` (~74%), `notifications` (~71%), `subscriptions` (~77%), `access` (~78%).
 
-**This run:** 330 / 335 suites passed at measurement time (7 failed, 4 skipped). Those failures were subsequently fixed (stale assertions + phone-invite mock).
+**This run:** all measured suites green at capture time.
 
 ### Frontend (from `coverage/coverage-summary.json` total)
 
 | Metric | Coverage |
 |--------|------------|
-| **Lines** | **72.06%** (13696 / 19005) |
-| Statements | 69.82% |
-| Functions | 61.05% |
-| Branches | 56.27% |
+| **Lines** | **72.52%** (14383 / 19832) |
+| Statements | 70.28% |
+| Functions | 61.67% |
+| Branches | **56.63%** |
 
 **Target:** **70%** lines — **MET**.
 
-Vs 2026-08-04 (72.21% / 13165 of 18230): covered lines up; denominator +775; headline essentially flat.
+Vs 2026-08-11 (72.06% / 13696 of 19005): covered lines up (+687); denominator +827; headline +0.5 pts.
 
-**This run:** 308 / 311 suites passed at measurement time (3 failed). Those failures were subsequently fixed.
+**This run:** 323 / 323 suites, 2334 tests passed.
 
 ### Gateway simulator (Vitest v8, included trees only)
 
@@ -137,6 +137,28 @@ Configured global threshold is **88%** lines — **not met**. `src/main` is the 
 | **widget-content.utils + facility-scope placeholder** | `frontend/src/__tests__/components/Widget/widget-content.utils.test.tsx` |
 
 ---
+
+## Low-hanging targets (2026-08-16 pass) — **DONE ≥75% lines**
+
+Targeted Jest coverage on each file (not a full gate re-run):
+
+| Priority | File | Before → After |
+|----------|------|----------------|
+| S | `frontend/.../access-session-trace-dump.utils.ts` | 48% → **100%** |
+| S | `frontend/.../jwt.utils.ts` | 64% → **100%** |
+| S | `frontend/.../user-role-display.utils.ts` | 53% → **100%** |
+| S | `frontend/.../deviceApiErrors.ts` | 64% → **100%** |
+| S | `frontend/.../dashboard-assignment.utils.ts` | 56% → **100%** |
+| S | `frontend/.../ConfirmDialog.tsx` | 65% → **100%** |
+| L | `frontend/.../api.service.ts` | 50% → **97%** |
+| S | `backend/.../lock-command-attribution.ts` | 17% → **100%** |
+| S | `backend/.../access-session-trace.utils.ts` | 60% → **99%** |
+| M | `backend/.../inventory-sync-error-notification.util.ts` | 69% → **98%** |
+| M | `backend/.../remote-lock-activity-logger.service.ts` | 62% → **100%** |
+| M | `backend/.../account-reset.service.ts` | 69% → **97%** |
+| L | `backend/.../users.routes.ts` | 62% → **75%** |
+
+New/extended suites: dump/jwt/dashboard-assignment/ConfirmDialog; role + deviceApiErrors; api.service batches; lock-command-attribution; session-trace utils; inventory-sync notif; remote-lock logger; account-reset (incl. denylist push); users details + reset-account routes.
 
 ## Path to true **>80%** on every P1/P2 bucket (honest estimate)
 

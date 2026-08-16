@@ -469,6 +469,33 @@ describe('AccessSessionCorrelator', () => {
     expect(granted.actor_name).toBe('FM');
   });
 
+  it('absorbs when grant occurredAt is slightly before DATETIME-rounded opened_at', async () => {
+    // MySQL DATETIME(0) rounds ≥500ms up: 13.850 → 14.000. Grant can still be in :13.xxx.
+    const roundedOpenedAt = new Date('2026-08-16T12:00:14.000Z');
+    const grantOccurredAt = new Date('2026-08-16T12:00:13.700Z');
+    const local = await correlator.onDeviceUnlocked({
+      facilityId: 'fac-1',
+      deviceId: 'dev-1',
+      deviceType: 'blulok',
+      method: 'local_device',
+      occurredAt: roundedOpenedAt,
+    });
+
+    const granted = await correlator.onGrantAccessEvent({
+      facilityId: 'fac-1',
+      deviceId: 'dev-1',
+      deviceType: 'blulok',
+      method: 'mobile_key',
+      actor: { type: 'user', id: 'u1', name: 'FM', role: 'facility_admin' },
+      occurredAt: grantOccurredAt,
+    });
+
+    expect(granted.id).toBe(local.id);
+    expect(granted.origin).toBe('on_site');
+    expect(granted.method).toBe('mobile_key');
+    expect(granted.metadata).toMatchObject({ absorbed_local_open: true });
+  });
+
   it('does not absorb a stale local open into a new grant', async () => {
     const staleOpenAt = new Date(Date.now() - 5 * 60_000);
     const local = await correlator.onDeviceUnlocked({

@@ -5,13 +5,10 @@ import { AuthService } from '@/services/auth.service';
 import { UserRole, CreateUserRequest, UpdateUserRequest, AuthenticatedRequest } from '@/types/auth.types';
 import { asyncHandler, AppError } from '@/middleware/error.middleware';
 import { authenticateToken, requireUserManagement, requireUserManagementOrSelf } from '@/middleware/auth.middleware';
-import { DatabaseService } from '@/services/database.service';
-import { UserDeviceModel } from '@/models/user-device.model';
 import { FirstTimeUserService } from '@/services/first-time-user.service';
 import { logger } from '@/utils/logger';
-import { AppEntryAccessService } from '@/services/passes/app-entry-access.service';
-import { AccessCodeService } from '@/services/access-code.service';
 import { toE164 } from '@/utils/phone.util';
+import { UserDetailsService } from '@/services/users/user-details.service';
 import { runUserActivationSideEffects } from '@/services/user-activation-side-effects.service';
 import { runUserDeactivationSideEffects } from '@/services/user-deactivation-side-effects.service';
 import {
@@ -309,264 +306,56 @@ registerGet(
   },
   requireUserManagementOrSelf,
   asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
-  const { id } = req.params;
-  const db = DatabaseService.getInstance().connection;
+    const { id } = req.params;
 
-  if (!id) {
-    res.status(400).json({
-      success: false,
-      message: 'User ID is required'
-    });
-    return;
-  }
-
-  // Check facility access for facility admins
-  const hasAccess = await checkFacilityAccess(req, id);
-  if (!hasAccess) {
-    res.status(403).json({
-      success: false,
-      message: 'Access denied to this user'
-    });
-    return;
-  }
-
-  const user = await UserModel.findById(id) as User;
-
-  if (!user) {
-    res.status(404).json({
-      success: false,
-      message: 'User not found'
-    });
-    return;
-  }
-
-  // Get user facilities
-  const userFacilities = await db('user_facility_associations as ufa')
-    .join('facilities as f', 'ufa.facility_id', 'f.id')
-    .select(
-      'f.id as facility_id',
-      'f.name as facility_name',
-      'f.address as facility_address'
-    )
-    .where('ufa.user_id', id)
-    .orderBy('f.name');
-
-  // Get units for each facility that the user has access to
-  const facilityIds = userFacilities.map(f => f.facility_id);
-  const facilitiesWithUnits = [];
-
-  if (facilityIds.length > 0) {
-    const unitsData = await db('unit_assignments as ua')
-      .join('units as u', 'ua.unit_id', 'u.id')
-      .leftJoin('blulok_devices as bd', 'u.id', 'bd.unit_id')
-      .select(
-        'u.facility_id',
-        'u.id as unit_id',
-        'u.unit_number',
-        'u.unit_type',
-        'ua.is_primary',
-        'bd.id as device_id',
-        'bd.device_serial',
-        'bd.lock_status',
-        'bd.device_status',
-        'bd.battery_level'
-      )
-      .where('ua.tenant_id', id)
-      .whereIn('u.facility_id', facilityIds)
-      .orderBy('u.unit_number');
-
-    // Combine facilities with their units
-    for (const facility of userFacilities) {
-      const facilityData = {
-        ...facility,
-        units: unitsData.filter(u => u.facility_id === facility.facility_id).map(u => ({
-          id: u.unit_id,
-          unitNumber: u.unit_number,
-          unitType: u.unit_type,
-          isPrimary: u.is_primary,
-          device: u.device_id ? {
-            id: u.device_id,
-            device_serial: u.device_serial,
-            lock_status: u.lock_status,
-            device_status: u.device_status,
-            battery_level: u.battery_level
-          } : undefined
-        }))
-      };
-      facilitiesWithUnits.push(facilityData);
-    }
-  }
-
-  // facilitiesWithUnits is already properly structured
-
-  // Registered mobile app devices (UserDevice rows). Admins see any user; tenants see self.
-  let userDevices: any[] = [];
-  let accessControlDevices: any[] = [];
-  const isSelfRequest = req.user!.userId === id;
-  const canLoadUserDevices = AuthService.isAdmin(req.user!.role) || isSelfRequest;
-  if (canLoadUserDevices) {
-    const userDeviceModel = new UserDeviceModel();
-    userDevices = await userDeviceModel.listByUser(id);
-
-    let lockAssociations: any[] = [];
-    let distributionErrors: any[] = [];
-
-    try {
-      lockAssociations = await db('device_lock_associations as dla')
-        .join('blulok_devices as bd', 'dla.lock_id', 'bd.id')
-        .join('units as u', 'bd.unit_id', 'u.id')
-        .join('facilities as f', 'u.facility_id', 'f.id')
-        .select(
-          'dla.user_device_id',
-          'bd.id as lock_id',
-          'bd.device_serial',
-          'u.unit_number',
-          'f.name as facility_name',
-          'dla.key_status',
-          'dla.last_error',
-          'dla.key_version',
-          'dla.key_code'
-        )
-        .whereIn('dla.user_device_id', userDevices.map(device => device.id));
-
-      distributionErrors = await db('device_lock_associations')
-        .select('user_device_id', 'last_error', 'updated_at')
-        .whereIn('user_device_id', userDevices.map(device => device.id))
-        .whereNotNull('last_error')
-        .orderBy('updated_at', 'desc');
-    } catch (error) {
-      logger.warn('Failed to load device lock associations', {
-        error: (error as Error)?.message || error,
-      });
+    if (!id) {
+      res.status(400).json({ success: false, message: 'User ID is required' });
+      return;
     }
 
-    for (const device of userDevices) {
-      device.associatedLocks = lockAssociations.filter(lock => lock.user_device_id === device.id);
-      device.distributionErrors = distributionErrors
-        .filter(error => error.user_device_id === device.id)
-        .slice(0, 10);
+    const hasAccess = await checkFacilityAccess(req, id);
+    if (!hasAccess) {
+      res.status(403).json({ success: false, message: 'Access denied to this user' });
+      return;
     }
-  }
 
-  const targetRole = user.role as UserRole;
-  const targetFacilityIds = facilityIds.map((facilityId) => String(facilityId));
-  const codesByDeviceId = new Map<string, Array<{
-    code: string;
-    valid_from: Date;
-    valid_until: Date;
-    schedule_id?: string | null;
-    schedule_name?: string | null;
-  }>>();
+    const user = await UserModel.findById(id) as User;
+    if (!user) {
+      res.status(404).json({ success: false, message: 'User not found' });
+      return;
+    }
 
-  try {
-    const appEntryDeviceIds = await AppEntryAccessService.resolveDeviceIds(db, {
-      userId: id,
-      userRole: targetRole,
-      facilityIds: targetFacilityIds,
+    const isSelfRequest = req.user!.userId === id;
+    const canLoadUserDevices = AuthService.isAdmin(req.user!.role) || isSelfRequest;
+
+    const enrichment = await UserDetailsService.getInstance().loadUserDetails(
+      id,
+      user,
+      { canLoadUserDevices },
+    );
+
+    res.json({
+      success: true,
+      user: {
+        id: user.id,
+        email: user.email,
+        phoneNumber: user.phone_number ?? null,
+        firstName: user.first_name,
+        lastName: user.last_name,
+        role: user.role,
+        isActive: Boolean(user.is_active),
+        simplifiedUi: Boolean(user.simplified_ui),
+        isPlaceholder: Boolean(user.is_placeholder),
+        lastLogin: user.last_login,
+        createdAt: user.created_at,
+        updatedAt: user.updated_at,
+        facilities: enrichment.facilities,
+        devices: enrichment.devices,
+        accessControlDevices: enrichment.accessControlDevices,
+      },
     });
-
-    if (appEntryDeviceIds.length > 0) {
-      const rows = await db('access_control_devices as d')
-        .select(
-          'd.id',
-          'd.name',
-          'd.device_type',
-          'd.location_description',
-          'd.device_serial',
-          'd.relay_channel',
-          'd.access_methods',
-          'g.facility_id',
-        )
-        .join('gateways as g', 'g.id', 'd.gateway_id')
-        .whereIn('d.id', appEntryDeviceIds)
-        .orderBy('d.name', 'asc');
-
-      try {
-        const appCodes = await AccessCodeService.getInstance().getAppCodesForUser(
-          id,
-          targetRole,
-          targetFacilityIds,
-        );
-        appCodes.forEach((pairing) => {
-          const list = codesByDeviceId.get(pairing.device_id) || [];
-          list.push({
-            code: pairing.code,
-            valid_from: pairing.valid_from,
-            valid_until: pairing.valid_until,
-            schedule_id: pairing.schedule_id ?? null,
-            schedule_name: pairing.schedule_name ?? null,
-          });
-          codesByDeviceId.set(pairing.device_id, list);
-        });
-      } catch (codeError) {
-        logger.warn('Failed to load access codes for user details access-control devices', {
-          userId: id,
-          error: (codeError as Error)?.message || codeError,
-        });
-      }
-
-      accessControlDevices = rows.map((row) => {
-        const rawMethods = row.access_methods;
-        let accessMethods: string[] = [];
-        if (Array.isArray(rawMethods)) {
-          accessMethods = rawMethods.map((entry) => String(entry));
-        } else if (typeof rawMethods === 'string') {
-          try {
-            const parsed = JSON.parse(rawMethods) as unknown;
-            if (Array.isArray(parsed)) {
-              accessMethods = parsed.map((entry) => String(entry));
-            }
-          } catch {
-            accessMethods = [];
-          }
-        }
-        return {
-          id: String(row.id),
-          device_id: String(row.id),
-          access_id: String(row.device_serial),
-          relay_channel: Number(row.relay_channel),
-          facility_id: String(row.facility_id),
-          name: String(row.name),
-          device_type: row.device_type,
-          location_description: row.location_description ?? null,
-          access_methods: accessMethods,
-          codes: (codesByDeviceId.get(String(row.id)) || []).sort((left, right) => {
-            const leftSchedule = String(left.schedule_id ?? '');
-            const rightSchedule = String(right.schedule_id ?? '');
-            if (leftSchedule !== rightSchedule) return leftSchedule.localeCompare(rightSchedule);
-            return String(left.code).localeCompare(String(right.code));
-          }),
-        };
-      });
-    }
-  } catch (error) {
-    logger.warn('Failed to load access-control entitlements for user details', {
-      userId: id,
-      error: (error as Error)?.message || error,
-    });
-  }
-
-  res.json({
-    success: true,
-    user: {
-      id: user.id,
-      email: user.email,
-      phoneNumber: user.phone_number ?? null,
-      firstName: user.first_name,
-      lastName: user.last_name,
-      role: user.role,
-      isActive: Boolean(user.is_active),
-      simplifiedUi: Boolean(user.simplified_ui),
-      isPlaceholder: Boolean(user.is_placeholder),
-      lastLogin: user.last_login,
-      createdAt: user.created_at,
-      updatedAt: user.updated_at,
-      facilities: facilitiesWithUnits,
-      devices: userDevices,
-      accessControlDevices: accessControlDevices,
-    }
-  });
-}));
+  }),
+);
 
 registerPost(
   router,

@@ -12,6 +12,7 @@ const createMockQuery = (config: { rows?: any[]; reject?: boolean } = {}) => {
   const promise = reject ? Promise.reject(new Error('mock query failed')) : Promise.resolve(rows);
   const chain: any = {
     join: () => chain,
+    leftJoin: () => chain,
     select: () => chain,
     where: () => chain,
     whereIn: () => chain,
@@ -1187,6 +1188,234 @@ describe('Users Routes', () => {
       expect(response.body.user.devices[0].associatedLocks).toEqual([]);
       expect(response.body.user.devices[0].distributionErrors).toEqual([]);
     }, 15000);
+
+    it('includes facility units and access-control devices on details', async () => {
+      const baseUser = {
+        id: testData.users.tenant.id,
+        email: 'tenant@test.com',
+        first_name: 'Tenant',
+        last_name: 'User',
+        role: 'tenant',
+        is_active: true,
+        last_login: null,
+        created_at: new Date(),
+        updated_at: new Date(),
+      };
+
+      const mockDb = createMockKnex({
+        'user_facility_associations as ufa': {
+          rows: [
+            {
+              facility_id: 'facility-1',
+              facility_name: 'Test Facility',
+              facility_address: null,
+            },
+          ],
+        },
+        'unit_assignments as ua': {
+          rows: [
+            {
+              facility_id: 'facility-1',
+              unit_id: 'unit-1',
+              unit_number: '101',
+              unit_type: 'storage',
+              is_primary: true,
+              device_id: 'lock-1',
+              device_serial: 'SN-1',
+              lock_status: 'locked',
+              device_status: 'online',
+              battery_level: 80,
+            },
+            {
+              facility_id: 'facility-1',
+              unit_id: 'unit-2',
+              unit_number: '102',
+              unit_type: 'storage',
+              is_primary: false,
+              device_id: null,
+              device_serial: null,
+              lock_status: null,
+              device_status: null,
+              battery_level: null,
+            },
+          ],
+        },
+        'access_control_devices as d': {
+          rows: [
+            {
+              id: 'ac-1',
+              name: 'Front gate',
+              device_type: 'door',
+              location_description: 'Lobby',
+              device_serial: 'AC-1',
+              relay_channel: 1,
+              access_methods: '["keypad"]',
+              facility_id: 'facility-1',
+            },
+            {
+              id: 'ac-2',
+              name: 'Side door',
+              device_type: 'door',
+              location_description: null,
+              device_serial: 'AC-2',
+              relay_channel: 2,
+              access_methods: ['app', 'keypad'],
+              facility_id: 'facility-1',
+            },
+            {
+              id: 'ac-3',
+              name: 'Broken methods',
+              device_type: 'door',
+              location_description: null,
+              device_serial: 'AC-3',
+              relay_channel: 3,
+              access_methods: '{not-json',
+              facility_id: 'facility-1',
+            },
+          ],
+        },
+        'device_lock_associations as dla': { rows: [] },
+        'device_lock_associations': { rows: [] },
+      });
+
+      getInstanceSpy = jest
+        .spyOn(DatabaseService, 'getInstance')
+        .mockReturnValue({ connection: mockDb } as any);
+      stubUserRow(UserModel.findById as jest.Mock, baseUser as any);
+      listDevicesSpy = jest
+        .spyOn(UserDeviceModel.prototype, 'listByUser')
+        .mockResolvedValue([]);
+
+      const { AppEntryAccessService } = await import(
+        '@/services/passes/app-entry-access.service'
+      );
+      const resolveSpy = jest
+        .spyOn(AppEntryAccessService, 'resolveDeviceIds')
+        .mockResolvedValue(['ac-1', 'ac-2', 'ac-3']);
+      const { AccessCodeService } = await import('@/services/access-code.service');
+      const codesSpy = jest
+        .spyOn(AccessCodeService.getInstance(), 'getAppCodesForUser')
+        .mockResolvedValue([
+          {
+            device_id: 'ac-1',
+            code: '9999',
+            valid_from: null,
+            valid_until: null,
+            schedule_id: 'sched-b',
+            schedule_name: 'Evening',
+          },
+          {
+            device_id: 'ac-1',
+            code: '1111',
+            valid_from: null,
+            valid_until: null,
+            schedule_id: 'sched-a',
+            schedule_name: 'Morning',
+          },
+        ] as any);
+
+      const response = await request(app)
+        .get(`/api/v1/users/${testData.users.tenant.id}/details`)
+        .set('Authorization', `Bearer ${testData.users.devAdmin.token}`)
+        .timeout(10000)
+        .expect(200);
+
+      expectSuccess(response);
+      expect(response.body.user.facilities[0].units).toHaveLength(2);
+      expect(response.body.user.facilities[0].units[0].device).toBeDefined();
+      expect(response.body.user.facilities[0].units[1].device).toBeUndefined();
+      expect(response.body.user.accessControlDevices).toHaveLength(3);
+      expect(response.body.user.accessControlDevices[0].codes.map((c: any) => c.code)).toEqual([
+        '1111',
+        '9999',
+      ]);
+      resolveSpy.mockRestore();
+      codesSpy.mockRestore();
+    }, 15000);
+
+    it('continues when access-code lookup fails for details', async () => {
+      const baseUser = {
+        id: testData.users.tenant.id,
+        email: 'tenant@test.com',
+        first_name: 'Tenant',
+        last_name: 'User',
+        role: 'tenant',
+        is_active: true,
+        last_login: null,
+        created_at: new Date(),
+        updated_at: new Date(),
+      };
+
+      const mockDb = createMockKnex({
+        'user_facility_associations as ufa': {
+          rows: [{ facility_id: 'facility-1', facility_name: 'F', facility_address: null }],
+        },
+        'unit_assignments as ua': { rows: [] },
+        'access_control_devices as d': {
+          rows: [
+            {
+              id: 'ac-1',
+              name: 'Gate',
+              device_type: 'door',
+              location_description: null,
+              device_serial: 'AC-1',
+              relay_channel: 1,
+              access_methods: null,
+              facility_id: 'facility-1',
+            },
+          ],
+        },
+        'device_lock_associations as dla': { rows: [] },
+        'device_lock_associations': { rows: [] },
+      });
+
+      getInstanceSpy = jest
+        .spyOn(DatabaseService, 'getInstance')
+        .mockReturnValue({ connection: mockDb } as any);
+      stubUserRow(UserModel.findById as jest.Mock, baseUser as any);
+      listDevicesSpy = jest
+        .spyOn(UserDeviceModel.prototype, 'listByUser')
+        .mockResolvedValue([]);
+
+      const { AppEntryAccessService } = await import(
+        '@/services/passes/app-entry-access.service'
+      );
+      const resolveSpy = jest
+        .spyOn(AppEntryAccessService, 'resolveDeviceIds')
+        .mockResolvedValue(['ac-1']);
+      const { AccessCodeService } = await import('@/services/access-code.service');
+      const codesSpy = jest
+        .spyOn(AccessCodeService.getInstance(), 'getAppCodesForUser')
+        .mockRejectedValue(new Error('codes down'));
+
+      const response = await request(app)
+        .get(`/api/v1/users/${testData.users.tenant.id}/details`)
+        .set('Authorization', `Bearer ${testData.users.devAdmin.token}`)
+        .timeout(10000)
+        .expect(200);
+
+      expectSuccess(response);
+      expect(response.body.user.accessControlDevices[0].codes).toEqual([]);
+      resolveSpy.mockRestore();
+      codesSpy.mockRestore();
+    }, 15000);
+  });
+
+  describe('POST /api/v1/users/:id/resend-invite delivery gaps', () => {
+    it('returns 400 when invite has no reachable contact', async () => {
+      const { FirstTimeUserService } = await import('@/services/first-time-user.service');
+      const sendInviteSpy = jest
+        .spyOn(FirstTimeUserService.getInstance(), 'sendInvite')
+        .mockResolvedValue({ delivered: [], warning: undefined } as any);
+
+      const response = await request(app)
+        .post(`/api/v1/users/${testData.users.tenant.id}/resend-invite`)
+        .set('Authorization', `Bearer ${testData.users.devAdmin.token}`)
+        .expect(400);
+
+      expect(response.body.message).toMatch(/no reachable/i);
+      sendInviteSpy.mockRestore();
+    });
   });
 
   describe('DELETE /api/v1/user-devices/admin/:id - Delete User Device', () => {
@@ -1224,6 +1453,79 @@ describe('Users Routes', () => {
         .expect(404);
 
       expectNotFound(response);
+    });
+  });
+
+  describe('POST /api/v1/users/:id/reset-account', () => {
+    it('rejects self-reset, missing user, and access denial', async () => {
+      const self = await request(app)
+        .post(`/api/v1/users/${testData.users.admin.id}/reset-account`)
+        .set('Authorization', `Bearer ${testData.users.admin.token}`)
+        .expect(400);
+      expect(self.body.message).toMatch(/own account/i);
+
+      const missing = await request(app)
+        .post('/api/v1/users/non-existent-id/reset-account')
+        .set('Authorization', `Bearer ${testData.users.devAdmin.token}`)
+        .expect(404);
+      expectNotFound(missing);
+
+      const denied = await request(app)
+        .post(`/api/v1/users/${testData.users.facility2Tenant.id}/reset-account`)
+        .set('Authorization', `Bearer ${testData.users.facilityAdmin.token}`)
+        .expect(403);
+      expectForbidden(denied);
+    });
+
+    it('blocks facility admin from resetting peer facility admins', async () => {
+      const response = await request(app)
+        .post('/api/v1/users/facility-admin-2/reset-account')
+        .set('Authorization', `Bearer ${testData.users.facilityAdmin.token}`)
+        .expect(403);
+      expect(response.body.message).toMatch(/only reset tenant/i);
+    });
+
+    it('resets account for admin with facility access', async () => {
+      const { AccountResetService } = await import('@/services/account-reset.service');
+      const spy = jest
+        .spyOn(AccountResetService.getInstance(), 'resetAndReinvite')
+        .mockResolvedValue({
+          user: { id: testData.users.otherTenant.id } as any,
+          devicesRevoked: 1,
+          inviteSent: true,
+          inviteWarning: 'partial',
+        });
+
+      const response = await request(app)
+        .post(`/api/v1/users/${testData.users.otherTenant.id}/reset-account`)
+        .set('Authorization', `Bearer ${testData.users.devAdmin.token}`)
+        .expect(200);
+
+      expect(response.body.success).toBe(true);
+      expect(response.body.inviteWarning).toBe('partial');
+      expect(spy).toHaveBeenCalledWith(
+        testData.users.otherTenant.id,
+        expect.objectContaining({ performedBy: testData.users.devAdmin.id }),
+      );
+      spy.mockRestore();
+    });
+
+    it('maps known reset failures to 400', async () => {
+      const { AccountResetService } = await import('@/services/account-reset.service');
+      const spy = jest
+        .spyOn(AccountResetService.getInstance(), 'resetAndReinvite')
+        .mockRejectedValue(
+          new Error('Cannot reset a placeholder tenant. Add an email or phone first.'),
+        );
+
+      const response = await request(app)
+        .post(`/api/v1/users/${testData.users.otherTenant.id}/reset-account`)
+        .set('Authorization', `Bearer ${testData.users.devAdmin.token}`)
+        .expect(400);
+
+      expect(response.body.success).toBe(false);
+      expect(response.body.message).toMatch(/placeholder/i);
+      spy.mockRestore();
     });
   });
 });

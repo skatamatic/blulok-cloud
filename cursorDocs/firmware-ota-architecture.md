@@ -4,6 +4,15 @@
 
 The firmware OTA (Over-The-Air) system delivers signed firmware binaries from the cloud to field devices through gateway WebSocket connections. Firmware can target several device types, and the gateway acts as a relay for non-gateway targets.
 
+### Module layout (backend)
+
+| Module | Responsibility |
+|--------|----------------|
+| `firmware.service.ts` | Thin facade — public static API for routes / WS handlers |
+| `firmware-catalog.service.ts` | Upload, init/complete, list, delete, prune/retention |
+| `firmware-push-engine.service.ts` | v1/v2 push execution, ACK, progress, disconnect resume |
+| `firmware-push-session.store.ts` | In-memory active-push Maps and timeout overrides |
+
 ## Target Types
 
 | Target Type       | Description                                      | Delivery Path                                |

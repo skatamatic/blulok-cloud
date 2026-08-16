@@ -74,12 +74,6 @@ import { logger } from '../utils/logger';
 import { DatabaseService } from '../services/database.service';
 import { AccessCodeService } from '@/services/access-code.service';
 import { DeviceGroupService } from '@/services/device-group.service';
-import {
-  normalizeDeviceListSortKey,
-  normalizeNetworkInfraSortKey,
-  sortMergedDeviceList,
-  needsInMemoryDeviceSort,
-} from '@/utils/merged-device-list.utils';
 import { DeviceReachabilityEnrichmentService } from '@/services/device-reachability-enrichment.service';
 import {
   registerGet,
@@ -116,8 +110,6 @@ import {
   removeDeviceResponseSchema,
 } from '@/schemas/devices.schemas';
 
-const DEFAULT_DEVICE_LIST_LIMIT = 30;
-const MAX_DEVICE_LIST_LIMIT = 200;
 const MOUNT = '/api/v1/devices';
 
 const reachabilityEnrichment = () => DeviceReachabilityEnrichmentService.getInstance();
@@ -149,21 +141,6 @@ function applyEffectiveStatusFilter<T extends object>(
   if (!statusFilter) return devices;
   const enricher = reachabilityEnrichment();
   return devices.filter((d) => enricher.matchesEffectiveStatus(d, statusFilter));
-}
-
-function parseListOffset(raw: unknown): number {
-  if (raw === undefined || raw === null || raw === '') return 0;
-  const n = typeof raw === 'number' ? raw : parseInt(String(raw), 10);
-  if (!Number.isFinite(n) || n < 0) return 0;
-  return n;
-}
-
-/** Returns validated limit in [1, max] or undefined if absent/invalid. */
-function parseListLimit(raw: unknown): number | undefined {
-  if (raw === undefined || raw === null || raw === '') return undefined;
-  const n = typeof raw === 'number' ? raw : parseInt(String(raw), 10);
-  if (!Number.isFinite(n) || n < 1) return undefined;
-  return Math.min(Math.floor(n), MAX_DEVICE_LIST_LIMIT);
 }
 
 const router = Router();
@@ -206,201 +183,49 @@ registerGet(
       const user = req.user!;
       const q = req.query as Record<string, unknown>;
       const { facility_id, device_type, status, search } = q;
-      const deviceScope = (q.device_scope as string | undefined) || 'operational';
+      const deviceScope = ((q.device_scope as string | undefined) || 'operational') as 'operational' | 'network_infra' | 'all';
       const sortByParam = (q.sortBy ?? q.sort_by) as string | undefined;
       const sortOrderParam = (q.sortOrder ?? q.sort_order) as string | undefined;
       const projectionRaw = q.projection as string | undefined;
       const projectionId = projectionRaw === 'id';
-      const limitParsed = parseListLimit(q.limit);
-      const offsetNum = parseListOffset(q.offset);
+      const limitParsed = DevicesService.parseListLimit(q.limit);
+      const offsetNum = DevicesService.parseListOffset(q.offset);
 
-      // Restrict facility access based on user role
-      const allowedFacilityId = facility_id as string | undefined;
-      /** When dashboard omits facility_id, scoped users see devices across all assigned facilities (not only the first). */
+      let allowedFacilityId = facility_id as string | undefined;
       let allowedFacilityIds: string[] | undefined;
 
-      // For facility-scoped users, enforce facility restrictions
       if (AuthService.isFacilityScoped(user.role)) {
         if (facility_id && !hasJwtFacilityClaim(user, facility_id as string)) {
           res.status(403).json({ success: false, message: 'Access denied to this facility' });
           return;
         }
-        // If no facility specified, restrict to user's facilities (all of them)
         if (!facility_id) {
           const userFacilityIds = applyFacilityScope(req);
           if (userFacilityIds && userFacilityIds.length > 0) {
             allowedFacilityIds = userFacilityIds;
           } else {
-            // User has no facility access - return empty result
             res.json({ devices: [], total: 0 });
             return;
           }
         }
       }
 
-      const sortKey = normalizeDeviceListSortKey(sortByParam);
-      const order: 'asc' | 'desc' = sortOrderParam === 'desc' ? 'desc' : 'asc';
-      const statusFilter = status as string | undefined;
-
-      if (deviceScope === 'network_infra') {
-        const { GatewayInventoryDeviceSyncService } = await import('@/services/gateway-inventory-device-sync.service');
-        const infraSortKey = normalizeNetworkInfraSortKey(sortByParam);
-        const fetchAllForEffectiveFilter = Boolean(statusFilter);
-        const infraFilters = {
-          search: search as string | undefined,
-          sortBy: infraSortKey as any,
-          sortOrder: order,
-          ...(fetchAllForEffectiveFilter
-            ? {}
-            : {
-                offset: offsetNum,
-                limit: limitParsed ?? (projectionId ? undefined : DEFAULT_DEVICE_LIST_LIMIT),
-              }),
-          ...(allowedFacilityId ? { facility_id: allowedFacilityId } : {}),
-          ...(allowedFacilityIds ? { facility_ids: allowedFacilityIds } : {}),
-        };
-        let { devices: networkInfraDevices } =
-          await GatewayInventoryDeviceSyncService.getInstance().listNetworkInfraDevices(infraFilters);
-
-        if (projectionId) {
-          res.json({
-            success: true,
-            devices: networkInfraDevices.map((d) => ({
-              id: d.id,
-              device_category: d.device_category,
-            })),
-            total: networkInfraDevices.length,
-          });
-          return;
-        }
-
-        networkInfraDevices = await enrichDeviceListRows(networkInfraDevices);
-        if (statusFilter) {
-          networkInfraDevices = applyEffectiveStatusFilter(networkInfraDevices, statusFilter);
-        }
-        const infraTotal = networkInfraDevices.length;
-        if (fetchAllForEffectiveFilter) {
-          const pageSize = limitParsed ?? DEFAULT_DEVICE_LIST_LIMIT;
-          networkInfraDevices = networkInfraDevices.slice(offsetNum, offsetNum + pageSize);
-        }
-
-        res.json({ success: true, devices: networkInfraDevices, total: infraTotal });
-        return;
-      }
-
-      const baseFilters: DeviceFilters = {
-        device_type: device_type as any,
-        search: search as string,
-      };
-      if (allowedFacilityId) {
-        (baseFilters as any).facility_id = allowedFacilityId;
-      } else if (allowedFacilityIds && allowedFacilityIds.length > 0) {
-        (baseFilters as any).facility_ids = allowedFacilityIds;
-      }
-
-      let devices: any[] = [];
-      let total = 0;
-      let devicesEnriched = false;
-
-      const dt = device_type as string | undefined;
-      const mergeAllScopes = deviceScope === 'all';
-
-      if (needsInMemoryDeviceSort(dt, sortKey) || mergeAllScopes || Boolean(statusFilter)) {
-        const fetchFilters: DeviceFilters = {
-          ...baseFilters,
-          sortBy: 'created_at',
-          sortOrder: 'asc',
-          ...(projectionId ? { skipPrimaryTenantEnrichment: true } : {}),
-        };
-
-        if (!dt || dt === 'all') {
-          const [accessControlDevices, blulokDevices] = await Promise.all([
-            deviceModel.findAccessControlDevices(fetchFilters),
-            deviceModel.findBluLokDevices(fetchFilters),
-          ]);
-          devices = [
-            ...accessControlDevices.map((d) => ({ ...d, device_category: 'access_control' })),
-            ...blulokDevices.map((d) => ({ ...d, device_category: 'blulok' })),
-          ];
-        } else if (dt === 'access_control') {
-          const accessControlDevices = await deviceModel.findAccessControlDevices(fetchFilters);
-          devices = accessControlDevices.map((d) => ({ ...d, device_category: 'access_control' }));
-        } else {
-          const blulokDevices = await deviceModel.findBluLokDevices(fetchFilters);
-          devices = blulokDevices.map((d) => ({ ...d, device_category: 'blulok' }));
-        }
-
-        if (mergeAllScopes) {
-          const { GatewayInventoryDeviceSyncService } = await import('@/services/gateway-inventory-device-sync.service');
-          const { devices: networkInfraDevices } =
-            await GatewayInventoryDeviceSyncService.getInstance().listNetworkInfraDevices({
-              search: search as string | undefined,
-              ...(allowedFacilityId ? { facility_id: allowedFacilityId } : {}),
-              ...(allowedFacilityIds ? { facility_ids: allowedFacilityIds } : {}),
-            });
-          devices = [...devices, ...networkInfraDevices];
-        }
-
-        if (!projectionId) {
-          devices = await enrichDeviceListRows(devices);
-          devicesEnriched = true;
-          if (statusFilter) {
-            devices = applyEffectiveStatusFilter(devices, statusFilter);
-          }
-        }
-
-        sortMergedDeviceList(devices, sortKey, order);
-        total = devices.length;
-        let pageSize: number;
-        if (limitParsed !== undefined) {
-          pageSize = limitParsed;
-        } else if (projectionId) {
-          pageSize = total;
-        } else {
-          pageSize = Math.min(DEFAULT_DEVICE_LIST_LIMIT, total);
-        }
-        devices = devices.slice(offsetNum, offsetNum + pageSize);
-      } else {
-        const filters: DeviceFilters = {
-          ...baseFilters,
-          sortBy: sortKey as any,
-          sortOrder: order,
-          ...(projectionId ? { skipPrimaryTenantEnrichment: true } : {}),
-        };
-
-        const allowUnboundedDb = projectionId && limitParsed === undefined;
-
-        if (!allowUnboundedDb) {
-          if (limitParsed !== undefined) {
-            filters.limit = limitParsed;
-          } else {
-            filters.limit = DEFAULT_DEVICE_LIST_LIMIT;
-          }
-        }
-        filters.offset = offsetNum;
-
-        // device_type === 'all' always uses the in-memory merge path above.
-        if (dt === 'access_control') {
-          const accessControlDevices = await deviceModel.findAccessControlDevices(filters);
-          devices = accessControlDevices.map((d) => ({ ...d, device_category: 'access_control' }));
-          total = await deviceModel.countAccessControlDevices(baseFilters);
-        } else {
-          const blulokDevices = await deviceModel.findBluLokDevices(filters);
-          devices = blulokDevices.map((d) => ({ ...d, device_category: 'blulok' }));
-          total = await deviceModel.countBluLokDevices(baseFilters);
-        }
-      }
-
-      if (!projectionId && devices.length > 0 && !devicesEnriched) {
-        devices = await enrichDeviceListRows(devices);
-      }
-
-      if (projectionId) {
-        devices = devices.map((d) => ({
-          id: d.id,
-          device_category: d.device_category,
-        }));
-      }
+      const { devices, total } = await DevicesService.getInstance().listDevices({
+        deviceType: device_type as string | undefined,
+        deviceScope,
+        sortBy: sortByParam,
+        sortOrder: sortOrderParam === 'desc' ? 'desc' : 'asc',
+        facilityId: allowedFacilityId,
+        facilityIds: allowedFacilityIds,
+        search: search as string | undefined,
+        statusFilter: status as string | undefined,
+        limit: limitParsed,
+        offset: offsetNum,
+        projectionId,
+        enrichFn: enrichDeviceListRows,
+        applyStatusFilter: applyEffectiveStatusFilter,
+        deviceModelOverride: deviceModel,
+      });
 
       res.json({ success: true, devices, total });
     } catch (error) {
@@ -1212,25 +1037,21 @@ registerGet(
       const { facility_id, status, search } = q;
       const sortByRaw = (q.sortBy ?? q.sort_by) as string | undefined;
       const sortOrderRaw = (q.sortOrder ?? q.sort_order) as string | undefined;
-      const limitParsed = parseListLimit(q.limit);
-      const offsetNum = parseListOffset(q.offset);
+      const limitParsed = DevicesService.parseListLimit(q.limit);
+      const offsetNum = DevicesService.parseListOffset(q.offset);
 
-      // Restrict facility access based on user role
       let allowedFacilityId = facility_id as string | undefined;
 
-      // For facility-scoped users, enforce facility restrictions
       if (AuthService.isFacilityScoped(user.role)) {
         if (facility_id && !hasJwtFacilityClaim(user, facility_id as string)) {
           res.status(403).json({ success: false, message: 'Access denied to this facility' });
           return;
         }
-        // If no facility specified, restrict to user's facilities
         if (!facility_id) {
           const userFacilityIds = applyFacilityScope(req);
           if (userFacilityIds && userFacilityIds.length > 0) {
-            allowedFacilityId = userFacilityIds[0]; // Default to first facility
+            allowedFacilityId = userFacilityIds[0];
           } else {
-            // User has no facility access - return empty result
             res.json({ success: true, devices: [], total: 0 });
             return;
           }
@@ -1248,11 +1069,7 @@ registerGet(
       const fetchAllForEffectiveFilter = Boolean(statusFilter);
 
       if (!fetchAllForEffectiveFilter) {
-        if (limitParsed !== undefined) {
-          filters.limit = limitParsed;
-        } else {
-          filters.limit = DEFAULT_DEVICE_LIST_LIMIT;
-        }
+        filters.limit = limitParsed ?? DevicesService.DEFAULT_LIST_LIMIT;
         filters.offset = offsetNum;
       }
       if (allowedFacilityId) {
@@ -1269,7 +1086,7 @@ registerGet(
         );
         devices = applyEffectiveStatusFilter(devices, statusFilter);
         total = devices.length;
-        const pageSize = limitParsed ?? DEFAULT_DEVICE_LIST_LIMIT;
+        const pageSize = limitParsed ?? DevicesService.DEFAULT_LIST_LIMIT;
         devices = devices.slice(offsetNum, offsetNum + pageSize);
       } else {
         const enricher = reachabilityEnrichment();

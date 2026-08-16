@@ -7,6 +7,13 @@ export const ON_SITE_GRANT_TO_OPEN_TTL_SEC = 60;
  */
 export const ON_SITE_GRANT_ABSORB_OPEN_WINDOW_SEC = 60;
 
+/**
+ * MySQL DATETIME(0) rounds fractional seconds ≥500ms up to the next second. A grant
+ * `occurred_at` taken just before that rounded `opened_at` would otherwise look
+ * "in the future" and skip absorb. Allow 1s of negative age for that skew.
+ */
+export const ON_SITE_GRANT_ABSORB_OPEN_SKEW_MS = 1000;
+
 /** Default poll interval for pending session expiry sweeper. */
 export const ACCESS_SESSION_SWEEPER_INTERVAL_MS = 30_000;
 

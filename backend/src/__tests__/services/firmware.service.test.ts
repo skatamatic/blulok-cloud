@@ -17,6 +17,8 @@ jest.mock('uuid', () => ({ v4: jest.fn(() => 'mock-uuid') }));
 import * as crypto from 'crypto';
 import { FIRMWARE_CHUNK_SIZE_BYTES } from '@/constants/firmware-chunk.constants';
 import { FirmwareService, _testActivePushes, _testResumeInFlightPushes } from '@/services/firmware/firmware.service';
+import { FirmwareCatalogService } from '@/services/firmware/firmware-catalog.service';
+import { FirmwarePushEngineService } from '@/services/firmware/firmware-push-engine.service';
 import { Ed25519Service } from '@/services/crypto/ed25519.service';
 import { GatewayEventsService } from '@/services/gateway/gateway-events.service';
 import { getFirmwareStorageProvider, validateFirmwareFile } from '@/services/firmware/firmware-storage.factory';
@@ -81,10 +83,14 @@ const mockUnicast = jest.fn();
 
 /** Re-establish every mock. Called in the top-level beforeEach. */
 function wireAllMocks() {
-  (FirmwareService as any).firmwareModel = mockFirmwareModel;
-  (FirmwareService as any).pushModel = mockPushModel;
-  (FirmwareService as any).pushEventModel = mockPushEventModel;
-  (FirmwareService as any).gatewayModel = mockGatewayModel;
+  // Wire mocks to FirmwareCatalogService (handles upload/list/delete/prune)
+  (FirmwareCatalogService as any).firmwareModel = mockFirmwareModel;
+  (FirmwareCatalogService as any).pushModel = mockPushModel;
+  // Wire mocks to FirmwarePushEngineService (handles push execution, ACK, progress)
+  (FirmwarePushEngineService as any).firmwareModel = mockFirmwareModel;
+  (FirmwarePushEngineService as any).pushModel = mockPushModel;
+  (FirmwarePushEngineService as any).pushEventModel = mockPushEventModel;
+  (FirmwarePushEngineService as any).gatewayModel = mockGatewayModel;
   (getFirmwareStorageProvider as jest.Mock).mockResolvedValue(mockStorageProvider);
   (Ed25519Service.signCommandJwt as jest.Mock).mockResolvedValue('signed-jwt');
   (GatewayEventsService.getInstance as jest.Mock).mockReturnValue({
@@ -391,7 +397,7 @@ describe('FirmwareService', () => {
     let broadcastSpy: jest.SpyInstance;
 
     beforeEach(() => {
-      broadcastSpy = jest.spyOn(FirmwareService as any, 'broadcastProgress').mockImplementation(() => {});
+      broadcastSpy = jest.spyOn(FirmwarePushEngineService as any, 'broadcastProgress').mockImplementation(() => {});
     });
 
     afterEach(() => {
@@ -446,9 +452,9 @@ describe('FirmwareService', () => {
       mockStorageProvider.download.mockResolvedValue(mockBinary);
 
       // Instantly resolve chunk ACKs (no real timers)
-      ackSpy = jest.spyOn(FirmwareService as any, 'waitForChunkAck').mockResolvedValue(undefined);
+      ackSpy = jest.spyOn(FirmwarePushEngineService as any, 'waitForChunkAck').mockResolvedValue(undefined);
       // Suppress subscription broadcasting
-      broadcastSpy = jest.spyOn(FirmwareService as any, 'broadcastProgress').mockImplementation(() => {});
+      broadcastSpy = jest.spyOn(FirmwarePushEngineService as any, 'broadcastProgress').mockImplementation(() => {});
     });
 
     afterEach(() => {
@@ -582,7 +588,7 @@ describe('FirmwareService', () => {
           connected = false;
         }
       });
-      const graceSpy = jest.spyOn(FirmwareService as any, 'scheduleTransferDisconnectGrace').mockImplementation(() => {});
+      const graceSpy = jest.spyOn(FirmwarePushEngineService as any, 'scheduleTransferDisconnectGrace').mockImplementation(() => {});
 
       await FirmwareService.executePush('push-1');
 
@@ -606,7 +612,7 @@ describe('FirmwareService', () => {
         chunks_total: 3,
         chunks_sent: 1,
       });
-      const graceSpy = jest.spyOn(FirmwareService as any, 'scheduleTransferDisconnectGrace').mockImplementation(() => {});
+      const graceSpy = jest.spyOn(FirmwarePushEngineService as any, 'scheduleTransferDisconnectGrace').mockImplementation(() => {});
 
       await FirmwareService.executePush('push-1');
 
@@ -673,7 +679,7 @@ describe('FirmwareService', () => {
       mockStorageProvider.createSignedDownloadUrl.mockResolvedValue(
         'https://storage.googleapis.com/bucket/firmware/fw-1/fw-3.0.0.bin?X-Goog-Signature=abc',
       );
-      broadcastSpy = jest.spyOn(FirmwareService as any, 'broadcastProgress').mockImplementation(() => {});
+      broadcastSpy = jest.spyOn(FirmwarePushEngineService as any, 'broadcastProgress').mockImplementation(() => {});
 
       let pollCount = 0;
       mockPushModel.findById.mockImplementation(async () => {
@@ -875,7 +881,7 @@ describe('FirmwareService', () => {
 
     let broadcastSpy: jest.SpyInstance;
     beforeEach(() => {
-      broadcastSpy = jest.spyOn(FirmwareService as any, 'broadcastProgress').mockImplementation(() => {});
+      broadcastSpy = jest.spyOn(FirmwarePushEngineService as any, 'broadcastProgress').mockImplementation(() => {});
     });
     afterEach(() => {
       broadcastSpy.mockRestore();
@@ -1362,7 +1368,7 @@ describe('FirmwareService', () => {
     let broadcastSpy: jest.SpyInstance;
 
     beforeEach(() => {
-      broadcastSpy = jest.spyOn(FirmwareService as any, 'broadcastProgress').mockImplementation(() => {});
+      broadcastSpy = jest.spyOn(FirmwarePushEngineService as any, 'broadcastProgress').mockImplementation(() => {});
     });
 
     afterEach(() => {
@@ -1371,7 +1377,7 @@ describe('FirmwareService', () => {
 
     it('pauses active transfers and arms reconnect grace instead of failing', async () => {
       const rejectSpy = jest.fn();
-      const graceSpy = jest.spyOn(FirmwareService as any, 'scheduleTransferDisconnectGrace').mockImplementation(() => {});
+      const graceSpy = jest.spyOn(FirmwarePushEngineService as any, 'scheduleTransferDisconnectGrace').mockImplementation(() => {});
       _testActivePushes.set('push-1', {
         cancel: false,
         nonce: 'n-1',
@@ -1398,7 +1404,7 @@ describe('FirmwareService', () => {
     let executeSpy: jest.SpyInstance;
 
     beforeEach(() => {
-      executeSpy = jest.spyOn(FirmwareService, 'executePush').mockResolvedValue(undefined);
+      executeSpy = jest.spyOn(FirmwarePushEngineService, 'executePush').mockResolvedValue(undefined);
     });
 
     afterEach(() => {
@@ -1451,8 +1457,8 @@ describe('FirmwareService', () => {
     let broadcastSpy: jest.SpyInstance;
 
     beforeEach(() => {
-      scheduleSpy = jest.spyOn(FirmwareService as any, 'scheduleVerifyingTimeout').mockImplementation(() => {});
-      broadcastSpy = jest.spyOn(FirmwareService as any, 'broadcastProgress').mockImplementation(() => {});
+      scheduleSpy = jest.spyOn(FirmwarePushEngineService as any, 'scheduleVerifyingTimeout').mockImplementation(() => {});
+      broadcastSpy = jest.spyOn(FirmwarePushEngineService as any, 'broadcastProgress').mockImplementation(() => {});
     });
 
     afterEach(() => {
@@ -1505,7 +1511,7 @@ describe('FirmwareService', () => {
 
     it('re-arms transfer disconnect grace for in-flight transferring pushes', async () => {
       const transferGraceSpy = jest
-        .spyOn(FirmwareService as any, 'scheduleTransferDisconnectGrace')
+        .spyOn(FirmwarePushEngineService as any, 'scheduleTransferDisconnectGrace')
         .mockImplementation(() => {});
       const now = Date.now();
       mockPushModel.findAllActive.mockResolvedValue([

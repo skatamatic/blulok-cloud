@@ -12,6 +12,7 @@ import {
 } from '@/models/access-session.model';
 import {
   COALESCEABLE_GRANT_METHODS,
+  ON_SITE_GRANT_ABSORB_OPEN_SKEW_MS,
   ON_SITE_GRANT_ABSORB_OPEN_WINDOW_SEC,
   ON_SITE_GRANT_TO_OPEN_TTL_SEC,
 } from '@/constants/access-session.constants';
@@ -125,7 +126,11 @@ function isAbsorbableLocalOpen(session: AccessSession, now: Date = new Date()): 
   const openedAt = session.opened_at || session.started_at;
   if (!openedAt) return false;
   const ageMs = now.getTime() - new Date(openedAt).getTime();
-  return ageMs >= 0 && ageMs <= ON_SITE_GRANT_ABSORB_OPEN_WINDOW_SEC * 1000;
+  // Allow small negative age: DATETIME(0) may round opened_at up past grant occurred_at.
+  return (
+    ageMs >= -ON_SITE_GRANT_ABSORB_OPEN_SKEW_MS
+    && ageMs <= ON_SITE_GRANT_ABSORB_OPEN_WINDOW_SEC * 1000
+  );
 }
 
 export class AccessSessionCorrelator {

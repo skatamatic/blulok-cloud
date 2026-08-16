@@ -29,6 +29,9 @@ jest.mock('@/services/database.service', () => ({
           return chainable();
         }),
         {
+          raw: jest.fn((sql: string) => sql),
+          fn: { now: jest.fn().mockReturnValue('NOW') },
+          schema: { hasTable: jest.fn().mockResolvedValue(true) },
           transaction: async (fn: (trx: any) => Promise<void>) => {
             const trx = Object.assign(
               (table: string) => {
@@ -141,6 +144,7 @@ describe('AccountResetService', () => {
       last_name: 'Lovelace',
       is_placeholder: false,
     });
+    sendInvite.mockResolvedValue({ delivered: ['email'], warning: undefined });
   });
 
   it('resets and re-invites a loginable user', async () => {
@@ -149,6 +153,7 @@ describe('AccountResetService', () => {
       sendInvite: true,
     });
     expect(result.user.id).toBe('u1');
+    expect(result.inviteSent).toBe(true);
     expect(sendInvite).toHaveBeenCalled();
   });
 
@@ -158,5 +163,114 @@ describe('AccountResetService', () => {
       sendInvite: false,
     });
     expect(sendInvite).not.toHaveBeenCalled();
+  });
+
+  it('rejects missing, placeholder, and contactless users', async () => {
+    (UserModel.findById as jest.Mock).mockResolvedValueOnce(undefined);
+    await expect(
+      AccountResetService.getInstance().resetAndReinvite('missing', {
+        performedBy: 'admin-1',
+      }),
+    ).rejects.toThrow('User not found');
+
+    const { isPlaceholderUser } = jest.requireMock('@/services/fms/fms-placeholder-user.utils');
+    (isPlaceholderUser as jest.Mock).mockReturnValueOnce(true);
+    await expect(
+      AccountResetService.getInstance().resetAndReinvite('u1', { performedBy: 'admin-1' }),
+    ).rejects.toThrow(/placeholder/i);
+
+    (isPlaceholderUser as jest.Mock).mockReturnValue(false);
+    (UserModel.findById as jest.Mock).mockResolvedValueOnce({
+      id: 'u1',
+      email: null,
+      phone_number: null,
+    });
+    await expect(
+      AccountResetService.getInstance().resetAndReinvite('u1', { performedBy: 'admin-1' }),
+    ).rejects.toThrow(/no email or phone/i);
+  });
+
+  it('surfaces invite delivery failures without failing the reset', async () => {
+    sendInvite.mockResolvedValueOnce({ delivered: [], warning: undefined });
+    const empty = await AccountResetService.getInstance().resetAndReinvite('u1', {
+      performedBy: 'admin-1',
+      sendInvite: true,
+    });
+    expect(empty.inviteSent).toBe(false);
+    expect(empty.inviteWarning).toMatch(/no invite could be sent/i);
+
+    sendInvite.mockRejectedValueOnce(new Error('smtp down'));
+    const failed = await AccountResetService.getInstance().resetAndReinvite('u1', {
+      performedBy: 'admin-1',
+      sendInvite: true,
+    });
+    expect(failed.inviteSent).toBe(false);
+    expect(failed.inviteWarning).toMatch(/could not be sent/i);
+  });
+
+  it('pushes denylist when optimization does not skip', async () => {
+    const {
+      AccessControlZoneAccessService,
+    } = jest.requireMock('@/services/access-control-zone-access.service') as {
+      AccessControlZoneAccessService: {
+        getDenylistTargetsForUserRevocation: jest.Mock;
+        getDeviceFacilityIds: jest.Mock;
+      };
+    };
+    const { DenylistOptimizationService } = jest.requireMock(
+      '@/services/denylist-optimization.service',
+    ) as { DenylistOptimizationService: { shouldSkipDenylistAdd: jest.Mock } };
+    const { DenylistService } = jest.requireMock('@/services/denylist.service') as {
+      DenylistService: { buildDenylistAdd: jest.Mock };
+    };
+    const unicast = jest.fn();
+    const { GatewayEventsService } = jest.requireMock(
+      '@/services/gateway/gateway-events.service',
+    ) as { GatewayEventsService: { getInstance: jest.Mock } };
+    GatewayEventsService.getInstance = jest.fn(() => ({ unicastToFacility: unicast }));
+
+    AccessControlZoneAccessService.getDenylistTargetsForUserRevocation.mockImplementation(
+      async () => [{ device_id: 'dev-1', device_type: 'blulok' }],
+    );
+    DenylistOptimizationService.shouldSkipDenylistAdd.mockImplementation(async () => false);
+    AccessControlZoneAccessService.getDeviceFacilityIds.mockImplementation(
+      async () => new Map([['dev-1', 'fac-1']]),
+    );
+    DenylistService.buildDenylistAdd.mockImplementation(async () => 'jwt-token');
+
+    await AccountResetService.getInstance().resetAndReinvite('u1', {
+      performedBy: 'admin-1',
+      sendInvite: false,
+    });
+
+    expect(DenylistService.buildDenylistAdd).toHaveBeenCalled();
+    expect(unicast).toHaveBeenCalledWith('fac-1', 'jwt-token');
+  });
+
+  it('swallows activity and notification failures after a successful wipe', async () => {
+    const { ActivityService } = jest.requireMock('@/services/activity.service') as {
+      ActivityService: { getInstance: () => { logActivity: jest.Mock } };
+    };
+    ActivityService.getInstance = jest.fn(() => ({
+      logActivity: jest.fn().mockRejectedValue(new Error('activity down')),
+    }));
+
+    const { InAppNotificationDispatcher } = jest.requireMock(
+      '@/services/notifications/in-app-notification-dispatcher.service',
+    ) as {
+      InAppNotificationDispatcher: {
+        getInstance: () => { notifyUserAccountReset: jest.Mock };
+      };
+    };
+    InAppNotificationDispatcher.getInstance = jest.fn(() => ({
+      notifyUserAccountReset: jest.fn().mockRejectedValue(new Error('notify down')),
+    }));
+
+    await expect(
+      AccountResetService.getInstance().resetAndReinvite('u1', {
+        performedBy: 'admin-1',
+        sendInvite: false,
+      }),
+    ).resolves.toEqual(expect.objectContaining({ inviteSent: false }));
   });
 });

@@ -74,7 +74,7 @@ Both modes then receive `AUTH_OK` (ops public keys, session role, etc.) as befor
 Successful path:
 
 1. Server responds with `AUTH_OK` (includes `gatewayId`, `sessionRole`, optional `autoRegistered`, and ops public key material for signed commands).
-2. Further messages: `PROXY_REQUEST`, firmware ACKs, `PONG`, etc. (see `backend/src/services/gateway/websocket-gateway.transport.ts`).
+2. Further messages: `PROXY_REQUEST`, firmware ACKs, `PONG`, etc. (dispatched from `gateway-ws-message-dispatcher.ts`; transport wiring in `websocket-gateway.transport.ts`).
 
 ### Auto-registration (unknown `gatewayId`)
 
@@ -91,7 +91,7 @@ See [Gateway Swap / Recovery — Operator & Developer Guide](./gateway-swap-reco
 
 ### Who may connect
 
-- Roles allowed: **`facility_admin`**, **`admin`**, **`dev_admin`** (see `AUTH` handler in `websocket-gateway.transport.ts`).
+- Roles allowed: **`facility_admin`**, **`admin`**, **`dev_admin`** (see `AUTH` handling in `gateway-ws-message-dispatcher.ts` / `gateway-ws-auth.ts`).
 - **`facility_admin`**: live DB association check for the `facilityId` sent in `AUTH` (JWT `facilityIds` are not used).
 
 If anything is wrong, the socket receives `ERROR` with codes such as `AUTH_FAILED`, `AUTH_FORBIDDEN`, `AUTH_BAD_REQUEST`, `AUTH_RATE_LIMITED`, then the connection is closed.
@@ -129,7 +129,7 @@ See also [Gateway device sync developer guide](./gateway-device-sync-developer-g
 - **Targeted broadcasts** (`facilityId` set): skip a dashboard client only if **`facilityIds.length > 0`** and the facility is **not** in that list. An **empty `facilityIds` array** must **not** skip (JavaScript: `[]` is truthy; older logic mis-fired).
 - **`findByFacilityId`** uses **`orderBy('updated_at', 'desc')`** before `.first()` so inbound WS DB sync picks a **deterministic** row if multiple gateway rows ever share a facility (normally one per facility).
 - **`GatewayModel.updateStatus`** for non-**online** states updates **`status` + `updated_at` only** — **`last_seen`** stays as last known good contact.
-- **Heartbeat** (`websocket-gateway.transport.ts`): if a facility’s socket is **not OPEN**, the transport **removes** it and emits **`notifyConnectionChange(..., false, 'socket_not_open')`** so **`gateways.status`** can go **offline** like a normal disconnect.
+- **Heartbeat** (`websocket-gateway.transport.ts` + session registry): if a facility’s socket is **not OPEN**, the transport **removes** it and emits **`notifyConnectionChange(..., false, 'socket_not_open')`** so **`gateways.status`** can go **offline** like a normal disconnect.
 - **Offline grace (`GATEWAY_OFFLINE_GRACE_MS`, default 20s):** inbound `/ws/gateway` disconnects **do not** immediately persist `gateways.status = offline`, fan out **Gateway Offline** in-app alerts, or flip product-facing **`connected`** / device reachability. The backend waits for reconnect; only after the grace window (still disconnected) does it update DB status, create notifications, and treat the outage as real. **`getFacilityProductLiveness()`** (used by `gateway_status_update` and device reachability enrichment) stays `connected: true` during grace; **`getFacilityConnectionStatus()`** remains the raw socket signal for commands/firmware. Dashboard toasts fire when the broadcast reports confirmed offline (no second client-side debounce). For e2e/local speed-ups, **`PUT /api/v1/dev/gateway-offline-grace`** `{ "grace_ms": <0–120000|null> }` overrides the process value (`null` clears).
 
 ## Google Cloud Run–specific issues

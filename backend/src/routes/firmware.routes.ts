@@ -14,7 +14,7 @@
 
 import { Router, Response, RequestHandler, NextFunction } from 'express';
 import multer from 'multer';
-import { authenticateToken } from '@/middleware/auth.middleware';
+import { authenticateToken, requireAdminOrFacilityAdmin } from '@/middleware/auth.middleware';
 import { asyncHandler } from '@/middleware/error.middleware';
 import { AuthenticatedRequest, UserRole } from '@/types/auth.types';
 import { FirmwareService } from '@/services/firmware/firmware.service';
@@ -67,15 +67,6 @@ const upload = multer({
 const requireDevAdmin: RequestHandler = (req: AuthenticatedRequest, res: Response, next: NextFunction): void => {
   if (req.user?.role !== UserRole.DEV_ADMIN) {
     res.status(403).json({ success: false, message: 'DEV_ADMIN role required' });
-    return;
-  }
-  next();
-};
-
-const requireAdminOrFacilityAdmin: RequestHandler = (req: AuthenticatedRequest, res: Response, next: NextFunction): void => {
-  const role = req.user?.role;
-  if (role !== UserRole.ADMIN && role !== UserRole.DEV_ADMIN && role !== UserRole.FACILITY_ADMIN) {
-    res.status(403).json({ success: false, message: 'Admin or Facility Admin role required' });
     return;
   }
   next();

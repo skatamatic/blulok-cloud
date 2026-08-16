@@ -55,6 +55,10 @@ import { parseQueryIntClamped, parseQueryInt, queryString } from '@/utils/query-
 import { GatewayRecoveryService } from '@/services/gateway/gateway-recovery.service';
 import { InventorySnapshotService } from '@/services/gateway/inventory-snapshot.service';
 import {
+  runGatewayLockFetchTest,
+  runGatewayManualSync,
+} from '@/services/gateway/gateway-connection-ops.service';
+import {
   registerGet,
   registerPost,
   registerPut,
@@ -83,30 +87,6 @@ const router = Router();
 const MOUNT = '/api/v1/gateways';
 const gatewayModel = new GatewayModel();
 const facilityModel = new FacilityModel();
-
-/**
- * Validate that a gateway has sufficient configuration for connection testing
- */
-function validateGatewayConfigurationForTesting(gateway: any): boolean {
-  const { gateway_type, base_url, connection_url } = gateway;
-
-  switch (gateway_type) {
-    case 'http':
-      // HTTP gateways require at least a base_url
-      return !!(base_url && base_url.trim().length > 0);
-
-    case 'physical':
-      // Physical gateways require a connection_url (WebSocket endpoint)
-      return !!(connection_url && connection_url.trim().length > 0);
-
-    case 'simulated':
-      // Simulated gateways always pass validation (they simulate connections)
-      return true;
-
-    default:
-      return false;
-  }
-}
 
 // Apply auth middleware to all routes
 router.use(authenticateToken);
@@ -1093,7 +1073,6 @@ registerPost(
   const user = req.user!;
   const id = req.params.id;
 
-  // Check if gateway exists and user has access
   const gateway = await gatewayModel.findById(String(id));
   if (!gateway) {
     res.status(404).json({
@@ -1103,7 +1082,6 @@ registerPost(
     return;
   }
 
-  // Check facility access for FACILITY_ADMIN users
   if (user.role === UserRole.FACILITY_ADMIN && user.facilityIds) {
     if (!gateway.facility_id || !user.facilityIds.includes(gateway.facility_id)) {
       res.status(403).json({
@@ -1114,101 +1092,8 @@ registerPost(
     }
   }
 
-  // Validate gateway configuration before testing connection
-  if (!validateGatewayConfigurationForTesting(gateway)) {
-    res.status(400).json({
-      success: false,
-      message: 'Gateway configuration is incomplete. Please provide required connection details.',
-      error: 'Missing required configuration fields for gateway type.'
-    });
-    return;
-  }
-
-  try {
-    // Import GatewayService dynamically to avoid circular dependencies
-    const { GatewayService } = await import('../services/gateway/gateway.service');
-    const gatewayService = GatewayService.getInstance();
-
-    // Get or initialize gateway
-    let gatewayInstance = gatewayService.getGateway(String(id));
-
-    if (!gatewayInstance) {
-      console.log(`Initializing gateway ${id} for lock fetch test...`);
-      try {
-        await gatewayService.initializeGateway(gateway);
-        gatewayInstance = gatewayService.getGateway(String(id));
-        if (!gatewayInstance) {
-          throw new Error('Failed to initialize gateway');
-        }
-      } catch (initError) {
-        console.error(`Failed to initialize gateway ${id}:`, initError);
-        res.status(500).json({
-          success: false,
-          message: 'Gateway not properly configured or initialized',
-          error: initError instanceof Error ? initError.message : 'Unknown initialization error'
-        });
-        return;
-      }
-    }
-
-    // Perform a sync to fetch locks (test connection by actually fetching data)
-    // Don't update status for test connection - just fetch locks
-    const syncResult = await gatewayInstance.sync(false);
-
-    // Check for critical connection errors
-    const hasCriticalErrors = syncResult?.syncResults?.errors?.some((error: string) =>
-      error.includes('API endpoint may not exist') ||
-      error.includes('base URL is incorrect') ||
-      error.includes('HTML response instead of JSON') ||
-      error.includes('API endpoint not found') ||
-      error.includes('Cannot connect to gateway') ||
-      error.includes('Authentication failed')
-    );
-
-    if (hasCriticalErrors) {
-      res.status(400).json({
-        success: false,
-        message: 'Gateway lock fetch failed - connection or configuration issue',
-        error: syncResult.syncResults.errors.join('; ')
-      });
-      return;
-    }
-
-    // Success - return lock count and basic info
-    res.json({
-      success: true,
-      message: `Gateway lock fetch successful - found ${syncResult.syncResults.devicesFound} locks`,
-      data: {
-        devicesFound: syncResult.syncResults.devicesFound,
-        devicesSynced: syncResult.syncResults.devicesSynced,
-        keysRetrieved: syncResult.syncResults.keysRetrieved,
-        errors: syncResult.syncResults.errors.length > 0 ? syncResult.syncResults.errors : undefined
-      }
-    });
-
-  } catch (error) {
-    console.error(`Gateway lock fetch test failed for ${id}:`, error);
-
-    // Provide more specific error messages
-    let errorMessage = 'Gateway lock fetch failed';
-    if (error instanceof Error) {
-      if (error.message.includes('ENOTFOUND') || error.message.includes('ECONNREFUSED')) {
-        errorMessage = 'Cannot connect to gateway. Please check the gateway URL and network connectivity.';
-      } else if (error.message.includes('401') || error.message.includes('Unauthorized')) {
-        errorMessage = 'Authentication failed. Please check gateway credentials.';
-      } else if (error.message.includes('timeout')) {
-        errorMessage = 'Connection timeout. Gateway may be offline or unresponsive.';
-      } else {
-        errorMessage = error.message;
-      }
-    }
-
-    res.status(500).json({
-      success: false,
-      message: errorMessage,
-      error: error instanceof Error ? error.message : 'Unknown error'
-    });
-  }
+  const result = await runGatewayLockFetchTest(gateway);
+  res.status(result.status).json(result.body);
 }));
 
 // POST /api/gateways/:id/sync - Manually sync gateway
@@ -1228,7 +1113,6 @@ registerPost(
   const user = req.user!;
   const id = req.params.id;
 
-  // Check if gateway exists and user has access
   const gateway = await gatewayModel.findById(String(id));
   if (!gateway) {
     res.status(404).json({
@@ -1238,7 +1122,6 @@ registerPost(
     return;
   }
 
-  // Check facility access for FACILITY_ADMIN users
   if (user.role === UserRole.FACILITY_ADMIN && user.facilityIds) {
     if (!gateway.facility_id || !user.facilityIds.includes(gateway.facility_id)) {
       res.status(403).json({
@@ -1249,69 +1132,8 @@ registerPost(
     }
   }
 
-  if (gateway.facility_id) {
-    const blocking = await GatewayRecoveryService.isBlockingActiveForFacility(gateway.facility_id);
-    if (blocking) {
-      res.status(409).json({
-        success: false,
-        code: 'recovery_in_progress',
-        message: 'Gateway recovery in progress — manual sync blocked until recovery completes or is bypassed',
-      });
-      return;
-    }
-  }
-
-  try {
-    // Import GatewayService dynamically to avoid circular dependencies
-    const { GatewayService } = await import('../services/gateway/gateway.service');
-
-    const gatewayService = GatewayService.getInstance();
-    const gatewayInstance = gatewayService.getGateway(String(id));
-
-    if (!gatewayInstance) {
-      res.status(404).json({
-        success: false,
-        message: 'Gateway not initialized'
-      });
-      return;
-    }
-
-    // Perform manual sync (update status based on result)
-    const syncResult = await gatewayInstance.sync(true);
-
-    // Check if there are critical errors that should fail the sync
-    const hasCriticalErrors = syncResult?.syncResults?.errors?.some((error: string) =>
-      error.includes('API endpoint may not exist') ||
-      error.includes('base URL is incorrect') ||
-      error.includes('HTML response instead of JSON') ||
-      error.includes('API endpoint not found') ||
-      error.includes('Gateway not connected') ||
-      error.includes('Cannot connect to gateway')
-    );
-
-    if (hasCriticalErrors && syncResult?.syncResults?.errors) {
-      res.status(400).json({
-        success: false,
-        message: syncResult.syncResults.errors.join('; '),
-        error: syncResult.syncResults.errors.join('; '),
-        data: syncResult
-      });
-      return;
-    }
-
-    res.json({
-      success: true,
-      message: 'Gateway synchronization completed successfully',
-      data: syncResult !== undefined ? syncResult : null
-    });
-  } catch (error) {
-    console.error(`Gateway sync failed for ${id}:`, error);
-    res.status(500).json({
-      success: false,
-      message: 'Gateway synchronization failed',
-      error: error instanceof Error ? error.message : 'Unknown error'
-    });
-  }
+  const result = await runGatewayManualSync(gateway);
+  res.status(result.status).json(result.body);
 }));
 
 export { router as gatewayRouter };

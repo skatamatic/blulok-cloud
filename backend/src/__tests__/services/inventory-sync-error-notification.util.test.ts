@@ -64,26 +64,87 @@ describe('inventory-sync-error-notification.util', () => {
     ).toBe('already registered at this facility on unit B-205');
   });
 
-  it('builds human-friendly duplicate serial copy with unit context', () => {
-    const issue = parseInventorySyncError(duplicateRaw, 'blulok');
-    expect(issue).not.toBeNull();
-    const copy = buildInventorySyncIssueNotification({
-      issue: issue!,
-      sourceFacilityName: '621 Sandbox',
-      conflict: {
+  it('parses failed add lock/access serials and blank input', () => {
+    expect(parseInventorySyncError('')).toBeNull();
+    expect(parseInventorySyncError('unrelated failure')).toBeNull();
+    expect(
+      extractDeviceSerialFromInventoryError('Failed to add device SERIAL-LOCK: boom'),
+    ).toBe('SERIAL-LOCK');
+    expect(
+      extractDeviceSerialFromInventoryError(
+        'Failed to add access control GATE::relay1: boom',
+      ),
+    ).toBe('GATE');
+    const accessIssue = parseInventorySyncError(
+      'Failed to add access control AC-9: something else',
+    );
+    expect(accessIssue).toEqual(
+      expect.objectContaining({
+        kind: 'other',
+        deviceSerial: 'AC-9',
+        deviceKind: 'access_control',
+      }),
+    );
+  });
+
+  it('formats access-device and missing-facility conflict copy', () => {
+    expect(formatSerialConflictDescription(null)).toBe(
+      'already registered at another facility',
+    );
+    expect(
+      formatSerialConflictDescription({
         facilityId: 'fac-2',
         facilityName: 'Riverside Storage',
-        unitId: 'unit-9',
-        unitNumber: 'B-205',
+        accessDeviceName: 'Front gate',
+      }),
+    ).toContain('access device “Front gate”');
+    expect(
+      formatSerialConflictDescription(
+        {
+          facilityId: 'fac-1',
+          facilityName: '621 Sandbox',
+          accessDeviceName: 'Front gate',
+        },
+        'fac-1',
+      ),
+    ).toContain('at this facility as access device');
+    expect(
+      formatSerialConflictDescription(
+        {
+          facilityId: 'fac-1',
+          facilityName: '621 Sandbox',
+        },
+        'fac-1',
+      ),
+    ).toBe('already registered at this facility (not assigned to a unit)');
+  });
+
+  it('builds same-facility duplicate and generic sync error notifications', () => {
+    const issue = parseInventorySyncError(duplicateRaw, 'blulok')!;
+    const sameFacility = buildInventorySyncIssueNotification({
+      issue,
+      sourceFacilityName: '621 Sandbox',
+      sourceFacilityId: 'fac-1',
+      conflict: {
+        facilityId: 'fac-1',
+        facilityName: '621 Sandbox',
+        unitNumber: 'A-1',
       },
     });
+    expect(sameFacility.message).toMatch(/Remove the duplicate/);
+    expect(sameFacility.priority).toBe('urgent');
 
-    expect(copy.title).toMatch(/duplicate lock serial/i);
-    expect(copy.message).toContain('621 Sandbox');
-    expect(copy.message).toContain('Riverside Storage');
-    expect(copy.message).toContain('unit B-205');
-    expect(copy.message).toContain('c6c2a375-7c8b-4765-a00a-4e3852535c5f');
-    expect(copy.message).toMatch(/unique across all facilities/i);
-    expect(copy.priority).toBe('urgent');
+    const other = buildInventorySyncIssueNotification({
+      issue: {
+        kind: 'other',
+        deviceSerial: 'AC-9',
+        deviceKind: 'access_control',
+        rawError: 'Failed to add access control AC-9: boom',
+      },
+      sourceFacilityName: '621 Sandbox',
+    });
+    expect(other.title).toMatch(/inventory sync error/i);
+    expect(other.priority).toBe('high');
+    expect(other.message).toContain('access control device');
   });
 });
