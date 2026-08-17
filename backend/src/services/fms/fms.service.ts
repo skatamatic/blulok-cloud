@@ -790,6 +790,39 @@ export class FMSService {
   }
 
   /**
+   * Apply tenant updated change (public for tests)
+   */
+  public async applyTenantUpdated(
+    change: FMSChange,
+    result: FMSChangeApplicationResult,
+    ctx: FMSApplyContext
+  ): Promise<void> {
+    return this.applicator.applyTenantUpdated(change, result, ctx);
+  }
+
+  /**
+   * Apply tenant unit assignment change (public for tests)
+   */
+  public async applyTenantUnitChanged(
+    change: FMSChange,
+    result: FMSChangeApplicationResult,
+    ctx: FMSApplyContext
+  ): Promise<void> {
+    return this.applicator.applyTenantUnitChanged(change, result, ctx);
+  }
+
+  /**
+   * Apply unit updated change (public for tests)
+   */
+  public async applyUnitUpdated(
+    change: FMSChange,
+    result: FMSChangeApplicationResult,
+    ctx: FMSApplyContext
+  ): Promise<void> {
+    return this.applicator.applyUnitUpdated(change, result, ctx);
+  }
+
+  /**
    * Restore FMS tenant access
    */
   private async restoreFmsTenantAccess(

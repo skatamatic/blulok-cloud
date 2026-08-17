@@ -669,9 +669,9 @@ export class FMSChangeApplicatorService {
   }
 
   /**
-   * Apply tenant updated change.
+   * Apply tenant updated change (public for focused unit tests).
    */
-  private async applyTenantUpdated(
+  async applyTenantUpdated(
     change: FMSChange,
     _result: FMSChangeApplicationResult,
     ctx: FMSApplyContext
@@ -819,9 +819,9 @@ export class FMSChangeApplicatorService {
   }
 
   /**
-   * Apply tenant unit assignment change (assign or unassign).
+   * Apply tenant unit assignment change (assign or unassign; public for focused unit tests).
    */
-  private async applyTenantUnitChanged(
+  async applyTenantUnitChanged(
     change: FMSChange,
     result: FMSChangeApplicationResult,
     ctx: FMSApplyContext
@@ -1215,9 +1215,9 @@ export class FMSChangeApplicatorService {
   }
 
   /**
-   * Apply unit updated change.
+   * Apply unit updated change (public for focused unit tests).
    */
-  private async applyUnitUpdated(
+  async applyUnitUpdated(
     change: FMSChange,
     result: FMSChangeApplicationResult,
     ctx: FMSApplyContext
