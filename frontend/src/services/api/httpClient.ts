@@ -48,42 +48,42 @@ function createHttpClient(): AxiosInstance {
 
 export const httpClient = createHttpClient();
 
-export async function get<T = unknown>(url: string, config?: AxiosRequestConfig): Promise<T> {
+export async function get<T = any>(url: string, config?: AxiosRequestConfig): Promise<T> {
   const response = config
-    ? await httpClient.get(url, config)
-    : await httpClient.get(url);
+    ? await httpClient.get<T>(url, config)
+    : await httpClient.get<T>(url);
   return response.data;
 }
 
-export async function post<T = unknown>(url: string, data?: unknown, config?: AxiosRequestConfig): Promise<T> {
+export async function post<T = any>(url: string, data?: unknown, config?: AxiosRequestConfig): Promise<T> {
   let response;
   if (config) {
-    response = await httpClient.post(url, data, config);
+    response = await httpClient.post<T>(url, data, config);
   } else if (data !== undefined) {
-    response = await httpClient.post(url, data);
+    response = await httpClient.post<T>(url, data);
   } else {
-    response = await httpClient.post(url);
+    response = await httpClient.post<T>(url);
   }
   return response.data;
 }
 
-export async function put<T = unknown>(url: string, data?: unknown, config?: AxiosRequestConfig): Promise<T> {
+export async function put<T = any>(url: string, data?: unknown, config?: AxiosRequestConfig): Promise<T> {
   const response = config
-    ? await httpClient.put(url, data, config)
-    : await httpClient.put(url, data);
+    ? await httpClient.put<T>(url, data, config)
+    : await httpClient.put<T>(url, data);
   return response.data;
 }
 
-export async function del<T = unknown>(url: string, config?: AxiosRequestConfig): Promise<T> {
+export async function del<T = any>(url: string, config?: AxiosRequestConfig): Promise<T> {
   const response = config
-    ? await httpClient.delete(url, config)
-    : await httpClient.delete(url);
+    ? await httpClient.delete<T>(url, config)
+    : await httpClient.delete<T>(url);
   return response.data;
 }
 
-export async function patch<T = unknown>(url: string, data?: unknown, config?: AxiosRequestConfig): Promise<T> {
+export async function patch<T = any>(url: string, data?: unknown, config?: AxiosRequestConfig): Promise<T> {
   const response = config
-    ? await httpClient.patch(url, data, config)
-    : await httpClient.patch(url, data);
+    ? await httpClient.patch<T>(url, data, config)
+    : await httpClient.patch<T>(url, data);
   return response.data;
 }

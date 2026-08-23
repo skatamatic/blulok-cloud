@@ -20,18 +20,19 @@ import * as systemSettingsApi from './api/systemSettingsApi';
 import * as adminApi from './api/adminApi';
 import { get, post, put, del } from './api/httpClient';
 
+/** Must forward `<T>` — a non-generic wrapper makes Axios infer `{}` and breaks `tsc`. */
 const httpHelpers = {
-  async get(url: string, config?: AxiosRequestConfig) {
-    return get(url, config);
+  async get<T = any>(url: string, config?: AxiosRequestConfig): Promise<T> {
+    return get<T>(url, config);
   },
-  async post(url: string, data?: unknown, config?: AxiosRequestConfig) {
-    return post(url, data, config);
+  async post<T = any>(url: string, data?: unknown, config?: AxiosRequestConfig): Promise<T> {
+    return post<T>(url, data, config);
   },
-  async put(url: string, data?: unknown, config?: AxiosRequestConfig) {
-    return put(url, data, config);
+  async put<T = any>(url: string, data?: unknown, config?: AxiosRequestConfig): Promise<T> {
+    return put<T>(url, data, config);
   },
-  async delete(url: string, config?: AxiosRequestConfig) {
-    return del(url, config);
+  async delete<T = any>(url: string, config?: AxiosRequestConfig): Promise<T> {
+    return del<T>(url, config);
   },
 };
 
