@@ -418,6 +418,39 @@ describe('StoredgeProvider', () => {
 
       expect(tenant).toBeNull();
     });
+
+    it('unwraps a Storable { tenant } envelope', async () => {
+      (global.fetch as jest.Mock)
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({
+            tenant: {
+              id: 'tenant-1',
+              email: 'john@example.com',
+              first_name: 'John',
+              last_name: 'Smith',
+              phone_numbers: [{ number: '555-1234', primary: true }],
+              active: true,
+            },
+          }),
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({
+            ledgers: [{ tenant: { id: 'tenant-1' }, unit: { id: 'unit-101' } }],
+            meta: { pagination: { next_page: null as number | null } },
+          }),
+        });
+
+      const tenant = await provider.fetchTenant('tenant-1');
+
+      expect(tenant).toMatchObject({
+        externalId: 'tenant-1',
+        email: 'john@example.com',
+        firstName: 'John',
+        lastName: 'Smith',
+      });
+    });
   });
 
   describe('Fetch Individual Unit', () => {
@@ -462,6 +495,41 @@ describe('StoredgeProvider', () => {
       const unit = await provider.fetchUnit('nonexistent');
 
       expect(unit).toBeNull();
+    });
+
+    it('unwraps a Storable { unit } envelope', async () => {
+      (global.fetch as jest.Mock).mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          unit: {
+            id: 'f1c0acb8-3cd8-49ac-8cf7-102eaac7633a',
+            name: 'WS-01',
+            unit_type: { name: 'Wine Storage' },
+            size: '5x5',
+            status: 'occupied',
+            current_tenant_id: 'tenant-1',
+            price: 75,
+          },
+        }),
+      });
+
+      const unit = await provider.fetchUnit('f1c0acb8-3cd8-49ac-8cf7-102eaac7633a');
+
+      expect(unit).toMatchObject({
+        externalId: 'f1c0acb8-3cd8-49ac-8cf7-102eaac7633a',
+        unitNumber: 'WS-01',
+        unitType: 'Wine Storage',
+        status: 'occupied',
+      });
+    });
+
+    it('returns null when the unit payload has no id', async () => {
+      (global.fetch as jest.Mock).mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ unit: { unit_type: { name: '' } } }),
+      });
+
+      await expect(provider.fetchUnit('unit-101')).resolves.toBeNull();
     });
 
     it('should map vacant status to available', async () => {

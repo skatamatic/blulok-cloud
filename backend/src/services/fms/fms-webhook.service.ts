@@ -845,7 +845,8 @@ export class FMSWebhookService {
     }
 
     const fetched = prefetchedUnit ?? (await provider.fetchUnit(unitExternalId));
-    if (!fetched) {
+    const fetchedExternalId = fetched?.externalId || unitExternalId;
+    if (!fetched || !fetchedExternalId || (fetched.status == null && !fetched.unitNumber && !fetched.externalId)) {
       logger.warn(
         `[FMS] Webhook occupancy: could not fetch unit ${unitExternalId} for companion unit_updated`,
         {
@@ -857,19 +858,24 @@ export class FMSWebhookService {
       return;
     }
 
+    const normalized: FMSUnit = {
+      ...fetched,
+      externalId: fetchedExternalId,
+    };
+
     const hasChanges =
-      blulokUnit.status !== fetched.status || blulokUnit.unit_type !== fetched.unitType;
+      blulokUnit.status !== normalized.status || blulokUnit.unit_type !== normalized.unitType;
     if (!hasChanges) {
       return;
     }
 
     const occupancyBlockers = resolveOccupiedUnitBlockers(
-      fetched,
+      normalized,
       blulokUnit.status,
-      await this.buildWebhookOccupancyContext(facilityId, inserts, fetched.tenantId)
+      await this.buildWebhookOccupancyContext(facilityId, inserts, normalized.tenantId)
     );
     if (occupancyBlockers.length > 0) {
-      logger.warn(`[FMS] Webhook occupancy: unit ${fetched.unitNumber} cannot be marked occupied yet`, {
+      logger.warn(`[FMS] Webhook occupancy: unit ${normalized.unitNumber} cannot be marked occupied yet`, {
         fms_sync: true,
         sync_log_id: syncLogId,
         facility_id: facilityId,
@@ -877,11 +883,12 @@ export class FMSWebhookService {
       });
     }
 
-    let impactSummary = `Update unit ${fetched.unitNumber} from webhook (occupancy sync)`;
-    if (isFmsUnitVacantStatus(fetched.status) && occupancyBlockers.length === 0) {
-      const tenantLabel = this.webhookBatchTenantLabel(inserts, fetched.tenantId);
+    const unitLabel = normalized.unitNumber || blulokUnit.unit_number || unitExternalId;
+    let impactSummary = `Update unit ${unitLabel} from webhook (occupancy sync)`;
+    if (isFmsUnitVacantStatus(normalized.status) && occupancyBlockers.length === 0) {
+      const tenantLabel = this.webhookBatchTenantLabel(inserts, normalized.tenantId);
       const ledgerNote = formatVacantUnitLedgerConflictNote(
-        fetched.unitNumber,
+        unitLabel,
         tenantLabel ? [tenantLabel] : []
       );
       if (ledgerNote) impactSummary = `${ledgerNote} (webhook)`;
@@ -891,10 +898,10 @@ export class FMSWebhookService {
       sync_log_id: syncLogId,
       change_type: FMSChangeType.UNIT_UPDATED,
       entity_type: 'unit',
-      external_id: fetched.externalId,
+      external_id: fetchedExternalId,
       internal_id: unitInternalId,
       before_data: { status: blulokUnit.status, unitType: blulokUnit.unit_type },
-      after_data: fetched,
+      after_data: normalized,
       required_actions: [],
       impact_summary: impactSummary,
       is_valid: occupancyBlockers.length === 0,

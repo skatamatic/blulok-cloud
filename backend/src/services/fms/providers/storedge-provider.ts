@@ -10,6 +10,7 @@ import {
 import { logger } from '@/utils/logger';
 import { validateFmsWebhookAuth } from '../fms-webhook-auth';
 import { resolveStoredgeWebhookType } from '../storedge-webhook-events';
+import { unwrapStoredgeEntity } from '../storedge-api.utils';
 
 /**
  * StoreDge FMS Provider
@@ -184,7 +185,12 @@ export class StoredgeProvider extends BaseFMSProvider {
   async fetchTenant(externalId: string): Promise<FMSTenant | null> {
     try {
         const url = `${this.config.baseUrl}/v1/${this.storedgeFacilityId}/tenants/${externalId}`;
-        const tenant = await this.makeAuthenticatedRequest(url);
+        const raw = await this.makeAuthenticatedRequest(url);
+        const tenant = unwrapStoredgeEntity(raw, ['tenant', 'data']) as any;
+        if (!tenant) {
+          logger.warn(`Storedge tenant ${externalId} response missing id`);
+          return null;
+        }
 
         const ledgers = await this.fetchAllPages('ledgers/current', 'ledgers');
 
@@ -215,9 +221,14 @@ export class StoredgeProvider extends BaseFMSProvider {
   async fetchUnit(externalId: string): Promise<FMSUnit | null> {
     try {
         const url = `${this.config.baseUrl}/v1/${this.storedgeFacilityId}/units/${externalId}`;
-        const unit = await this.makeAuthenticatedRequest(url);
+        const raw = await this.makeAuthenticatedRequest(url);
+        const unit = unwrapStoredgeEntity(raw, ['unit', 'data']) as any;
+        if (!unit) {
+          logger.warn(`Storedge unit ${externalId} response missing id`);
+          return null;
+        }
         return {
-            externalId: unit.id,
+            externalId: String(unit.id),
             unitNumber: unit.name,
             unitType: unit.unit_type?.name ?? '',
             size: unit.size,

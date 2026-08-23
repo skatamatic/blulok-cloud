@@ -226,9 +226,72 @@ describe('FMSService ledger webhook occupancy companion unit_updated', () => {
     expect(changeCreate).toHaveBeenCalledWith(
       expect.objectContaining({
         change_type: FMSChangeType.UNIT_UPDATED,
+        external_id: 'ext-unit',
         after_data: expect.objectContaining({ status: 'occupied', tenantId: 'ext-tenant' }),
         is_valid: true,
       }),
+    );
+  });
+
+  it('fills companion external_id from the webhook unit_id when fetch omits it', async () => {
+    unitFindById.mockResolvedValue({
+      id: 'unit-1',
+      facility_id: facilityId,
+      unit_number: '101',
+      status: 'available',
+      unit_type: 'Small',
+    });
+    fetchUnitSpy.mockResolvedValue({
+      unitNumber: '101',
+      unitType: 'Small',
+      status: 'occupied',
+      tenantId: 'ext-tenant',
+    });
+
+    const envelope = ledgerEnvelope(
+      'evt-move-in-no-ext',
+      'com.storedge.ledger.moved-in.v1',
+      'ext-tenant',
+      'ext-unit',
+    );
+    const raw = Buffer.from(JSON.stringify(envelope));
+    await FMSService.getInstance().handleWebhookEvent(facilityId, raw, webhookHeaders(raw));
+
+    expect(changeCreate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        change_type: FMSChangeType.UNIT_UPDATED,
+        external_id: 'ext-unit',
+        after_data: expect.objectContaining({ externalId: 'ext-unit', status: 'occupied' }),
+        impact_summary: expect.stringContaining('101'),
+      }),
+    );
+  });
+
+  it('skips a garbage companion unit_updated and still records the assign', async () => {
+    unitFindById.mockResolvedValue({
+      id: 'unit-1',
+      facility_id: facilityId,
+      unit_number: '101',
+      status: 'occupied',
+      unit_type: 'Wine Storage',
+    });
+    fetchUnitSpy.mockResolvedValue({ unitType: '' });
+
+    const envelope = ledgerEnvelope(
+      'evt-move-in-garbage-unit',
+      'com.storedge.ledger.moved-in.v1',
+      'ext-tenant',
+      'ext-unit',
+    );
+    const raw = Buffer.from(JSON.stringify(envelope));
+    await FMSService.getInstance().handleWebhookEvent(facilityId, raw, webhookHeaders(raw));
+
+    expect(changeCreate).toHaveBeenCalledTimes(1);
+    expect(changeCreate).toHaveBeenCalledWith(
+      expect.objectContaining({ change_type: FMSChangeType.TENANT_UNIT_CHANGED }),
+    );
+    expect(changeCreate).not.toHaveBeenCalledWith(
+      expect.objectContaining({ change_type: FMSChangeType.UNIT_UPDATED }),
     );
   });
 
