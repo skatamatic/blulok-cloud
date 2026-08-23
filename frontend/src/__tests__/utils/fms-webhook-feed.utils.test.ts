@@ -3,6 +3,7 @@ import {
   getWebhookFeedOutcomeLabel,
   mergeWebhookFeed,
   reconcileWebhookFeedReview,
+  webhookFeedHasDetails,
 } from '@/utils/fms-webhook-feed.utils';
 import { FMSWebhookFeedItem } from '@/types/fms.types';
 
@@ -41,6 +42,12 @@ describe('fms-webhook-feed.utils', () => {
   it('labels failed and ignored diagnostic outcomes', () => {
     expect(getWebhookFeedOutcomeLabel({ ...makeEvent('1'), status: 'failed' })).toBe('Failed');
     expect(getWebhookFeedOutcomeLabel({ ...makeEvent('1'), status: 'ignored' })).toBe('Not applied');
+  });
+
+  it('exposes details only when there is an error or inspect payload', () => {
+    expect(webhookFeedHasDetails(makeEvent('1'))).toBe(false);
+    expect(webhookFeedHasDetails({ ...makeEvent('1'), errorMessage: 'boom' })).toBe(true);
+    expect(webhookFeedHasDetails(makeEvent('1'), true)).toBe(true);
   });
 
   it('labels partial auto-apply outcomes', () => {

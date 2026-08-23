@@ -29,19 +29,47 @@ function makeEvent(overrides: Partial<FMSWebhookFeedItem> = {}): FMSWebhookFeedI
 }
 
 describe('FMSWebhookFeed', () => {
-  it('shows failed events and expands raw JSON for inspectors', async () => {
+  it('keeps technical errors collapsed until details are expanded', async () => {
     const user = userEvent.setup();
     render(<FMSWebhookFeed events={[makeEvent()]} showPayload />);
 
     expect(screen.getByText('Failed')).toBeInTheDocument();
-    expect(screen.getByText(/Unsupported Storable webhook event type/)).toBeInTheDocument();
+    expect(screen.queryByText(/Unsupported Storable webhook event type/)).not.toBeInTheDocument();
 
-    await user.click(screen.getByRole('button', { name: /show payload/i }));
-    expect(document.querySelector('pre')?.textContent).toContain('com.storedge.lead.moved-in.v1');
+    await user.click(screen.getByRole('button', { name: /show details/i }));
+    expect(screen.getByText(/Unsupported Storable webhook event type/)).toBeInTheDocument();
+    expect(screen.getByText('Payload')).toBeInTheDocument();
+    expect(screen.getByText(/"type": "com.storedge.lead.moved-in.v1"/)).toBeInTheDocument();
   });
 
-  it('hides payload controls when not inspecting', () => {
+  it('hides payload JSON when not inspecting', async () => {
+    const user = userEvent.setup();
     render(<FMSWebhookFeed events={[makeEvent()]} />);
-    expect(screen.queryByRole('button', { name: /show payload/i })).not.toBeInTheDocument();
+
+    expect(screen.queryByText('Copy JSON')).not.toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: /show details/i }));
+    expect(screen.getByText(/Unsupported Storable webhook event type/)).toBeInTheDocument();
+    expect(screen.queryByText('Copy JSON')).not.toBeInTheDocument();
+    expect(screen.queryByText('Payload')).not.toBeInTheDocument();
+  });
+
+  it('does not expand successful events without inspect access', () => {
+    render(
+      <FMSWebhookFeed
+        events={[
+          makeEvent({
+            status: 'processed',
+            errorMessage: null,
+            requiresReview: false,
+            changesDetected: 1,
+            changesApplied: 1,
+            autoApplied: true,
+          }),
+        ]}
+      />,
+    );
+
+    expect(screen.getByText('Auto-applied')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /show details/i })).not.toBeInTheDocument();
   });
 });

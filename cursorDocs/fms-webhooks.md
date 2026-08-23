@@ -81,7 +81,7 @@ Valid Storable CloudEvents that BluLok does not act on (contacts, insurance, gat
 ## Webhook log (FMS setup)
 
 - Facility admins see the last **5 successful** (`processed`) events.
-- **Admin / Dev Admin** see the last **20** events including **failed** and **ignored**, plus the raw JSON envelope (`raw_payload`) on each row.
+- **Admin / Dev Admin** see the last **20** events including **failed** and **ignored**. Collapsed rows show only the event title, time, and outcome badge (Failed / Not applied / Auto-applied / Pending review / etc.). Technical `error_message` and the raw JSON envelope (`raw_payload`) stay behind an expand on that row.
 - Failed apply/processing keeps the row (`status=failed`, `error_message`) instead of deleting it. A later Storable retry of the same envelope `id` reprocesses that failed row.
 
 ## Processing flow

@@ -50,6 +50,17 @@ export function getWebhookFeedOutcomeLabel(item: FMSWebhookFeedItem): string {
   return `${item.changesApplied}/${item.changesDetected} applied`;
 }
 
+export function webhookFeedHasDetails(
+  item: FMSWebhookFeedItem,
+  showPayload = false,
+): boolean {
+  return showPayload || Boolean(item.errorMessage);
+}
+
+export function formatWebhookFeedPayload(item: FMSWebhookFeedItem): string {
+  return JSON.stringify(item.rawPayload ?? item.summary ?? {}, null, 2);
+}
+
 export function getWebhookFeedOutcomeClass(item: FMSWebhookFeedItem): string {
   if (item.status === 'failed') {
     return 'bg-rose-100 text-rose-800 dark:bg-rose-900/20 dark:text-rose-300';
