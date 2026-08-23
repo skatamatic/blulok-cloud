@@ -537,7 +537,11 @@ registerGet(
       }
     }
 
-    const events = await FMSService.getInstance().getRecentWebhookEvents(facilityId, limit);
+    const includeDiagnostics = user.role === UserRole.ADMIN || user.role === UserRole.DEV_ADMIN;
+    const events = await FMSService.getInstance().getRecentWebhookEvents(facilityId, limit, {
+      includeUnsuccessful: includeDiagnostics,
+      includeRawPayload: includeDiagnostics,
+    });
 
     res.json({
       success: true,

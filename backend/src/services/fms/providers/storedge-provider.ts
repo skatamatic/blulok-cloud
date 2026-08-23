@@ -4,13 +4,12 @@ import {
   FMSUnit,
   FMSProviderCapabilities,
   FMSWebhookPayload,
-  FMSWebhookEventType,
   FMSProviderConfig,
   StoredgeCloudEventEnvelope,
-  StoredgeWebhookEventType,
 } from '@/types/fms.types';
 import { logger } from '@/utils/logger';
 import { validateFmsWebhookAuth } from '../fms-webhook-auth';
+import { resolveStoredgeWebhookType } from '../storedge-webhook-events';
 
 /**
  * StoreDge FMS Provider
@@ -232,17 +231,6 @@ export class StoredgeProvider extends BaseFMSProvider {
     }
   }
 
-  private static readonly STOREDGE_TYPE_MAP: Record<StoredgeWebhookEventType, FMSWebhookEventType> = {
-    'com.storedge.tenant.created.v1': 'tenant.created',
-    'com.storedge.tenant.updated.v1': 'tenant.updated',
-    'com.storedge.ledger.moved-in.v1': 'ledger.moved-in',
-    'com.storedge.ledger.moved-out.v1': 'ledger.moved-out',
-    'com.storedge.unit.created.v1': 'unit.created',
-    'com.storedge.unit.deleted.v1': 'unit.deleted',
-    'com.storedge.unit.overlock-applied.v1': 'unit.overlock-applied',
-    'com.storedge.unit.overlock-removed.v1': 'unit.overlock-removed',
-  };
-
   private getWebhookSignatureHeaderName(): string {
     const custom = this.config.customSettings?.webhookSignatureHeader;
     return typeof custom === 'string' && custom.trim() ? custom.trim() : 'X-Storable-Signature';
@@ -279,10 +267,7 @@ export class StoredgeProvider extends BaseFMSProvider {
       throw new Error('Invalid Storable CloudEvents envelope');
     }
 
-    const mapped = StoredgeProvider.STOREDGE_TYPE_MAP[envelope.type as StoredgeWebhookEventType];
-    if (!mapped) {
-      throw new Error(`Unsupported Storable webhook event type: ${envelope.type}`);
-    }
+    const resolved = resolveStoredgeWebhookType(envelope.type);
 
     const bodyFacilityId = String(envelope.body.facility_id ?? '');
     if (!bodyFacilityId) {
@@ -296,10 +281,13 @@ export class StoredgeProvider extends BaseFMSProvider {
 
     return {
       externalEventId: envelope.id,
-      event_type: mapped,
+      event_type: resolved.eventType,
       timestamp: envelope.time ?? envelope.sent_at ?? new Date().toISOString(),
       facility_external_id: bodyFacilityId,
       data: envelope.body as Record<string, unknown>,
+      applyAs: resolved.applyAs,
+      disposition: resolved.disposition,
+      rawType: envelope.type,
     };
   }
 

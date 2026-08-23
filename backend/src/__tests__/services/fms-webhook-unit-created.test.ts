@@ -101,6 +101,8 @@ describe('FMSService unit.created webhook', () => {
       deleteByExternalEventId,
       create: createWebhookRecord,
       markProcessed,
+      markFailed: jest.fn(),
+      markIgnored: jest.fn(),
       isProcessed: (record: { processed_at?: Date | null }) => record.processed_at != null,
     };
     (svc as unknown as { syncLogModel: Record<string, jest.Mock> }).syncLogModel = {

@@ -662,6 +662,38 @@ describe('StoredgeProvider', () => {
       expect(parsed.data.tenant_id).toBe('tenant-abc');
     });
 
+    it('applies lead.moved-in as ledger.moved-in while keeping the original event type', async () => {
+      const parsed = await provider.parseWebhookPayload({
+        id: 'evt-lead-in',
+        time: '2024-01-18T22:18:40Z',
+        type: 'com.storedge.lead.moved-in.v1',
+        body: {
+          facility_id: facilityId,
+          tenant_id: 'tenant-abc',
+          unit_id: 'unit-xyz',
+          lead_id: 'lead-1',
+          ledger_id: null,
+        },
+      });
+
+      expect(parsed.event_type).toBe('lead.moved-in');
+      expect(parsed.applyAs).toBe('ledger.moved-in');
+      expect(parsed.disposition).toBe('apply');
+      expect(parsed.data.tenant_id).toBe('tenant-abc');
+    });
+
+    it('records unknown catalog events as ignored instead of throwing', async () => {
+      const parsed = await provider.parseWebhookPayload({
+        id: 'evt-contact',
+        type: 'com.storedge.contact.created.v1',
+        body: { facility_id: facilityId, tenant_id: 't1' },
+      });
+
+      expect(parsed.event_type).toBe('contact.created');
+      expect(parsed.disposition).toBe('ignored');
+      expect(parsed.applyAs).toBeUndefined();
+    });
+
     it('rejects facility_id mismatch', async () => {
       await expect(
         provider.parseWebhookPayload({

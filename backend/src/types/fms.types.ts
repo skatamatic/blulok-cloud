@@ -276,6 +276,7 @@ export type StoredgeWebhookEventType =
   | 'com.storedge.tenant.updated.v1'
   | 'com.storedge.ledger.moved-in.v1'
   | 'com.storedge.ledger.moved-out.v1'
+  | 'com.storedge.lead.moved-in.v1'
   | 'com.storedge.unit.created.v1'
   | 'com.storedge.unit.deleted.v1'
   | 'com.storedge.unit.overlock-applied.v1'
@@ -286,18 +287,27 @@ export type FMSWebhookEventType =
   | 'tenant.updated'
   | 'ledger.moved-in'
   | 'ledger.moved-out'
+  | 'lead.moved-in'
   | 'unit.created'
   | 'unit.deleted'
   | 'unit.overlock-applied'
   | 'unit.overlock-removed';
 
+export type FMSWebhookDisposition = 'apply' | 'ignored';
+
+export type FMSWebhookRecordStatus = 'received' | 'processed' | 'failed' | 'ignored';
+
 /** Normalized webhook payload after provider parsing */
 export interface FMSWebhookPayload {
   externalEventId: string;
-  event_type: FMSWebhookEventType;
+  event_type: string;
   timestamp: string;
   facility_external_id: string;
   data: Record<string, unknown>;
+  /** When set, webhook apply uses this type (e.g. lead.moved-in → ledger.moved-in). */
+  applyAs?: FMSWebhookEventType;
+  disposition?: FMSWebhookDisposition;
+  rawType?: string;
 }
 
 /** Recent webhook activity pushed over WS and shown in the FMS tab feed. */
@@ -314,6 +324,9 @@ export interface FMSWebhookFeedItem {
   autoApplied: boolean;
   requiresReview: boolean;
   syncLogId: string;
+  status?: FMSWebhookRecordStatus;
+  errorMessage?: string | null;
+  rawPayload?: Record<string, unknown> | null;
 }
 
 export interface StoredgeTenantEventBody {

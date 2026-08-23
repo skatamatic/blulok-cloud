@@ -150,7 +150,7 @@ export const fmsSyncHistoryResponseSchema = Joi.object({
 });
 
 export const fmsWebhookEventsQuerySchema = paginationQuerySchema.keys({
-  limit: Joi.number().integer().min(1).max(20).optional(),
+  limit: Joi.number().integer().min(1).max(50).optional(),
 });
 
 export const fmsWebhookEventsResponseSchema = Joi.object({

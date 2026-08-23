@@ -4,6 +4,7 @@ const FMS_UPDATE_EVENT_LABELS: Record<string, string> = {
   'tenant.updated': 'Tenant updated',
   'ledger.moved-in': 'Tenant move-in',
   'ledger.moved-out': 'Tenant move-out',
+  'lead.moved-in': 'Lead move-in',
   'unit.created': 'Unit created',
   'unit.deleted': 'Unit removed',
   'unit.overlock-applied': 'Overlock applied',

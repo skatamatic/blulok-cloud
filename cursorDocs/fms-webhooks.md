@@ -65,16 +65,29 @@ All events use the same CloudEvents-style envelope:
 | [com.storedge.tenant.created.v1](https://webhooks.storable.io/event-catalog/docs/events/com.storedge.tenant.created/1) | Create/map tenant user |
 | [com.storedge.tenant.updated.v1](https://webhooks.storable.io/event-catalog/docs/events/com.storedge.tenant.updated/1) | Update tenant profile |
 | [com.storedge.ledger.moved-in.v1](https://webhooks.storable.io/event-catalog/docs/events/com.storedge.ledger.moved-in/1) | Assign tenant to unit; if mapped unit status/type differs from FMS, also emit companion `unit_updated` |
+| [com.storedge.lead.moved-in.v1](https://webhooks.storable.io/event-catalog/docs/events/com.storedge.lead.moved-in/1) | Same assign path as ledger move-in. Storable fires this when a **lead converts to occupancy**; `ledger_id` is often still null. If both lead + ledger move-in arrive, the second assign is a no-op. |
 | [com.storedge.ledger.moved-out.v1](https://webhooks.storable.io/event-catalog/docs/events/com.storedge.ledger.moved-out/1) | Unassign tenant (does **not** delete users); companion `unit_updated` when FMS unit status/type differs (e.g. vacant kick-out / status write) |
 | [com.storedge.unit.created.v1](https://webhooks.storable.io/event-catalog/docs/events/com.storedge.unit.created/1) | Fetch unit from API → create unit |
 | [com.storedge.unit.deleted.v1](https://webhooks.storable.io/event-catalog/docs/events/com.storedge.unit.deleted/1) | Remove mapped unit (guarded if assigned/device linked) |
 | [com.storedge.unit.overlock-applied.v1](https://webhooks.storable.io/event-catalog/docs/events/com.storedge.unit.overlock-applied/1) | Set `units.is_overlocked = true` |
 | [com.storedge.unit.overlock-removed.v1](https://webhooks.storable.io/event-catalog/docs/events/com.storedge.unit.overlock-removed/1) | Clear overlock flag |
 
+## Other catalog events (recorded, not applied)
+
+Valid Storable CloudEvents that BluLok does not act on (contacts, insurance, gate-access, `lead.created`, `lead.cancelled`, and any unrecognized `com.storedge.*` type) are **acknowledged** (`200`) and stored as `status=ignored`. This stops Storable retries and keeps the payload in the webhook log for review.
+
+**Lead vs ledger (current call):** apply `lead.moved-in` and `ledger.moved-in` as occupancy assigns. Ignore `lead.created` / `lead.cancelled` until we have production evidence they should create or revoke BluLok users. Revisit if a site only fires lead events for reservations that should get keys.
+
+## Webhook log (FMS setup)
+
+- Facility admins see the last **5 successful** (`processed`) events.
+- **Admin / Dev Admin** see the last **20** events including **failed** and **ignored**, plus the raw JSON envelope (`raw_payload`) on each row.
+- Failed apply/processing keeps the row (`status=failed`, `error_message`) instead of deleting it. A later Storable retry of the same envelope `id` reprocesses that failed row.
+
 ## Processing flow
 
-1. Verify signature and parse envelope (`StoredgeProvider`).
-2. Deduplicate by envelope `id` (`fms_webhook_events` table). A row is considered **processed** only after the full pipeline succeeds (`processed_at` set). Failed deliveries delete the in-flight row so Storable retries are re-processed; successful deliveries return `duplicate: true` on retry.
+1. Verify signature and parse envelope (`StoredgeProvider`). Unknown catalog types no longer throw.
+2. Deduplicate by envelope `id` (`fms_webhook_events` table). A row is considered **processed** when `status` is `processed` or `ignored`. Failed rows (`status=failed`) are retried. Successful / ignored deliveries return `duplicate: true` on retry.
 3. When **autoAcceptWebhookChanges** is off (or unset and **autoAcceptChanges** is off), consecutive webhooks append pending changes to the same open webhook sync log (`changes_pending > 0`) so operators can review/apply one batch.
 4. Create or reuse `fms_sync_logs` (`triggered_by = webhook`).
 5. Insert `fms_changes` rows (same review/apply pipeline as manual sync).

@@ -41,6 +41,17 @@ import type { FMSChangeApplicatorService } from './fms-change-applicator.service
  * Models are accessed via getter to support test-time mocking on parent service.
  */
 
+function parseWebhookJson(rawBody: Buffer): Record<string, unknown> | null {
+  try {
+    const parsed = JSON.parse(rawBody.toString('utf8'));
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : null;
+  } catch {
+    return null;
+  }
+}
+
 function moveOutValidationErrors(
   tenantExternalId: string,
   unitExternalId: string,
@@ -121,6 +132,7 @@ export class FMSWebhookService {
     }
 
     const payload = await provider.parseWebhookPayload(rawBody);
+    const rawPayload = parseWebhookJson(rawBody);
 
     const existing = await this.models.webhookEventModel.findByExternalEventId(
       facilityId,
@@ -131,6 +143,10 @@ export class FMSWebhookService {
     }
     if (existing && !this.models.webhookEventModel.isProcessed(existing)) {
       await this.models.webhookEventModel.deleteByExternalEventId(facilityId, payload.externalEventId);
+    }
+
+    if (payload.disposition === 'ignored') {
+      return this.recordIgnoredWebhook(facilityId, payload, rawPayload);
     }
 
     const autoAccept = shouldAutoAcceptChanges(config.config.syncSettings, 'webhook');
@@ -163,12 +179,19 @@ export class FMSWebhookService {
       external_event_id: payload.externalEventId,
       event_type: payload.event_type,
       sync_log_id: syncLog.id,
+      status: 'received',
+      raw_payload: rawPayload,
     });
 
     try {
       const { summary, summaryText } = summarizeFmsWebhookPayload(payload);
 
-      const pendingInserts = await this.buildWebhookChanges(facilityId, syncLog.id, payload, provider);
+      const pendingInserts = await this.buildWebhookChanges(
+        facilityId,
+        syncLog.id,
+        this.toApplyPayload(payload),
+        provider
+      );
 
       const changes: FMSChange[] = [];
       for (const insert of pendingInserts) {
@@ -267,7 +290,9 @@ export class FMSWebhookService {
         received_at: webhookRecord.received_at,
         sync_log_id: syncLog.id,
         event_summary: eventSummary,
-      });
+        status: 'processed',
+        raw_payload: rawPayload,
+      }, { includeRawPayload: true });
 
       void this.notifyFmsWebhookReceived(facilityId, payload, webhookFeedItem);
       this.core.broadcastFMSSyncUpdate(facilityId, webhookFeedItem);
@@ -281,19 +306,28 @@ export class FMSWebhookService {
         requiresReview,
       };
     } catch (error) {
-      await this.models.webhookEventModel.deleteByExternalEventId(facilityId, payload.externalEventId);
+      const errorMessage = error instanceof Error ? error.message : 'Webhook processing failed';
+      await this.models.webhookEventModel.markFailed(webhookRecord.id, errorMessage, {
+        summaryText: `Failed: ${payload.event_type}`,
+        eventType: payload.event_type,
+      });
       if (syncLogCreatedForEvent) {
         await this.models.syncLogModel.update(syncLog.id, {
           sync_status: FMSSyncStatus.FAILED,
-          error_message: error instanceof Error ? error.message : 'Webhook processing failed',
+          error_message: errorMessage,
         });
       }
-      void this.notifyFmsWebhookFailure(
+      void this.notifyFmsWebhookFailure(facilityId, payload, errorMessage);
+      this.core.broadcastFMSSyncUpdate(
         facilityId,
-        payload,
-        error instanceof Error ? error.message : 'Webhook processing failed'
+        this.toWebhookFeedItem({
+          ...webhookRecord,
+          status: 'failed',
+          error_message: errorMessage,
+          event_summary: { summaryText: `Failed: ${payload.event_type}`, eventType: payload.event_type },
+          raw_payload: rawPayload,
+        }, { includeRawPayload: true })
       );
-      this.core.broadcastFMSSyncUpdate(facilityId);
       throw error;
     }
   }
@@ -301,8 +335,14 @@ export class FMSWebhookService {
   /**
    * Recent webhook events for the facility FMS tab feed.
    */
-  async getRecentWebhookEvents(facilityId: string, limit = 5): Promise<FMSWebhookFeedItem[]> {
-    const records = await this.models.webhookEventModel.findRecentByFacility(facilityId, limit);
+  async getRecentWebhookEvents(
+    facilityId: string,
+    limit = 5,
+    options: { includeUnsuccessful?: boolean; includeRawPayload?: boolean } = {}
+  ): Promise<FMSWebhookFeedItem[]> {
+    const records = await this.models.webhookEventModel.findRecentByFacility(facilityId, limit, {
+      includeUnsuccessful: options.includeUnsuccessful === true,
+    });
     const syncLogIds = [
       ...new Set(
         records
@@ -320,7 +360,9 @@ export class FMSWebhookService {
     );
 
     return records.map((record) => {
-      const item = this.toWebhookFeedItem(record);
+      const item = this.toWebhookFeedItem(record, {
+        includeRawPayload: options.includeRawPayload === true,
+      });
       if (!item.requiresReview || !item.syncLogId) {
         return item;
       }
@@ -334,15 +376,21 @@ export class FMSWebhookService {
     });
   }
 
-  private toWebhookFeedItem(record: {
-    id: string;
-    facility_id: string;
-    external_event_id: string;
-    event_type: string;
-    received_at: Date | string;
-    sync_log_id?: string | null;
-    event_summary?: Record<string, unknown> | null;
-  }): FMSWebhookFeedItem {
+  private toWebhookFeedItem(
+    record: {
+      id: string;
+      facility_id: string;
+      external_event_id: string;
+      event_type: string;
+      received_at: Date | string;
+      sync_log_id?: string | null;
+      event_summary?: Record<string, unknown> | null;
+      status?: FMSWebhookFeedItem['status'];
+      error_message?: string | null;
+      raw_payload?: Record<string, unknown> | null;
+    },
+    options: { includeRawPayload?: boolean } = {}
+  ): FMSWebhookFeedItem {
     const eventSummary = record.event_summary ?? {};
     const changesDetected = Number(eventSummary.changesDetected ?? 0);
     const changesApplied = Number(eventSummary.changesApplied ?? 0);
@@ -371,6 +419,61 @@ export class FMSWebhookService {
       autoApplied,
       requiresReview,
       syncLogId: record.sync_log_id ?? '',
+      status: record.status ?? 'processed',
+      errorMessage: record.error_message ?? null,
+      rawPayload: options.includeRawPayload ? record.raw_payload ?? null : null,
+    };
+  }
+
+  private toApplyPayload(payload: FMSWebhookPayload): FMSWebhookPayload {
+    if (!payload.applyAs || payload.applyAs === payload.event_type) {
+      return payload;
+    }
+    return { ...payload, event_type: payload.applyAs };
+  }
+
+  private async recordIgnoredWebhook(
+    facilityId: string,
+    payload: FMSWebhookPayload,
+    rawPayload: Record<string, unknown> | null
+  ): Promise<{
+    duplicate: boolean;
+    message: string;
+    syncLogId?: string;
+    changesDetected?: number;
+    changesApplied?: number;
+    requiresReview?: boolean;
+  }> {
+    const { summary, summaryText } = summarizeFmsWebhookPayload(payload);
+    const eventSummary = {
+      ...summary,
+      summaryText,
+      changesDetected: 0,
+      changesApplied: 0,
+      autoApplied: false,
+      requiresReview: false,
+      ignored: true,
+      rawType: payload.rawType,
+    };
+
+    const webhookRecord = await this.models.webhookEventModel.create({
+      facility_id: facilityId,
+      external_event_id: payload.externalEventId,
+      event_type: payload.event_type,
+      status: 'ignored',
+      raw_payload: rawPayload,
+      event_summary: eventSummary,
+    });
+
+    const webhookFeedItem = this.toWebhookFeedItem(webhookRecord, { includeRawPayload: true });
+    this.core.broadcastFMSSyncUpdate(facilityId, webhookFeedItem);
+
+    return {
+      duplicate: false,
+      message: `Recorded ${payload.event_type} webhook (not applied)`,
+      changesDetected: 0,
+      changesApplied: 0,
+      requiresReview: false,
     };
   }
 

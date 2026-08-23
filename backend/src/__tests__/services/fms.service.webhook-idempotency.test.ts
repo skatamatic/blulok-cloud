@@ -36,6 +36,8 @@ describe('FMSService.handleWebhookEvent idempotency', () => {
   const deleteByExternalEventId = jest.fn();
   const createWebhookRecord = jest.fn();
   const markProcessed = jest.fn();
+  const markFailed = jest.fn();
+  const markIgnored = jest.fn();
   const findByFacilityId = jest.fn();
   const syncLogCreate = jest.fn();
   const syncLogUpdate = jest.fn();
@@ -100,7 +102,13 @@ describe('FMSService.handleWebhookEvent idempotency', () => {
       deleteByExternalEventId,
       create: createWebhookRecord,
       markProcessed,
-      isProcessed: (record: { processed_at?: Date | null }) => record.processed_at != null,
+      markFailed,
+      markIgnored,
+      isProcessed: (record: { processed_at?: Date | null; status?: string }) => {
+        if (record.status === 'failed' || record.status === 'received') return false;
+        if (record.status === 'processed' || record.status === 'ignored') return true;
+        return record.processed_at != null;
+      },
     };
     (svc as unknown as { syncLogModel: Record<string, jest.Mock> }).syncLogModel = {
       create: syncLogCreate,
@@ -120,6 +128,30 @@ describe('FMSService.handleWebhookEvent idempotency', () => {
       .fn()
       .mockResolvedValue('Test Facility');
     (svc as unknown as { notifyFmsWebhookReceived: jest.Mock }).notifyFmsWebhookReceived = jest.fn();
+  });
+
+  it('records ignored Storable catalog events without creating a sync log', async () => {
+    const raw = Buffer.from(JSON.stringify({
+      id: 'evt-ignored',
+      type: 'com.storedge.contact.created.v1',
+      body: { facility_id: 'ext-fac', tenant_id: 't1' },
+    }));
+
+    const result = await FMSService.getInstance().handleWebhookEvent(
+      facilityId,
+      raw,
+      webhookHeaders(raw)
+    );
+
+    expect(result.duplicate).toBe(false);
+    expect(result.message).toContain('not applied');
+    expect(syncLogCreate).not.toHaveBeenCalled();
+    expect(createWebhookRecord).toHaveBeenCalledWith(
+      expect.objectContaining({
+        event_type: 'contact.created',
+        status: 'ignored',
+      })
+    );
   });
 
   it('returns duplicate only for successfully processed events', async () => {
@@ -167,7 +199,7 @@ describe('FMSService.handleWebhookEvent idempotency', () => {
     expect(markProcessed).toHaveBeenCalled();
   });
 
-  it('removes webhook record when processing throws so Storable can retry', async () => {
+  it('keeps a failed webhook record so retries can reprocess and the UI can show the payload', async () => {
     changeCreate.mockRejectedValueOnce(new Error('DB unavailable'));
 
     const raw = Buffer.from(JSON.stringify(tenantUpdatedEnvelope('evt-fail')));
@@ -175,7 +207,12 @@ describe('FMSService.handleWebhookEvent idempotency', () => {
       FMSService.getInstance().handleWebhookEvent(facilityId, raw, webhookHeaders(raw))
     ).rejects.toThrow('DB unavailable');
 
-    expect(deleteByExternalEventId).toHaveBeenCalledWith(facilityId, 'evt-fail');
+    expect(markFailed).toHaveBeenCalledWith(
+      'wh-1',
+      'DB unavailable',
+      expect.objectContaining({ eventType: 'tenant.updated' })
+    );
+    expect(deleteByExternalEventId).not.toHaveBeenCalled();
     expect(syncLogUpdate).toHaveBeenCalledWith(
       'sync-1',
       expect.objectContaining({ sync_status: FMSSyncStatus.FAILED })

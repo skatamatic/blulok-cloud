@@ -38,6 +38,11 @@ describe('fms-webhook-feed.utils', () => {
     expect(getWebhookFeedOutcomeLabel(makeEvent('1'))).toBe('Pending review');
   });
 
+  it('labels failed and ignored diagnostic outcomes', () => {
+    expect(getWebhookFeedOutcomeLabel({ ...makeEvent('1'), status: 'failed' })).toBe('Failed');
+    expect(getWebhookFeedOutcomeLabel({ ...makeEvent('1'), status: 'ignored' })).toBe('Not applied');
+  });
+
   it('labels partial auto-apply outcomes', () => {
     expect(
       getWebhookFeedOutcomeLabel({

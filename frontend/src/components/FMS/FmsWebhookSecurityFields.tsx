@@ -193,8 +193,9 @@ export function FmsWebhookSecurityFields({
         {webhookUrl}
       </div>
       <p className="text-xs text-gray-500 dark:text-gray-400">
-        Subscribe to: tenant.created, tenant.updated, ledger.moved-in, ledger.moved-out, unit.created,
-        unit.deleted, unit.overlock-applied, unit.overlock-removed.
+        Subscribe to occupancy events: tenant.created, tenant.updated, ledger.moved-in, ledger.moved-out,
+        lead.moved-in, unit.created, unit.deleted, unit.overlock-applied, unit.overlock-removed.
+        Other Storable catalog events are stored for diagnostics but not applied.
       </p>
     </div>
   );

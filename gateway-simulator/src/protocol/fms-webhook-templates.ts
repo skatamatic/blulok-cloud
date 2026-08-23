@@ -211,6 +211,14 @@ const ledgerBodyFields: WebhookTemplateField[] = [
   { key: 'moveInDate', label: 'Move-in date', path: 'body.move_in_date', type: 'datetime' },
 ];
 
+const leadMovedInBodyFields: WebhookTemplateField[] = [
+  { key: 'facilityId', label: 'Facility ID (external)', path: 'body.facility_id', type: 'text', required: true },
+  { key: 'tenantId', label: 'Tenant ID', path: 'body.tenant_id', type: 'text', required: true },
+  { key: 'unitId', label: 'Unit ID', path: 'body.unit_id', type: 'text', required: true },
+  { key: 'leadId', label: 'Lead ID', path: 'body.lead_id', type: 'text' },
+  { key: 'ledgerId', label: 'Ledger ID', path: 'body.ledger_id', type: 'text' },
+];
+
 const unitIdBodyFields: WebhookTemplateField[] = [
   { key: 'facilityId', label: 'Facility ID (external)', path: 'body.facility_id', type: 'text', required: true },
   {
@@ -263,6 +271,13 @@ export const FMS_WEBHOOK_TEMPLATES: WebhookEventTemplate[] = [
     tenant_id: 'tenant-demo-001',
     unit_id: 'unit-demo-001',
     move_in_date: isoNow(),
+  })),
+  storedgeTemplate('storedge-lead-moved-in', 'Lead moved in', 'com.storedge.lead.moved-in.v1', leadMovedInBodyFields, (ctx) => ({
+    facility_id: ctx.externalFacilityId,
+    tenant_id: 'tenant-demo-001',
+    unit_id: 'unit-demo-001',
+    lead_id: 'lead-demo-001',
+    ledger_id: '',
   })),
   storedgeTemplate('storedge-ledger-moved-out', 'Ledger moved out', 'com.storedge.ledger.moved-out.v1', ledgerBodyFields, (ctx) => ({
     facility_id: ctx.externalFacilityId,

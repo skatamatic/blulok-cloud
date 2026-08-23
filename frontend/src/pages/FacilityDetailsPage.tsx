@@ -1826,6 +1826,7 @@ const normalizeFacilityTab = (value: string | null): FacilityTab | null => {
           facilityName={facility.name}
           isDevMode={localStorage.getItem('fms-simulated-enabled') === 'true'}
           canEditFMS={canEditFMS}
+          canInspectWebhooks={canEditFMS}
           simplifiedUi={simplifiedUi}
         />
       )}

@@ -37,6 +37,7 @@ import { isFMSSyncInProgressError } from '@/utils/fms-sync.utils';
 import { formatDateTime } from '@/utils/datetime.utils';
 import { formatPendingReviewLabel, pickOpenPendingReviewLog, FMS_PENDING_REVIEW_CHANGED } from '@/utils/fms-pending-review.utils';
 import {
+  FMS_WEBHOOK_FEED_DIAGNOSTIC_LIMIT,
   FMS_WEBHOOK_FEED_LIMIT,
   mergeWebhookFeed,
   reconcileWebhookFeedReview,
@@ -48,6 +49,8 @@ interface FacilityFMSTabProps {
   facilityName?: string;
   isDevMode?: boolean;
   canEditFMS?: boolean;
+  /** Admin / dev_admin: show failed/ignored webhooks and raw JSON payloads. */
+  canInspectWebhooks?: boolean;
   /** Presentation-only simplified Cloud UI (hides technical FMS surfaces). */
   simplifiedUi?: boolean;
 }
@@ -86,6 +89,7 @@ export function FacilityFMSTab({
   facilityName,
   isDevMode = false,
   canEditFMS = true,
+  canInspectWebhooks = false,
   simplifiedUi = false,
 }: FacilityFMSTabProps) {
   if (simplifiedUi) {
@@ -98,6 +102,7 @@ export function FacilityFMSTab({
       facilityName={facilityName}
       isDevMode={isDevMode}
       canEditFMS={canEditFMS}
+      canInspectWebhooks={canInspectWebhooks}
     />
   );
 }
@@ -107,6 +112,7 @@ function FacilityFMSTabAdvanced({
   facilityName,
   isDevMode = false,
   canEditFMS = true,
+  canInspectWebhooks = false,
 }: Omit<FacilityFMSTabProps, 'simplifiedUi'>) {
   const { addToast } = useToast();
   const { canStartNewSync, startSync, completeSync, showReview, cancelSync, hasCompletedSync, openPendingReview, syncState } = useFMSSync();
@@ -125,6 +131,9 @@ function FacilityFMSTabAdvanced({
   const [selectedProvider, setSelectedProvider] = useState<FMSProviderType | null>(null);
   const [configExpanded, setConfigExpanded] = useState(false);
   const webhookLoadSeqRef = useRef(0);
+  const webhookFeedLimit = canInspectWebhooks
+    ? FMS_WEBHOOK_FEED_DIAGNOSTIC_LIMIT
+    : FMS_WEBHOOK_FEED_LIMIT;
 
   const loadConfig = async () => {
     try {
@@ -176,7 +185,7 @@ function FacilityFMSTabAdvanced({
     const seq = ++webhookLoadSeqRef.current;
     try {
       const { events } = await fmsService.getWebhookEvents(facilityId, {
-        limit: FMS_WEBHOOK_FEED_LIMIT,
+        limit: webhookFeedLimit,
       });
       if (seq !== webhookLoadSeqRef.current) return;
       setWebhookFeedError(null);
@@ -233,7 +242,7 @@ function FacilityFMSTabAdvanced({
           return;
         }
         if (data?.webhookEvent?.facilityId === facilityId) {
-          setWebhookFeed((prev) => mergeWebhookFeed(prev, data.webhookEvent!));
+          setWebhookFeed((prev) => mergeWebhookFeed(prev, data.webhookEvent!, webhookFeedLimit));
         }
         void loadSyncHistory();
       },
@@ -550,7 +559,8 @@ function FacilityFMSTabAdvanced({
               <div>
                 <h3 className="text-base font-semibold text-gray-900 dark:text-white">Recent Webhooks</h3>
                 <p className="mt-0.5 text-sm text-gray-500 dark:text-gray-400">
-                  Last {FMS_WEBHOOK_FEED_LIMIT} inbound FMS webhook events for this facility
+                  Last {webhookFeedLimit} inbound FMS webhook events for this facility
+                  {canInspectWebhooks ? ' · includes failed and unapplied events' : ''}
                 </p>
               </div>
               {webhookFeedError && (
@@ -570,6 +580,7 @@ function FacilityFMSTabAdvanced({
             ) : (
               <FMSWebhookFeed
                 events={webhookFeed}
+                showPayload={canInspectWebhooks}
                 onReviewPending={(syncLogId) => void handleReviewPending(syncLogId)}
               />
             )}

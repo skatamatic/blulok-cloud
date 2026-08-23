@@ -905,9 +905,10 @@ export class FMSService {
    */
   public async getRecentWebhookEvents(
     facilityId: string,
-    limit = 5
+    limit = 5,
+    options: { includeUnsuccessful?: boolean; includeRawPayload?: boolean } = {}
   ): Promise<FMSWebhookFeedItem[]> {
-    return this.webhook.getRecentWebhookEvents(facilityId, limit);
+    return this.webhook.getRecentWebhookEvents(facilityId, limit, options);
   }
 
   /**

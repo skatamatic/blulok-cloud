@@ -188,6 +188,8 @@ export interface FMSSyncLog {
   updated_at: string;
 }
 
+export type FMSWebhookRecordStatus = 'received' | 'processed' | 'failed' | 'ignored';
+
 export interface FMSWebhookFeedItem {
   id: string;
   facilityId: string;
@@ -201,6 +203,9 @@ export interface FMSWebhookFeedItem {
   autoApplied: boolean;
   requiresReview: boolean;
   syncLogId: string;
+  status?: FMSWebhookRecordStatus;
+  errorMessage?: string | null;
+  rawPayload?: Record<string, unknown> | null;
 }
 
 // API Response types

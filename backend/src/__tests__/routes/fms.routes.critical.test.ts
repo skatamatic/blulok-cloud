@@ -483,6 +483,10 @@ describe('FMS routes — critical paths', () => {
 
       expectSuccess(response);
       expect(response.body.events).toHaveLength(1);
+      expect(FMSService.getInstance().getRecentWebhookEvents).toHaveBeenCalledWith(facility1, 5, {
+        includeUnsuccessful: true,
+        includeRawPayload: true,
+      });
     });
 
     it('returns 403 when facility_admin out of scope', async () => {
