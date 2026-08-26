@@ -397,8 +397,8 @@ On backend boot, **gateway recovery** in-flight state is re-armed **before** fir
 ### Cloud Run / multi-instance
 
 - Gateway connections and recovery push targets are **in-memory per process**.
-- Prefer **`min-instances=1`**; consider **`max-instances=1`** until shared routing exists.
-- WebSocket request timeout: set **`--timeout=3600`** (see [Gateway integration](./gateway-integration.md)).
+- Leave **`min-instances=0`**: an open `/ws/gateway` keeps that instance. Optional `1` only for a warm idle instance. Consider **`max-instances=1`** until shared routing exists.
+- WebSocket request timeout: **`--timeout=3600`**, plus **`--no-cpu-throttling --session-affinity --no-use-http2`**. Node `requestTimeout` is disabled in process (see [Gateway integration](./gateway-integration.md) §2 / §2b).
 - Outbound gating uses a **5-second TTL cache** per instance; lock/inventory paths use DB checks.
 
 ### Environment variables (relevant)

@@ -43,6 +43,8 @@ App                          Cloud
 
 Server-side fanout is **in-memory per Cloud Run instance** (same class of constraint as `/ws/gateway`). Prefer **session affinity** when `max-instances > 1`. A process restart drops sockets; clients reconnect and re-subscribe (snapshot resets state).
 
+Cloud Run + Node lifetime: the socket is one HTTP request, capped at the service **`--timeout`** (deployed **3600s**). Heartbeats do **not** reset that timer or Node’s default **300s `requestTimeout`** (the backend sets `requestTimeout=0`). An open `/ws/app` connection keeps its Cloud Run instance allocated — **min-instances is not required**. Expect a disconnect at the hour mark and on deploys; follow the reconnect playbook. Details: [Gateway integration](./gateway-integration.md) §2 / §2b.
+
 ---
 
 ## 2. Connect

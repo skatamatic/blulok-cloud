@@ -64,9 +64,15 @@ steps:
       - '100'
       - '--concurrency'
       - '80'
-      # WebSocket /ws/gateway is one long-lived HTTP request; default 300s cuts every ~5 min.
+      # WebSocket is one long-lived HTTP request; default 300s cuts every ~5 min.
       - '--timeout'
       - '3600'
+      # Open sockets already keep the instance (and CPU) allocated — no min-instances pin.
+      # Always-on CPU avoids throttling gaps between WS frames; affinity helps reconnects.
+      - '--no-cpu-throttling'
+      - '--session-affinity'
+      # HTTP/2 end-to-end breaks Cloud Run WebSockets.
+      - '--no-use-http2'
 
   # Deploy to Cloud Run - Frontend
   - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'

@@ -140,26 +140,57 @@ See also [Gateway device sync developer guide](./gateway-device-sync-developer-g
 
 Mitigations:
 
-- Prefer **`--min-instances=1`** and/or **`--max-instances=1`** for the backend service **until** gateway routing is centralized (e.g. Redis pub/sub or a dedicated gateway service).
-- Or enable **session affinity** for the service so the same client tends to reach the same instance (still not a full substitute for shared state).
+- Enable **session affinity** (`--session-affinity` in `cloudbuild.yaml`) so reconnects tend to hit the same instance (still not a full substitute for shared state).
+- Prefer **`--max-instances=1`** until gateway routing is centralized (e.g. Redis pub/sub or a dedicated gateway service). **`--min-instances=1`** is optional (cold-start only); open sockets already keep their instance — see §2b.
 
 ### 2. Request timeout (≈5 minute disconnects)
 
-On Cloud Run, a WebSocket counts as **one HTTP request** for its whole lifetime. The service **`--timeout`** is a **wall-clock limit** from upgrade to close (default **300 seconds / 5 minutes**). **Ping/Pong and JSON heartbeats do not reset this timer** — only raising the timeout helps.
+On Cloud Run, a WebSocket counts as **one HTTP request** for its whole lifetime. Two independent **5-minute** timers can cut that request even when heartbeats are flowing:
 
-If gateway debug shows **`connection_closed` ~5 minutes after `connection_opened`** while pings still succeed, this is almost always the **default Cloud Run timeout**.
+| Timer | Default | Heartbeats reset it? | What to do |
+|-------|---------|----------------------|------------|
+| **Cloud Run `--timeout`** | **300s / 5 min** (max **3600s / 60 min**) | **No** — wall-clock from upgrade to close | Deploy with **`--timeout=3600`** |
+| **Node.js 18+ `http.Server.requestTimeout`** | **300s / 5 min** | **No** — same wall-clock; WS frames do not count | Backend sets it to **`0`** in `configureLongLivedHttpServer` (`backend/src/utils/http-server-timeouts.ts`) |
 
-**Fix:** set the backend service timeout to the max you need (platform max is **3600s / 60 minutes** today):
+If gateway or app debug shows **`connection_closed` ~5 minutes after `connection_opened`** while pings still succeed, check **both**. Cloud Run timeout in Console can look correct (3600) while Node still kills the socket.
+
+### Live `blulok-cloud-dev` (checked 2026-08-26)
+
+There is **no user-managed HTTP(S) Load Balancer** in this project: no URL maps, backend services, forwarding rules, serverless NEGs, Cloud Armor, or API Gateway. Clients hit Cloud Run’s built-in Google Front End on:
+
+- `https://blulok-cloud-backend-dev-ki5hilafxa-uw.a.run.app`
+- `https://blulok-cloud-backend-dev-870285319955.us-west1.run.app`
+
+That GFE uses the Cloud Run service **`timeoutSeconds`**. Applied **2026-08-26** on **`blulok-cloud-backend-dev`** (us-west1, revision `…-00181-6lp`): **`timeoutSeconds=3600`**, **`cpu-throttling=false`**, **`sessionAffinity=true`**, port **`http1`**.
+
+Develop deploys via Cloud Build trigger **`blulok-cloud-backend-develop-auto`**. The trigger’s deploy step now re-applies `--timeout=3600 --no-cpu-throttling --session-affinity --no-use-http2` so image updates do not drop back to 300s. Repo **`cloudbuild.yaml`** (`blulok-backend` / us-central1) is **not** what ships this environment.
+
+The Node `requestTimeout=0` fix (`configureLongLivedHttpServer`) still needs a **new image** on this service. Until that revision is out, Node can still close sockets at 5 minutes even though Cloud Run now allows 3600s.
+
+**Also live:** min-instances **0**, max **10**, Direct VPC egress to `blulok-cloud-dev-private-network` (Cloud SQL at `10.40.0.3`). No Cloud Run domain mapping.
+
+After **60 minutes** (or whatever you set), Cloud Run will still close the socket; the **Java gateway / mobile app must reconnect**. That hourly recycle is a platform limit, not a keepalive failure.
+
+### 2b. Scale-to-zero vs open WebSockets (do not pin min-instances)
+
+An open WebSocket **is** an in-flight HTTP request. Cloud Run **does not scale that instance to zero** while any `/ws`, `/ws/app`, or `/ws/gateway` socket is open, and it **allocates CPU** for the life of the connection. Application heartbeats and RFC6455 pings keep **middleboxes / NAT** from treating the TCP path as idle; they are **not** what keeps the Cloud Run instance billed.
+
+You do **not** need **`--min-instances=1`** just to hold gateway or app sockets. Leave min-instances at **0** so unused revisions can scale away after the last connection closes.
+
+Still apply these (in `cloudbuild.yaml`; no min-instances pin):
+
+| Flag | Why |
+|------|-----|
+| **`--no-cpu-throttling`** | CPU always allocated for the instance lifetime. Avoids request-only CPU gaps between frames (timers, JSON PING, background work). Billing is already instance-based while a WebSocket is open. |
+| **`--session-affinity`** | Best-effort sticky reconnects so `/ws/app` and `/ws/gateway` hit the instance that still has in-memory state. |
+| **`--no-use-http2`** | HTTP/2 end-to-end breaks Cloud Run WebSockets. |
 
 ```bash
-gcloud run services update blulok-backend --region=YOUR_REGION --timeout=3600
+gcloud run services update blulok-backend --region=YOUR_REGION \
+  --timeout=3600 --no-cpu-throttling --session-affinity --no-use-http2
 ```
 
-Or in **Console → Cloud Run → service → Edit & deploy new revision → Request timeout**.
-
-Repo **`cloudbuild.yaml`** deploys the backend with **`--timeout 3600`** so CI/CD matches this requirement. If you deploy manually, add the same flag.
-
-After **60 minutes** (or whatever you set), Cloud Run will still close the socket; the **Java gateway must reconnect** (you already see reconnects within a few seconds — that part is fine).
+**`--min-instances=1`** is optional (faster reconnect after a total idle scale-to-zero / cold start). It is **not** required to keep an already-connected socket alive.
 
 ### 3. “Permanent” persistence — what is actually possible
 
@@ -175,10 +206,10 @@ So **permanent** in production means one of these:
 
 **Recommended path for BluLok today**
 
-1. **Deploy backend with `--timeout=3600`** (see `cloudbuild.yaml` and §2 above).
+1. **Deploy backend with `--timeout=3600 --no-cpu-throttling --session-affinity --no-use-http2`** (see `cloudbuild.yaml` and §2 / §2b). Node `requestTimeout` is disabled in process.
 2. **Gateway (Java):** ensure **automatic reconnect** on any close (`1006`, normal close, timeout), then **same AUTH flow**; avoid long sleeps before reconnect.
 3. **Backend:** keep **idempotent reconnect** behavior (you already resume firmware on `AUTH` for a facility — extend that mindset to any other long-lived work).
-4. **Stability:** **`--min-instances=1`** on the backend reduces cold starts when gateways reconnect; consider **`--max-instances=1`** until command routing is **not** purely in-memory (or add **Redis**/shared bus so any instance can reach the right connection).
+4. **Stability:** leave **`--min-instances=0`** so idle backends can scale away; open sockets keep their instance. Consider **`--max-instances=1`** until command routing is **not** purely in-memory (or add **Redis**/shared bus so any instance can reach the right connection).
 
 If you **must** avoid hourly disconnects entirely, plan **B** — a small always-on **gateway-connector** service (VM or GKE) that holds WebSockets and talks to the rest of BluLok over HTTPS — is the durable fix.
 
@@ -429,8 +460,8 @@ The Facility → Gateway → **DevTools/Diag** panel (DEV_ADMIN only) streams ra
 - [ ] JWT from **that** backend; not expired; role `facility_admin` | `admin` | `dev_admin`.
 - [ ] `facilityId` is a real facility UUID; for `facility_admin`, the user has a live DB association to that facility.
 - [ ] First message after connect is **`AUTH`** JSON (not query-string token).
-- [ ] If connections flap or commands never arrive on Cloud Run, check **instance count** and **timeouts** (`--timeout=3600` for gateway WS).
-- [ ] For “always connected” behavior on Cloud Run: accept **hourly** TCP recycle and rely on **fast gateway reconnect** + **`min-instances`**. For **no** hard cap, plan a **non–Cloud Run** WebSocket tier (see §3).
+- [ ] If connections flap or commands never arrive on Cloud Run, check **instance count**, **`--timeout=3600`**, **`--no-cpu-throttling`**, **`--session-affinity`**, **`--no-use-http2`**, and Node `requestTimeout=0` (startup log: `HTTP server timeouts configured for long-lived WebSockets`).
+- [ ] For “always connected” behavior on Cloud Run: accept **hourly** TCP recycle and rely on **fast gateway reconnect**. Open sockets keep the instance (no min-instances pin). For **no** hard cap, plan a **non–Cloud Run** WebSocket tier (see §3).
 
 ## Troubleshooting (from production checks)
 

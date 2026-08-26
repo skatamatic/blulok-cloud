@@ -14,6 +14,7 @@ import { StoredgeProvider } from '@/services/fms/providers/storedge-provider';
 import { FMSProviderType } from '@/types/fms.types';
 import { validateEd25519Env } from '@/utils/security-env';
 import { AccessControlNoFeedbackService } from '@/services/access-control-no-feedback.service';
+import { configureLongLivedHttpServer } from '@/utils/http-server-timeouts';
 
 async function bootstrap(): Promise<void> {
   try {
@@ -82,6 +83,8 @@ async function bootstrap(): Promise<void> {
       logger.info(`BluLok API server running on port ${config.port}`);
       logger.info(`Environment: ${config.nodeEnv}`);
     });
+    const httpTimeouts = configureLongLivedHttpServer(server);
+    logger.info('HTTP server timeouts configured for long-lived WebSockets', httpTimeouts);
 
     // Initialize WebSocket and logger interceptor
     const wsService = WebSocketService.getInstance();

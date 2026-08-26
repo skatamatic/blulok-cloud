@@ -16,6 +16,7 @@ wss://<host>/ws/app?token=<JWT>
 
 - Same JWT as REST.
 - Prefer Cloud Run **session affinity** when `max-instances > 1` (in-memory subscribers).
+- Cloud Run treats this socket as one HTTP request (max **3600s**). Heartbeats keep NAT/proxies alive and satisfy the **60s idle close**; they do **not** reset Cloud Run or Node wall-clock timeouts. Backend disables Node’s 5-minute `requestTimeout` and deploys with `--no-cpu-throttling` so an open socket keeps its instance without **min-instances**. Clients must reconnect after the hourly recycle (and on any unexpected close). See [Gateway integration](./gateway-integration.md) §2 / §2b.
 
 ## Subscribe
 
