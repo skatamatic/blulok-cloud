@@ -62,16 +62,32 @@ jest.mock('@/services/events/notification-events.service');
 jest.mock('@/services/events/activity-events.service');
 jest.mock('@/services/events/access-session-events.service');
 jest.mock('@/services/access/access-session-read.service');
+jest.mock('@/services/gateway/gateway-events.service', () => ({
+  GatewayEventsService: {
+    getInstance: jest.fn(),
+  },
+}));
+
+import { GatewayEventsService } from '@/services/gateway/gateway-events.service';
 
 describe('AppRealtimeHub', () => {
   let hub: AppRealtimeHub;
   let mockWs: jest.Mocked<WebSocket>;
   let sessionReadMock: { queryRecent: jest.Mock; findSessionRecordById: jest.Mock };
+  let mockGetFacilityProductLiveness: jest.Mock;
 
   beforeEach(() => {
     const existing = (AppRealtimeHub as any).instance;
     if (existing?.destroy) existing.destroy();
     (AppRealtimeHub as any).instance = undefined;
+
+    mockGetFacilityProductLiveness = jest.fn().mockReturnValue({
+      connected: true,
+      lastPongAt: Date.parse('2026-08-25T16:00:02.000Z'),
+    });
+    (GatewayEventsService.getInstance as jest.Mock).mockReturnValue({
+      getFacilityProductLiveness: mockGetFacilityProductLiveness,
+    });
 
     (NotificationEventsService.getInstance as jest.Mock).mockReturnValue({
       onNotificationCreated: jest.fn().mockReturnValue(() => {}),
@@ -333,6 +349,7 @@ describe('AppRealtimeHub', () => {
     expect(payload.event).toBe('device_status_update');
     expect(payload.data.updatedDeviceId).toBe('dev-own');
     expect(payload.data.devices[0].unit_id).toBe('unit-a');
+    expect(payload.data.devices[0].device_category).toBe('blulok');
 
     (mockWs.send as jest.Mock).mockClear();
     deviceModel.findBluLokDeviceById = jest.fn().mockResolvedValue({
@@ -374,6 +391,7 @@ describe('AppRealtimeHub', () => {
     expect(payload.event).toBe('device_status_update');
     expect(payload.data.devices[0].id).toBe('ac-1');
     expect(payload.data.devices[0].unit_id).toBeNull();
+    expect(payload.data.devices[0].device_category).toBe('access_control');
   });
 
   it('emitAccessSessionUpsert fans out to the matching facility subscriber', async () => {
@@ -470,6 +488,40 @@ describe('AppRealtimeHub', () => {
     const payload = JSON.parse((mockWs.send as jest.Mock).mock.calls[0][0]);
     expect(payload.event).toBe('gateway_status_update');
     expect(payload.data.gateways[0].id).toBe('gw-1');
+    expect(payload.data.gateways[0].connected).toBe(true);
+    expect(payload.data.gateways[0].lastActivityAt).toBe('2026-08-25T16:00:02.000Z');
+    expect(mockGetFacilityProductLiveness).toHaveBeenCalledWith('facility-1');
+  });
+
+  it('emitGatewayStatusUpdate reports connected false when the inbound socket is down', async () => {
+    (FacilityAccessService.hasAccessToFacility as jest.Mock).mockResolvedValue(true);
+    mockGetFacilityProductLiveness.mockReturnValue({ connected: false });
+    await hub.subscribe(mockWs, tenantClient(), 'facility-1', 'sub-1');
+    (mockWs.send as jest.Mock).mockClear();
+
+    await hub.emitGatewayStatusUpdate('facility-1', 'gw-1');
+    const payload = JSON.parse((mockWs.send as jest.Mock).mock.calls[0][0]);
+    expect(payload.data.updatedGatewayId).toBe('gw-1');
+    expect(payload.data.gateways[0].connected).toBe(false);
+    expect(payload.data.gateways[0].status).toBe('online');
+  });
+
+  it('app_snapshot gateways include live connected from product liveness', async () => {
+    (FacilityAccessService.hasAccessToFacility as jest.Mock).mockResolvedValue(true);
+    mockGetFacilityProductLiveness.mockReturnValue({
+      connected: true,
+      lastPongAt: Date.parse('2026-08-26T01:00:00.000Z'),
+    });
+    await hub.subscribe(mockWs, tenantClient(), 'facility-1', 'sub-1');
+    const payload = JSON.parse((mockWs.send as jest.Mock).mock.calls[0][0]);
+    expect(payload.event).toBe('app_snapshot');
+    expect(payload.data.gateways[0]).toEqual(
+      expect.objectContaining({
+        id: 'gw-1',
+        connected: true,
+        lastActivityAt: '2026-08-26T01:00:00.000Z',
+      }),
+    );
   });
 
   it('emitKeySharingUpdate uses shared_with_user_id for maintenance clients', async () => {

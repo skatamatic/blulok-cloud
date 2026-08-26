@@ -257,6 +257,7 @@ export class DeviceStatusSubscriptionManager extends BaseSubscriptionManager {
 
     return {
       id: device.id,
+      device_category: 'blulok' as const,
       device_serial: device.device_serial,
       name: displayName,
       device_settings: deviceSettings,
@@ -287,6 +288,7 @@ export class DeviceStatusSubscriptionManager extends BaseSubscriptionManager {
     const lockStatus = Boolean(device.is_locked) ? 'locked' : 'unlocked';
     return {
       id: device.id,
+      device_category: 'access_control' as const,
       device_serial: device.device_serial ?? device.name ?? device.id,
       name: device.name,
       location_description: device.location_description,

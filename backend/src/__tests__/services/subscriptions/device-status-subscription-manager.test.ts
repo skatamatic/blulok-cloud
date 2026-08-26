@@ -422,6 +422,9 @@ describe('DeviceStatusSubscriptionManager', () => {
       expect(mockWs.send).toHaveBeenCalledWith(
         expect.stringContaining('"updatedDeviceId":"device-1"')
       );
+      expect(mockWs.send).toHaveBeenCalledWith(
+        expect.stringContaining('"device_category":"blulok"')
+      );
     });
 
     it('should broadcast access_control metadata including name', async () => {
@@ -493,6 +496,7 @@ describe('DeviceStatusSubscriptionManager', () => {
 
       const payload = JSON.parse(mockWs.send.mock.calls[0][0]);
       expect(payload.data.devices[0].lock_status).toBe('locked');
+      expect(payload.data.devices[0].device_category).toBe('access_control');
     });
 
     it('should not send update when subscription filters for a different device', async () => {

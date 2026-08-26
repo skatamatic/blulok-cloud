@@ -223,7 +223,7 @@ List slices for history feeds are intentionally small (last **10** notifications
       createdAt: string;
     }>;
   };
-  devices: object[];           // role-scoped (see §7)
+  devices: object[];           // role-scoped (see §7); each row includes device_category
   units: {                     // counts + compact unlocked rows (id, unit_number, status, …)
     unlockedUnits: object[];
     totalUnits: number;
@@ -256,16 +256,18 @@ List slices for history feeds are intentionally small (last **10** notifications
     id: string;
     facilityId: string;
     name: string;
-    status: string;
+    status: string;              // persisted DB status (online/offline/…)
     lastSeen?: string | null;
-    connected: null;
-    lastActivityAt?: string | null;
+    connected: boolean | null;   // live /ws/gateway session (null only if liveness lookup fails)
+    lastActivityAt?: string | null; // live pong time when available, else lastSeen
   }>;
   lastUpdated: string;
 }
 ```
 
 Exact nested shapes for devices/units/codes align with the corresponding REST resources used by the app; when in doubt, prefer REST field names you already parse. Ignore unknown keys on device rows (live updates may add fields over time).
+
+**Gateway `status` vs `connected`:** `status` is the persisted gateway row (updated on connect/disconnect, with a short offline grace so Cloud Run recycles do not flap it). `connected` is live product liveness — `true` while an inbound `/ws/gateway` socket is open or still inside that grace window. Prefer `connected` for “is the gateway reachable right now”; use `status` / `lastSeen` when you need the last known persisted state.
 
 ---
 
@@ -301,6 +303,7 @@ Server filters every event. The app should still not assume “facility admin”
     "devices": [
       {
         "id": "…",
+        "device_category": "blulok",
         "lock_status": "locked",
         "unit_id": "…",
         "facility_id": "…"
@@ -315,7 +318,7 @@ Server filters every event. The app should still not assume “facility admin”
 }
 ```
 
-Merge by device `id`. Payload may include reachability enrichment fields; ignore unknown keys safely.
+`device_category` is `"blulok"` or `"access_control"` (same values as REST device lists). Snapshot `devices[]` uses the same shape. Merge by device `id`. Payload may include reachability enrichment fields; ignore unknown keys safely.
 
 ### `notification_created`
 

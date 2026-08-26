@@ -322,17 +322,8 @@ export class AppRealtimeHub {
         const gateways = await this.gatewayModel.findBoundGatewaysWithContext({
           facility_id: client.facilityId,
         });
-        const rows = gateways.map((g) => ({
-          id: g.id,
-          facilityId: g.facility_id,
-          name: g.name,
-          status: g.status,
-          lastSeen: g.last_seen,
-          connected: null,
-          lastActivityAt: g.last_seen,
-        }));
         this.sendAppEvent(ws, client, 'gateway_status_update', {
-          gateways: rows,
+          gateways: await this.formatAppGateways(gateways, client.facilityId),
           updatedGatewayId: gatewayId,
           lastUpdated: new Date().toISOString(),
         });
@@ -560,17 +551,53 @@ export class AppRealtimeHub {
         count: codes.length,
       },
       keySharing,
-      gateways: gateways.map((g) => ({
-        id: g.id,
-        facilityId: g.facility_id,
-        name: g.name,
-        status: g.status,
-        lastSeen: g.last_seen,
-        connected: null,
-        lastActivityAt: g.last_seen,
-      })),
+      gateways: await this.formatAppGateways(gateways, facilityId),
       lastUpdated: new Date().toISOString(),
     };
+  }
+
+  /**
+   * Persist `status` / `lastSeen` from the gateway row; overlay live WS liveness
+   * (`connected`, fresher `lastActivityAt`) from the inbound `/ws/gateway` session.
+   * `connected` is null only when the liveness lookup itself fails.
+   */
+  private async formatAppGateways(
+    gateways: Array<{
+      id: string;
+      facility_id?: string | null;
+      name: string;
+      status: string;
+      last_seen?: Date | string | null;
+    }>,
+    facilityId: string,
+  ): Promise<Array<{
+    id: string;
+    facilityId: string | null | undefined;
+    name: string;
+    status: string;
+    lastSeen?: Date | string | null;
+    connected: boolean | null;
+    lastActivityAt: string | Date | null;
+  }>> {
+    let liveness: { connected: boolean; lastPongAt?: number } | null = null;
+    try {
+      const { GatewayEventsService } = await import('@/services/gateway/gateway-events.service');
+      liveness = GatewayEventsService.getInstance().getFacilityProductLiveness(facilityId);
+    } catch (error) {
+      logger.warn('[AppRealtime] Failed to resolve live gateway connectivity:', error);
+    }
+
+    return gateways.map((g) => ({
+      id: g.id,
+      facilityId: g.facility_id,
+      name: g.name,
+      status: g.status,
+      lastSeen: g.last_seen,
+      connected: liveness ? liveness.connected : null,
+      lastActivityAt: liveness?.lastPongAt
+        ? new Date(liveness.lastPongAt).toISOString()
+        : (g.last_seen ?? null),
+    }));
   }
 
   private async loadDevicesForClient(client: AppRealtimeClient): Promise<unknown[]> {
@@ -670,6 +697,7 @@ export class AppRealtimeHub {
 
     return {
       id: device.id,
+      device_category: 'blulok' as const,
       device_serial: device.device_serial,
       name: displayName,
       device_settings: deviceSettings,
@@ -696,6 +724,7 @@ export class AppRealtimeHub {
   private formatAccessControlDevice(device: any): Record<string, unknown> {
     return {
       id: device.id,
+      device_category: 'access_control' as const,
       device_serial: device.device_serial ?? device.name ?? device.id,
       name: device.name,
       location_description: device.location_description,
