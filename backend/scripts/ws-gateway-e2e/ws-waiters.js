@@ -107,6 +107,28 @@ async function waitForSessionUpsert(events, predicate, startLen = 0, timeoutMs =
 }
 
 /**
+ * `/ws/app` variant of {@link waitForSessionUpsert}: session upserts arrive wrapped
+ * as `app_event` rather than as a top-level `access_session_upsert` frame.
+ * @param {Array} events
+ * @param {(session: object, evt: object) => boolean} predicate
+ * @param {number} [startLen]
+ * @param {number} [timeoutMs]
+ */
+async function waitForAppSessionUpsert(events, predicate, startLen = 0, timeoutMs = 10000) {
+  return waitForWsEvent(
+    events,
+    (msg) => {
+      if (msg?.type !== 'app_event' || msg?.event !== 'access_session_upsert') return false;
+      const session = msg?.data?.session;
+      if (!session) return false;
+      return predicate(session, msg);
+    },
+    startLen,
+    timeoutMs,
+  );
+}
+
+/**
  * Poll GET /access-sessions until a session matches `predicate` (or timeout).
  * @param {import('axios').AxiosStatic} axiosClient
  * @param {string} apiBase
@@ -144,5 +166,6 @@ module.exports = {
   waitForWsEvent,
   waitForAppEvent,
   waitForSessionUpsert,
+  waitForAppSessionUpsert,
   waitForAccessSession,
 };

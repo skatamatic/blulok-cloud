@@ -51,7 +51,7 @@ One active `app` subscription per socket. Ack, then `app_event` with `event: "ap
 }
 ```
 
-Event catalog, RBAC matrix, snapshot shape, reconnect, and merge rules: see the [mobile developer guide](./app-realtime-developer-guide.md).
+Event catalog, RBAC matrix, snapshot shape, reconnect, and merge rules: see the [mobile developer guide](./app-realtime-developer-guide.md). Live session rows use `access_session_upsert` plus `accessSessions` on `app_snapshot`. While a session is `pending` (Waiting for unlock), poll REST — gateway unlock may settle on a different Cloud Run instance than the app socket.
 
 ## Out of scope on `/ws/app`
 

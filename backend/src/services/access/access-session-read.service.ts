@@ -81,6 +81,43 @@ export class AccessSessionReadService {
     limit: number;
     offset: number;
   }> {
+    return this.runQuery(userId, role, facilityIds, filters, { includeTotal: true });
+  }
+
+  /**
+   * Preview list for realtime snapshots: same scoping as `query` minus the
+   * unbounded COUNT(*) used for pagination. Snapshots render a short list and
+   * are rebuilt by every client on reconnect, so that count is pure load.
+   */
+  public async queryRecent(
+    userId: string,
+    role: UserRole,
+    facilityIds: string[] | undefined,
+    filters: SessionQueryFilters,
+  ): Promise<{ sessions: AccessSessionRecord[]; currently_open: number }> {
+    const { sessions, currently_open } = await this.runQuery(
+      userId,
+      role,
+      facilityIds,
+      filters,
+      { includeTotal: false },
+    );
+    return { sessions, currently_open };
+  }
+
+  private async runQuery(
+    userId: string,
+    role: UserRole,
+    facilityIds: string[] | undefined,
+    filters: SessionQueryFilters,
+    options: { includeTotal: boolean },
+  ): Promise<{
+    sessions: AccessSessionRecord[];
+    total: number;
+    currently_open: number;
+    limit: number;
+    offset: number;
+  }> {
     const scope = await this.scopeService.buildScope(userId, role, facilityIds);
     const limit = Math.min(filters.limit || 50, 100);
     const offset = Math.max(filters.offset || 0, 0);
@@ -97,7 +134,9 @@ export class AccessSessionReadService {
     const sessionFilters = this.buildSessionFilters(filters, scope, role);
     const [rows, total, currentlyOpen] = await Promise.all([
       this.sessionModel.findWithContext(sessionFilters),
-      this.sessionModel.count({ ...sessionFilters, limit: undefined, offset: undefined }),
+      options.includeTotal
+        ? this.sessionModel.count({ ...sessionFilters, limit: undefined, offset: undefined })
+        : Promise.resolve(0),
       this.sessionModel.countCurrentlyOpen({
         facility_id: sessionFilters.facility_id,
         facility_ids: sessionFilters.facility_ids,
@@ -111,7 +150,22 @@ export class AccessSessionReadService {
       }),
     ]);
 
-    let mapped = rows.map((row) => this.mapSession(row));
+    return {
+      sessions: this.applyPostFilters(rows.map((row) => this.mapSession(row)), role, filters),
+      total,
+      currently_open: currentlyOpen,
+      limit,
+      offset,
+    };
+  }
+
+  /** Refinements the SQL layer cannot express (method aliases, derived success). */
+  private applyPostFilters(
+    sessions: AccessSessionRecord[],
+    role: UserRole,
+    filters: SessionQueryFilters,
+  ): AccessSessionRecord[] {
+    let mapped = sessions;
     if (role === UserRole.TENANT) {
       mapped = mapped.filter((s) => s.device_type !== 'access_control');
     }
@@ -124,14 +178,7 @@ export class AccessSessionReadService {
         return filters.success ? ok : !ok;
       });
     }
-
-    return {
-      sessions: mapped,
-      total,
-      currently_open: currentlyOpen,
-      limit,
-      offset,
-    };
+    return mapped;
   }
 
   public async findById(

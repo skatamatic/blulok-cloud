@@ -327,9 +327,9 @@ Get activity logs for a specific device.
 Subscribe to `activity` via WebSocket to receive:
 - `activity_update` - Initial activity data on subscription (`data.activities`, `data.count`, `data.lastUpdated`)
 - `activity_new` - New activity logged; includes both `data.activity` and enriched `data.accessLog` (same shape as `GET /access-history?view=raw` rows) for live grid prepend in raw Access History / Activity Monitor
-- `access_session_upsert` - Access session created/updated; `data.session` is an `AccessSessionRecord` plus `data.changed` field names — used by sessions view and Access History widget
+- `access_session_upsert` - Access session created/updated; `data.session` is an `AccessSessionRecord` plus `data.changed` field names — used by sessions view and Access History widget. Same payload is also an `/ws/app` `app_event` (plus `accessSessions` on `app_snapshot`). While a row is `pending`, dashboard polls REST every 2s because gateway unlock may settle on another Cloud Run instance.
 
-**Regression:** `backend/npm run ws:e2e` — **Access Event Canonical Pipeline** section asserts `activity_update` snapshots, `activity_new` + `accessLog` envelopes after ingestion, role-scoped fanout, and tenant isolation.
+**Regression:** `backend/npm run ws:e2e` — **Access Event Canonical Pipeline** section asserts `activity_update` snapshots, `activity_new` + `accessLog` envelopes after ingestion, role-scoped fanout, and tenant isolation. `access_session_upsert` is covered separately in the **Access History remote unlock cycle** and **App Realtime** sections (see [access sessions](./access-sessions.md)).
 
 **Subscription Parameters:**
 ```json

@@ -174,4 +174,107 @@ describe('useAccessHistoryLiveUpdates', () => {
 
     expect(onFallbackRefresh).toHaveBeenCalledWith({ background: true });
   });
+
+  describe('access_session_upsert', () => {
+    const baseSession = {
+      id: 'sess-1',
+      state: 'pending',
+      device_id: 'dev-1',
+      device_type: 'blulok',
+      facility_id: 'fac-1',
+      unit_id: 'unit-1',
+      method: 'admin_remote',
+      outcome: 'granted',
+      started_at: '2026-06-16T18:00:00.000Z',
+      unit_number: 'A-101',
+      facility_name: 'Test Facility',
+    };
+
+    const renderSessionHook = (overrides: Record<string, unknown> = {}) => {
+      const onSessionUpsert = jest.fn((updater: (prev: never[]) => unknown) => {
+        updater([]);
+      });
+      const onSessionUpserted = jest.fn();
+      const onFallbackRefresh = jest.fn();
+
+      renderHook(() =>
+        useAccessHistoryLiveUpdates({
+          enabled: true,
+          liveFilters: {},
+          maxRows: 20,
+          canUpsertSessions: true,
+          onSessionUpsert: onSessionUpsert as never,
+          onSessionUpserted,
+          onFallbackRefresh,
+          ...overrides,
+        }),
+      );
+
+      return {
+        handler: mockSubscribe.mock.calls[0][1] as (data: unknown) => void,
+        onSessionUpsert,
+        onSessionUpserted,
+        onFallbackRefresh,
+      };
+    };
+
+    it('upserts a session row without triggering a refetch', () => {
+      const { handler, onSessionUpsert, onSessionUpserted, onFallbackRefresh } = renderSessionHook();
+
+      act(() => {
+        handler({
+          eventType: 'access_session_upsert',
+          payload: { session: baseSession, changed: ['state'] },
+        });
+      });
+
+      expect(onSessionUpsert).toHaveBeenCalled();
+      expect(onSessionUpserted).toHaveBeenCalled();
+      expect(onFallbackRefresh).not.toHaveBeenCalled();
+    });
+
+    it('refetches instead of upserting when the backend reports a missing row', () => {
+      const { handler, onSessionUpsert, onFallbackRefresh } = renderSessionHook();
+
+      act(() => {
+        handler({
+          eventType: 'access_session_upsert',
+          payload: { session: null, changed: ['state'] },
+        });
+      });
+
+      expect(onSessionUpsert).not.toHaveBeenCalled();
+      expect(onFallbackRefresh).toHaveBeenCalledWith({ background: true });
+    });
+
+    it('refetches when the session payload is not a usable row', () => {
+      const { handler, onSessionUpsert, onFallbackRefresh } = renderSessionHook();
+
+      act(() => {
+        handler({
+          eventType: 'access_session_upsert',
+          payload: { session: { id: 'sess-1', state: 'not-a-state' } },
+        });
+      });
+
+      expect(onSessionUpsert).not.toHaveBeenCalled();
+      expect(onFallbackRefresh).toHaveBeenCalledWith({ background: true });
+    });
+
+    it('drops sessions that fail the live filters', () => {
+      const { handler, onSessionUpsert, onFallbackRefresh } = renderSessionHook({
+        liveFilters: { unit_id: 'unit-other' },
+      });
+
+      act(() => {
+        handler({
+          eventType: 'access_session_upsert',
+          payload: { session: baseSession },
+        });
+      });
+
+      expect(onSessionUpsert).not.toHaveBeenCalled();
+      expect(onFallbackRefresh).not.toHaveBeenCalled();
+    });
+  });
 });

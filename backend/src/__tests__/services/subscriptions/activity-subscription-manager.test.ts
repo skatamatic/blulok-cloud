@@ -5,11 +5,15 @@ import { UnitModel } from '@/models/unit.model';
 import { DeviceModel } from '@/models/device.model';
 import { AccessEventScopeService } from '@/services/access/access-event-scope.service';
 import { AccessHistoryReadService } from '@/services/access/access-history-read.service';
+import { AccessSessionReadService } from '@/services/access/access-session-read.service';
+import { AccessSessionEventsService } from '@/services/events/access-session-events.service';
 import { UserRole } from '@/types/auth.types';
 import { WebSocket } from 'ws';
 
 jest.mock('@/models/activity-log.model');
 jest.mock('@/services/events/activity-events.service');
+jest.mock('@/services/events/access-session-events.service');
+jest.mock('@/services/access/access-session-read.service');
 jest.mock('@/models/unit.model');
 jest.mock('@/models/device.model');
 jest.mock('@/services/access/access-event-scope.service');
@@ -31,6 +35,7 @@ const TEST_UNIT_ID_2 = 'a47ac10b-58cc-4372-a567-0e02b2c3d480';
 const TEST_DEVICE_ID = 'b47ac10b-58cc-4372-a567-0e02b2c3d479';
 const TEST_USER_ID = 'c47ac10b-58cc-4372-a567-0e02b2c3d479';
 const TEST_ACTIVITY_ID = 'd47ac10b-58cc-4372-a567-0e02b2c3d479';
+const TEST_SESSION_ID = 'e47ac10b-58cc-4372-a567-0e02b2c3d479';
 
 const openWs = () =>
   ({
@@ -49,6 +54,8 @@ describe('ActivitySubscriptionManager', () => {
   };
   let mockScopeService: { getTenantAccessibleUnitIds: jest.Mock };
   let mockAccessHistoryRead: { findAccessRecordById: jest.Mock };
+  let mockSessionEventService: { onSessionUpsert: jest.Mock };
+  let mockAccessSessionRead: { findSessionRecordById: jest.Mock };
 
   const mockActivityLog = {
     id: TEST_ACTIVITY_ID,
@@ -122,6 +129,27 @@ describe('ActivitySubscriptionManager', () => {
     mockAccessHistoryRead = {
       findAccessRecordById: jest.fn().mockResolvedValue({ id: 'access-1' }),
     };
+
+    mockSessionEventService = {
+      onSessionUpsert: jest.fn().mockReturnValue(() => {}),
+    };
+
+    mockAccessSessionRead = {
+      findSessionRecordById: jest.fn().mockResolvedValue({
+        id: TEST_SESSION_ID,
+        state: 'open',
+        facility_id: TEST_FACILITY_ID,
+        unit_id: TEST_UNIT_ID,
+        unit_number: 'A-101',
+        facility_name: 'Test Facility',
+        device_serial: 'SN-12345',
+      }),
+    };
+
+    (AccessSessionEventsService.getInstance as jest.Mock).mockReturnValue(mockSessionEventService);
+    (AccessSessionReadService as jest.MockedClass<typeof AccessSessionReadService>).mockImplementation(
+      () => mockAccessSessionRead as any,
+    );
 
     (ActivityLogModel as jest.MockedClass<typeof ActivityLogModel>).mockImplementation(
       () => mockActivityLogModel as any,
@@ -616,6 +644,122 @@ describe('ActivitySubscriptionManager', () => {
       await expect(handler(baseEvent())).resolves.toBeUndefined();
       expect(closed.send).not.toHaveBeenCalled();
       expect(open.send).toHaveBeenCalled();
+    });
+  });
+
+  describe('broadcastSessionUpsert via event listener', () => {
+    const sessionEvent = (overrides: Record<string, unknown> = {}) => ({
+      sessionId: TEST_SESSION_ID,
+      facilityId: TEST_FACILITY_ID,
+      unitId: TEST_UNIT_ID,
+      deviceId: TEST_DEVICE_ID,
+      state: 'open',
+      changed: ['state', 'opened_at'],
+      session: {
+        id: TEST_SESSION_ID,
+        actor_id: TEST_USER_ID,
+        unit_id: TEST_UNIT_ID,
+        facility_id: TEST_FACILITY_ID,
+      },
+      timestamp: new Date('2026-01-01T00:00:00Z'),
+      ...overrides,
+    });
+
+    const sessionHandler = () => mockSessionEventService.onSessionUpsert.mock.calls[0][0];
+
+    async function subscribe(ws: any, client: any, data: any = {}, id = 'sub-session') {
+      await manager.handleSubscription(
+        ws,
+        { type: 'subscription', subscriptionType: 'activity', subscriptionId: id, data },
+        client,
+      );
+      ws.send.mockClear();
+    }
+
+    it('registers a session upsert listener on construction', () => {
+      expect(mockSessionEventService.onSessionUpsert).toHaveBeenCalled();
+    });
+
+    it('does not read the session when there are no watchers', async () => {
+      await sessionHandler()(sessionEvent());
+      expect(mockAccessSessionRead.findSessionRecordById).not.toHaveBeenCalled();
+    });
+
+    it('does not read the session when no subscription matches the event', async () => {
+      const ws = openWs();
+      await subscribe(ws, adminClient, { facilityId: TEST_FACILITY_ID_2 }, 'sub-other-facility');
+
+      await sessionHandler()(sessionEvent());
+
+      expect(mockAccessSessionRead.findSessionRecordById).not.toHaveBeenCalled();
+      expect(ws.send).not.toHaveBeenCalled();
+    });
+
+    it('broadcasts the join-enriched record with changed fields', async () => {
+      const ws = openWs();
+      await subscribe(ws, adminClient);
+
+      await sessionHandler()(sessionEvent());
+
+      expect(mockAccessSessionRead.findSessionRecordById).toHaveBeenCalledWith(TEST_SESSION_ID);
+      const msg = JSON.parse(ws.send.mock.calls[0][0]);
+      expect(msg.type).toBe('access_session_upsert');
+      expect(msg.data.session).toEqual(
+        expect.objectContaining({ id: TEST_SESSION_ID, unit_number: 'A-101', device_serial: 'SN-12345' }),
+      );
+      expect(msg.data.changed).toEqual(['state', 'opened_at']);
+      expect(msg.data.timestamp).toBe('2026-01-01T00:00:00.000Z');
+    });
+
+    it('reads the session once when several subscriptions match the same event', async () => {
+      await subscribe(openWs(), adminClient, {}, 'sub-a');
+      await subscribe(openWs(), adminClient, {}, 'sub-b');
+
+      await sessionHandler()(sessionEvent());
+
+      expect(mockAccessSessionRead.findSessionRecordById).toHaveBeenCalledTimes(1);
+    });
+
+    it('sends session: null when the row is gone so clients refetch', async () => {
+      const ws = openWs();
+      await subscribe(ws, adminClient);
+      mockAccessSessionRead.findSessionRecordById.mockResolvedValue(null);
+
+      await sessionHandler()(sessionEvent());
+
+      const msg = JSON.parse(ws.send.mock.calls[0][0]);
+      expect(msg.type).toBe('access_session_upsert');
+      expect(msg.data.session).toBeNull();
+    });
+
+    it('skips tenants outside the unit scope unless they are the actor', async () => {
+      const ws = openWs();
+      await subscribe(ws, tenantClient, {}, 'sub-tenant-session');
+
+      await sessionHandler()(
+        sessionEvent({
+          unitId: TEST_UNIT_ID_2,
+          session: { id: TEST_SESSION_ID, actor_id: 'someone-else', unit_id: TEST_UNIT_ID_2 },
+        }),
+      );
+      expect(ws.send).not.toHaveBeenCalled();
+
+      await sessionHandler()(
+        sessionEvent({
+          unitId: TEST_UNIT_ID_2,
+          session: { id: TEST_SESSION_ID, actor_id: TEST_USER_ID, unit_id: TEST_UNIT_ID_2 },
+        }),
+      );
+      expect(ws.send).toHaveBeenCalled();
+    });
+
+    it('skips facility admins for events outside their facilities', async () => {
+      const ws = openWs();
+      await subscribe(ws, facilityAdminClient, {}, 'sub-fa-session');
+
+      await sessionHandler()(sessionEvent({ facilityId: TEST_FACILITY_ID_2 }));
+
+      expect(ws.send).not.toHaveBeenCalled();
     });
   });
 });

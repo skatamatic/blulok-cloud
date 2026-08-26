@@ -13,6 +13,7 @@ import { SortableTableTh } from '@/components/Common/SortableTableTh';
 import { useToast } from '@/contexts/ToastContext';
 import { useGlobalFacility, ALL_FACILITIES_ID } from '@/contexts/GlobalFacilityContext';
 import { useAccessHistoryLiveUpdates } from '@/hooks/useAccessHistoryLiveUpdates';
+import { usePendingSessionPoll } from '@/hooks/usePendingSessionPoll';
 import {
   AccessHistoryFilters,
   AccessHistoryFilterState,
@@ -261,6 +262,11 @@ export default function AccessHistoryPage() {
     },
     onFallbackRefresh: (options) => loadAccessHistoryRef.current(options),
   });
+
+  usePendingSessionPoll(
+    !isRawView && sessions.some((session) => session.state === 'pending'),
+    (options) => loadAccessHistoryRef.current(options),
+  );
 
   const highlightItems = isRawView ? logs : sessions;
   useHighlight(

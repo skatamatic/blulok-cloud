@@ -185,11 +185,14 @@ Ignore events whose `facilityId` / `subscriptionId` do not match your active sub
 | `device_status_update` | Lock / access-control telemetry | Upsert by device `id` in `data.devices[]` |
 | `units_update` | Unit summary / counts payload | Replace units section |
 | `activity_new` | Single new activity row | Prepend to feed (cap list length) |
+| `access_session_upsert` | Access session created/updated | Upsert by `data.session.id`; drive Waiting for unlock → Open from `session.state` |
 | `access_codes_update` | Full entitled code list for user@facility | Replace codes section |
 | `key_sharing_update` | Key-share list for user@facility | Replace key-sharing section |
 | `gateway_status_update` | Facility gateway rows | Replace / upsert gateways |
 
 **Note:** `activity_update` exists in shared type enums for dashboard parity but **live `/ws/app` fanout uses `activity_new`** plus the activity slice inside `app_snapshot`. Do not wait for a separate `activity_update` on this channel.
+
+**Waiting for unlock:** a remote grant creates `state: pending` on the instance that handled the HTTP unlock. The physical unlock is applied on the instance that holds `/ws/gateway`. In-memory fanout does **not** cross instances, so you can miss `access_session_upsert` / `device_status_update` / `activity_new` until reconnect. Handle `access_session_upsert` (and `accessSessions` on `app_snapshot`). While any visible session is `pending`, poll `GET /api/v1/access-sessions` (or `/:id`) every ~2s — a full refresh already shows the settled row. Same-state unlocks (device already unlocked) do **not** emit `activity_new`; they do emit `access_session_upsert`. If a session row is superseded or deleted between the event and the fanout read, no `access_session_upsert` is sent at all — never infer deletion from a missing event; treat REST and the next `app_snapshot` as authoritative.
 
 **Not on `/ws/app` (dashboard `/ws` only):** FMS sync, firmware push progress, gateway recovery/telemetry/device-sync logs, command queue, `general_stats`, `dashboard_layout`, `gateway_debug`, `dev_notifications`, multi-type parallel subscriptions.
 
@@ -236,6 +239,10 @@ List slices for history feeds are intentionally small (last **10** notifications
     activities: object[];      // max 10
     count: number;             // total matching (may be > activities.length)
   };
+  accessSessions: {
+    sessions: object[];        // max 10, same shape as GET /access-sessions
+    currentlyOpen: number;     // no total: snapshots skip the pagination COUNT
+  };
   accessCodes: {
     codes: object[];
     count: number;
@@ -273,6 +280,7 @@ Server filters every event. The app should still not assume “facility admin”
 | `device_status_update` | Devices on **accessible units** only (assignments + active key shares). Devices **without** `unit_id` are **not** sent to tenants | All devices in facility | Facility filter |
 | `units_update` | Only when an **accessible unit** changed (not facility-wide / other units) | Facility admins: facility units (incl. facility-wide). Maintenance: same as tenant (accessible unit only) | Facility filter |
 | `activity_new` | Own units or own actor | Facility (maintenance: own actor on live stream) | Facility filter |
+| `access_session_upsert` | Own units or own actor | Facility (maintenance: own actor) | Facility filter |
 | `access_codes_update` | Entitled codes | Facility keypad codes | Facility filter |
 | `key_sharing_update` | Primary / recipient rules | Facility | Facility filter |
 | `gateway_status_update` | Facility gateways | Facility | Facility filter |

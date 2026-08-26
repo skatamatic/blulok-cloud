@@ -14,6 +14,7 @@ export type AppRealtimeEventName =
   | 'units_update'
   | 'activity_update'
   | 'activity_new'
+  | 'access_session_upsert'
   | 'access_codes_update'
   | 'key_sharing_update'
   | 'gateway_status_update';

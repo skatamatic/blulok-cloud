@@ -12,6 +12,12 @@ import { DeviceReachabilityEnrichmentService } from '@/services/device-reachabil
 import { NotificationEventsService } from '@/services/events/notification-events.service';
 import { ActivityEventsService, ActivityEvent } from '@/services/events/activity-events.service';
 import {
+  AccessSessionEventsService,
+  AccessSessionUpsertEvent,
+} from '@/services/events/access-session-events.service';
+import { AccessSessionReadService } from '@/services/access/access-session-read.service';
+import { resolveSessionRecordOnce } from '@/services/access/access-session-record-resolver';
+import {
   canViewNotificationType,
   excludedNotificationTypesForRole,
 } from '@/utils/in-app-notification-visibility.utils';
@@ -47,6 +53,7 @@ export class AppRealtimeHub {
   private unitsService = UnitsService.getInstance();
   private accessCodeService = AccessCodeService.getInstance();
   private activityService = ActivityService.getInstance();
+  private sessionReadService = new AccessSessionReadService();
   private reachability = DeviceReachabilityEnrichmentService.getInstance();
   private cleanupFns: Array<() => void> = [];
   private listenersReady = false;
@@ -63,6 +70,7 @@ export class AppRealtimeHub {
     this.listenersReady = true;
     const notifications = NotificationEventsService.getInstance();
     const activity = ActivityEventsService.getInstance();
+    const sessions = AccessSessionEventsService.getInstance();
 
     this.cleanupFns.push(
       notifications.onNotificationCreated(async (event) => {
@@ -127,6 +135,12 @@ export class AppRealtimeHub {
     this.cleanupFns.push(
       activity.onActivityLogged(async (event: ActivityEvent) => {
         await this.emitActivityNew(event);
+      }),
+    );
+
+    this.cleanupFns.push(
+      sessions.onSessionUpsert(async (event: AccessSessionUpsertEvent) => {
+        await this.emitAccessSessionUpsert(event);
       }),
     );
   }
@@ -365,6 +379,36 @@ export class AppRealtimeHub {
     }
   }
 
+  private async emitAccessSessionUpsert(event: AccessSessionUpsertEvent): Promise<void> {
+    if (this.subscribers.size === 0) return;
+    if (!event.facilityId) return;
+
+    // Authorisation only needs the raw event, so filter before touching the DB:
+    // an upsert for a facility nobody is subscribed to costs nothing.
+    const targets = Array.from(this.subscribers.values()).filter(({ client }) =>
+      client.subscriptionId
+      && client.facilityId === event.facilityId
+      && canReceiveActivityOnAppStream(client, {
+        facilityId: event.facilityId,
+        unitId: event.unitId ?? event.session.unit_id,
+        actor: { id: event.session.actor_id },
+      }));
+    if (targets.length === 0) return;
+
+    // Missing record means the session was superseded or deleted; the next snapshot
+    // or REST poll is authoritative, so emit nothing rather than a context-less row.
+    const session = await resolveSessionRecordOnce(event, this.sessionReadService);
+    if (!session) return;
+
+    for (const { ws, client } of targets) {
+      this.sendAppEvent(ws, client, 'access_session_upsert', {
+        session,
+        changed: event.changed,
+        timestamp: event.timestamp.toISOString(),
+      });
+    }
+  }
+
   private async emitActivityNew(event: ActivityEvent): Promise<void> {
     if (this.subscribers.size === 0) return;
     const activity = {
@@ -439,6 +483,7 @@ export class AppRealtimeHub {
       devices,
       units,
       activityResult,
+      sessionResult,
       codes,
       keySharing,
       gateways,
@@ -464,6 +509,12 @@ export class AppRealtimeHub {
         client.facilityIds,
         { facilityId, limit: AppRealtimeHub.APP_LIST_LIMIT, offset: 0 },
       ).catch(() => ({ activities: [], total: 0 })),
+      this.sessionReadService.queryRecent(
+        client.userId,
+        client.userRole,
+        client.facilityIds,
+        { facility_id: facilityId, limit: AppRealtimeHub.APP_LIST_LIMIT, offset: 0 },
+      ).catch(() => ({ sessions: [], currently_open: 0 })),
       this.accessCodeService.getAppCodesForUser(
         client.userId,
         client.userRole,
@@ -499,6 +550,10 @@ export class AppRealtimeHub {
       activity: {
         activities: activityResult.activities ?? [],
         count: activityResult.total ?? 0,
+      },
+      accessSessions: {
+        sessions: sessionResult.sessions ?? [],
+        currentlyOpen: sessionResult.currently_open ?? 0,
       },
       accessCodes: {
         codes,

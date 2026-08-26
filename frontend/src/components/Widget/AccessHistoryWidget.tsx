@@ -6,6 +6,7 @@ import { apiService } from '@/services/api.service';
 import { AccessSession } from '@/types/access-session.types';
 import { useAuth } from '@/contexts/AuthContext';
 import { useAccessHistoryLiveUpdates } from '@/hooks/useAccessHistoryLiveUpdates';
+import { usePendingSessionPoll } from '@/hooks/usePendingSessionPoll';
 import { getWidgetLayoutProfile, WIDGET_LIST_SCROLL_CLASS } from '@/utils/widget-layout.utils';
 import { AccessHistoryWidgetSessionRow } from '@/components/Widget/AccessHistoryWidgetSessionRow';
 import { getAccessSessionActionIcon } from '@/components/AccessHistory/accessHistoryIcons';
@@ -93,6 +94,11 @@ export const AccessHistoryWidget: React.FC<AccessHistoryWidgetProps> = ({
     onSessionUpsert: setSessions,
     onFallbackRefresh: (options) => fetchAccessHistoryRef.current(options),
   });
+
+  usePendingSessionPoll(
+    sessions.some((session) => session.state === 'pending'),
+    (options) => fetchAccessHistoryRef.current(options),
+  );
 
   const layout = getWidgetLayoutProfile(currentSize);
   const maxItems = layout.listCap;

@@ -12,6 +12,8 @@ import { ActivityService } from '@/services/activity.service';
 import { DeviceReachabilityEnrichmentService } from '@/services/device-reachability-enrichment.service';
 import { NotificationEventsService } from '@/services/events/notification-events.service';
 import { ActivityEventsService } from '@/services/events/activity-events.service';
+import { AccessSessionEventsService } from '@/services/events/access-session-events.service';
+import { AccessSessionReadService } from '@/services/access/access-session-read.service';
 import type { AppRealtimeClient } from '@/services/app-realtime.types';
 
 jest.mock('@/services/facility-access.service', () => ({
@@ -58,10 +60,13 @@ jest.mock('@/services/activity.service');
 jest.mock('@/services/device-reachability-enrichment.service');
 jest.mock('@/services/events/notification-events.service');
 jest.mock('@/services/events/activity-events.service');
+jest.mock('@/services/events/access-session-events.service');
+jest.mock('@/services/access/access-session-read.service');
 
 describe('AppRealtimeHub', () => {
   let hub: AppRealtimeHub;
   let mockWs: jest.Mocked<WebSocket>;
+  let sessionReadMock: { queryRecent: jest.Mock; findSessionRecordById: jest.Mock };
 
   beforeEach(() => {
     const existing = (AppRealtimeHub as any).instance;
@@ -78,6 +83,20 @@ describe('AppRealtimeHub', () => {
     (ActivityEventsService.getInstance as jest.Mock).mockReturnValue({
       onActivityLogged: jest.fn().mockReturnValue(() => {}),
     });
+    (AccessSessionEventsService.getInstance as jest.Mock).mockReturnValue({
+      onSessionUpsert: jest.fn().mockReturnValue(() => {}),
+    });
+    sessionReadMock = {
+      queryRecent: jest.fn().mockResolvedValue({ sessions: [], currently_open: 0 }),
+      findSessionRecordById: jest.fn().mockResolvedValue({
+        id: 'sess-1',
+        state: 'open',
+        unit_id: 'unit-a',
+        facility_id: 'facility-1',
+        user_id: 'user-1',
+      }),
+    };
+    (AccessSessionReadService as unknown as jest.Mock).mockImplementation(() => sessionReadMock);
 
     (NotificationModel as jest.Mock).mockImplementation(() => ({
       getUnreadCount: jest.fn().mockResolvedValue(2),
@@ -219,6 +238,10 @@ describe('AppRealtimeHub', () => {
     expect(payload.event).toBe('app_snapshot');
     expect(payload.facilityId).toBe('facility-1');
     expect(payload.data.notifications.unreadCount).toBe(2);
+    expect(payload.data.accessSessions).toEqual({
+      sessions: [],
+      currentlyOpen: 0,
+    });
 
     const deviceIds = (payload.data.devices as Array<{ id: string }>).map((d) => d.id);
     expect(deviceIds).toContain('dev-own');
@@ -351,6 +374,87 @@ describe('AppRealtimeHub', () => {
     expect(payload.event).toBe('device_status_update');
     expect(payload.data.devices[0].id).toBe('ac-1');
     expect(payload.data.devices[0].unit_id).toBeNull();
+  });
+
+  it('emitAccessSessionUpsert fans out to the matching facility subscriber', async () => {
+    (FacilityAccessService.hasAccessToFacility as jest.Mock).mockResolvedValue(true);
+    await hub.subscribe(mockWs, tenantClient(), 'facility-1', 'sub-1');
+    (mockWs.send as jest.Mock).mockClear();
+
+    await (hub as any).emitAccessSessionUpsert({
+      sessionId: 'sess-1',
+      facilityId: 'facility-1',
+      unitId: 'unit-a',
+      deviceId: 'dev-own',
+      state: 'open',
+      changed: ['state', 'opened_at'],
+      session: { id: 'sess-1', actor_id: 'user-1', unit_id: 'unit-a' },
+      timestamp: new Date('2026-08-26T06:00:00.000Z'),
+    });
+
+    expect(mockWs.send).toHaveBeenCalledTimes(1);
+    const payload = JSON.parse((mockWs.send as jest.Mock).mock.calls[0][0]);
+    expect(payload.event).toBe('access_session_upsert');
+    expect(payload.data.session.id).toBe('sess-1');
+    expect(payload.data.changed).toEqual(['state', 'opened_at']);
+  });
+
+  it('emitAccessSessionUpsert skips tenants for other units', async () => {
+    (FacilityAccessService.hasAccessToFacility as jest.Mock).mockResolvedValue(true);
+    await hub.subscribe(mockWs, tenantClient(), 'facility-1', 'sub-1');
+    (mockWs.send as jest.Mock).mockClear();
+
+    await (hub as any).emitAccessSessionUpsert({
+      sessionId: 'sess-other',
+      facilityId: 'facility-1',
+      unitId: 'unit-b',
+      deviceId: 'dev-other',
+      state: 'open',
+      changed: ['state'],
+      session: { id: 'sess-other', actor_id: 'other', unit_id: 'unit-b' },
+      timestamp: new Date(),
+    });
+
+    expect(mockWs.send).not.toHaveBeenCalled();
+  });
+
+  it('emitAccessSessionUpsert does not read the session when nobody is authorised', async () => {
+    (FacilityAccessService.hasAccessToFacility as jest.Mock).mockResolvedValue(true);
+    await hub.subscribe(mockWs, tenantClient(), 'facility-1', 'sub-1');
+    sessionReadMock.findSessionRecordById.mockClear();
+
+    await (hub as any).emitAccessSessionUpsert({
+      sessionId: 'sess-other',
+      facilityId: 'facility-2',
+      unitId: 'unit-b',
+      deviceId: 'dev-other',
+      state: 'open',
+      changed: ['state'],
+      session: { id: 'sess-other', actor_id: 'other', unit_id: 'unit-b' },
+      timestamp: new Date(),
+    });
+
+    expect(sessionReadMock.findSessionRecordById).not.toHaveBeenCalled();
+  });
+
+  it('emitAccessSessionUpsert emits nothing when the session row is gone', async () => {
+    (FacilityAccessService.hasAccessToFacility as jest.Mock).mockResolvedValue(true);
+    await hub.subscribe(mockWs, tenantClient(), 'facility-1', 'sub-1');
+    (mockWs.send as jest.Mock).mockClear();
+    sessionReadMock.findSessionRecordById.mockResolvedValue(null);
+
+    await (hub as any).emitAccessSessionUpsert({
+      sessionId: 'sess-1',
+      facilityId: 'facility-1',
+      unitId: 'unit-a',
+      deviceId: 'dev-own',
+      state: 'open',
+      changed: ['state'],
+      session: { id: 'sess-1', actor_id: 'user-1', unit_id: 'unit-a' },
+      timestamp: new Date(),
+    });
+
+    expect(mockWs.send).not.toHaveBeenCalled();
   });
 
   it('emitGatewayStatusUpdate ignores subscribers on other facilities', async () => {

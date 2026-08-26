@@ -14,6 +14,7 @@ import { DeviceModel } from '@/models/device.model';
 import { AccessEventScopeService } from '@/services/access/access-event-scope.service';
 import { AccessHistoryReadService } from '@/services/access/access-history-read.service';
 import { AccessSessionReadService } from '@/services/access/access-session-read.service';
+import { resolveSessionRecordOnce } from '@/services/access/access-session-record-resolver';
 
 const LIVE_ACTIVITY_TYPES = AccessHistoryReadService.ACCESS_HISTORY_ACTIVITY_TYPES;
 
@@ -223,8 +224,7 @@ export class ActivitySubscriptionManager extends BaseSubscriptionManager {
     const activeSubscriptions = Array.from(this.watchers.keys());
     if (activeSubscriptions.length === 0) return;
 
-    const sessionRecord = await this.accessSessionReadService.findSessionRecordById(event.sessionId);
-
+    const targets: string[] = [];
     for (const subscriptionId of activeSubscriptions) {
       const client = this.clientContext.get(subscriptionId);
       const filters = this.subscriptionFilters.get(subscriptionId);
@@ -254,25 +254,36 @@ export class ActivitySubscriptionManager extends BaseSubscriptionManager {
         if (!event.session.actor_id || event.session.actor_id !== client.userId) continue;
       }
 
+      if (!this.watchers.get(subscriptionId)) continue;
+      targets.push(subscriptionId);
+    }
+
+    if (targets.length === 0) return;
+
+    // A null record means the row was superseded or deleted (e.g. the unlinked-session
+    // race in onDeviceUnlocked). Clients treat that as "refetch" rather than rendering
+    // the event's pre-join snapshot, which would be missing unit/facility context.
+    const sessionRecord = await resolveSessionRecordOnce(event, this.accessSessionReadService);
+
+    for (const subscriptionId of targets) {
       const watchers = this.watchers.get(subscriptionId);
       if (!watchers) continue;
 
       for (const ws of watchers) {
-        if (ws.readyState === WebSocket.OPEN) {
-          try {
-            ws.send(JSON.stringify({
-              type: 'access_session_upsert',
-              subscriptionId,
-              data: {
-                session: sessionRecord,
-                changed: event.changed,
-                timestamp: event.timestamp.toISOString(),
-              },
-              timestamp: new Date().toISOString(),
-            }));
-          } catch (error) {
-            this.logger.error('Error broadcasting access session upsert:', error);
-          }
+        if (ws.readyState !== WebSocket.OPEN) continue;
+        try {
+          ws.send(JSON.stringify({
+            type: 'access_session_upsert',
+            subscriptionId,
+            data: {
+              session: sessionRecord,
+              changed: event.changed,
+              timestamp: event.timestamp.toISOString(),
+            },
+            timestamp: new Date().toISOString(),
+          }));
+        } catch (error) {
+          this.logger.error('Error broadcasting access session upsert:', error);
         }
       }
     }

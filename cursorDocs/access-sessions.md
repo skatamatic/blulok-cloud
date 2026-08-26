@@ -79,8 +79,14 @@ Filters (both mounts): facility/unit/user/device/method/date plus `state=open|pe
 Subscribe `activity` as before:
 
 - `activity_new` — raw enriched `accessLog` (Activity Monitor / raw view; matches `GET /access-history`)
-- `access_session_upsert` — session row + `changed` fields for in-place pending → open → closed updates (Access History UI)
+- `access_session_upsert` — session row + `changed` fields for in-place pending → open → closed updates (Access History UI). Also fanned out on **`/ws/app`** as `app_event` (`event: access_session_upsert`) plus an `accessSessions` slice on `app_snapshot`.
 - `access_session_trace` — correlator decisions + raw access/lock/unlock events for the Gateway **Session trace** tab (`access_session_trace_update`). Facility-scoped; optional `gateway_id` / `device_id` / `unit_id` / `user_id`. Ring is process-local (Cloud Run instance).
+
+**Cross-instance gap:** pending is written on the instance that handled the unlock HTTP; physical unlock is applied on the instance that holds `/ws/gateway`. In-memory EventEmitter fanout does not cross instances. Dashboard Access History (page + widget) polls REST every 2s while any visible row is `pending`. App clients should do the same (see [app realtime](./app-realtime-developer-guide.md)).
+
+**Regression:** `backend/npm run ws:e2e` asserts the full `pending → open → closed` upsert sequence twice — once on the dashboard `activity` feed (**Access History remote unlock cycle**) and once on `/ws/app` (**App Realtime**), plus the `accessSessions` slice on `app_snapshot`, tenant unit scoping of that slice, and that a reconnect snapshot already carries the settled session. Every payload is checked for `facility_name` / `unit_number` / `device_serial` so a regression to a non-enriched row fails the suite.
+
+**Fanout read path:** both consumers (`ActivitySubscriptionManager`, `AppRealtimeHub`) need the join-enriched record, so they share `resolveSessionRecordOnce` — one `findWithContext` per event, memoised on the event object, and only after subscriber/RBAC filtering has found a recipient. When the row is gone (e.g. the unlinked-session race in `onDeviceUnlocked`) the dashboard sends `session: null`, which clients treat as "refetch"; `/ws/app` sends nothing. Never synthesise a row from the raw event — it has no facility/unit/device join context and would overwrite a good row with a blank one.
 
 ## UI
 

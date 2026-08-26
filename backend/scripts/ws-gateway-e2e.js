@@ -49,6 +49,7 @@ const {
   waitForWsEvent,
   waitForAppEvent,
   waitForSessionUpsert,
+  waitForAppSessionUpsert,
   waitForAccessSession,
 } = require('./ws-gateway-e2e/ws-waiters');
 const {
@@ -589,6 +590,32 @@ function stateSync(ws, facilityId, updates, id, extra = {}) {
   return proxyWs(ws, id, 'POST', `/internal/gateway/devices/state`, {
     body: { updates, facility_id: facilityId, ...extra },
   });
+}
+
+/**
+ * `unit_number` / `facility_name` / `device_serial` only exist on the joined
+ * projection, so their presence proves the fanout sent the enriched record
+ * rather than reconstructing a row from the raw event (which loses all display
+ * context and would silently overwrite a good row in the UI).
+ */
+function assertSessionUpsertEnriched(evt, label, { expectUnit = true } = {}) {
+  const session = evt?.data?.session;
+  if (!session) throw new Error(`access_session_upsert(${label}) missing data.session`);
+  if (!Array.isArray(evt.data.changed)) {
+    throw new Error(`access_session_upsert(${label}) missing data.changed[]`);
+  }
+  if (!evt.data.timestamp || Number.isNaN(Date.parse(evt.data.timestamp))) {
+    throw new Error(`access_session_upsert(${label}) missing ISO data.timestamp`);
+  }
+  const missing = [];
+  if (!session.facility_name) missing.push('facility_name');
+  if (!session.device_serial) missing.push('device_serial');
+  if (expectUnit && !session.unit_number) missing.push('unit_number');
+  if (missing.length > 0) {
+    throw new Error(
+      `access_session_upsert(${label}) is not join-enriched — missing ${missing.join(', ')}: ${JSON.stringify(session)}`,
+    );
+  }
 }
 
 // Verbose HTTP logging
@@ -3156,15 +3183,21 @@ async function run() {
       }
       const pendingUpsert = await waitForSessionUpsert(
         histSessionFeed.events,
-        (s) => isRemoteCycleSession(s) && (s.state === 'pending' || s.id === pendingHit.session.id),
+        (s) => s.id === pendingHit.session.id && s.state === 'pending',
         0,
         8000,
       );
       if (!pendingUpsert) {
-        warn('access_session_upsert for pending not observed (REST pending still OK); continuing');
-      } else {
-        ok('access_session_upsert observed for pending remote session');
+        throw new Error(
+          `Expected access_session_upsert(pending) for ${pendingHit.session.id}; saw ${
+            histSessionFeed.events
+              .map((e) => `${e.data.session.id.slice(0, 8)}/${e.data.session.state}`)
+              .join(',') || 'none'
+          }`,
+        );
       }
+      assertSessionUpsertEnriched(pendingUpsert, 'pending');
+      ok('access_session_upsert observed for pending remote session');
       ok('Access session pending after cloud unlock');
 
       step('While pending, grant-like access-events attach (attempt_count) without replacing remote actor');
@@ -3264,9 +3297,13 @@ async function run() {
         8000,
       );
       if (!openUpsert) {
-        warn('access_session_upsert for open not observed (REST open still OK); continuing');
-      } else {
-        ok('access_session_upsert observed for open remote session');
+        throw new Error(`Expected access_session_upsert(open) for ${openHit.session.id}`);
+      }
+      assertSessionUpsertEnriched(openUpsert, 'open');
+      if (!Array.isArray(openUpsert.data.changed) || !openUpsert.data.changed.includes('state')) {
+        throw new Error(
+          `access_session_upsert(open) must report changed=['state', ...]; got ${JSON.stringify(openUpsert.data.changed)}`,
+        );
       }
       ok(`Access session open (currently_open=${openHit.currently_open})`);
 
@@ -3310,10 +3347,10 @@ async function run() {
         8000,
       );
       if (!closedUpsert) {
-        warn('access_session_upsert for closed not observed (REST closed still OK); continuing');
-      } else {
-        ok('access_session_upsert observed for closed remote session');
+        throw new Error(`Expected access_session_upsert(closed) for ${closedHit.session.id}`);
       }
+      assertSessionUpsertEnriched(closedUpsert, 'closed');
+      ok('access_session_upsert observed for pending → open → closed remote session');
 
       const sessionDetail = await axios.get(`${API_BASE}/access-sessions/${closedHit.session.id}`, {
         headers: authHeaders(token),
@@ -7111,6 +7148,27 @@ async function run() {
         }
         ok(`Tenant received app_snapshot (devices=${snapDeviceIds.length}, unread=${snapshot.data.notifications?.unreadCount ?? '?'})`);
 
+        const snapSessions = snapshot.data.accessSessions;
+        if (!snapSessions || !Array.isArray(snapSessions.sessions)) {
+          throw new Error('app_snapshot missing accessSessions.sessions[]');
+        }
+        if (typeof snapSessions.currentlyOpen !== 'number') {
+          throw new Error('app_snapshot accessSessions missing numeric currentlyOpen');
+        }
+        // Snapshots deliberately skip the pagination COUNT(*); clients page via REST.
+        if ('count' in snapSessions) {
+          throw new Error('app_snapshot accessSessions must not carry a pagination count');
+        }
+        const foreignUnitSession = snapSessions.sessions.find(
+          (s) => s.unit_id && s.unit_id !== unitId,
+        );
+        if (foreignUnitSession) {
+          throw new Error(
+            `Tenant app_snapshot leaked a session for unit ${foreignUnitSession.unit_id} (expected only ${unitId})`,
+          );
+        }
+        ok(`Tenant app_snapshot accessSessions (rows=${snapSessions.sessions.length}, currentlyOpen=${snapSessions.currentlyOpen})`);
+
         step('Denying subscribe to foreign facility on /ws/app');
         const denyApp = await connectAppWs(primaryToken);
         let denied = false;
@@ -7163,6 +7221,103 @@ async function run() {
           throw new Error('Did not receive app_event device_status_update for tenant unit device');
         }
         ok(`Tenant received device_status_update (lock_status=${updated.lock_status})`);
+
+        step('Remote unlock cycle — expect access_session_upsert pending → open → closed on /ws/app');
+        const preAppSessionLen = tenantApp.events.length;
+        const appUnlockRes = await axios.put(
+          `${API_BASE}/devices/blulok/${deviceId}/lock`,
+          { lock_status: 'unlocked' },
+          { headers: authHeaders(token) },
+        );
+        if (appUnlockRes.status !== 200 || appUnlockRes.data?.success === false) {
+          throw new Error(
+            `App-stream remote unlock failed: ${appUnlockRes.status} ${JSON.stringify(appUnlockRes.data)}`,
+          );
+        }
+        const appPending = await waitForAppSessionUpsert(
+          tenantApp.events,
+          (s) => s.device_id === deviceId && s.state === 'pending',
+          preAppSessionLen,
+          12000,
+        );
+        if (!appPending) {
+          throw new Error('Expected app_event access_session_upsert(pending) on /ws/app after remote unlock');
+        }
+        assertSessionUpsertEnriched(appPending, 'app pending');
+        const appSessionId = appPending.data.session.id;
+        ok(`Tenant /ws/app received access_session_upsert pending (${appSessionId.slice(0, 8)})`);
+
+        const appOpenSettle = await stateSync(
+          ws,
+          facilityId,
+          [gwLockDevice({ lock_id: remainingSerial, locked: false, state: 'OPENED', online: true })],
+          `req-app-session-open-${Date.now()}`,
+        );
+        if (appOpenSettle.status !== 200) {
+          throw new Error(`App-stream unlock settle failed: ${appOpenSettle.status}`);
+        }
+        const appOpen = await waitForAppSessionUpsert(
+          tenantApp.events,
+          (s) => s.id === appSessionId && s.state === 'open',
+          preAppSessionLen,
+          12000,
+        );
+        if (!appOpen) {
+          throw new Error(`Expected app_event access_session_upsert(open) for ${appSessionId} on /ws/app`);
+        }
+        assertSessionUpsertEnriched(appOpen, 'app open');
+        ok('Tenant /ws/app received access_session_upsert open for the same session');
+
+        // Re-lock: also restores the CLOSED baseline later sections assume.
+        const appCloseSettle = await stateSync(
+          ws,
+          facilityId,
+          [gwLockDevice({ lock_id: remainingSerial, locked: true, state: 'CLOSED', online: true })],
+          `req-app-session-close-${Date.now()}`,
+        );
+        if (appCloseSettle.status !== 200) {
+          throw new Error(`App-stream re-lock settle failed: ${appCloseSettle.status}`);
+        }
+        const appClosed = await waitForAppSessionUpsert(
+          tenantApp.events,
+          (s) => s.id === appSessionId && s.state === 'closed',
+          preAppSessionLen,
+          12000,
+        );
+        if (!appClosed) {
+          throw new Error(`Expected app_event access_session_upsert(closed) for ${appSessionId} on /ws/app`);
+        }
+        assertSessionUpsertEnriched(appClosed, 'app closed');
+        ok('Tenant /ws/app received access_session_upsert closed (pending → open → closed complete)');
+
+        step('Reconnecting /ws/app — snapshot must already contain the settled session');
+        // Mirrors the "refresh fixes it" recovery path: a fresh snapshot is authoritative
+        // even if a live event was missed (e.g. fanout landed on another instance).
+        const resnapApp = await connectAppWs(primaryToken);
+        try {
+          await subscribeAppFacility(resnapApp.ws, facilityId);
+          const resnap = await waitForAppEvent(resnapApp.events, 'app_snapshot', 0, 10000);
+          const resnapSession = (resnap?.data?.accessSessions?.sessions || [])
+            .find((s) => s.id === appSessionId);
+          if (!resnapSession) {
+            throw new Error(
+              `Reconnect app_snapshot missing session ${appSessionId}; got ${
+                (resnap?.data?.accessSessions?.sessions || [])
+                  .map((s) => `${s.id.slice(0, 8)}/${s.state}`)
+                  .join(',') || 'none'
+              }`,
+            );
+          }
+          if (resnapSession.state !== 'closed') {
+            throw new Error(`Reconnect snapshot session state expected closed, got ${resnapSession.state}`);
+          }
+          if (!resnapSession.unit_number || !resnapSession.facility_name) {
+            throw new Error('Reconnect snapshot session is not join-enriched');
+          }
+          ok('Reconnect app_snapshot carries the settled session with full context');
+        } finally {
+          closeAppWs(resnapApp.ws);
+        }
 
         step('Facility admin /ws/app snapshot includes broader device set');
         const faApp = await connectAppWs(created.facilityAdminToken || facilityAdmin.token);

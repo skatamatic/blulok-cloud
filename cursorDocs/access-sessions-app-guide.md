@@ -320,7 +320,7 @@ Payload includes enriched `accessLog` in the **raw history** shape. Use for an A
 1. Point list / pull-to-refresh at `/api/v1/access-sessions`.
 2. Map cells: subject · user · method title · status from `state` · time from `started_at`.
 3. Detail sheet: `/access-sessions/:id` → timeline from session fields; optional `events` section.
-4. WS: handle `access_session_upsert`; demote `activity_new` to raw-only screens.
+4. WS: on **`/ws/app`**, handle `app_event` `access_session_upsert` and replace `accessSessions` from `app_snapshot`. Dashboard `/ws` `activity` still uses top-level `access_session_upsert`. Demote `activity_new` to raw-only screens. While any row is `pending`, poll `GET /access-sessions` every ~2s (gateway unlock may settle on another Cloud Run instance).
 5. Open-lock badge: use `currently_open` and/or `state=open`.
 6. Expect empty/partial historical sessions until Cloud backfill has been run for that environment (raw history remains complete). Backfill is an admin/ops concern (`POST /api/v1/admin/access-sessions/backfill`), not an app API.
 
