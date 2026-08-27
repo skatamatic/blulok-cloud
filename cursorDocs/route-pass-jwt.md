@@ -18,6 +18,22 @@ Related context: [auth.md](./auth.md) (user sessions and roles), [security-desig
 
 Implementation: [`backend/src/routes/passes.routes.ts`](../backend/src/routes/passes.routes.ts), orchestration in [`backend/src/services/passes/route-pass.orchestrator.ts`](../backend/src/services/passes/route-pass.orchestrator.ts), authoritative scope in [`backend/src/services/passes/route-pass-context.service.ts`](../backend/src/services/passes/route-pass-context.service.ts), signing in [`backend/src/services/passes.service.ts`](../backend/src/services/passes.service.ts) and [`backend/src/services/crypto/ed25519.service.ts`](../backend/src/services/crypto/ed25519.service.ts).
 
+### Debug issuance (dev_admin, non-production)
+
+`POST /passes/request` always issues for the **authenticated caller**. There is no impersonation path. For support/debug, non-production `dev_admin` can issue a pass **for another user** without logging in as them:
+
+| Item | Value |
+|------|--------|
+| Endpoint | `POST /api/v1/admin/dev-tools/issue-route-pass` |
+| Authentication | `dev_admin` Bearer token |
+| Production | **Disabled** (403), same guard as gateway-ping |
+| Body | `{ "userId": "<uuid>", "appDeviceId"?: "<app_device_id>", "facilityId"?: "<uuid>" }` |
+| Response | `{ "success": true, "routePass": "<jwt>", "userId", "appDeviceId", "facilityId" }` |
+
+This calls the same `RoutePassOrchestrator.issueForUser` as `/passes/request`, so claims still come from DB state for the **target** user. Issuance is written to `route_pass_issuance_log`. The issuance log stores metadata only (`jti`, `audiences`, timestamps) — never the compact JWT.
+
+Skill: `node .cursor/skills/debug-blulok-deployment/scripts/blulok-debug.mjs fetch-pass --user "<email>" --report` reads the latest unexpired log row (no mint). Add `--issue` only when you need a new compact JWT. The compact token lives on the app device after issuance; Cloud never persists it.
+
 **Authoritative data at issuance:** Each `POST /passes/request` reloads the user's **role**, **active status**, and **facility scope** from the database. The route handler passes only `userId` and optional `facility_id` into the orchestrator — session JWT claims (`role`, `facilityIds`) are never forwarded. Every route pass claim is derived from DB state at request time:
 
 | Claim / field | Source at issuance |

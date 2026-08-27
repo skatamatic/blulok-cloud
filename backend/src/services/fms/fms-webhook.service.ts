@@ -32,7 +32,12 @@ import {
   type FmsOccupancyTenantInfo,
 } from './fms-unit-occupancy-validation.utils';
 import { validateFmsTenantWebhookFields, formatFmsTenantContactLabel } from './fms-tenant-validation.utils';
-import { summarizeFmsWebhookPayload } from './fms-webhook-summary.utils';
+import {
+  isOpaqueFmsId,
+  labelsFromFmsChangePayloads,
+  summarizeFmsWebhookPayload,
+  type FmsWebhookDisplayLabels,
+} from './fms-webhook-summary.utils';
 import { logger } from '@/utils/logger';
 import type { FMSServiceModels, FMSServiceCore } from './fms-service-context';
 import type { FMSChangeApplicatorService } from './fms-change-applicator.service';
@@ -184,14 +189,18 @@ export class FMSWebhookService {
     });
 
     try {
-      const { summary, summaryText } = summarizeFmsWebhookPayload(payload);
-
       const pendingInserts = await this.buildWebhookChanges(
         facilityId,
         syncLog.id,
         this.toApplyPayload(payload),
         provider
       );
+      const displayLabels = await this.resolveWebhookDisplayLabels(
+        facilityId,
+        payload.data ?? {},
+        pendingInserts
+      );
+      const { summary, summaryText } = summarizeFmsWebhookPayload(payload, displayLabels);
 
       const changes: FMSChange[] = [];
       for (const insert of pendingInserts) {
@@ -294,7 +303,7 @@ export class FMSWebhookService {
         raw_payload: rawPayload,
       }, { includeRawPayload: true });
 
-      void this.notifyFmsWebhookReceived(facilityId, payload, webhookFeedItem);
+      void this.notifyFmsWebhookReceived(facilityId, payload, webhookFeedItem, displayLabels);
       this.core.broadcastFMSSyncUpdate(facilityId, webhookFeedItem);
 
       return {
@@ -444,7 +453,8 @@ export class FMSWebhookService {
     changesApplied?: number;
     requiresReview?: boolean;
   }> {
-    const { summary, summaryText } = summarizeFmsWebhookPayload(payload);
+    const displayLabels = await this.resolveWebhookDisplayLabels(facilityId, payload.data ?? {}, []);
+    const { summary, summaryText } = summarizeFmsWebhookPayload(payload, displayLabels);
     const eventSummary = {
       ...summary,
       summaryText,
@@ -486,10 +496,74 @@ export class FMSWebhookService {
     return (row?.name as string | undefined) || 'Facility';
   }
 
+  private async resolveWebhookDisplayLabels(
+    facilityId: string,
+    data: Record<string, unknown>,
+    inserts: Parameters<typeof this.models.changeModel.create>[0][]
+  ): Promise<FmsWebhookDisplayLabels> {
+    const fromInserts = labelsFromFmsChangePayloads(inserts);
+    let unitLabel = fromInserts.unitLabel;
+    let tenantLabel = fromInserts.tenantLabel;
+
+    const unitExternalId =
+      typeof data.unit_id === 'string'
+        ? data.unit_id
+        : typeof data.unitId === 'string'
+          ? data.unitId
+          : undefined;
+    const tenantExternalId =
+      typeof data.tenant_id === 'string'
+        ? data.tenant_id
+        : typeof data.tenantId === 'string'
+          ? data.tenantId
+          : undefined;
+
+    if (!unitLabel && unitExternalId) {
+      const unitMapping = await this.models.entityMappingModel.findByExternalId(
+        facilityId,
+        'unit',
+        unitExternalId
+      );
+      if (unitMapping?.internal_id) {
+        const unit = await this.models.unitModel.findById(unitMapping.internal_id);
+        if (unit?.unit_number && !isOpaqueFmsId(unit.unit_number)) {
+          unitLabel = unit.unit_number;
+        }
+      }
+    }
+
+    if (!tenantLabel && tenantExternalId) {
+      const tenantMapping = await this.models.entityMappingModel.findByExternalId(
+        facilityId,
+        'user',
+        tenantExternalId
+      );
+      if (tenantMapping?.internal_id) {
+        try {
+          const { DatabaseService } = await import('@/services/database.service');
+          const row = await DatabaseService.getInstance()
+            .connection('users')
+            .where('id', tenantMapping.internal_id)
+            .first('first_name', 'last_name', 'email');
+          const name = [row?.first_name, row?.last_name].filter(Boolean).join(' ').trim();
+          if (name) tenantLabel = name;
+          else if (typeof row?.email === 'string' && row.email.trim() && !isOpaqueFmsId(row.email)) {
+            tenantLabel = row.email.trim();
+          }
+        } catch {
+          // Display lookup is best-effort; notification still sends without a name.
+        }
+      }
+    }
+
+    return { tenantLabel, unitLabel };
+  }
+
   private async notifyFmsWebhookReceived(
     facilityId: string,
     payload: FMSWebhookPayload,
-    webhookFeedItem: FMSWebhookFeedItem
+    webhookFeedItem: FMSWebhookFeedItem,
+    display?: FmsWebhookDisplayLabels
   ): Promise<void> {
     try {
       const { InAppNotificationDispatcher } = await import(
@@ -497,13 +571,18 @@ export class FMSWebhookService {
       );
       const facilityName = await this.getFacilityName(facilityId);
       const dispatcher = InAppNotificationDispatcher.getInstance();
+      const payloadData: Record<string, unknown> = { ...(payload.data ?? {}) };
+      if (display?.unitLabel) payloadData.unit_number = display.unitLabel;
+      if (display?.tenantLabel && !payloadData.first_name && !payloadData.firstName) {
+        payloadData.first_name = display.tenantLabel;
+      }
 
       await dispatcher.notifyFmsWebhookReceived(
         facilityId,
         facilityName,
         webhookFeedItem.id,
         payload.event_type,
-        payload.data ?? {},
+        payloadData,
         {
           changesDetected: webhookFeedItem.changesDetected,
           changesApplied: webhookFeedItem.changesApplied,

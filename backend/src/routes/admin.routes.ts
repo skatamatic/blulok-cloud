@@ -39,11 +39,13 @@ import { Ed25519Service } from '@/services/crypto/ed25519.service';
 import { DenylistService } from '@/services/denylist.service';
 import { GatewayDebugService } from '@/services/gateway/gateway-debug.service';
 import { logger } from '@/utils/logger';
+import { handleAdminIssueRoutePass } from '@/routes/admin-issue-route-pass.handler';
 import { registerDelete, registerGet, registerPost } from '@/openapi/register-route';
 import {
   rateLimitBypassBodySchema,
   notificationsTestModeBodySchema,
   gatewayPingBodySchema,
+  issueRoutePassBodySchema,
   gatewayCommandBodySchema,
   deviceDeletionOutboxQuerySchema,
   adminUserIdParamSchema,
@@ -269,6 +271,21 @@ registerPost(
   GatewayEventsService.getInstance().unicastToFacility(facilityId, { type: 'PING' });
   res.json({ success: true, facilityId });
   }),
+);
+
+registerPost(
+  router,
+  '/dev-tools/issue-route-pass',
+  {
+    openApiPath: `${MOUNT}/dev-tools/issue-route-pass`,
+    tags: ['Admin'],
+    summary: 'Issue a route pass for a specific user (non-production debug)',
+    security: 'bearer',
+    body: issueRoutePassBodySchema,
+  },
+  authenticateToken,
+  requireDevAdmin,
+  asyncHandler(handleAdminIssueRoutePass),
 );
 
 registerGet(

@@ -52,7 +52,9 @@ This document summarizes the new centralized trust model implemented in the back
     - `POST /api/v1/internal/gateway/devices/state` - Partial lock and access_control state updates (`lock_id` or `access_id` + `relay_channel`)
     - `GET /api/v1/internal/gateway/access-codes` - Poll resolved active keypad codes for facility devices
   - Admin: `POST /api/v1/admin/ops-key-rotation/broadcast` (DEV_ADMIN only)
-  - Dev Tools (DEV_ADMIN, non-production only): `POST /api/v1/admin/dev-tools/gateway-command` - sends DENYLIST_ADD, DENYLIST_REMOVE, LOCK, UNLOCK commands to gateway for testing
+  - Dev Tools (DEV_ADMIN, non-production only):
+    - `POST /api/v1/admin/dev-tools/gateway-command` - sends DENYLIST_ADD, DENYLIST_REMOVE, LOCK, UNLOCK commands to gateway for testing
+    - `POST /api/v1/admin/dev-tools/issue-route-pass` - issue a route pass for a specific user (debug/support; same orchestrator as `POST /passes/request`)
   - Firmware OTA:
     - `POST /api/v1/firmware/upload` - Upload firmware binary (DEV_ADMIN only, multer multipart)
     - `GET /api/v1/firmware` - List active firmware (ADMIN/DEV_ADMIN/FACILITY_ADMIN)

@@ -16,6 +16,12 @@ export const gatewayPingBodySchema = Joi.object({
   facilityId: Joi.string().required(),
 });
 
+export const issueRoutePassBodySchema = Joi.object({
+  userId: Joi.string().uuid().required(),
+  appDeviceId: Joi.string().trim().min(1).optional(),
+  facilityId: Joi.string().uuid().optional(),
+});
+
 export const gatewayCommandBodySchema = Joi.object({
   facilityId: Joi.string().required(),
   command: Joi.string().valid('DENYLIST_ADD', 'DENYLIST_REMOVE', 'LOCK', 'UNLOCK').required(),

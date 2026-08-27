@@ -25,6 +25,14 @@ export function getFmsUpdateEventLabel(eventType: string | undefined): string {
   return FMS_UPDATE_EVENT_LABELS[eventType] ?? formatEventLabel(eventType);
 }
 
+const OPAQUE_FMS_ID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function isOpaqueFmsId(value: string | undefined): boolean {
+  if (!value) return false;
+  return OPAQUE_FMS_ID_RE.test(value.trim());
+}
+
 function pickString(
   data: Record<string, unknown>,
   ...keys: string[]
@@ -38,12 +46,31 @@ function pickString(
   return undefined;
 }
 
+function pickFriendly(data: Record<string, unknown>, ...keys: string[]): string | undefined {
+  const value = pickString(data, ...keys);
+  if (!value || isOpaqueFmsId(value)) return undefined;
+  return value;
+}
+
+function formatUnitSubject(unitLabel: string): string {
+  const trimmed = unitLabel.trim();
+  if (!trimmed || isOpaqueFmsId(trimmed)) return '';
+  return /^unit\s+/i.test(trimmed) ? trimmed : `Unit ${trimmed}`;
+}
+
+function isOpaqueSubjectLabel(label: string): boolean {
+  return isOpaqueFmsId(label.replace(/^unit\s+/i, '').trim());
+}
+
 export function describeFmsUpdatePushSubjectFromMetadata(
   metadata: Record<string, unknown> | null | undefined,
 ): string | undefined {
   if (!metadata) return undefined;
   if (typeof metadata.subjectLabel === 'string' && metadata.subjectLabel.trim()) {
-    return metadata.subjectLabel.trim();
+    const labeled = metadata.subjectLabel.trim();
+    if (!isOpaqueSubjectLabel(labeled)) {
+      return labeled;
+    }
   }
 
   const payload =
@@ -54,13 +81,16 @@ export function describeFmsUpdatePushSubjectFromMetadata(
   const firstName = pickString(payload, 'first_name', 'firstName');
   const lastName = pickString(payload, 'last_name', 'lastName');
   const name = [firstName, lastName].filter(Boolean).join(' ').trim();
-  const email = pickString(payload, 'email');
-  const unitId = pickString(payload, 'unit_id', 'unitId', 'unit_number', 'unitNumber');
+  const email = pickFriendly(payload, 'email');
+  const unitRaw =
+    pickFriendly(payload, 'unit_number', 'unitNumber') || pickFriendly(payload, 'unit_id', 'unitId');
+  const unit = unitRaw ? formatUnitSubject(unitRaw) : '';
 
+  if (name && unit) return `${name} · ${unit}`;
   if (name && email) return `${name} (${email})`;
   if (name) return name;
   if (email) return email;
-  if (unitId) return `Unit ${unitId}`;
+  if (unit) return unit;
   return undefined;
 }
 
@@ -101,7 +131,8 @@ export function normalizeFmsUpdatePushTitle(title: string): string {
 export function normalizeFmsUpdatePushMessage(message: string): string {
   return message
     .replace(/\bwebhook\b/gi, 'FMS update')
-    .replace(/\b(\d+) change\(s\) pending review\b/gi, '$1 change(s) need your review');
+    .replace(/\b(\d+) change\(s\) pending review\b/gi, '$1 change(s) need your review')
+    .replace(/\s*\(Unit\s+[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\)\s*$/i, '');
 }
 
 export function getFmsUpdatePushDetailRows(

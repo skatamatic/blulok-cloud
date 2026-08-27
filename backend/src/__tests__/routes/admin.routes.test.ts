@@ -42,6 +42,7 @@ import { Ed25519Service } from '@/services/crypto/ed25519.service';
 import { LockCommandService } from '@/services/lock-command.service';
 import { config } from '@/config/environment';
 import { DeviceDeletionOutboxService } from '@/services/device-deletion-outbox.service';
+import { RoutePassError, RoutePassOrchestrator } from '@/services/passes/route-pass.orchestrator';
 
 function createAdminTxnKnex(options?: { unitIds?: string[]; gatewayIds?: string[]; userDeviceIds?: string[] }) {
   const unitIds = options?.unitIds ?? [];
@@ -328,6 +329,92 @@ describe('Admin Routes', () => {
           .send({ enabled: true })
           .expect(403);
         expect(response.body.message).toMatch(/production/i);
+      } finally {
+        (config as { nodeEnv: string }).nodeEnv = prev;
+      }
+    });
+  });
+
+  describe('POST /api/v1/admin/dev-tools/issue-route-pass', () => {
+    const userId = '27b950ef-9a93-4a7f-84c0-91bd872363b1';
+    const issuedJwt = 'eyJhbGciOiJFZERTQSJ9.eyJzdWIiOiJ1c2VyIn0.sig';
+    let issueSpy: jest.SpiedFunction<typeof RoutePassOrchestrator.issueForUser>;
+
+    beforeEach(() => {
+      issueSpy = jest.spyOn(RoutePassOrchestrator, 'issueForUser').mockResolvedValue(issuedJwt);
+    });
+
+    afterEach(() => {
+      issueSpy.mockRestore();
+    });
+
+    it('should return 403 for admin token (requireDevAdmin)', async () => {
+      const response = await request(app)
+        .post('/api/v1/admin/dev-tools/issue-route-pass')
+        .set('Authorization', `Bearer ${testData.users.admin.token}`)
+        .send({ userId })
+        .expect(403);
+
+      expectForbidden(response);
+      expect(issueSpy).not.toHaveBeenCalled();
+    });
+
+    it('should return 400 when userId is missing', async () => {
+      const response = await request(app)
+        .post('/api/v1/admin/dev-tools/issue-route-pass')
+        .set('Authorization', `Bearer ${testData.users.devAdmin.token}`)
+        .send({})
+        .expect(400);
+
+      expect(response.body.success).toBe(false);
+      expect(issueSpy).not.toHaveBeenCalled();
+    });
+
+    it('should return 200 with a live JWT for the target user', async () => {
+      const response = await request(app)
+        .post('/api/v1/admin/dev-tools/issue-route-pass')
+        .set('Authorization', `Bearer ${testData.users.devAdmin.token}`)
+        .send({
+          userId,
+          appDeviceId: 'android-device-1',
+          facilityId: '33c4ea6b-0a39-470c-8cc3-b1d84baddba2',
+        })
+        .expect(200);
+
+      expectSuccess(response);
+      expect(response.body.routePass).toBe(issuedJwt);
+      expect(response.body.userId).toBe(userId);
+      expect(response.body.appDeviceId).toBe('android-device-1');
+      expect(issueSpy).toHaveBeenCalledWith(
+        { userId, facilityId: '33c4ea6b-0a39-470c-8cc3-b1d84baddba2' },
+        'android-device-1',
+      );
+    });
+
+    it('should map RoutePassError to its status', async () => {
+      issueSpy.mockRejectedValue(new RoutePassError('No registered app device for this user', 409));
+
+      const response = await request(app)
+        .post('/api/v1/admin/dev-tools/issue-route-pass')
+        .set('Authorization', `Bearer ${testData.users.devAdmin.token}`)
+        .send({ userId })
+        .expect(409);
+
+      expect(response.body.success).toBe(false);
+      expect(response.body.message).toMatch(/registered app device/i);
+    });
+
+    it('should return 403 in production', async () => {
+      const prev = config.nodeEnv;
+      (config as { nodeEnv: string }).nodeEnv = 'production';
+      try {
+        const response = await request(app)
+          .post('/api/v1/admin/dev-tools/issue-route-pass')
+          .set('Authorization', `Bearer ${testData.users.devAdmin.token}`)
+          .send({ userId })
+          .expect(403);
+        expect(response.body.message).toMatch(/production/i);
+        expect(issueSpy).not.toHaveBeenCalled();
       } finally {
         (config as { nodeEnv: string }).nodeEnv = prev;
       }

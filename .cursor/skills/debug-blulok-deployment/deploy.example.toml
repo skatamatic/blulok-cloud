@@ -1,0 +1,38 @@
+# BluLok deployment debug suite — copy to deploy.toml (gitignored).
+# Secrets: deploy.env.example → deploy.env
+
+default_env = "develop"
+
+[develop]
+label = "Develop"
+api_base = "https://blulok-cloud-backend-dev-ki5hilafxa-uw.a.run.app/api/v1"
+admin_identifier = "devadmin@blulok.com"
+admin_password_env = "BLULOK_DEBUG_ADMIN_PASSWORD"
+gcp_project = "blulok-cloud-dev"
+gcp_region = "us-west1"
+cloud_run_backend = "blulok-cloud-backend-dev"
+cloud_sql_instance = "blulok-cloud-dev:us-west1:blulok-mysql-develop"
+
+[develop.database]
+host = "127.0.0.1"
+port = "3307"
+user = "blulok_user"
+password_env = "BLULOK_DEBUG_DB_PASSWORD"
+name = "blulok_prod"
+
+# [production]
+# label = "Production"
+# api_base = "https://YOUR-PROD-BACKEND.run.app/api/v1"
+# admin_identifier = "devadmin@blulok.com"
+# admin_password_env = "BLULOK_DEBUG_ADMIN_PASSWORD_PROD"
+# gcp_project = "blulok-cloud-prod"
+# gcp_region = "us-central1"
+# cloud_run_backend = "blulok-backend"
+# cloud_sql_instance = "blulok-cloud-prod:us-central1:blulok-mysql-prod"
+#
+# [production.database]
+# host = "127.0.0.1"
+# port = "3308"
+# user = "blulok_user"
+# password_env = "BLULOK_DEBUG_DB_PASSWORD_PROD"
+# name = "blulok_prod"

@@ -1,6 +1,8 @@
 import {
   buildFmsUpdatePushNotification,
+  describeFmsUpdatePushSubject,
   describeFmsWebhookOutcome,
+  labelsFromFmsChangePayloads,
   summarizeFmsWebhookPayload,
 } from '@/services/fms/fms-webhook-summary.utils';
 import { FMSWebhookPayload } from '@/types/fms.types';
@@ -75,5 +77,45 @@ describe('fms-webhook-summary.utils', () => {
     expect(content.message).toContain('needs your review');
     expect(content.subjectLabel).toBe('Unit unit-demo-001');
     expect(content.statusLabel).toBe('Needs your review');
+  });
+
+  it('does not use Storable UUIDs as the notification subject', () => {
+    expect(
+      describeFmsUpdatePushSubject({
+        unit_id: 'f1c0acb8-3cd8-49ac-8cf7-102eaac7633a',
+        tenant_id: '54e4154d-1984-4bb9-89a2-88af79793a66',
+      }),
+    ).toBeUndefined();
+  });
+
+  it('prefers mapped unit number and tenant name over raw ids', () => {
+    expect(
+      describeFmsUpdatePushSubject(
+        { unit_id: 'f1c0acb8-3cd8-49ac-8cf7-102eaac7633a' },
+        { tenantLabel: 'Jane Doe', unitLabel: 'WS-01' },
+      ),
+    ).toBe('Jane Doe · Unit WS-01');
+  });
+
+  it('reads display labels from change payloads', () => {
+    expect(
+      labelsFromFmsChangePayloads([
+        { after_data: { unitNumber: '101', firstName: 'Alex', lastName: 'Kim' } },
+      ]),
+    ).toEqual({ tenantLabel: 'Alex Kim', unitLabel: '101' });
+  });
+
+  it('omits opaque ids from webhook feed summaries', () => {
+    const { summaryText } = summarizeFmsWebhookPayload({
+      ...basePayload,
+      event_type: 'ledger.moved-in',
+      data: {
+        tenant_id: '54e4154d-1984-4bb9-89a2-88af79793a66',
+        unit_id: 'f1c0acb8-3cd8-49ac-8cf7-102eaac7633a',
+      },
+    }, { unitLabel: 'WS-01', tenantLabel: 'Jane Doe' });
+    expect(summaryText).toContain('Jane Doe');
+    expect(summaryText).toContain('unit WS-01');
+    expect(summaryText).not.toContain('f1c0acb8');
   });
 });

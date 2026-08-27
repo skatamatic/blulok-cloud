@@ -17,6 +17,8 @@ yarn-error.log*
 .env.production.local
 backend/.env
 frontend/.env
+.cursor/skills/debug-blulok-deployment/deploy.toml
+.cursor/skills/debug-blulok-deployment/deploy.env
 backend/terrain-harness-out/
 env
 
