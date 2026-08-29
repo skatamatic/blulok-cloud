@@ -9,10 +9,12 @@ import {
   isFmsNotificationReviewSettled,
 } from '@/utils/fms-pending-review.utils';
 
-export type FmsNotificationDisplayItem = {
+export type FmsNotificationDisplayItem<
+  T extends DashboardNotificationView = DashboardNotificationView,
+> = {
   key: string;
-  notification: DashboardNotificationView;
-  instances: DashboardNotificationView[];
+  notification: T;
+  instances: T[];
 };
 
 function extractTenantClusterKey(notification: DashboardNotificationView): string | null {
@@ -75,10 +77,10 @@ function facilityNameFromNotification(notification: DashboardNotificationView): 
   return fromMessage?.[1]?.trim() || null;
 }
 
-export function presentFmsNotificationForDisplay(
-  notification: DashboardNotificationView,
+export function presentFmsNotificationForDisplay<T extends DashboardNotificationView>(
+  notification: T,
   openSyncLogIds: Set<string> | null,
-): DashboardNotificationView {
+): T {
   if (!isFmsNotificationReviewSettled(notification, openSyncLogIds)) {
     return notification;
   }
@@ -118,8 +120,8 @@ export function mergeRecordedFmsNotificationGroups(
   return [...existing.filter((group) => !overlapping.includes(group)), [...union]];
 }
 
-export function rememberUnreadFmsNotificationGroups(
-  items: FmsNotificationDisplayItem[],
+export function rememberUnreadFmsNotificationGroups<T extends DashboardNotificationView>(
+  items: FmsNotificationDisplayItem<T>[],
   existing: string[][],
 ): string[][] {
   let next = existing;
@@ -177,12 +179,12 @@ function canAttachToFmsGroup(
   return false;
 }
 
-export function groupDashboardNotifications(
-  notifications: DashboardNotificationView[],
+export function groupDashboardNotifications<T extends DashboardNotificationView>(
+  notifications: T[],
   openSyncLogIds: Set<string> | null = null,
   recordedGroups: string[][] = [],
-): FmsNotificationDisplayItem[] {
-  const result: FmsNotificationDisplayItem[] = [];
+): FmsNotificationDisplayItem<T>[] {
+  const result: FmsNotificationDisplayItem<T>[] = [];
 
   for (const notification of notifications) {
     const groupKey = getFmsWebhookGroupKey(notification);
@@ -256,8 +258,8 @@ export function describeFmsNotificationInstance(notification: DashboardNotificat
   };
 }
 
-export function pickGroupedFmsReviewTarget(
-  instances: DashboardNotificationView[],
+export function pickGroupedFmsReviewTarget<T extends DashboardNotificationView>(
+  instances: T[],
   openSyncLogIds: Set<string> | null,
 ): ReturnType<typeof getFmsNotificationReviewTarget> {
   for (const instance of instances) {

@@ -27,7 +27,6 @@ import { apiService } from '@/services/api.service';
 import {
   FMS_PENDING_REVIEW_CHANGED,
   collectFmsReviewSyncLogIds,
-  getFmsNotificationReviewTarget,
 } from '@/utils/fms-pending-review.utils';
 import {
   describeFmsNotificationInstance,

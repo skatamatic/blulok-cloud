@@ -356,13 +356,6 @@ export function FMSChangeReviewModal({
     return () => clearInterval(interval);
   }, [applying]);
 
-  const toggleChange = (changeId: string) => {
-    const next = new Set(selectedChanges);
-    if (next.has(changeId)) next.delete(changeId);
-    else next.add(changeId);
-    setSelectedChanges(next);
-  };
-
   const toggleGroup = (changeIds: string[]) => {
     const next = new Set(selectedChanges);
     const allSelected = changeIds.every((id) => next.has(id));
