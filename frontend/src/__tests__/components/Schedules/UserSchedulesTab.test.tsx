@@ -70,24 +70,30 @@ describe('UserSchedulesTab', () => {
           lastName: 'D',
         },
       ],
+      total: 3,
     });
     (apiService.getFacilitySchedules as jest.Mock).mockResolvedValue({ schedules });
+    (apiService.getFacilityUserScheduleAssignments as jest.Mock).mockResolvedValue({
+      assignments: [{ userId: 'tenant-1', scheduleId: 'sched-custom' }],
+    });
     (apiService.getUnits as jest.Mock).mockResolvedValue({
       units: [
         {
           id: 'unit-1',
           unit_number: 'A-101',
           primary_tenant: { id: 'tenant-1' },
+          shared_tenants: [
+            {
+              id: 'co-1',
+              email: 'cotenant@example.com',
+              first_name: 'Casey',
+              last_name: 'Share',
+              role: UserRole.TENANT,
+            },
+          ],
         },
       ],
-    });
-    (apiService.getUserScheduleForFacility as jest.Mock).mockImplementation(async (userId: string) => {
-      if (userId === 'tenant-1') {
-        return { schedule: schedules[0] };
-      }
-      const err: any = new Error('not found');
-      err.response = { status: 404 };
-      throw err;
+      total: 1,
     });
     (apiService.setUserScheduleForFacility as jest.Mock).mockResolvedValue({ success: true });
   });
@@ -105,41 +111,91 @@ describe('UserSchedulesTab', () => {
     expect(apiService.getUsers).not.toHaveBeenCalled();
   });
 
-  it('loads tenants/maintenance, maps unit numbers, and falls back on 404 schedule', async () => {
+  it('loads every facility tenant including unit co-tenants and uses the bulk assignment API', async () => {
     render(<UserSchedulesTab facilityId={facilityId} />);
 
     await waitFor(() => {
       expect(screen.getByText('Alex Tenant')).toBeInTheDocument();
       expect(screen.getByText('Morgan Tech')).toBeInTheDocument();
+      expect(screen.getByText('Casey Share')).toBeInTheDocument();
     });
 
-    expect(screen.getByText(/Units: A-101/)).toBeInTheDocument();
+    expect(screen.getByRole('columnheader', { name: /User/i })).toBeInTheDocument();
+    expect(screen.getAllByText('A-101')).toHaveLength(2);
     expect(screen.getByText('Weekday Access')).toBeInTheDocument();
-    // Maintenance has no assigned schedule and no matching precanned default in fixtures
     expect(screen.getByText('Not assigned')).toBeInTheDocument();
-    expect(apiService.getUsers).toHaveBeenCalledWith({ facility: facilityId });
+    expect(apiService.getUsers).toHaveBeenCalledWith({
+      facility: facilityId,
+      limit: 200,
+      offset: 0,
+      sortBy: 'name',
+      sortOrder: 'asc',
+    });
+    expect(apiService.getFacilityUserScheduleAssignments).toHaveBeenCalledWith(facilityId);
+    expect(apiService.getUserScheduleForFacility).not.toHaveBeenCalled();
     expect(screen.queryByText('A D')).not.toBeInTheDocument();
   });
 
-  it('filters to tenants only when Tenants role filter is selected', async () => {
-    render(<UserSchedulesTab facilityId={facilityId} />);
-    await waitFor(() => expect(screen.getByText('Alex Tenant')).toBeInTheDocument());
-
-    await act(async () => {
-      fireEvent.click(screen.getByRole('button', { name: 'Tenants' }));
+  it('pages past the default 20-user API cap', async () => {
+    const pageOne = Array.from({ length: 200 }, (_, i) => ({
+      id: `tenant-${i}`,
+      email: `t${i}@x.com`,
+      firstName: 'Page',
+      lastName: `${i}`,
+      role: UserRole.TENANT,
+    }));
+    (apiService.getUsers as jest.Mock)
+      .mockResolvedValueOnce({ users: pageOne, total: 201 })
+      .mockResolvedValueOnce({
+        users: [
+          {
+            id: 'tenant-200',
+            email: 'last@x.com',
+            firstName: 'Last',
+            lastName: 'User',
+            role: UserRole.TENANT,
+          },
+        ],
+        total: 201,
+      });
+    (apiService.getUnits as jest.Mock).mockResolvedValue({ units: [], total: 0 });
+    (apiService.getFacilityUserScheduleAssignments as jest.Mock).mockResolvedValue({
+      assignments: [],
     });
+
+    render(<UserSchedulesTab facilityId={facilityId} />);
 
     await waitFor(() => {
-      expect(screen.getByText('Alex Tenant')).toBeInTheDocument();
-      expect(screen.queryByText('Morgan Tech')).not.toBeInTheDocument();
+      expect(screen.getByText('Last User')).toBeInTheDocument();
     });
+    expect(apiService.getUsers).toHaveBeenCalledTimes(2);
+    expect(apiService.getUsers).toHaveBeenNthCalledWith(2, {
+      facility: facilityId,
+      limit: 200,
+      offset: 200,
+      sortBy: 'name',
+      sortOrder: 'asc',
+    });
+    expect(screen.getByText(/Showing 201 of 201 users/)).toBeInTheDocument();
+  });
+
+  it('filters to tenants only without refetching', async () => {
+    render(<UserSchedulesTab facilityId={facilityId} />);
+    await waitFor(() => expect(screen.getByText('Alex Tenant')).toBeInTheDocument());
+    expect(apiService.getUsers).toHaveBeenCalledTimes(1);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Tenants' }));
+
+    expect(screen.getByText('Alex Tenant')).toBeInTheDocument();
+    expect(screen.queryByText('Morgan Tech')).not.toBeInTheDocument();
+    expect(apiService.getUsers).toHaveBeenCalledTimes(1);
   });
 
   it('toasts when Save is clicked without a selected schedule id', async () => {
     render(<UserSchedulesTab facilityId={facilityId} />);
     await waitFor(() => expect(screen.getByText('Alex Tenant')).toBeInTheDocument());
 
-    const row = screen.getByText('Alex Tenant').closest('div.border') as HTMLElement;
+    const row = screen.getByText('Alex Tenant').closest('tr') as HTMLElement;
     fireEvent.click(within(row).getByRole('button', { name: 'Change' }));
 
     const select = within(row).getByRole('combobox');
@@ -157,7 +213,7 @@ describe('UserSchedulesTab', () => {
     render(<UserSchedulesTab facilityId={facilityId} />);
     await waitFor(() => expect(screen.getByText('Alex Tenant')).toBeInTheDocument());
 
-    const row = screen.getByText('Alex Tenant').closest('div.border') as HTMLElement;
+    const row = screen.getByText('Alex Tenant').closest('tr') as HTMLElement;
     fireEvent.click(within(row).getByRole('button', { name: 'Change' }));
 
     const select = within(row).getByRole('combobox');
@@ -179,7 +235,6 @@ describe('UserSchedulesTab', () => {
       });
     });
 
-    // loadData re-runs after assign
     expect(apiService.getUsers.mock.calls.length).toBeGreaterThan(1);
   });
 

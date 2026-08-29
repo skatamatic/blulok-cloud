@@ -75,6 +75,10 @@ export async function resetUserAccount(userId: string) {
   }>(`/users/${userId}/reset-account`);
 }
 
+export async function getFacilityUserScheduleAssignments(facilityId: string) {
+  return get(`/facilities/${facilityId}/user-schedules`);
+}
+
 export async function getUserScheduleForFacility(userId: string, facilityId: string) {
   return get(`/users/${userId}/facilities/${facilityId}/schedule`);
 }

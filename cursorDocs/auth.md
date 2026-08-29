@@ -168,6 +168,8 @@ CREATE TABLE user_facility_associations (
 
 ### User list API (`GET /api/v1/users`)
 
+Default page size is **20** (`limit` / `offset`). Clients that need a full facility roster (for example Facility Details → Schedules → User Schedules) must page until `total` is exhausted. Facility filter is `facility` or `facility_id` and matches `user_facility_associations` only — occupants who appear on units but lack that association are not in the list.
+
 List scoping is enforced in `filterUsersForListScope` (`users-rbac.util.ts`) and `UserListScopeService`:
 
 | Requester | Visible users |

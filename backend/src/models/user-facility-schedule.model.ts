@@ -99,6 +99,18 @@ export class UserFacilityScheduleModel extends BaseModel {
   }
 
   /**
+   * List user_id + schedule_id pairs for a facility (no N+1).
+   */
+  public static async listAssignmentsForFacility(
+    facilityId: string
+  ): Promise<Array<{ user_id: string; schedule_id: string }>> {
+    return this.query()
+      .select('user_id', 'schedule_id')
+      .where('facility_id', facilityId)
+      .orderBy('user_id', 'asc') as Promise<Array<{ user_id: string; schedule_id: string }>>;
+  }
+
+  /**
    * Get all users assigned to a schedule in a facility
    */
   public static async getUsersForSchedule(

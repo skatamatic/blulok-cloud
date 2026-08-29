@@ -24,7 +24,9 @@ import {
   userScheduleParamSchema,
   setUserScheduleSchema,
   schedulesResponseSchema,
+  facilityUserSchedulesResponseSchema,
 } from '@/schemas/schedules.schemas';
+import { handleListFacilityUserScheduleAssignments } from '@/routes/schedules-user-assignments.handler';
 
 const router = Router();
 const MOUNT = '/api/v1';
@@ -228,6 +230,26 @@ registerDelete(
       success: true,
       message: 'Schedule deleted successfully',
     });
+  }),
+);
+
+registerGet(
+  router,
+  '/facilities/:facilityId/user-schedules',
+  {
+    openApiPath: `${MOUNT}/facilities/{facilityId}/user-schedules`,
+    tags: ['Schedules'],
+    summary: 'List user schedule assignments for a facility',
+    security: 'bearer',
+    params: scheduleFacilityIdParamSchema,
+    responses: {
+      200: facilityUserSchedulesResponseSchema,
+    },
+  },
+  requireAdminOrFacilityAdmin,
+  requireFacilityAccess('facilityId'),
+  asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+    await handleListFacilityUserScheduleAssignments(req, res, getUserContext(req));
   }),
 );
 

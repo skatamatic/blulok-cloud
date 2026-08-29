@@ -90,7 +90,8 @@ Configured global threshold is **88%** lines — **not met**. `src/main` is the 
 | **Activity + notification event bus** (routing, scoped emits, handler isolation) | `backend/src/__tests__/services/events/activity-and-notification-events.test.ts` |
 | **AppRealtimeHub fanout** (device/gateway/key-sharing RBAC emits) | extended `backend/src/__tests__/services/app-realtime.hub.test.ts` |
 | **API client lock/schedule/401 interceptor** | extended `frontend/src/__tests__/services/api.service.test.ts` |
-| **UserSchedulesTab** (RBAC, load/filter/assign workflows) | `frontend/src/__tests__/components/Schedules/UserSchedulesTab.test.tsx` |
+| **UserSchedulesTab** (RBAC, load/filter/assign, paging past the 20-user default) | `frontend/src/__tests__/components/Schedules/UserSchedulesTab.test.tsx` |
+| **user-schedules utils** (merge co-tenants, filter/sort) | `frontend/src/__tests__/components/Schedules/user-schedules.utils.test.ts` |
 | **ProtectedRoute** (100% of component file) | `frontend/src/__tests__/components/ProtectedRoute.test.tsx` |
 | **useBackNavigation** | `frontend/src/__tests__/hooks/useBackNavigation.test.ts` |
 | **BluDesign API client** | `frontend/src/__tests__/api/bludesign.client.test.ts` |

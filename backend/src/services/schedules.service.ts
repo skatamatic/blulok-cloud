@@ -366,6 +366,29 @@ export class SchedulesService {
   }
 
   /**
+   * List user→schedule assignments for a facility (admin / facility-admin).
+   */
+  public static async listUserScheduleAssignments(
+    facilityId: string,
+    userContext: UserContext
+  ): Promise<Array<{ userId: string; scheduleId: string }>> {
+    const hasAccess = await FacilityAccessService.hasAccessToFacility(
+      userContext.userId,
+      userContext.role,
+      facilityId
+    );
+    if (!hasAccess) {
+      throw new Error('Access denied to this facility');
+    }
+    if (!AuthService.isAdmin(userContext.role) && !AuthService.isFacilityAdmin(userContext.role)) {
+      throw new Error('Insufficient permissions to list user schedules');
+    }
+
+    const rows = await UserFacilityScheduleModel.listAssignmentsForFacility(facilityId);
+    return rows.map((row) => ({ userId: row.user_id, scheduleId: row.schedule_id }));
+  }
+
+  /**
    * Get user's schedule for a facility
    */
   public static async getUserScheduleForFacility(

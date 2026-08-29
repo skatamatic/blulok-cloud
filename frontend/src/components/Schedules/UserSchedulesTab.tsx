@@ -1,37 +1,47 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useToast } from '@/contexts/ToastContext';
 import { apiService } from '@/services/api.service';
-import {
-  ScheduleWithTimeWindows,
-  UserScheduleResponse,
-} from '@/types/schedule.types';
+import { ScheduleWithTimeWindows } from '@/types/schedule.types';
 import { User, UserRole } from '@/types/auth.types';
+import { SortableTableTh } from '@/components/Common/SortableTableTh';
+import { MagnifyingGlassIcon, CheckIcon, XMarkIcon, ExclamationTriangleIcon } from '@heroicons/react/24/outline';
 import {
-  MagnifyingGlassIcon, 
-  UserIcon,
-  ClockIcon,
-  CheckIcon,
-  XMarkIcon,
-  ExclamationTriangleIcon,
-  HomeIcon
-} from '@heroicons/react/24/outline';
+  defaultScheduleForUser,
+  filterScheduleUsers,
+  mergeFacilityScheduleUsers,
+  buildUserUnitMap,
+  sortScheduleUsers,
+  tenantDisplayName,
+  UNIT_PAGE_SIZE,
+  USER_PAGE_SIZE,
+  type ScheduleRoleFilter,
+  type UserWithSchedule,
+} from '@/components/Schedules/user-schedules.utils';
 
 interface UserSchedulesTabProps {
   facilityId: string;
 }
 
-interface UserWithSchedule extends User {
-  currentSchedule?: ScheduleWithTimeWindows | null;
-  unitNumbers?: string[];
+type SortKey = 'name' | 'role' | 'units' | 'schedule';
+
+async function fetchAllPages<T>(
+  pageSize: number,
+  loadPage: (offset: number, limit: number) => Promise<{ rows: T[]; total: number }>,
+): Promise<T[]> {
+  const first = await loadPage(0, pageSize);
+  const rows = [...first.rows];
+  const total = first.total;
+  let offset = pageSize;
+  while (offset < total) {
+    const next = await loadPage(offset, pageSize);
+    rows.push(...next.rows);
+    if (!next.rows.length) break;
+    offset += pageSize;
+  }
+  return rows;
 }
 
-/**
- * User Schedules Tab Component
- *
- * Allows admins to assign schedules to tenants and maintenance users
- * for a specific facility. Users can have different schedules per facility.
- */
 export const UserSchedulesTab: React.FC<UserSchedulesTabProps> = ({ facilityId }) => {
   const { authState } = useAuth();
   const { addToast } = useToast();
@@ -39,85 +49,62 @@ export const UserSchedulesTab: React.FC<UserSchedulesTabProps> = ({ facilityId }
   const [schedules, setSchedules] = useState<ScheduleWithTimeWindows[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
-  const [roleFilter, setRoleFilter] = useState<'all' | 'tenant' | 'maintenance'>('all');
+  const [roleFilter, setRoleFilter] = useState<ScheduleRoleFilter>('all');
+  const [sortBy, setSortBy] = useState<SortKey>('name');
+  const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc');
   const [editingUserId, setEditingUserId] = useState<string | null>(null);
   const [selectedScheduleId, setSelectedScheduleId] = useState<string>('');
 
-  const canEdit = authState.user?.role === 'admin' || 
-                  authState.user?.role === 'dev_admin' || 
-                  authState.user?.role === 'facility_admin';
+  const canEdit =
+    authState.user?.role === 'admin' ||
+    authState.user?.role === 'dev_admin' ||
+    authState.user?.role === 'facility_admin';
 
-  useEffect(() => {
-    if (canEdit) {
-      loadData();
-    }
-  }, [facilityId, canEdit, roleFilter]);
-
-  const loadData = async () => {
+  const loadData = useCallback(async () => {
     try {
       setLoading(true);
-      const [usersResponse, schedulesResponse, unitsResponse] = await Promise.all([
-        apiService.getUsers({ 
-          facility: facilityId,
+      const [listedUsers, units, schedulesResponse, assignmentsResponse] = await Promise.all([
+        fetchAllPages<User>(USER_PAGE_SIZE, async (offset, limit) => {
+          const res = await apiService.getUsers({
+            facility: facilityId,
+            limit,
+            offset,
+            sortBy: 'name',
+            sortOrder: 'asc',
+          });
+          return { rows: res.users || [], total: res.total ?? (res.users || []).length };
+        }),
+        fetchAllPages<any>(UNIT_PAGE_SIZE, async (offset, limit) => {
+          const res = await apiService.getUnits({ facility_id: facilityId, limit, offset });
+          return { rows: res.units || [], total: res.total ?? (res.units || []).length };
         }),
         apiService.getFacilitySchedules(facilityId),
-        apiService.getUnits({ facility_id: facilityId }),
+        apiService.getFacilityUserScheduleAssignments(facilityId),
       ]);
 
-      const facilityUsers: User[] = usersResponse.users || [];
-      const units: any[] = unitsResponse.units || [];
-      
-      // Create a map of user ID to unit numbers (for primary tenants)
-      const userUnitMap = new Map<string, string[]>();
-      units.forEach((unit: any) => {
-        if (unit.primary_tenant?.id) {
-          const userId = unit.primary_tenant.id;
-          if (!userUnitMap.has(userId)) {
-            userUnitMap.set(userId, []);
-          }
-          userUnitMap.get(userId)!.push(unit.unit_number);
-        }
-      });
-      
-      // Filter to only tenants and maintenance users
-      let filteredUsers = facilityUsers.filter(
-        u => u.role === UserRole.TENANT || u.role === UserRole.MAINTENANCE
+      const facilitySchedules: ScheduleWithTimeWindows[] = schedulesResponse.schedules || [];
+      const assignmentMap = new Map<string, string>(
+        (assignmentsResponse.assignments || []).map((row: { userId: string; scheduleId: string }) => [
+          row.userId,
+          row.scheduleId,
+        ]),
       );
+      const unitMap = buildUserUnitMap(units);
+      const merged = mergeFacilityScheduleUsers(listedUsers, units);
 
-      // Apply role filter if not 'all'
-      if (roleFilter !== 'all') {
-        filteredUsers = filteredUsers.filter(u => u.role === roleFilter);
-      }
-
-      // Load schedule for each user
-      const usersWithSchedules = await Promise.all(
-        filteredUsers.map(async (user) => {
-          try {
-            const scheduleResponse: UserScheduleResponse = await apiService.getUserScheduleForFacility(
-              user.id,
-              facilityId
-            );
-            return {
-              ...user,
-              currentSchedule: scheduleResponse.schedule,
-              unitNumbers: userUnitMap.get(user.id) || [],
-            };
-          } catch (error: any) {
-            // User may not have a schedule assigned yet
-            if (error?.response?.status !== 404) {
-              console.error(`Failed to load schedule for user ${user.id}:`, error);
-            }
-            return {
-              ...user,
-              currentSchedule: null,
-              unitNumbers: userUnitMap.get(user.id) || [],
-            };
-          }
-        })
+      setUsers(
+        merged.map((user) => {
+          const assignedId = assignmentMap.get(user.id);
+          return {
+            ...user,
+            currentSchedule: assignedId
+              ? facilitySchedules.find((s) => s.id === assignedId) ?? null
+              : null,
+            unitNumbers: unitMap.get(user.id) || [],
+          };
+        }),
       );
-
-      setUsers(usersWithSchedules);
-      setSchedules(schedulesResponse.schedules || []);
+      setSchedules(facilitySchedules);
     } catch (error: any) {
       addToast({
         type: 'error',
@@ -127,7 +114,13 @@ export const UserSchedulesTab: React.FC<UserSchedulesTabProps> = ({ facilityId }
     } finally {
       setLoading(false);
     }
-  };
+  }, [addToast, facilityId]);
+
+  useEffect(() => {
+    if (canEdit) {
+      void loadData();
+    }
+  }, [canEdit, loadData]);
 
   const handleAssignSchedule = async (userId: string) => {
     if (!selectedScheduleId) {
@@ -150,32 +143,19 @@ export const UserSchedulesTab: React.FC<UserSchedulesTabProps> = ({ facilityId }
     }
   };
 
-  const getDefaultSchedule = (user: UserWithSchedule): ScheduleWithTimeWindows | undefined => {
-    if (user.role === UserRole.TENANT) {
-      return schedules.find(s => s.name === 'Default Tenant Schedule' && s.schedule_type === 'precanned');
-    } else if (user.role === UserRole.MAINTENANCE) {
-      return schedules.find(s => s.name === 'Maintenance Schedule' && s.schedule_type === 'precanned');
+  const handleSort = (columnKey: string) => {
+    const key = columnKey as SortKey;
+    if (sortBy === key) {
+      setSortOrder((prev) => (prev === 'asc' ? 'desc' : 'asc'));
+      return;
     }
-    return undefined;
+    setSortBy(key);
+    setSortOrder('asc');
   };
 
-  const filteredUsers = useMemo(() => {
-    let filtered = users;
-
-    // Apply search filter
-    if (searchQuery.trim()) {
-      const query = searchQuery.toLowerCase();
-      filtered = filtered.filter(user => {
-        const fullName = `${user.firstName} ${user.lastName}`.toLowerCase();
-        const email = user.email?.toLowerCase() || '';
-        const unitNumbers = (user.unitNumbers || []).join(' ').toLowerCase();
-        return fullName.includes(query) || email.includes(query) || unitNumbers.includes(query);
-      });
-    }
-
-    // Role filter is already applied in loadData, so we don't need to filter again here
-    return filtered;
-  }, [users, searchQuery]);
+  const visibleUsers = useMemo(() => {
+    return sortScheduleUsers(filterScheduleUsers(users, searchQuery, roleFilter), sortBy, sortOrder);
+  }, [users, searchQuery, roleFilter, sortBy, sortOrder]);
 
   if (!canEdit) {
     return (
@@ -194,21 +174,21 @@ export const UserSchedulesTab: React.FC<UserSchedulesTabProps> = ({ facilityId }
   }
 
   return (
-    <div className="space-y-6">
-      {/* Warning */}
+    <div className="space-y-4">
       <div className="p-3 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-lg">
         <div className="flex items-start gap-2">
           <ExclamationTriangleIcon className="h-5 w-5 text-amber-600 dark:text-amber-400 flex-shrink-0 mt-0.5" />
           <div className="text-sm text-amber-800 dark:text-amber-300">
             <p className="font-medium mb-1">Schedule changes may take up to 24 hours to take effect</p>
-            <p className="text-xs">Existing route passes remain valid until they expire. New route passes will use the updated schedule immediately.</p>
+            <p className="text-xs">
+              Existing route passes remain valid until they expire. New route passes will use the
+              updated schedule immediately.
+            </p>
           </div>
         </div>
       </div>
 
-      {/* Filters */}
-      <div className="flex flex-col sm:flex-row gap-4">
-        {/* Search */}
+      <div className="flex flex-col sm:flex-row gap-3">
         <div className="flex-1 relative">
           <MagnifyingGlassIcon className="absolute left-3 top-1/2 transform -translate-y-1/2 h-5 w-5 text-gray-400" />
           <input
@@ -219,186 +199,184 @@ export const UserSchedulesTab: React.FC<UserSchedulesTabProps> = ({ facilityId }
             className="w-full pl-10 pr-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-primary-500 focus:border-transparent"
           />
         </div>
-
-        {/* Role Filter */}
         <div className="flex gap-2">
-          <button
-            onClick={() => setRoleFilter('all')}
-            className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
-              roleFilter === 'all'
-                ? 'bg-primary-600 text-white'
-                : 'bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-300 dark:hover:bg-gray-600'
-            }`}
-          >
-            All Users
-          </button>
-          <button
-            onClick={() => setRoleFilter('tenant')}
-            className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
-              roleFilter === 'tenant'
-                ? 'bg-primary-600 text-white'
-                : 'bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-300 dark:hover:bg-gray-600'
-            }`}
-          >
-            Tenants
-          </button>
-          <button
-            onClick={() => setRoleFilter('maintenance')}
-            className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
-              roleFilter === 'maintenance'
-                ? 'bg-primary-600 text-white'
-                : 'bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-300 dark:hover:bg-gray-600'
-            }`}
-          >
-            Maintenance
-          </button>
+          {([
+            ['all', 'All Users'],
+            ['tenant', 'Tenants'],
+            ['maintenance', 'Maintenance'],
+          ] as const).map(([value, label]) => (
+            <button
+              key={value}
+              type="button"
+              onClick={() => setRoleFilter(value)}
+              className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+                roleFilter === value
+                  ? 'bg-primary-600 text-white'
+                  : 'bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-300 dark:hover:bg-gray-600'
+              }`}
+            >
+              {label}
+            </button>
+          ))}
         </div>
       </div>
 
-      {/* Users List */}
-      <div className="space-y-3">
-        {filteredUsers.length === 0 ? (
-          <div className="text-center p-8 text-gray-500 dark:text-gray-400">
-            {searchQuery || roleFilter !== 'all'
-              ? 'No users found matching your filters.'
-              : 'No tenants or maintenance users found in this facility.'}
-          </div>
-        ) : (
-          filteredUsers.map((user) => {
-            const defaultSchedule = getDefaultSchedule(user);
-            const currentSchedule = user.currentSchedule || defaultSchedule;
-            const isEditing = editingUserId === user.id;
+      {visibleUsers.length === 0 ? (
+        <div className="text-center p-8 text-gray-500 dark:text-gray-400">
+          {searchQuery || roleFilter !== 'all'
+            ? 'No users found matching your filters.'
+            : 'No tenants or maintenance users found in this facility.'}
+        </div>
+      ) : (
+        <div className="bg-white dark:bg-gray-800 shadow overflow-hidden sm:rounded-md border border-gray-200 dark:border-gray-700">
+          <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
+            <thead className="bg-gray-50 dark:bg-gray-900">
+              <tr>
+                <SortableTableTh
+                  label="User"
+                  columnKey="name"
+                  sortBy={sortBy}
+                  sortOrder={sortOrder}
+                  onSort={handleSort}
+                />
+                <SortableTableTh
+                  label="Role"
+                  columnKey="role"
+                  sortBy={sortBy}
+                  sortOrder={sortOrder}
+                  onSort={handleSort}
+                />
+                <SortableTableTh
+                  label="Units"
+                  columnKey="units"
+                  sortBy={sortBy}
+                  sortOrder={sortOrder}
+                  onSort={handleSort}
+                />
+                <SortableTableTh
+                  label="Schedule"
+                  columnKey="schedule"
+                  sortBy={sortBy}
+                  sortOrder={sortOrder}
+                  onSort={handleSort}
+                />
+                <th
+                  scope="col"
+                  className="px-6 py-3 text-right text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-gray-400"
+                >
+                  Actions
+                </th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-200 dark:divide-gray-700">
+              {visibleUsers.map((user) => {
+                const defaultSchedule = defaultScheduleForUser(user, schedules);
+                const currentSchedule = user.currentSchedule || defaultSchedule;
+                const isDefault = Boolean(currentSchedule && currentSchedule === defaultSchedule && !user.currentSchedule);
+                const isEditing = editingUserId === user.id;
 
-            return (
-              <div
-                key={user.id}
-                className="border border-gray-200 dark:border-gray-700 rounded-lg p-4 bg-white dark:bg-gray-800 hover:shadow-md transition-shadow"
-              >
-                <div className="flex items-start justify-between">
-                  {/* User Info */}
-                  <div className="flex-1">
-                    <div className="flex items-center gap-3">
-                      <div className="flex-shrink-0 w-10 h-10 rounded-full bg-primary-100 dark:bg-primary-900/30 flex items-center justify-center">
-                        <UserIcon className="h-6 w-6 text-primary-600 dark:text-primary-400" />
+                return (
+                  <tr key={user.id} className="hover:bg-blue-50/50 dark:hover:bg-blue-900/10">
+                    <td className="px-6 py-4 whitespace-nowrap text-sm">
+                      <div className="font-medium text-gray-900 dark:text-white">
+                        {tenantDisplayName(user)}
                       </div>
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2">
-                          <h4 className="text-sm font-semibold text-gray-900 dark:text-white">
-                            {user.firstName} {user.lastName}
-                          </h4>
-                          <span className={`px-2 py-0.5 text-xs font-medium rounded ${
-                            user.role === UserRole.TENANT
-                              ? 'bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400'
-                              : 'bg-yellow-100 dark:bg-yellow-900/30 text-yellow-700 dark:text-yellow-400'
-                          }`}>
-                            {user.role === UserRole.TENANT ? 'Tenant' : 'Maintenance'}
-                          </span>
-                        </div>
-                        <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
-                          {user.email}
-                        </p>
-                        {/* Unit Numbers */}
-                        {user.unitNumbers && user.unitNumbers.length > 0 && (
-                          <div className="flex items-center gap-1 mt-1.5">
-                            <HomeIcon className="h-3.5 w-3.5 text-gray-400 dark:text-gray-500" />
-                            <span className="text-xs text-gray-600 dark:text-gray-400">
-                              Units: {user.unitNumbers.join(', ')}
-                            </span>
-                          </div>
-                        )}
-                      </div>
-                    </div>
-
-                    {/* Current Schedule */}
-                    {!isEditing && (
-                      <div className="mt-3 ml-13 flex items-center gap-2">
-                        <ClockIcon className="h-4 w-4 text-gray-400" />
-                        <span className="text-sm text-gray-600 dark:text-gray-400">
-                          <span className="font-medium">Schedule:</span>{' '}
-                          {currentSchedule ? (
-                            <span className="text-gray-900 dark:text-white">
-                              {currentSchedule.name}
-                              {currentSchedule === defaultSchedule && (
-                                <span className="text-xs text-gray-500 dark:text-gray-400 ml-1">(default)</span>
-                              )}
-                            </span>
-                          ) : (
-                            <span className="text-gray-500 dark:text-gray-400 italic">Not assigned</span>
-                          )}
-                        </span>
-                      </div>
-                    )}
-
-                    {/* Schedule Selector (when editing) */}
-                    {isEditing && (
-                      <div className="mt-3 ml-13 space-y-2">
-                        <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">
-                          Select Schedule
-                        </label>
+                      <div className="text-gray-500 dark:text-gray-400">{user.email || '—'}</div>
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      <span
+                        className={`inline-flex px-2.5 py-0.5 rounded-full text-xs font-medium ${
+                          user.role === UserRole.TENANT
+                            ? 'bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400'
+                            : 'bg-yellow-100 dark:bg-yellow-900/30 text-yellow-700 dark:text-yellow-400'
+                        }`}
+                      >
+                        {user.role === UserRole.TENANT ? 'Tenant' : 'Maintenance'}
+                      </span>
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-white">
+                      {user.unitNumbers?.length ? user.unitNumbers.join(', ') : (
+                        <span className="text-gray-400">—</span>
+                      )}
+                    </td>
+                    <td className="px-6 py-4 text-sm text-gray-900 dark:text-white">
+                      {isEditing ? (
                         <select
                           value={selectedScheduleId || currentSchedule?.id || ''}
                           onChange={(e) => setSelectedScheduleId(e.target.value)}
-                          className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+                          className="w-full min-w-[12rem] px-3 py-1.5 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-primary-500 focus:border-transparent"
                         >
-                          <option value="">-- Select a schedule --</option>
+                          <option value="">— Select a schedule —</option>
                           {schedules
-                            .filter(s => s.is_active)
-                            .map(schedule => (
+                            .filter((s) => s.is_active)
+                            .map((schedule) => (
                               <option key={schedule.id} value={schedule.id}>
-                                {schedule.name} {schedule.schedule_type === 'precanned' ? '(System)' : '(Custom)'}
+                                {schedule.name}{' '}
+                                {schedule.schedule_type === 'precanned' ? '(System)' : '(Custom)'}
                               </option>
                             ))}
                         </select>
-                        <div className="flex gap-2 mt-3">
+                      ) : currentSchedule ? (
+                        <span>
+                          {currentSchedule.name}
+                          {isDefault && (
+                            <span className="text-xs text-gray-500 dark:text-gray-400 ml-1">(default)</span>
+                          )}
+                        </span>
+                      ) : (
+                        <span className="text-gray-400 italic">Not assigned</span>
+                      )}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-right text-sm">
+                      {isEditing ? (
+                        <div className="inline-flex gap-2">
                           <button
+                            type="button"
                             onClick={() => handleAssignSchedule(user.id)}
-                            disabled={!selectedScheduleId && !currentSchedule?.id}
-                            className="flex items-center gap-2 px-4 py-2 bg-primary-600 hover:bg-primary-700 disabled:bg-gray-300 disabled:cursor-not-allowed text-white rounded-lg transition-colors text-sm"
+                            className="inline-flex items-center gap-1 px-2.5 py-1.5 text-sm font-medium text-white bg-primary-600 hover:bg-primary-700 rounded-lg"
                           >
                             <CheckIcon className="h-4 w-4" />
                             Save
                           </button>
                           <button
+                            type="button"
                             onClick={() => {
                               setEditingUserId(null);
                               setSelectedScheduleId('');
                             }}
-                            className="flex items-center gap-2 px-4 py-2 bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-300 rounded-lg transition-colors text-sm"
+                            className="inline-flex items-center gap-1 px-2.5 py-1.5 text-sm font-medium text-gray-700 dark:text-gray-300 bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 rounded-lg"
                           >
                             <XMarkIcon className="h-4 w-4" />
                             Cancel
                           </button>
                         </div>
-                      </div>
-                    )}
-                  </div>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setEditingUserId(user.id);
+                            setSelectedScheduleId(currentSchedule?.id || '');
+                          }}
+                          className="px-3 py-1.5 text-sm font-medium text-primary-600 dark:text-primary-400 hover:bg-primary-50 dark:hover:bg-primary-900/20 rounded-lg"
+                        >
+                          {currentSchedule ? 'Change' : 'Assign'}
+                        </button>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
 
-                  {/* Actions */}
-                  {!isEditing && (
-                    <button
-                      onClick={() => {
-                        setEditingUserId(user.id);
-                        setSelectedScheduleId(currentSchedule?.id || '');
-                      }}
-                      className="ml-4 px-3 py-2 text-sm font-medium text-primary-600 dark:text-primary-400 hover:bg-primary-50 dark:hover:bg-primary-900/20 rounded-lg transition-colors"
-                    >
-                      {currentSchedule ? 'Change' : 'Assign'}
-                    </button>
-                  )}
-                </div>
-              </div>
-            );
-          })
-        )}
-      </div>
-
-      {/* Summary */}
-      {filteredUsers.length > 0 && (
+      {visibleUsers.length > 0 && (
         <div className="text-sm text-gray-500 dark:text-gray-400 text-center">
-          Showing {filteredUsers.length} of {users.length} {roleFilter === 'all' ? 'users' : roleFilter === 'tenant' ? 'tenants' : 'maintenance users'}
+          Showing {visibleUsers.length} of {users.length}{' '}
+          {roleFilter === 'all' ? 'users' : roleFilter === 'tenant' ? 'tenants' : 'maintenance users'}
         </div>
       )}
     </div>
   );
 };
-

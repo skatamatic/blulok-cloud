@@ -358,6 +358,35 @@ describe('SchedulesService', () => {
       expect(out.schedule.id).toBe(sid);
     });
 
+    it('listUserScheduleAssignments returns facility rows for admins', async () => {
+      (UserFacilityScheduleModel.listAssignmentsForFacility as jest.Mock).mockResolvedValue([
+        { user_id: 'u1', schedule_id: 's1' },
+      ]);
+      const { FacilityAccessService } = await import('@/services/facility-access.service');
+      (FacilityAccessService.hasAccessToFacility as jest.Mock).mockResolvedValue(true);
+      const { AuthService } = await import('@/services/auth.service');
+      (AuthService.isAdmin as jest.Mock).mockReturnValue(true);
+      (AuthService.isFacilityAdmin as jest.Mock).mockReturnValue(false);
+
+      const rows = await SchedulesService.listUserScheduleAssignments(facilityId, userContext);
+      expect(rows).toEqual([{ userId: 'u1', scheduleId: 's1' }]);
+    });
+
+    it('listUserScheduleAssignments rejects tenants', async () => {
+      const { FacilityAccessService } = await import('@/services/facility-access.service');
+      (FacilityAccessService.hasAccessToFacility as jest.Mock).mockResolvedValue(true);
+      const { AuthService } = await import('@/services/auth.service');
+      (AuthService.isAdmin as jest.Mock).mockReturnValue(false);
+      (AuthService.isFacilityAdmin as jest.Mock).mockReturnValue(false);
+
+      await expect(
+        SchedulesService.listUserScheduleAssignments(facilityId, {
+          userId: 'tenant-self',
+          role: UserRole.TENANT,
+        }),
+      ).rejects.toThrow(/Insufficient permissions/);
+    });
+
     it('getUserScheduleForFacility rejects non-admin viewing other user', async () => {
       await expect(
         SchedulesService.getUserScheduleForFacility('other-user', facilityId, {

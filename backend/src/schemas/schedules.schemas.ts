@@ -39,3 +39,10 @@ export const setUserScheduleSchema = Joi.object({
 });
 
 export const schedulesResponseSchema = successEnvelopeSchema.unknown(true);
+
+export const facilityUserSchedulesResponseSchema = successEnvelopeSchema.keys({
+  assignments: Joi.array().items(Joi.object({
+    userId: Joi.string().required(),
+    scheduleId: Joi.string().required(),
+  })).required(),
+});

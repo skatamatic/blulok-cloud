@@ -1369,6 +1369,7 @@ describe('APIService', () => {
       await apiService.getScheduleUsage('f1', 's1');
       await apiService.deleteSchedule('f1', 's1');
       await apiService.getUserScheduleForFacility('user-1', 'f1');
+      await apiService.getFacilityUserScheduleAssignments('f1');
 
       expect(mockAxios.get).toHaveBeenCalledWith('/units/u1');
       expect(mockAxios.delete).toHaveBeenCalledWith('/units/u1');
