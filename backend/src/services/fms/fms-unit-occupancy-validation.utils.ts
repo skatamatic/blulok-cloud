@@ -41,6 +41,7 @@ export type BlockedTenantSource = {
   external_id: string;
   is_valid?: boolean;
   validation_errors?: string[] | undefined;
+  after_data?: { collidingExternalIds?: unknown } | Record<string, unknown> | null;
 };
 
 export type FmsOccupancyContext = {
@@ -74,6 +75,19 @@ function isFlaggedInvalid(isValid: unknown): boolean {
   return isValid === false || isValid === 0;
 }
 
+function collidingExternalIdsFromAfterData(afterData: BlockedTenantSource['after_data']): string[] {
+  if (!afterData || typeof afterData !== 'object') return [];
+  const raw = (afterData as { collidingExternalIds?: unknown }).collidingExternalIds;
+  if (!Array.isArray(raw)) return [];
+  return raw.filter((id): id is string => typeof id === 'string' && id.trim().length > 0);
+}
+
+function joinTenantLabels(labels: string[]): string {
+  if (labels.length <= 1) return labels[0] ?? '';
+  if (labels.length === 2) return `${labels[0]} and ${labels[1]}`;
+  return `${labels.slice(0, -1).join(', ')}, and ${labels[labels.length - 1]}`;
+}
+
 /** Tenant external ids that cannot be created, mapped to their validation reasons. */
 function collectBlockedTenants(tenantChanges: BlockedTenantSource[]): Map<string, string[]> {
   const blocked = new Map<string, string[]>();
@@ -81,9 +95,116 @@ function collectBlockedTenants(tenantChanges: BlockedTenantSource[]): Map<string
     if (change.change_type !== FMSChangeType.TENANT_ADDED) continue;
     if (!isFlaggedInvalid(change.is_valid)) continue;
     const reasons = Array.isArray(change.validation_errors) ? change.validation_errors : [];
-    blocked.set(change.external_id, reasons.length > 0 ? reasons : ['Tenant record is incomplete']);
+    const fallback = reasons.length > 0 ? reasons : ['Tenant record is incomplete'];
+    const ids = [change.external_id, ...collidingExternalIdsFromAfterData(change.after_data)];
+    for (const id of ids) {
+      blocked.set(id, fallback);
+    }
   }
   return blocked;
+}
+
+/**
+ * Occupied `unit_updated` is redundant when an invalid `tenant_added` already names the same
+ * tenant — the review queue only needs the root identity / validation problem.
+ * Webhook batches with no `tenant_added` still emit the blocked unit row.
+ */
+export function shouldOmitOccupiedUnitReview(
+  fmsUnit: Pick<FMSUnit, 'tenantId'>,
+  occupancyBlockers: string[],
+  ctx: FmsOccupancyContext,
+): boolean {
+  if (occupancyBlockers.length === 0) return false;
+  const tenantId = fmsUnit.tenantId?.trim();
+  if (!tenantId) return false;
+  return ctx.blockedTenantErrorsByExternalId.has(tenantId);
+}
+
+export function buildIdentityCollisionReview(options: {
+  userLabel: string;
+  tenants: Array<FmsOccupancyTenantInfo & { externalId: string }>;
+}): {
+  impact_summary: string;
+  validation_errors: string[];
+  collidingExternalIds: string[];
+} {
+  const collidingExternalIds = options.tenants.map((tenant) => tenant.externalId);
+  const labels = [...new Set(options.tenants.map((tenant) => formatFmsTenantContactLabel(tenant)))];
+  const impact_summary =
+    labels.length <= 1
+      ? `FMS tenant ${labels[0] ?? 'this tenant'} matches an existing BluLok user who is already mapped to a different FMS tenant`
+      : `FMS tenants ${joinTenantLabels(labels)} share contact info with BluLok user ${options.userLabel}, who is already mapped to a different FMS tenant`;
+  const uniqueHint =
+    labels.length <= 1
+      ? 'Give this tenant a unique email or phone in your FMS, or remap the user.'
+      : 'Give each of these tenants a unique email or phone in your FMS, or remap the user.';
+  return {
+    impact_summary,
+    validation_errors: [
+      `Contact info matches BluLok user ${options.userLabel}, who is already mapped to a different FMS tenant. Each BluLok user can map to only one FMS tenant. ${uniqueHint}`,
+    ],
+    collidingExternalIds,
+  };
+}
+
+export function buildOccupiedLedgerUnassignReview(options: {
+  tenant: FmsOccupancyTenantInfo;
+  units: Array<{ unitNumber: string }>;
+}): { impact_summary: string; validation_errors: string[] } {
+  const contact = formatFmsTenantContactLabel(options.tenant);
+  const label = formatTenantLabel(options.tenant);
+  if (options.units.length <= 1) {
+    const unitNumber = options.units[0]?.unitNumber ?? 'this unit';
+    return {
+      impact_summary: `Remove ${contact} from unit ${unitNumber} — blocked (FMS unit still occupied)`,
+      validation_errors: [
+        `FMS marks unit ${unitNumber} as occupied by ${label}, but that tenant's ledger no longer ` +
+          'lists this unit. Unit status is the source of truth for occupancy, so this removal was not applied. ' +
+          'Fix the ledger or unit status in your FMS so they agree, then sync again.',
+      ],
+    };
+  }
+
+  const unitList = options.units.map((unit) => unit.unitNumber).join(', ');
+  return {
+    impact_summary: `Remove ${contact} from units ${unitList} — blocked (FMS units still occupied)`,
+    validation_errors: [
+      `FMS marks units ${unitList} as occupied by ${label}, but that tenant's ledger no longer ` +
+        'lists those units. Unit status is the source of truth for occupancy, so these removals were not applied. ' +
+        'Fix the ledger or unit status in your FMS so they agree, then sync again.',
+    ],
+  };
+}
+
+export function buildVacantLedgerAssignReview(options: {
+  tenant: FmsOccupancyTenantInfo;
+  units: Array<{ unitNumber: string; status: string }>;
+}): { impact_summary: string; validation_errors: string[] } {
+  const contact = formatFmsTenantContactLabel(options.tenant);
+  if (options.units.length <= 1) {
+    const unit = options.units[0];
+    return {
+      impact_summary: `Assign ${contact} to unit ${unit?.unitNumber ?? 'this unit'} — blocked (FMS unit is vacant)`,
+      validation_errors: unit
+        ? resolveLedgerAssignAgainstUnitStatus({
+            unitNumber: unit.unitNumber,
+            fmsUnitStatus: unit.status,
+            tenant: options.tenant,
+          })
+        : [],
+    };
+  }
+
+  const unitList = options.units.map((unit) => unit.unitNumber).join(', ');
+  const label = formatTenantLabel(options.tenant);
+  return {
+    impact_summary: `Assign ${contact} to units ${unitList} — blocked (FMS units are vacant)`,
+    validation_errors: [
+      `FMS marks units ${unitList} as vacant, but a ledger still lists ${label} on them. ` +
+        'Unit status is the source of truth for occupancy, so these assignments were not applied. ' +
+        'Fix the ledger or unit status in your FMS so they agree, then sync again.',
+    ],
+  };
 }
 
 export function buildFmsOccupancyContext(options: {

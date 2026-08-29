@@ -44,6 +44,10 @@ import {
   isFmsChangeDismissible,
 } from '@/utils/fms-change-dismiss.utils';
 import { formatFmsApplyFailureToast } from '@/utils/fms-apply-error-display.utils';
+import {
+  groupFmsReviewChanges,
+  presentFmsReviewGroup,
+} from '@/utils/fms-review-group.utils';
 import { ApplyProgressOverlay } from '@/components/FMS/ApplyProgressOverlay';
 
 interface FMSChangeReviewModalProps {
@@ -171,6 +175,20 @@ function getChangeStyle(type: FMSChangeType): ChangeVisualStyle {
 
 function formatActionLabel(action: FMSChangeAction | string): string {
   return String(action).replace(/_/g, ' ');
+}
+
+function uniqueActionLabels(changes: FMSChange[]): string[] {
+  const seen = new Set<string>();
+  const actions: string[] = [];
+  for (const change of changes) {
+    for (const action of change.required_actions ?? []) {
+      const key = String(action);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      actions.push(key);
+    }
+  }
+  return actions;
 }
 
 function generateChangesSummary(result: FMSChangeApplicationResult, selectedCount: number): string {
@@ -345,6 +363,16 @@ export function FMSChangeReviewModal({
     setSelectedChanges(next);
   };
 
+  const toggleGroup = (changeIds: string[]) => {
+    const next = new Set(selectedChanges);
+    const allSelected = changeIds.every((id) => next.has(id));
+    for (const id of changeIds) {
+      if (allSelected) next.delete(id);
+      else next.add(id);
+    }
+    setSelectedChanges(next);
+  };
+
   const toggleExpand = (changeId: string) => {
     const next = new Set(expandedChanges);
     if (next.has(changeId)) next.delete(changeId);
@@ -373,6 +401,8 @@ export function FMSChangeReviewModal({
 
   const invalidCount = reviewChanges.filter((c) => c.is_valid === false).length;
   const dismissibleCount = countDismissibleChanges(reviewChanges);
+  const problemGroups = groupFmsReviewChanges(reviewChanges.filter((c) => c.is_valid === false));
+  const problemCount = problemGroups.length;
 
   const filteredChanges = reviewChanges.filter((change) => {
     const valid = change.is_valid !== false;
@@ -397,7 +427,10 @@ export function FMSChangeReviewModal({
     return true;
   });
 
-  const filteredSelectedCount = filteredChanges.filter((c) => selectedChanges.has(c.id)).length;
+  const displayItems = groupFmsReviewChanges(filteredChanges);
+  const filteredSelectedCount = displayItems.filter((group) =>
+    group.changes.every((change) => selectedChanges.has(change.id)),
+  ).length;
   const changesToApply = (activeFilter === 'all' ? reviewChanges : filteredChanges).filter(
     (c) => selectedChanges.has(c.id) && c.is_valid !== false,
   );
@@ -563,7 +596,7 @@ export function FMSChangeReviewModal({
     { key: 'added', label: 'Added', count: addedCount, activeClass: 'text-emerald-600 dark:text-emerald-400' },
     { key: 'updated', label: 'Updated', count: updatedCount, activeClass: 'text-[#147FD4] dark:text-sky-400' },
     { key: 'removed', label: 'Removed', count: removedCount, activeClass: 'text-rose-600 dark:text-rose-400' },
-    { key: 'invalid', label: 'Invalid', count: invalidCount, activeClass: 'text-amber-600 dark:text-amber-400' },
+    { key: 'invalid', label: 'Invalid', count: problemCount, activeClass: 'text-amber-600 dark:text-amber-400' },
   ];
 
   const applyPercent = applyProgress?.percent ?? (applying ? 3 : 0);
@@ -702,10 +735,10 @@ export function FMSChangeReviewModal({
                         <ExclamationTriangleIcon className="mt-0.5 h-5 w-5 shrink-0 text-amber-600 dark:text-amber-400" />
                         <div>
                           <p className="text-sm font-semibold text-amber-900 dark:text-amber-100">
-                            {dismissibleCount} change{dismissibleCount !== 1 ? 's' : ''} could not be applied
+                            {problemCount} problem{problemCount !== 1 ? 's' : ''} could not be applied
                           </p>
                           <p className="mt-0.5 text-xs text-amber-800/90 dark:text-amber-300/90">
-                            Automatic sync skipped these items. They stay here until you dismiss them or fix the source data in your FMS.
+                            Automatic sync skipped these items. Related rows from the same FMS issue are grouped. They stay here until you dismiss them or fix the source data in your FMS.
                           </p>
                         </div>
                       </div>
@@ -724,7 +757,7 @@ export function FMSChangeReviewModal({
 
                 {/* Scrollable body */}
                 <div className="status-area-scrollbar min-h-0 flex-1 overflow-y-auto overscroll-contain px-5 py-4 sm:px-6">
-                  {filteredChanges.length === 0 ? (
+                  {displayItems.length === 0 ? (
                     <div className="flex flex-col items-center justify-center py-16 text-center">
                       <div className="mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-gray-100 dark:bg-gray-800">
                         <MagnifyingGlassIcon className="h-6 w-6 text-gray-400" />
@@ -734,20 +767,27 @@ export function FMSChangeReviewModal({
                     </div>
                   ) : (
                     <div className="space-y-2.5">
-                      {filteredChanges.map((change) => {
+                      {displayItems.map((group) => {
+                        const change = group.primary;
+                        const presentation = presentFmsReviewGroup(group);
+                        const grouped = group.changes.length > 1;
                         const style = getChangeStyle(change.change_type);
                         const Icon = style.icon;
-                        const isExpanded = expandedChanges.has(change.id);
-                        const isSelected = selectedChanges.has(change.id);
+                        const isExpanded = expandedChanges.has(group.key);
+                        const isSelected = group.changes.every((row) => selectedChanges.has(row.id));
                         const isInvalid = change.is_valid === false;
-                        const failedToApply = didFmsChangeFailToApply(change);
-                        const canDismiss = isFmsChangeDismissible(change);
+                        const failedToApply = group.changes.some((row) => didFmsChangeFailToApply(row));
+                        const canDismiss = group.changes.every((row) => isFmsChangeDismissible(row));
+                        const title = presentation.title || style.label;
+                        const impact = presentation.impact || change.impact_summary;
+                        const errors = presentation.errors.length > 0 ? presentation.errors : change.validation_errors;
+                        const requiredActions = uniqueActionLabels(group.changes);
 
                         return (
                           <div
-                            key={change.id}
+                            key={group.key}
                             data-testid="fms-change-card"
-                            onClick={() => toggleChange(change.id)}
+                            onClick={() => toggleGroup(group.changes.map((row) => row.id))}
                             className={`group relative overflow-hidden rounded-xl border transition-all duration-200 cursor-pointer ${
                               isInvalid
                                 ? 'border-amber-200/80 bg-amber-50/50 dark:border-amber-800/60 dark:bg-amber-950/20'
@@ -771,14 +811,16 @@ export function FMSChangeReviewModal({
 
                               <div className="min-w-0 flex-1 pr-8">
                                 <div className="flex items-center gap-2">
-                                  <h4 className="text-sm font-semibold text-gray-900 dark:text-white">{style.label}</h4>
+                                  <h4 className="text-sm font-semibold text-gray-900 dark:text-white">{title}</h4>
                                   <span className="hidden rounded-md bg-gray-200/70 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-gray-500 dark:bg-gray-700/70 dark:text-gray-400 sm:inline">
-                                    {change.change_type.replace(/_/g, ' ')}
+                                    {grouped
+                                      ? `${group.changes.length} related`
+                                      : change.change_type.replace(/_/g, ' ')}
                                   </span>
                                 </div>
 
                                 <p className="mt-1 text-sm leading-relaxed text-gray-600 dark:text-gray-400">
-                                  {change.impact_summary}
+                                  {impact}
                                 </p>
 
                                 {isInvalid && (
@@ -789,9 +831,9 @@ export function FMSChangeReviewModal({
                                         <p className="text-xs font-semibold text-amber-900 dark:text-amber-200">
                                           {failedToApply ? 'This change failed to apply' : 'Cannot apply this change'}
                                         </p>
-                                        {change.validation_errors && change.validation_errors.length > 0 ? (
+                                        {errors && errors.length > 0 ? (
                                           <ul className="mt-1 space-y-0.5 text-xs text-amber-800 dark:text-amber-300">
-                                            {change.validation_errors.map((err, idx) => (
+                                            {errors.map((err, idx) => (
                                               <li key={idx}>{err}</li>
                                             ))}
                                           </ul>
@@ -800,12 +842,19 @@ export function FMSChangeReviewModal({
                                             Validation details not available.
                                           </p>
                                         )}
+                                        {presentation.relatedSummaries.length > 0 && (
+                                          <ul className="mt-2 space-y-0.5 text-xs text-amber-800/80 dark:text-amber-300/80">
+                                            {presentation.relatedSummaries.map((summary) => (
+                                              <li key={summary}>{summary}</li>
+                                            ))}
+                                          </ul>
+                                        )}
                                         {canDismiss && (
                                           <button
                                             type="button"
                                             onClick={(e) => {
                                               e.stopPropagation();
-                                              void handleDismiss([change.id]);
+                                              void handleDismiss(group.changes.map((row) => row.id));
                                             }}
                                             disabled={applying}
                                             className="mt-2 inline-flex items-center gap-1 text-xs font-medium text-amber-900 underline-offset-2 hover:underline disabled:opacity-50 dark:text-amber-200"
@@ -834,11 +883,11 @@ export function FMSChangeReviewModal({
                                   </button>
                                 )}
 
-                                {change.required_actions && change.required_actions.length > 0 && (
+                                {!isInvalid && requiredActions.length > 0 && (
                                   <div className="mt-2.5 flex flex-wrap gap-1.5">
-                                    {change.required_actions.map((action, idx) => (
+                                    {requiredActions.map((action) => (
                                       <span
-                                        key={idx}
+                                        key={action}
                                         className={`rounded-md px-2 py-0.5 text-[11px] font-medium capitalize ${style.tagBg} ${style.tagText}`}
                                       >
                                         {formatActionLabel(action)}
@@ -879,7 +928,7 @@ export function FMSChangeReviewModal({
                                   data-testid="fms-change-expand"
                                   onClick={(e) => {
                                     e.stopPropagation();
-                                    toggleExpand(change.id);
+                                    toggleExpand(group.key);
                                   }}
                                   className="rounded-md p-1 text-gray-400 transition-colors hover:bg-gray-200/80 hover:text-gray-600 dark:hover:bg-gray-700 dark:hover:text-gray-200"
                                   aria-label={isExpanded ? 'Collapse details' : 'Expand details'}
@@ -918,7 +967,7 @@ export function FMSChangeReviewModal({
                       <span className="text-gray-600 dark:text-gray-400">
                         <span className="font-semibold text-[#147FD4] dark:text-sky-400">{filteredSelectedCount}</span>
                         {' of '}
-                        {filteredChanges.length} selected
+                        {displayItems.length} selected
                       </span>
                       <span className="hidden text-gray-300 dark:text-gray-600 sm:inline">·</span>
                       <div className="flex items-center gap-2">

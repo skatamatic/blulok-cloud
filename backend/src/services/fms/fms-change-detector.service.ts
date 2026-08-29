@@ -16,12 +16,16 @@ import {
 } from '@/types/fms.types';
 import {
   buildFmsOccupancyContext,
+  buildIdentityCollisionReview,
+  buildOccupiedLedgerUnassignReview,
+  buildVacantLedgerAssignReview,
   formatVacantUnitLedgerConflictNote,
   isFmsUnitVacantStatus,
   partitionTenantUnitIdsByOccupancy,
   resolveLedgerAssignAgainstUnitStatus,
   resolveLedgerUnassignAgainstUnitStatus,
   resolveOccupiedUnitBlockers,
+  shouldOmitOccupiedUnitReview,
   type FmsOccupancyContext,
 } from './fms-unit-occupancy-validation.utils';
 import {
@@ -176,6 +180,10 @@ export class FMSChangeDetectorService {
     };
 
     const pendingInserts: Parameters<typeof this.models.changeModel.bulkCreate>[0] = [];
+    const identityCollisions = new Map<
+      string,
+      { userLabel: string; tenants: FMSTenant[] }
+    >();
 
     for (const fmsTenant of fmsTenants) {
       logger.debug(
@@ -231,12 +239,12 @@ export class FMSChangeDetectorService {
           validation_errors: validationErrors,
         });
 
-        for (const conflict of vacantConflicts) {
-          const blockers = resolveLedgerAssignAgainstUnitStatus({
-            unitNumber: conflict.unitNumber,
-            fmsUnitStatus: conflict.status,
+        if (vacantConflicts.length > 0) {
+          const review = buildVacantLedgerAssignReview({
             tenant: fmsTenant,
+            units: vacantConflicts,
           });
+          const first = vacantConflicts[0];
           pendingInserts.push({
             sync_log_id: syncLogId,
             change_type: FMSChangeType.TENANT_UNIT_CHANGED,
@@ -244,14 +252,16 @@ export class FMSChangeDetectorService {
             external_id: fmsTenant.externalId,
             after_data: {
               action: 'assign_unit',
-              unitId: unitMappingsByExternalId.get(conflict.externalId)?.internal_id,
-              unitNumber: conflict.unitNumber,
-              externalUnitId: conflict.externalId,
+              unitId: unitMappingsByExternalId.get(first.externalId)?.internal_id,
+              unitNumber: first.unitNumber,
+              unitNumbers: vacantConflicts.map((conflict) => conflict.unitNumber),
+              externalUnitId: first.externalId,
+              externalUnitIds: vacantConflicts.map((conflict) => conflict.externalId),
             },
             required_actions: [FMSChangeAction.ASSIGN_UNIT, FMSChangeAction.ADD_ACCESS],
-            impact_summary: `Assign ${formatFmsTenantContactLabel(fmsTenant)} to unit ${conflict.unitNumber} — blocked (FMS unit is vacant)`,
+            impact_summary: review.impact_summary,
             is_valid: false,
-            validation_errors: blockers,
+            validation_errors: review.validation_errors,
           });
         }
       } else {
@@ -262,20 +272,13 @@ export class FMSChangeDetectorService {
             (row) => row.internal_id === user.id && row.external_id !== fmsTenant.externalId
           );
           if (otherMapping) {
-            const contact = formatFmsTenantContactLabel(fmsTenant);
-            pendingInserts.push({
-              sync_log_id: syncLogId,
-              change_type: FMSChangeType.TENANT_ADDED,
-              entity_type: 'tenant',
-              external_id: fmsTenant.externalId,
-              after_data: fmsTenant,
-              required_actions: [FMSChangeAction.CREATE_USER],
-              impact_summary: `FMS tenant ${contact} matches an existing BluLok user who is already mapped to a different FMS tenant`,
-              is_valid: false,
-              validation_errors: [
-                `Contact info matches BluLok user ${user.email || user.phone_number || 'this account'}, who is already mapped to a different FMS tenant. Each BluLok user can map to only one FMS tenant. Give this tenant a unique email or phone in your FMS, or remap the user.`,
-              ],
-            });
+            const userLabel = user.email || user.phone_number || 'this account';
+            const existing = identityCollisions.get(user.id);
+            if (existing) {
+              existing.tenants.push(fmsTenant);
+            } else {
+              identityCollisions.set(user.id, { userLabel, tenants: [fmsTenant] });
+            }
             continue;
           }
 
@@ -388,6 +391,29 @@ export class FMSChangeDetectorService {
       }
     }
 
+    for (const group of identityCollisions.values()) {
+      const review = buildIdentityCollisionReview({
+        userLabel: group.userLabel,
+        tenants: group.tenants,
+      });
+      const primary = group.tenants[0];
+      pendingInserts.push({
+        sync_log_id: syncLogId,
+        change_type: FMSChangeType.TENANT_ADDED,
+        entity_type: 'tenant',
+        external_id: primary.externalId,
+        after_data: {
+          ...primary,
+          collidingExternalIds: review.collidingExternalIds,
+          collidingTenants: group.tenants.map((tenant) => formatFmsTenantContactLabel(tenant)),
+        },
+        required_actions: [FMSChangeAction.CREATE_USER],
+        impact_summary: review.impact_summary,
+        is_valid: false,
+        validation_errors: review.validation_errors,
+      });
+    }
+
     const fmsTenantExtIds = new Set(fmsTenants.map((t) => t.externalId));
     for (const mapping of existingMappings) {
       if (!fmsTenantExtIds.has(mapping.external_id)) {
@@ -467,6 +493,12 @@ export class FMSChangeDetectorService {
       fmsUnitMappings.filter((m) => m !== null).map((m) => m!.internal_id)
     );
 
+    const vacantAssigns: Array<{
+      mapping: NonNullable<(typeof fmsUnitMappings)[number]>;
+      unit: { unit_number: string };
+      status: string;
+    }> = [];
+
     for (const mapping of fmsUnitMappings) {
       if (mapping && !currentUnitIds.has(mapping.internal_id)) {
         const unit = context.unitsById.get(mapping.internal_id);
@@ -478,6 +510,15 @@ export class FMSChangeDetectorService {
           fmsUnitStatus: fmsUnit?.status,
           tenant: fmsTenant,
         });
+
+        if (blockers.length > 0) {
+          vacantAssigns.push({
+            mapping,
+            unit,
+            status: String(fmsUnit?.status ?? 'available'),
+          });
+          continue;
+        }
 
         pendingInserts.push({
           sync_log_id: syncLogId,
@@ -491,19 +532,49 @@ export class FMSChangeDetectorService {
             unitNumber: unit.unit_number,
           },
           required_actions: [FMSChangeAction.ASSIGN_UNIT, FMSChangeAction.ADD_ACCESS],
-          impact_summary:
-            blockers.length > 0
-              ? `Assign ${fmsTenant.email} to unit ${unit.unit_number} — blocked (FMS unit is vacant)`
-              : `Assign ${fmsTenant.email} to unit ${unit.unit_number} - Gateway access will be granted`,
-          is_valid: blockers.length === 0,
-          validation_errors: blockers.length > 0 ? blockers : undefined,
+          impact_summary: `Assign ${fmsTenant.email} to unit ${unit.unit_number} - Gateway access will be granted`,
+          is_valid: true,
         });
       }
+    }
+
+    if (vacantAssigns.length > 0) {
+      const review = buildVacantLedgerAssignReview({
+        tenant: fmsTenant,
+        units: vacantAssigns.map((row) => ({
+          unitNumber: row.unit.unit_number,
+          status: row.status,
+        })),
+      });
+      const first = vacantAssigns[0];
+      pendingInserts.push({
+        sync_log_id: syncLogId,
+        change_type: FMSChangeType.TENANT_UNIT_CHANGED,
+        entity_type: 'tenant',
+        external_id: fmsTenant.externalId,
+        internal_id: tenantId,
+        after_data: {
+          action: 'assign_unit',
+          unitId: first.mapping.internal_id,
+          unitNumber: first.unit.unit_number,
+          unitNumbers: vacantAssigns.map((row) => row.unit.unit_number),
+          unitIds: vacantAssigns.map((row) => row.mapping.internal_id),
+        },
+        required_actions: [FMSChangeAction.ASSIGN_UNIT, FMSChangeAction.ADD_ACCESS],
+        impact_summary: review.impact_summary,
+        is_valid: false,
+        validation_errors: review.validation_errors,
+      });
     }
 
     const externalIdByInternalUnitId = new Map(
       [...context.unitMappingsByExternalId.values()].map((m) => [m.internal_id, m.external_id])
     );
+
+    const occupiedUnassigns: Array<{
+      assignment: (typeof currentAssignments)[number];
+      unitNumber: string;
+    }> = [];
 
     for (const assignment of currentAssignments) {
       if (!fmsInternalUnitIds.has(assignment.unit_id)) {
@@ -512,13 +583,20 @@ export class FMSChangeDetectorService {
         const fmsUnit = externalUnitId
           ? context.fmsUnitsByExternalId.get(externalUnitId)
           : undefined;
+        const unitNumber = unit?.unit_number || assignment.unit_id;
         const blockers = resolveLedgerUnassignAgainstUnitStatus({
-          unitNumber: unit?.unit_number || assignment.unit_id,
+          unitNumber,
           fmsUnitStatus: fmsUnit?.status,
           fmsUnitTenantId: fmsUnit?.tenantId,
           tenantExternalId: fmsTenant.externalId,
           tenant: fmsTenant,
         });
+
+        if (blockers.length > 0) {
+          occupiedUnassigns.push({ assignment, unitNumber });
+          continue;
+        }
+
         pendingInserts.push({
           sync_log_id: syncLogId,
           change_type: FMSChangeType.TENANT_UNIT_CHANGED,
@@ -532,14 +610,36 @@ export class FMSChangeDetectorService {
           },
           after_data: null as any,
           required_actions: [FMSChangeAction.UNASSIGN_UNIT, FMSChangeAction.REMOVE_ACCESS],
-          impact_summary:
-            blockers.length > 0
-              ? `Remove ${fmsTenant.email} from unit ${unit?.unit_number || assignment.unit_id} — blocked (FMS unit still occupied)`
-              : `Remove ${fmsTenant.email} from unit ${unit?.unit_number || assignment.unit_id} - Gateway access will be revoked`,
-          is_valid: blockers.length === 0,
-          validation_errors: blockers.length > 0 ? blockers : undefined,
+          impact_summary: `Remove ${fmsTenant.email} from unit ${unitNumber} - Gateway access will be revoked`,
+          is_valid: true,
         });
       }
+    }
+
+    if (occupiedUnassigns.length > 0) {
+      const review = buildOccupiedLedgerUnassignReview({
+        tenant: fmsTenant,
+        units: occupiedUnassigns.map((row) => ({ unitNumber: row.unitNumber })),
+      });
+      const first = occupiedUnassigns[0];
+      pendingInserts.push({
+        sync_log_id: syncLogId,
+        change_type: FMSChangeType.TENANT_UNIT_CHANGED,
+        entity_type: 'tenant',
+        external_id: fmsTenant.externalId,
+        internal_id: tenantId,
+        before_data: {
+          action: 'unassign_unit',
+          unitId: first.assignment.unit_id,
+          unitNumber: first.unitNumber,
+          unitNumbers: occupiedUnassigns.map((row) => row.unitNumber),
+        },
+        after_data: null as any,
+        required_actions: [FMSChangeAction.UNASSIGN_UNIT, FMSChangeAction.REMOVE_ACCESS],
+        impact_summary: review.impact_summary,
+        is_valid: false,
+        validation_errors: review.validation_errors,
+      });
     }
   }
 
@@ -672,6 +772,9 @@ export class FMSChangeDetectorService {
           logger.debug(`[FMS] Unit ${fmsUnit.unitNumber} has data changes`, { sync_log_id: syncLogId });
 
           const occupancyBlockers = resolveOccupiedUnitBlockers(fmsUnit, unit.status, occupancyContext);
+          if (shouldOmitOccupiedUnitReview(fmsUnit, occupancyBlockers, occupancyContext)) {
+            continue;
+          }
           if (occupancyBlockers.length > 0) {
             logger.warn(`[FMS] Unit ${fmsUnit.unitNumber} cannot be marked occupied yet`, {
               fms_sync: true,

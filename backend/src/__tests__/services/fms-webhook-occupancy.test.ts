@@ -381,7 +381,7 @@ describe('FMSService ledger webhook occupancy companion unit_updated', () => {
     );
   });
 
-  it('blocks the companion unit_updated when the moving-in tenant has no name', async () => {
+  it('skips the companion unit_updated when the moving-in tenant is already an invalid tenant_added', async () => {
     findByExternalId.mockImplementation((_fac: string, entityType: string, externalId: string) => {
       if (entityType === 'unit') {
         return Promise.resolve({ id: 'map-u', internal_id: 'unit-1', external_id: externalId });
@@ -423,9 +423,13 @@ describe('FMSService ledger webhook occupancy companion unit_updated', () => {
 
     expect(changeCreate).toHaveBeenCalledWith(
       expect.objectContaining({
-        change_type: FMSChangeType.UNIT_UPDATED,
+        change_type: FMSChangeType.TENANT_ADDED,
         is_valid: false,
-        validation_errors: [expect.stringMatching(/cannot be created|first or last name/i)],
+      }),
+    );
+    expect(changeCreate).not.toHaveBeenCalledWith(
+      expect.objectContaining({
+        change_type: FMSChangeType.UNIT_UPDATED,
       }),
     );
   });
@@ -477,7 +481,7 @@ describe('FMSService ledger webhook occupancy companion unit_updated', () => {
       expect.objectContaining({
         change_type: FMSChangeType.TENANT_UNIT_CHANGED,
         is_valid: false,
-        validation_errors: [expect.stringContaining('Unit ext-unit is not mapped')],
+        validation_errors: [expect.stringContaining('This unit is not mapped in BluLok yet')],
       }),
     );
   });
@@ -509,7 +513,7 @@ describe('FMSService ledger webhook occupancy companion unit_updated', () => {
       expect.objectContaining({
         change_type: FMSChangeType.TENANT_UNIT_CHANGED,
         is_valid: false,
-        validation_errors: [expect.stringContaining('Tenant ext-tenant is not mapped')],
+        validation_errors: [expect.stringContaining('This tenant is not mapped in BluLok yet')],
       }),
     );
   });

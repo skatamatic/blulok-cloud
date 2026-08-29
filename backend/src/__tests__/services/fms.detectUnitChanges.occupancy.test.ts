@@ -52,7 +52,7 @@ describe('FMSService.detectUnitChanges — occupancy blockers', () => {
     (FMSService as any).instance = undefined;
   });
 
-  it('marks the unit update invalid when its FMS tenant cannot be created', async () => {
+  it('omits occupied unit_updated when the holding tenant is already an invalid tenant_added', async () => {
     const svc: any = FMSService.getInstance();
     wire(svc);
 
@@ -78,14 +78,35 @@ describe('FMSService.detectUnitChanges — occupancy blockers', () => {
       occupancyContext,
     );
 
+    expect(changes).toHaveLength(0);
+  });
+
+  it('marks the unit update invalid when occupied and no tenant_added already explains it', async () => {
+    const svc: any = FMSService.getInstance();
+    wire(svc);
+
+    const occupancyContext = buildFmsOccupancyContext({
+      fmsTenants: [],
+      tenantChanges: [],
+      mappedTenantExternalIds: [],
+    });
+
+    const changes = await svc.detectUnitChanges(
+      facilityId,
+      [fmsUnit({ unitType: 'Self-Storage Unit', tenantId: undefined })],
+      [],
+      'sync-1',
+      [blulokUnit()],
+      occupancyContext,
+    );
+
     expect(changes).toHaveLength(1);
     expect(changes[0]).toMatchObject({
       change_type: FMSChangeType.UNIT_UPDATED,
       internal_id: 'unit-908',
       is_valid: false,
     });
-    expect(changes[0].validation_errors[0]).toContain('Lucien Robel');
-    expect(changes[0].validation_errors[0]).toContain('Missing or empty first name');
+    expect(changes[0].validation_errors[0]).toContain('does not say which tenant holds it');
   });
 
   it('leaves the unit update applicable when the FMS tenant will be created as a placeholder', async () => {

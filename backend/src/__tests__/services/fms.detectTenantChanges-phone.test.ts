@@ -270,4 +270,79 @@ describe('FMSService.detectTenantChanges — phone-only tenants', () => {
     expect(collision?.validation_errors?.[0]).toMatch(/already mapped to a different FMS tenant/);
     expect(collision?.validation_errors?.[0]).toMatch(/unique email or phone/);
   });
+
+  it('emits one invalid tenant_added when several FMS tenants collide on the same BluLok user', async () => {
+    const svc = FMSService.getInstance() as any;
+
+    svc.entityMappingModel = {
+      findByFacility: jest.fn().mockResolvedValue([
+        {
+          id: 'map-other',
+          external_id: 'ext-already-mapped',
+          internal_id: 'user-t3',
+          metadata: { email: 't3@example.com', phone: '+12504882375' },
+        },
+      ]),
+      ensureMapping: jest.fn(),
+    };
+    svc.unitAssignmentModel = {
+      findByFacilityId: jest.fn().mockResolvedValue([]),
+    };
+    svc.changeModel = {
+      bulkCreate: jest.fn().mockImplementation(async (rows: unknown[]) =>
+        rows.map((row, index) => ({ id: `change-${index}`, ...(row as object) })),
+      ),
+    };
+
+    jest.spyOn(UserModel, 'findByRoleMinimalForFacility').mockResolvedValue([
+      {
+        id: 'user-t3',
+        email: 't3@example.com',
+        phone_number: '+12504882375',
+        login_identifier: 't3@example.com',
+        first_name: 'Tester',
+        last_name: 'Three',
+      },
+    ] as any);
+
+    const changes = await svc.detectTenantChanges(
+      'fac-1',
+      [
+        {
+          externalId: 'ext-tester-two',
+          email: 't2@example.com',
+          firstName: 'Tester',
+          lastName: 'Two',
+          phone: '+12504882375',
+          unitIds: [],
+          status: 'active' as const,
+        },
+        {
+          externalId: 'ext-tester-three',
+          email: 't3@example.com',
+          firstName: 'Tester',
+          lastName: 'Three',
+          phone: '+12504882375',
+          unitIds: [],
+          status: 'active' as const,
+        },
+      ],
+      [],
+      'sync-1',
+      [],
+      jest.fn(),
+    );
+
+    const collisions = changes.filter((c: { change_type: string; is_valid: boolean }) =>
+      c.change_type === FMSChangeType.TENANT_ADDED && c.is_valid === false,
+    );
+    expect(collisions).toHaveLength(1);
+    expect(collisions[0].after_data.collidingExternalIds).toEqual([
+      'ext-tester-two',
+      'ext-tester-three',
+    ]);
+    expect(collisions[0].impact_summary).toMatch(/t2@example.com/);
+    expect(collisions[0].impact_summary).toMatch(/t3@example.com/);
+    expect(collisions[0].validation_errors?.[0]).toMatch(/each of these tenants/i);
+  });
 });

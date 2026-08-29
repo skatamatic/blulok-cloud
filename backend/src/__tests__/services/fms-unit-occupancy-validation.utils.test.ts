@@ -1,10 +1,14 @@
 import {
   buildFmsOccupancyContext,
+  buildIdentityCollisionReview,
+  buildOccupiedLedgerUnassignReview,
+  buildVacantLedgerAssignReview,
   isFmsUnitVacantStatus,
   partitionTenantUnitIdsByOccupancy,
   resolveLedgerAssignAgainstUnitStatus,
   resolveLedgerUnassignAgainstUnitStatus,
   resolveOccupiedUnitBlockers,
+  shouldOmitOccupiedUnitReview,
   formatVacantUnitLedgerConflictNote,
 } from '@/services/fms/fms-unit-occupancy-validation.utils';
 import { FMSChangeType, FMSTenant } from '@/types/fms.types';
@@ -312,6 +316,76 @@ describe('ledger vs unit-status conflicts (unit status is SoT)', () => {
       { externalId: 'u-101', unitNumber: '101', status: 'available' },
       { externalId: 'u-806', unitNumber: '806', status: 'available' },
     ]);
+  });
+
+  it('marks every colliding FMS tenant id as blocked from a grouped tenant_added', () => {
+    const ctx = buildFmsOccupancyContext({
+      fmsTenants: [
+        tenant({ externalId: 'ext-t2', email: 't2@blulok.com' }),
+        tenant({ externalId: 'ext-t3', email: 't3@blulok.com' }),
+      ],
+      tenantChanges: [
+        {
+          change_type: FMSChangeType.TENANT_ADDED,
+          external_id: 'ext-t2',
+          is_valid: false,
+          validation_errors: ['already mapped'],
+          after_data: { collidingExternalIds: ['ext-t2', 'ext-t3'] },
+        },
+      ],
+      mappedTenantExternalIds: [],
+    });
+
+    expect(ctx.blockedTenantErrorsByExternalId.has('ext-t2')).toBe(true);
+    expect(ctx.blockedTenantErrorsByExternalId.has('ext-t3')).toBe(true);
+    expect(
+      shouldOmitOccupiedUnitReview(
+        { tenantId: 'ext-t3' },
+        ['blocked'],
+        ctx,
+      ),
+    ).toBe(true);
+  });
+
+  it('combines identity collisions and vacant ledger assigns for review copy', () => {
+    const collision = buildIdentityCollisionReview({
+      userLabel: 't3@blulok.com',
+      tenants: [
+        tenant({ externalId: 'ext-t2', email: 't2@blulok.com' }),
+        tenant({ externalId: 'ext-t3', email: 't3@blulok.com' }),
+      ],
+    });
+    expect(collision.collidingExternalIds).toEqual(['ext-t2', 'ext-t3']);
+    expect(collision.impact_summary).toContain('t2@blulok.com');
+    expect(collision.impact_summary).toContain('t3@blulok.com');
+    expect(collision.validation_errors[0]).toMatch(/each of these tenants/i);
+
+    const vacant = buildVacantLedgerAssignReview({
+      tenant: tenant({
+        externalId: 't1',
+        firstName: 'June',
+        lastName: 'Marry',
+        email: 'june.mary@yopmail.com',
+      }),
+      units: [
+        { unitNumber: '101', status: 'available' },
+        { unitNumber: '806', status: 'available' },
+      ],
+    });
+    expect(vacant.impact_summary).toContain('units 101, 806');
+    expect(vacant.validation_errors[0]).toContain('June Marry');
+
+    const occupied = buildOccupiedLedgerUnassignReview({
+      tenant: tenant({
+        externalId: 't1',
+        firstName: 'June',
+        lastName: 'Marry',
+        email: 'june.mary@yopmail.com',
+      }),
+      units: [{ unitNumber: '104' }, { unitNumber: '105' }],
+    });
+    expect(occupied.impact_summary).toContain('units 104, 105');
+    expect(occupied.validation_errors[0]).toContain('these removals were not applied');
   });
 
   it('formats a vacant unit_updated note when ledgers still claim tenants', () => {

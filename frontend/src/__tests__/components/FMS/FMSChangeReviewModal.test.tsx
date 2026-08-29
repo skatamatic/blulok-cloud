@@ -1016,4 +1016,140 @@ describe('FMSChangeReviewModal', () => {
       expect(screen.getByText('Change without actions')).toBeInTheDocument();
     });
   });
+
+  describe('Grouped invalid problems', () => {
+    it('combines identity-collision and vacant-ledger rows into two problem cards', () => {
+      const grouped: FMSChange[] = [
+        {
+          id: 't3',
+          sync_log_id: 'sync-123',
+          change_type: FMSChangeType.TENANT_ADDED,
+          entity_type: 'tenant',
+          external_id: 'ext-t3',
+          after_data: { email: 't3@blulok.com' },
+          required_actions: [FMSChangeAction.CREATE_USER],
+          impact_summary:
+            'FMS tenant t3@blulok.com matches an existing BluLok user who is already mapped to a different FMS tenant',
+          is_reviewed: false,
+          is_valid: false,
+          validation_errors: [
+            'Contact info matches BluLok user t3@blulok.com, who is already mapped to a different FMS tenant. Each BluLok user can map to only one FMS tenant. Give this tenant a unique email or phone in your FMS, or remap the user.',
+          ],
+          created_at: '2025-01-01T00:00:00Z',
+        },
+        {
+          id: 't2',
+          sync_log_id: 'sync-123',
+          change_type: FMSChangeType.TENANT_ADDED,
+          entity_type: 'tenant',
+          external_id: 'ext-t2',
+          after_data: { email: 't2@blulok.com' },
+          required_actions: [FMSChangeAction.CREATE_USER],
+          impact_summary:
+            'FMS tenant t2@blulok.com matches an existing BluLok user who is already mapped to a different FMS tenant',
+          is_reviewed: false,
+          is_valid: false,
+          validation_errors: [
+            'Contact info matches BluLok user t3@blulok.com, who is already mapped to a different FMS tenant. Each BluLok user can map to only one FMS tenant. Give this tenant a unique email or phone in your FMS, or remap the user.',
+          ],
+          created_at: '2025-01-01T00:00:00Z',
+        },
+        {
+          id: 'u100',
+          sync_log_id: 'sync-123',
+          change_type: FMSChangeType.UNIT_UPDATED,
+          entity_type: 'unit',
+          external_id: 'ext-100',
+          after_data: { unitNumber: '100' },
+          required_actions: [],
+          impact_summary: 'Update unit 100',
+          is_reviewed: false,
+          is_valid: false,
+          validation_errors: [
+            'Unit 100 is occupied by Tester Three (t3@blulok.com) in FMS, but that tenant cannot be created in BluLok: Contact info matches BluLok user t3@blulok.com, who is already mapped to a different FMS tenant.',
+          ],
+          created_at: '2025-01-01T00:00:00Z',
+        },
+        {
+          id: 'a101',
+          sync_log_id: 'sync-123',
+          change_type: FMSChangeType.TENANT_UNIT_CHANGED,
+          entity_type: 'tenant',
+          external_id: 'ext-june',
+          after_data: { unitNumber: '101' },
+          required_actions: [FMSChangeAction.ASSIGN_UNIT],
+          impact_summary: 'Assign june.mary@yopmail.com to unit 101 — blocked (FMS unit is vacant)',
+          is_reviewed: false,
+          is_valid: false,
+          validation_errors: [
+            'FMS marks unit 101 as vacant, but a ledger still lists June Marry (june.mary@yopmail.com) on it. Unit status is the source of truth for occupancy, so this assignment was not applied.',
+          ],
+          created_at: '2025-01-01T00:00:00Z',
+        },
+        {
+          id: 'a806',
+          sync_log_id: 'sync-123',
+          change_type: FMSChangeType.TENANT_UNIT_CHANGED,
+          entity_type: 'tenant',
+          external_id: 'ext-june',
+          after_data: { unitNumber: '806' },
+          required_actions: [FMSChangeAction.ASSIGN_UNIT],
+          impact_summary: 'Assign june.mary@yopmail.com to unit 806 — blocked (FMS unit is vacant)',
+          is_reviewed: false,
+          is_valid: false,
+          validation_errors: [
+            'FMS marks unit 806 as vacant, but a ledger still lists June Marry (june.mary@yopmail.com) on it. Unit status is the source of truth for occupancy, so this assignment was not applied.',
+          ],
+          created_at: '2025-01-01T00:00:00Z',
+        },
+      ];
+
+      renderWithProviders(
+        <FMSChangeReviewModal
+          isOpen={true}
+          onClose={jest.fn()}
+          changes={grouped}
+          onApply={jest.fn()}
+          syncResult={{ ...mockSyncResult, changesDetected: grouped }}
+        />
+      );
+
+      expect(screen.getAllByTestId('fms-change-card')).toHaveLength(2);
+      expect(screen.getByText('2 problems could not be applied')).toBeInTheDocument();
+      expect(screen.getByText('Shared tenant contact')).toBeInTheDocument();
+      expect(screen.getByText('Unit status and ledger disagree')).toBeInTheDocument();
+      expect(screen.getByText('Invalid (2)')).toBeInTheDocument();
+    });
+
+    it('titles a single incomplete tenant as a problem, not Tenant added', () => {
+      const incomplete: FMSChange = {
+        id: 'nameless',
+        sync_log_id: 'sync-123',
+        change_type: FMSChangeType.TENANT_ADDED,
+        entity_type: 'tenant',
+        external_id: 'ext-nameless',
+        after_data: { firstName: '', lastName: '' },
+        required_actions: [FMSChangeAction.CREATE_USER],
+        impact_summary: 'New tenant: Unknown Unknown (placeholder — no login)',
+        is_reviewed: false,
+        is_valid: false,
+        validation_errors: ['Missing or empty first name', 'Missing or empty last name'],
+        created_at: '2025-01-01T00:00:00Z',
+      };
+
+      renderWithProviders(
+        <FMSChangeReviewModal
+          isOpen={true}
+          onClose={jest.fn()}
+          changes={[incomplete]}
+          onApply={jest.fn()}
+          syncResult={{ ...mockSyncResult, changesDetected: [incomplete] }}
+        />
+      );
+
+      expect(screen.getByText('Incomplete tenant record')).toBeInTheDocument();
+      expect(screen.queryByText('Tenant added')).not.toBeInTheDocument();
+      expect(screen.queryByText('create user')).not.toBeInTheDocument();
+    });
+  });
 });

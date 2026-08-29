@@ -29,6 +29,7 @@ import {
   isFmsUnitVacantStatus,
   resolveLedgerAssignAgainstUnitStatus,
   resolveOccupiedUnitBlockers,
+  shouldOmitOccupiedUnitReview,
   type FmsOccupancyContext,
   type FmsOccupancyTenantInfo,
 } from './fms-unit-occupancy-validation.utils';
@@ -70,10 +71,10 @@ function moveOutValidationErrors(
     return errors;
   }
   if (!tenantInternalId) {
-    errors.push(`Tenant ${tenantExternalId} is not mapped in BluLok yet`);
+    errors.push('This tenant is not mapped in BluLok yet');
   }
   if (!unitInternalId) {
-    errors.push(`Unit ${unitExternalId} is not mapped in BluLok yet`);
+    errors.push('This unit is not mapped in BluLok yet');
   }
   return errors.length > 0 ? errors : undefined;
 }
@@ -960,11 +961,19 @@ export class FMSWebhookService {
       return;
     }
 
+    const occupancyContext = await this.buildWebhookOccupancyContext(
+      facilityId,
+      inserts,
+      normalized.tenantId
+    );
     const occupancyBlockers = resolveOccupiedUnitBlockers(
       normalized,
       blulokUnit.status,
-      await this.buildWebhookOccupancyContext(facilityId, inserts, normalized.tenantId)
+      occupancyContext
     );
+    if (shouldOmitOccupiedUnitReview(normalized, occupancyBlockers, occupancyContext)) {
+      return;
+    }
     if (occupancyBlockers.length > 0) {
       logger.warn(`[FMS] Webhook occupancy: unit ${normalized.unitNumber} cannot be marked occupied yet`, {
         fms_sync: true,
