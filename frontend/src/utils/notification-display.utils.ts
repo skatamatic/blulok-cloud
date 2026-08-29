@@ -1,6 +1,7 @@
 import type { UserNotificationApi } from '@/types/notifications.types';
 import { formatNotificationTimestamp } from '@/utils/datetime.utils';
 import {
+  getFmsSyncReviewDetailRows,
   getFmsUpdatePushDetailRows,
   normalizeFmsUpdatePushMessage,
   normalizeFmsUpdatePushTitle,
@@ -28,10 +29,26 @@ const ACTION_REQUIRED_PRIORITIES = new Set(['high', 'urgent']);
  * Derive whether a notification should appear under "Action Required" filters.
  * No DB column — priority + notification_type only.
  */
+function metadataNeedsFmsReview(metadata?: Record<string, unknown> | null): boolean {
+  if (!metadata) return false;
+  return (
+    metadata.requiresReview === true ||
+    metadata.autoApplyBlocked === true ||
+    Number(metadata.pendingCount ?? 0) > 0
+  );
+}
+
 export function deriveActionRequired(
   notificationType: string,
-  priority: string
+  priority: string,
+  metadata?: Record<string, unknown> | null,
 ): boolean {
+  if (
+    (notificationType === 'fms_sync_complete' || notificationType === 'fms_webhook_received') &&
+    metadataNeedsFmsReview(metadata)
+  ) {
+    return true;
+  }
   return (
     ACTION_REQUIRED_TYPES.has(notificationType) ||
     ACTION_REQUIRED_PRIORITIES.has(priority)
@@ -59,7 +76,8 @@ export interface DashboardNotificationView {
 
 function mapApiTypeToTone(
   notificationType: string,
-  priority: string
+  priority: string,
+  metadata?: Record<string, unknown> | null,
 ): WidgetNotificationTone {
   if (
     notificationType === 'access_denied' ||
@@ -71,6 +89,12 @@ function mapApiTypeToTone(
     priority === 'urgent'
   ) {
     return 'error';
+  }
+  if (
+    notificationType === 'fms_sync_complete' &&
+    metadataNeedsFmsReview(metadata)
+  ) {
+    return 'warning';
   }
   if (
     notificationType === 'maintenance_alert' ||
@@ -187,7 +211,11 @@ export function getNotificationDetailLines(
     'message' | 'notificationType' | 'priority' | 'reference' | 'metadata' | 'facilityId'
   >,
 ): string[] {
-  if (notification.notificationType === 'fms_webhook_received') {
+  if (
+    notification.notificationType === 'fms_webhook_received' ||
+    (notification.notificationType === 'fms_sync_complete' &&
+      metadataNeedsFmsReview(notification.metadata))
+  ) {
     return [notification.message];
   }
 
@@ -208,11 +236,18 @@ export function getNotificationDetailLines(
 export function getNotificationStructuredDetails(
   notification: Pick<DashboardNotificationView, 'notificationType' | 'metadata'>,
 ): FmsUpdatePushDetailRow[] | null {
-  if (notification.notificationType !== 'fms_webhook_received') {
-    return null;
+  if (notification.notificationType === 'fms_webhook_received') {
+    const rows = getFmsUpdatePushDetailRows(notification.metadata ?? null);
+    return rows.length > 0 ? rows : null;
   }
-  const rows = getFmsUpdatePushDetailRows(notification.metadata ?? null);
-  return rows.length > 0 ? rows : null;
+  if (
+    notification.notificationType === 'fms_sync_complete' &&
+    metadataNeedsFmsReview(notification.metadata)
+  ) {
+    const rows = getFmsSyncReviewDetailRows(notification.metadata ?? null);
+    return rows.length > 0 ? rows : null;
+  }
+  return null;
 }
 
 export function notificationMessageNeedsExpansion(message: string, maxPreviewLength = 96): boolean {
@@ -370,8 +405,8 @@ export function getNotificationUrgencyBadge(
 export function mapApiNotificationToDashboardView(
   n: UserNotificationApi
 ): DashboardNotificationView & { displayType: 'info' | 'warning' | 'error' | 'success' } {
-  const actionRequired = deriveActionRequired(n.type, n.priority);
-  const tone = mapApiTypeToTone(n.type, n.priority);
+  const actionRequired = deriveActionRequired(n.type, n.priority, n.metadata);
+  const tone = mapApiTypeToTone(n.type, n.priority, n.metadata);
   const title =
     n.type === 'fms_webhook_received' ? normalizeFmsUpdatePushTitle(n.title) : n.title;
   const message =

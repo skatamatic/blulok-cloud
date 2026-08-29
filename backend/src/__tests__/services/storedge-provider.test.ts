@@ -260,6 +260,40 @@ describe('StoredgeProvider', () => {
       expect(tenants).toHaveLength(1);
       expect(tenants[0]?.status).toBe('inactive');
     });
+
+    it('skips incomplete ledgers instead of throwing', async () => {
+      const endPage = { meta: { pagination: { next_page: null as number | null } } };
+      (global.fetch as jest.Mock)
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({
+            ledgers: [
+              { tenant: null, unit: { id: 'unit-orphan' } },
+              { tenant: { id: 'tenant-1' }, unit: null },
+              { tenant: { id: 'tenant-1' }, unit: { id: 'unit-101' } },
+            ],
+            ...endPage,
+          }),
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({
+            tenants: [{
+              id: 'tenant-1',
+              email: 'john@example.com',
+              first_name: 'John',
+              last_name: 'Smith',
+              phone_numbers: [],
+              active: true,
+            }],
+            ...endPage,
+          }),
+        });
+
+      const tenants = await provider.fetchTenants();
+      expect(tenants).toHaveLength(1);
+      expect(tenants[0]?.unitIds).toEqual(['unit-101']);
+    });
   });
 
   describe('Fetch Units', () => {

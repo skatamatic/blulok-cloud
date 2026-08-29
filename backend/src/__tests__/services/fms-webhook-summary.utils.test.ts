@@ -79,6 +79,27 @@ describe('fms-webhook-summary.utils', () => {
     expect(content.statusLabel).toBe('Needs your review');
   });
 
+  it('explains when automatic webhook apply was blocked by a detected problem', () => {
+    const content = buildFmsUpdatePushNotification({
+      facilityName: 'BluLok HQ',
+      eventType: 'ledger.moved-in',
+      payloadData: { first_name: 'Tester', last_name: 'Three', unit_number: '100' },
+      changesDetected: 3,
+      changesApplied: 0,
+      autoApplied: false,
+      requiresReview: true,
+      autoApplyAttempted: true,
+      problemSummaries: [
+        'Contact info matches BluLok user t3@blulok.com, who is already mapped to a different FMS tenant.',
+      ],
+    });
+    expect(content.statusLabel).toBe('Automatic sync did not apply');
+    expect(content.autoApplyBlocked).toBe(true);
+    expect(content.message).toContain('Automatic sync did not apply because a problem was detected');
+    expect(content.message).toContain('Open Review changes');
+    expect(content.message).toContain('Tester Three · Unit 100');
+  });
+
   it('does not use Storable UUIDs as the notification subject', () => {
     expect(
       describeFmsUpdatePushSubject({

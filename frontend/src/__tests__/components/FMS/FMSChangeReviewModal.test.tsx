@@ -646,6 +646,9 @@ describe('FMSChangeReviewModal', () => {
       expect(screen.getByText('This change failed to apply')).toBeInTheDocument();
       expect(screen.queryByText('Cannot apply this change')).not.toBeInTheDocument();
       expect(screen.getByText(/Lucien Robel/)).toBeInTheDocument();
+      expect(
+        screen.getByText(/Automatic sync did not apply because a problem was detected/),
+      ).toBeInTheDocument();
     });
   });
 

@@ -59,6 +59,39 @@ describe('notification-display.utils', () => {
     expect(v.actionRequired).toBe(false);
   });
 
+  it('treats blocked FMS sync complete cards as action-required warnings', () => {
+    const v = mapApiNotificationToDashboardView(
+      api({
+        type: 'fms_sync_complete',
+        priority: 'high',
+        title: 'FMS Changes Need Review',
+        message: 'Automatic sync did not apply because a problem was detected.',
+        metadata: {
+          requiresReview: true,
+          autoApplyBlocked: true,
+          syncLogId: 'sync-1',
+          pendingCount: 1,
+          statusLabel: 'Automatic sync did not apply',
+          problemSummaries: [
+            'Contact info matches BluLok user t3@blulok.com, who is already mapped to a different FMS tenant.',
+          ],
+        },
+      }),
+    );
+    expect(v.tone).toBe('warning');
+    expect(v.actionRequired).toBe(true);
+    expect(v.displayType).toBe('warning');
+
+    const rows = getNotificationStructuredDetails(v);
+    expect(rows).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ label: 'Status', value: 'Automatic sync did not apply' }),
+        expect.objectContaining({ label: 'Problem', value: expect.stringContaining('t3@blulok.com') }),
+        expect.objectContaining({ label: 'Next step', value: expect.stringContaining('Review changes') }),
+      ]),
+    );
+  });
+
   it('marks pending-review FMS update pushes as action required via high priority', () => {
     const v = mapApiNotificationToDashboardView(
       api({

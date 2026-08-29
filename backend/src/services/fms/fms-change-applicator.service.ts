@@ -461,19 +461,28 @@ export class FMSChangeApplicatorService {
         syncLogId: change.sync_log_id,
         force: true,
       });
-      await this.models.entityMappingModel.create({
-        facility_id: facilityId,
-        entity_type: 'user',
-        external_id: tenantData.externalId,
-        internal_id: user.id,
-        provider_type: config?.provider_type || 'generic_rest',
-        metadata: {
-          email: tenantData.email,
-          phone: tenantData.phone,
-          leaseStartDate: tenantData.leaseStartDate,
-          leaseEndDate: tenantData.leaseEndDate,
-        },
-      });
+      try {
+        await this.models.entityMappingModel.ensureMapping({
+          facility_id: facilityId,
+          entity_type: 'user',
+          external_id: tenantData.externalId,
+          internal_id: user.id,
+          provider_type: config?.provider_type || 'generic_rest',
+          metadata: {
+            email: tenantData.email,
+            phone: tenantData.phone,
+            leaseStartDate: tenantData.leaseStartDate,
+            leaseEndDate: tenantData.leaseEndDate,
+          },
+        });
+      } catch (error) {
+        if ((error as { code?: string }).code === 'FMS_MAPPING_CONFLICT') {
+          throw new Error(
+            'This FMS tenant matches a BluLok user who is already mapped to a different FMS tenant. Fix the shared email/phone in FMS or remap the user.'
+          );
+        }
+        throw error;
+      }
     } else {
       await this.restoreFmsTenantAccess(user.id, facilityId, {
         mapping: existingMapping,

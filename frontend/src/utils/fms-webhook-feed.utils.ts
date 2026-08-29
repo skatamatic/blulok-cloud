@@ -47,6 +47,9 @@ export function getWebhookFeedOutcomeLabel(item: FMSWebhookFeedItem): string {
     }
     return 'Pending review';
   }
+  if (item.changesApplied === 0) {
+    return 'Not applied';
+  }
   return `${item.changesApplied}/${item.changesDetected} applied`;
 }
 

@@ -152,5 +152,6 @@ Within each tier, highest **`priority`** wins. Assigned layouts are read-only fo
 ## Notifications widget
 
 - Data from **`GET /api/v1/notifications`** with optional **`facilityId`**.
-- **“Action required”** is **derived** in **`notification-display.utils.ts`** from **`priority`** (`high`, `urgent`) and **`notification_type`** (`security_alert`, `maintenance_alert`) — not a DB column.
+- **“Action required”** is **derived** in **`notification-display.utils.ts`** from **`priority`** (`high`, `urgent`), **`notification_type`** (`security_alert`, `maintenance_alert`, plus FMS review metadata), and FMS `requiresReview` / `autoApplyBlocked` — not a DB column.
+- **FMS review CTA**: `fms_webhook_received` / `fms_sync_complete` cards with pending review show **Review changes**, which opens `FMSChangeReviewModal` via `getFmsNotificationReviewTarget` (`metadata.syncLogId`, or `reference.id` for `fms_sync`). Blocked auto-apply copy lives in `fms-review-notification.utils.ts` (backend) and is mirrored in the card details.
 - Real-time: WebSocket subscription type **`notifications`**; `websocket.service` routes `notifications_update`, `notification_created`, etc., to the same handlers.

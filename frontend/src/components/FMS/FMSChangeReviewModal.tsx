@@ -632,7 +632,9 @@ export function FMSChangeReviewModal({
                         </span>
                       </Dialog.Title>
                       <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
-                        Select the changes to accept. Gateway access updates apply automatically.
+                        {invalidCount > 0
+                          ? 'Automatic sync did not apply because a problem was detected. Review the blocked items below for the cause and how to fix it.'
+                          : 'Select the changes to accept. Gateway access updates apply automatically.'}
                       </p>
                     </div>
                   </div>
@@ -703,7 +705,7 @@ export function FMSChangeReviewModal({
                             {dismissibleCount} change{dismissibleCount !== 1 ? 's' : ''} could not be applied
                           </p>
                           <p className="mt-0.5 text-xs text-amber-800/90 dark:text-amber-300/90">
-                            Invalid or failed changes remain in review until you dismiss them.
+                            Automatic sync skipped these items. They stay here until you dismiss them or fix the source data in your FMS.
                           </p>
                         </div>
                       </div>

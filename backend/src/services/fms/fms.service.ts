@@ -46,6 +46,8 @@ import {
   FMSWebhookFeedItem,
 } from '@/types/fms.types';
 import { shouldAutoAcceptChanges } from './fms-auto-accept.utils';
+import { collectFmsReviewProblems } from './fms-review-notification.utils';
+import { isSupersedablePendingSyncLog } from './fms-sync-cleanup.utils';
 import {
   isFmsChangeDismissible,
   isFmsChangePending,
@@ -267,6 +269,14 @@ export class FMSService {
     });
 
     for (const oldSync of pendingSyncs.logs) {
+      if (!isSupersedablePendingSyncLog(oldSync)) {
+        logger.info(`[FMS] Keeping webhook review batch ${oldSync.id} through full sync`, {
+          fms_sync: true,
+          facility_id: facilityId,
+          old_sync_log_id: oldSync.id,
+        });
+        continue;
+      }
       const deletedCount = await this.changeModel.deleteBySyncLogId(oldSync.id);
       logger.info(`[FMS] Deleted ${deletedCount} uncommitted changes from old sync ${oldSync.id}`, {
         fms_sync: true,
@@ -435,10 +445,12 @@ export class FMSService {
       });
 
       let pendingReviewCount = changes.length;
+      let changesApplied = 0;
 
       if (autoAccept && changes.length > 0) {
         const outcome = await this.autoAcceptAndApplyChanges(syncLog.id, changes);
         pendingReviewCount = outcome.pendingCount;
+        changesApplied = outcome.changesApplied;
 
         if (outcome.requiresReview) {
           await this.syncLogModel.markPendingReview(syncLog.id, {
@@ -500,7 +512,12 @@ export class FMSService {
         userId,
         false,
         undefined,
-        pendingReviewCount
+        pendingReviewCount,
+        {
+          autoApplyAttempted: autoAccept && changes.length > 0,
+          changesApplied,
+          problemSummaries: collectFmsReviewProblems(changes).problemSummaries,
+        }
       );
 
       return result;
@@ -550,7 +567,12 @@ export class FMSService {
     triggeredByUserId: string | undefined,
     failed: boolean,
     errorMessage?: string,
-    pendingReviewCount?: number
+    pendingReviewCount?: number,
+    reviewContext?: {
+      autoApplyAttempted?: boolean;
+      changesApplied?: number;
+      problemSummaries?: string[];
+    }
   ): Promise<void> {
     try {
       const { InAppNotificationDispatcher } = await import(
@@ -573,14 +595,17 @@ export class FMSService {
           triggeredByUserId
         );
       } else if (pendingReviewCount && pendingReviewCount > 0) {
-        await dispatcher.notifyFmsSyncPendingReview(
+        await dispatcher.notifyFmsSyncPendingReview({
           facilityId,
           facilityName,
           syncLogId,
-          pendingReviewCount,
+          pendingCount: pendingReviewCount,
           changesDetected,
-          triggeredByUserId
-        );
+          excludeUserId: triggeredByUserId,
+          autoApplyAttempted: reviewContext?.autoApplyAttempted,
+          changesApplied: reviewContext?.changesApplied,
+          problemSummaries: reviewContext?.problemSummaries,
+        });
       } else {
         await dispatcher.notifyFmsSyncComplete(
           facilityId,

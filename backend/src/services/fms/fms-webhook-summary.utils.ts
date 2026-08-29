@@ -1,4 +1,5 @@
 import { FMSWebhookPayload } from '@/types/fms.types';
+import { buildFmsPendingReviewNotification } from '@/services/fms/fms-review-notification.utils';
 
 export type FmsWebhookSummary = {
   summary: Record<string, unknown>;
@@ -119,6 +120,8 @@ export function describeFmsUpdatePushStatus(options: {
   changesApplied?: number;
   autoApplied: boolean;
   requiresReview: boolean;
+  autoApplyAttempted?: boolean;
+  problemSummaries?: string[];
 }): string {
   if (options.changesDetected === 0) {
     return 'No action needed';
@@ -127,12 +130,15 @@ export function describeFmsUpdatePushStatus(options: {
     return 'Applied automatically';
   }
   if (options.requiresReview) {
-    const applied = options.changesApplied ?? 0;
-    if (applied > 0) {
-      const pending = Math.max(0, options.changesDetected - applied);
-      return `${applied} applied · ${pending} need review`;
-    }
-    return 'Needs your review';
+    return buildFmsPendingReviewNotification({
+      facilityName: '',
+      pendingCount: Math.max(0, options.changesDetected - (options.changesApplied ?? 0)),
+      changesDetected: options.changesDetected,
+      changesApplied: options.changesApplied,
+      autoApplyAttempted: options.autoApplyAttempted === true,
+      problemSummaries: options.problemSummaries,
+      source: 'webhook',
+    }).statusLabel;
   }
   return 'Update received';
 }
@@ -146,6 +152,8 @@ export function buildFmsUpdatePushNotification(options: {
   changesApplied: number;
   autoApplied: boolean;
   requiresReview: boolean;
+  autoApplyAttempted?: boolean;
+  problemSummaries?: string[];
   display?: FmsWebhookDisplayLabels;
 }): {
   title: string;
@@ -153,25 +161,33 @@ export function buildFmsUpdatePushNotification(options: {
   eventLabel: string;
   subjectLabel?: string;
   statusLabel: string;
+  autoApplyBlocked?: boolean;
 } {
   const eventLabel = getFmsUpdateEventLabel(options.eventType);
   const subjectLabel = describeFmsUpdatePushSubject(options.payloadData, options.display);
-  const statusLabel = describeFmsUpdatePushStatus(options);
 
   let message: string;
+  let statusLabel = describeFmsUpdatePushStatus(options);
+  let autoApplyBlocked = false;
+
   if (options.changesDetected === 0) {
     message = `${options.facilityName} received an FMS update. No changes were needed in BluLok.`;
   } else if (options.autoApplied) {
     message = `${options.facilityName} received a ${eventLabel.toLowerCase()} update from your property management system. Changes were applied automatically.`;
   } else if (options.requiresReview) {
-    const applied = options.changesApplied;
-    if (applied > 0) {
-      const pending = Math.max(0, options.changesDetected - applied);
-      message = `${options.facilityName} received a ${eventLabel.toLowerCase()} update. ${applied} change${applied === 1 ? '' : 's'} applied; ${pending} still need${pending === 1 ? 's' : ''} your review.`;
-    } else {
-      const count = options.changesDetected;
-      message = `${options.facilityName} received a ${eventLabel.toLowerCase()} update. ${count} change${count === 1 ? '' : 's'} need${count === 1 ? 's' : ''} your review before they take effect.`;
-    }
+    const review = buildFmsPendingReviewNotification({
+      facilityName: options.facilityName,
+      pendingCount: Math.max(0, options.changesDetected - options.changesApplied),
+      changesDetected: options.changesDetected,
+      changesApplied: options.changesApplied,
+      autoApplyAttempted: options.autoApplyAttempted === true,
+      problemSummaries: options.problemSummaries,
+      source: 'webhook',
+      eventLabel,
+    });
+    message = review.message;
+    statusLabel = review.statusLabel;
+    autoApplyBlocked = review.autoApplyBlocked;
   } else {
     message = `${options.facilityName} received a ${eventLabel.toLowerCase()} update from your property management system.`;
   }
@@ -186,6 +202,7 @@ export function buildFmsUpdatePushNotification(options: {
     eventLabel,
     subjectLabel,
     statusLabel,
+    autoApplyBlocked,
   };
 }
 

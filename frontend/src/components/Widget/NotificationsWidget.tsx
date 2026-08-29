@@ -22,7 +22,9 @@ import { useDashboardFacilityScope } from '@/hooks/useDashboardFacilityScope';
 import { useAuth } from '@/contexts/AuthContext';
 import { useGlobalFacility } from '@/contexts/GlobalFacilityContext';
 import { useToast } from '@/contexts/ToastContext';
+import { useFMSSync } from '@/contexts/FMSSyncContext';
 import { apiService } from '@/services/api.service';
+import { getFmsNotificationReviewTarget } from '@/utils/fms-pending-review.utils';
 import { useWebSocketSubscription } from '@/hooks/useWebSocketSubscription';
 import type { UserNotificationApi } from '@/types/notifications.types';
 import {
@@ -137,6 +139,7 @@ const NotificationCard: React.FC<{
   readOnly?: boolean;
   onToggle: () => void;
   onHide?: () => void;
+  onReviewFms?: () => void;
   formatTimestamp: (timestamp: Date, compact?: boolean) => string;
 }> = ({
   notification,
@@ -147,6 +150,7 @@ const NotificationCard: React.FC<{
   readOnly,
   onToggle,
   onHide,
+  onReviewFms,
   formatTimestamp,
 }) => {
   const expandable = notificationMessageNeedsExpansion(notification.message);
@@ -312,6 +316,18 @@ const NotificationCard: React.FC<{
                   {facilityLabel}
                 </span>
               )}
+              {onReviewFms && (
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onReviewFms();
+                  }}
+                  className="no-drag rounded-md bg-amber-500 px-2.5 py-1 text-[11px] font-semibold text-white shadow-sm shadow-amber-500/25 transition-colors hover:bg-amber-600 dark:bg-amber-500 dark:hover:bg-amber-400"
+                >
+                  Review changes
+                </button>
+              )}
               {!readOnly && !notification.isHidden && onHide && (
                 <button
                   type="button"
@@ -391,6 +407,7 @@ export const NotificationsWidget: React.FC<NotificationsWidgetProps> = ({
   const { authState } = useAuth();
   const { facilities } = useGlobalFacility();
   const { addToast } = useToast();
+  const { openPendingReview } = useFMSSync();
   const viewerRole = authState.user?.role;
   const { size, handleSizeChange } = useWidgetSizeState(
     currentSize,
@@ -755,6 +772,27 @@ export const NotificationsWidget: React.FC<NotificationsWidgetProps> = ({
     [showFacilityInCards, facilities, authState.user?.facilityIds, authState.user?.facilityNames],
   );
 
+  const handleReviewFms = useCallback(
+    async (notification: DisplayNotification) => {
+      const target = getFmsNotificationReviewTarget(notification);
+      if (!target) return;
+      try {
+        await openPendingReview(
+          target.facilityId,
+          target.syncLogId,
+          resolveFacilityLabel(notification.facilityId) ?? undefined,
+        );
+      } catch (error) {
+        addToast({
+          type: 'error',
+          title: 'Could not open review',
+          message: error instanceof Error ? error.message : 'Please try again',
+        });
+      }
+    },
+    [addToast, openPendingReview, resolveFacilityLabel],
+  );
+
   return (
     <Widget
       id={id}
@@ -869,6 +907,11 @@ export const NotificationsWidget: React.FC<NotificationsWidgetProps> = ({
                     readOnly={readOnly}
                     onToggle={() => handleNotificationToggle(notification.id)}
                     onHide={() => void hideNotification(notification.id)}
+                    onReviewFms={
+                      getFmsNotificationReviewTarget(notification)
+                        ? () => void handleReviewFms(notification)
+                        : undefined
+                    }
                     formatTimestamp={formatTimestamp}
                   />
                 ))}

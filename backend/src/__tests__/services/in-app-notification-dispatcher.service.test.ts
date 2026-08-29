@@ -65,6 +65,37 @@ describe('InAppNotificationDispatcher', () => {
     expect(expected.length).toBeLessThanOrEqual(36);
   });
 
+  it('includes a review target and blocked-auto-apply copy for FMS pending review', async () => {
+    const dispatcher = InAppNotificationDispatcher.getInstance();
+    await dispatcher.notifyFmsSyncPendingReview({
+      facilityId: 'fac-1',
+      facilityName: 'BluLok HQ',
+      syncLogId: 'sync-1',
+      pendingCount: 1,
+      changesDetected: 1,
+      autoApplyAttempted: true,
+      changesApplied: 0,
+      problemSummaries: [
+        'Contact info matches BluLok user t3@blulok.com, who is already mapped to a different FMS tenant.',
+      ],
+    });
+
+    expect(mockCreate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'fms_sync_complete',
+        title: 'FMS Changes Need Review',
+        priority: 'high',
+        referenceId: 'sync-1',
+        message: expect.stringContaining('Automatic sync did not apply because a problem was detected'),
+        metadata: expect.objectContaining({
+          requiresReview: true,
+          syncLogId: 'sync-1',
+          autoApplyBlocked: true,
+        }),
+      }),
+    );
+  });
+
   it('fans out inventory duplicate serial alerts to facility operator roles', async () => {
     const dispatcher = InAppNotificationDispatcher.getInstance();
     await dispatcher.notifyDeviceInventorySyncError({

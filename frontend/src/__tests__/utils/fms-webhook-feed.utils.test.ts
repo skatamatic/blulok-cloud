@@ -39,6 +39,18 @@ describe('fms-webhook-feed.utils', () => {
     expect(getWebhookFeedOutcomeLabel(makeEvent('1'))).toBe('Pending review');
   });
 
+  it('does not present discarded zero-apply rows as a successful apply count', () => {
+    expect(
+      getWebhookFeedOutcomeLabel({
+        ...makeEvent('1'),
+        changesDetected: 3,
+        changesApplied: 0,
+        requiresReview: false,
+        autoApplied: false,
+      }),
+    ).toBe('Not applied');
+  });
+
   it('labels failed and ignored diagnostic outcomes', () => {
     expect(getWebhookFeedOutcomeLabel({ ...makeEvent('1'), status: 'failed' })).toBe('Failed');
     expect(getWebhookFeedOutcomeLabel({ ...makeEvent('1'), status: 'ignored' })).toBe('Not applied');

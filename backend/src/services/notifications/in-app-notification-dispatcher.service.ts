@@ -231,7 +231,7 @@ export class InAppNotificationDispatcher {
 
       facilityId,
 
-      metadata: { changesDetected },
+      metadata: { changesDetected, syncLogId, requiresReview: false },
 
       excludeUserIds: excludeUserId ? [excludeUserId] : undefined,
 
@@ -243,41 +243,91 @@ export class InAppNotificationDispatcher {
 
 
 
-  public async notifyFmsSyncPendingReview(
+  public async notifyFmsSyncPendingReview(params: {
 
-    facilityId: string,
+    facilityId: string;
 
-    facilityName: string,
+    facilityName: string;
 
-    syncLogId: string,
+    syncLogId: string;
 
-    pendingCount: number,
+    pendingCount: number;
 
-    changesDetected: number,
+    changesDetected: number;
 
-    excludeUserId?: string,
+    excludeUserId?: string;
 
-  ): Promise<void> {
+    autoApplyAttempted?: boolean;
+
+    changesApplied?: number;
+
+    problemSummaries?: string[];
+
+  }): Promise<void> {
+
+    const { buildFmsPendingReviewNotification } = await import(
+
+      '@/services/fms/fms-review-notification.utils'
+
+    );
+
+    const content = buildFmsPendingReviewNotification({
+
+      facilityName: params.facilityName,
+
+      pendingCount: params.pendingCount,
+
+      changesDetected: params.changesDetected,
+
+      changesApplied: params.changesApplied,
+
+      autoApplyAttempted: params.autoApplyAttempted === true,
+
+      problemSummaries: params.problemSummaries,
+
+      source: 'sync',
+
+    });
 
     await this.notifyFacilityOperators({
 
       type: 'fms_sync_complete',
 
-      title: 'FMS Changes Need Review',
+      title: content.title,
 
-      message: `FMS sync for ${facilityName}: ${pendingCount} change(s) need manual review${changesDetected > pendingCount ? ` (${changesDetected - pendingCount} auto-applied)` : ''}.`,
+      message: content.message,
 
       priority: 'high',
 
       referenceType: 'fms_sync',
 
-      referenceId: syncLogId,
+      referenceId: params.syncLogId,
 
-      facilityId,
+      facilityId: params.facilityId,
 
-      metadata: { changesDetected, pendingCount, requiresReview: true },
+      metadata: {
 
-      excludeUserIds: excludeUserId ? [excludeUserId] : undefined,
+        changesDetected: params.changesDetected,
+
+        pendingCount: params.pendingCount,
+
+        changesApplied: params.changesApplied ?? 0,
+
+        requiresReview: true,
+
+        syncLogId: params.syncLogId,
+
+        autoApplyAttempted: params.autoApplyAttempted === true,
+
+        autoApplyBlocked: content.autoApplyBlocked,
+
+        problemSummaries: params.problemSummaries ?? [],
+
+        statusLabel: content.statusLabel,
+
+      },
+
+      excludeUserIds: params.excludeUserId ? [params.excludeUserId] : undefined,
 
       expiresInDays: 30,
 
@@ -317,7 +367,7 @@ export class InAppNotificationDispatcher {
 
       facilityId,
 
-      metadata: { errorMessage },
+      metadata: { errorMessage, syncLogId },
 
       excludeUserIds: excludeUserId ? [excludeUserId] : undefined,
 
@@ -353,6 +403,10 @@ export class InAppNotificationDispatcher {
 
       syncLogId?: string;
 
+      autoApplyAttempted?: boolean;
+
+      problemSummaries?: string[];
+
     },
 
     priority: 'low' | 'normal' | 'high' | 'urgent' = 'low',
@@ -380,6 +434,10 @@ export class InAppNotificationDispatcher {
       autoApplied: outcome.autoApplied,
 
       requiresReview: outcome.requiresReview,
+
+      autoApplyAttempted: outcome.autoApplyAttempted,
+
+      problemSummaries: outcome.problemSummaries,
 
     });
 
@@ -420,6 +478,14 @@ export class InAppNotificationDispatcher {
         requiresReview: outcome.requiresReview,
 
         syncLogId: outcome.syncLogId,
+
+        autoApplyAttempted: outcome.autoApplyAttempted === true,
+
+        autoApplyBlocked: content.autoApplyBlocked === true,
+
+        problemSummaries: outcome.problemSummaries ?? [],
+
+        pendingCount: Math.max(0, outcome.changesDetected - outcome.changesApplied),
 
       },
 

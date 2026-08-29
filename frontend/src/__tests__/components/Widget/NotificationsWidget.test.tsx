@@ -11,10 +11,15 @@ const mockDeleteNotification = jest.fn();
 const mockMarkAllNotificationsRead = jest.fn();
 const mockHideAllNotifications = jest.fn();
 const mockAddToast = jest.fn();
+const mockOpenPendingReview = jest.fn();
 
 jest.mock('@/contexts/ToastContext', () => ({
   ...jest.requireActual('@/contexts/ToastContext'),
   useToast: () => ({ addToast: mockAddToast }),
+}));
+
+jest.mock('@/contexts/FMSSyncContext', () => ({
+  useFMSSync: () => ({ openPendingReview: mockOpenPendingReview }),
 }));
 
 jest.mock('@/services/api.service', () => ({
@@ -363,6 +368,70 @@ describe('NotificationsWidget', () => {
     await waitFor(() => {
       expect(screen.getByText('FMS Update Push')).toBeInTheDocument();
       expect(screen.getByText(/alex@example.com/)).toBeInTheDocument();
+    });
+  });
+
+  it('opens the FMS review modal from a webhook notification that needs review', async () => {
+    mockGetNotifications.mockResolvedValueOnce({
+      success: true,
+      notifications: [
+        baseNotification({
+          id: 'wh-review',
+          type: 'fms_webhook_received',
+          title: 'FMS Update Push',
+          message: '3 changes need your review',
+          priority: 'high',
+          metadata: { requiresReview: true, syncLogId: 'sync-wh-1', eventType: 'ledger.moved-in' },
+        }),
+      ],
+      total: 1,
+      unreadCount: 1,
+      limit: 50,
+      offset: 0,
+    });
+
+    renderWithProviders(<NotificationsWidget id="w1" title="Notifications" initialSize="large" />);
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Review changes' })).toBeInTheDocument());
+
+    fireEvent.click(screen.getByRole('button', { name: 'Review changes' }));
+
+    await waitFor(() => {
+      expect(mockOpenPendingReview).toHaveBeenCalledWith('fac-123', 'sync-wh-1', '621 Sandbox');
+    });
+  });
+
+  it('opens the FMS review modal from a full-sync notification that blocked automatic apply', async () => {
+    mockGetNotifications.mockResolvedValueOnce({
+      success: true,
+      notifications: [
+        baseNotification({
+          id: 'sync-review',
+          type: 'fms_sync_complete',
+          title: 'FMS Changes Need Review',
+          message: 'Automatic sync did not apply because a problem was detected.',
+          priority: 'high',
+          reference: { type: 'fms_sync', id: 'sync-hq-1' },
+          metadata: {
+            requiresReview: true,
+            autoApplyBlocked: true,
+            pendingCount: 1,
+            problemSummaries: ['Shared phone matches an already-mapped tenant.'],
+          },
+        }),
+      ],
+      total: 1,
+      unreadCount: 1,
+      limit: 50,
+      offset: 0,
+    });
+
+    renderWithProviders(<NotificationsWidget id="w1" title="Notifications" initialSize="large" />);
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Review changes' })).toBeInTheDocument());
+
+    fireEvent.click(screen.getByRole('button', { name: 'Review changes' }));
+
+    await waitFor(() => {
+      expect(mockOpenPendingReview).toHaveBeenCalledWith('fac-123', 'sync-hq-1', '621 Sandbox');
     });
   });
 

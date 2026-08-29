@@ -11,6 +11,7 @@ import { logger } from '@/utils/logger';
 import { validateFmsWebhookAuth } from '../fms-webhook-auth';
 import { resolveStoredgeWebhookType } from '../storedge-webhook-events';
 import { unwrapStoredgeEntity } from '../storedge-api.utils';
+import { unitIdsForStoredgeTenant } from '../storedge-ledger.utils';
 
 /**
  * StoreDge FMS Provider
@@ -147,10 +148,7 @@ export class StoredgeProvider extends BaseFMSProvider {
     const tenants = await this.fetchAllPages('tenants/current', 'tenants');
 
     return tenants.map((tenant: any) => {
-      const tenantLedgers = ledgers.filter(
-        (ledger: any) => ledger.tenant.id === tenant.id
-      );
-      const unitIds = tenantLedgers.map((ledger: any) => ledger.unit.id);
+      const unitIds = unitIdsForStoredgeTenant(ledgers, tenant.id);
 
       const primaryPhoneNumber = (tenant.phone_numbers || []).find(
         (pn: any) => pn.primary
@@ -194,10 +192,7 @@ export class StoredgeProvider extends BaseFMSProvider {
 
         const ledgers = await this.fetchAllPages('ledgers/current', 'ledgers');
 
-        const tenantLedgers = ledgers.filter(
-            (ledger: any) => ledger.tenant.id === tenant.id
-        );
-        const unitIds = tenantLedgers.map((ledger: any) => ledger.unit.id);
+        const unitIds = unitIdsForStoredgeTenant(ledgers, tenant.id);
 
         const primaryPhoneNumber = (tenant.phone_numbers || []).find(
             (pn: any) => pn.primary

@@ -1,5 +1,7 @@
 import {
+  describeFmsUpdatePushStatusFromMetadata,
   describeFmsUpdatePushSubjectFromMetadata,
+  getFmsSyncReviewDetailRows,
   normalizeFmsUpdatePushMessage,
 } from '@/utils/fms-update-push-notification.utils';
 
@@ -33,6 +35,34 @@ describe('fms-update-push-notification.utils', () => {
       ),
     ).toBe(
       'BluLok HQ received a tenant move-in update from your property management system. Changes were applied automatically.',
+    );
+  });
+
+  it('labels blocked auto-apply as automatic sync did not apply', () => {
+    expect(
+      describeFmsUpdatePushStatusFromMetadata({
+        autoApplyBlocked: true,
+        requiresReview: true,
+        changesDetected: 3,
+        changesApplied: 0,
+      }),
+    ).toBe('Automatic sync did not apply');
+  });
+
+  it('includes problem and next-step rows for a blocked full sync', () => {
+    const rows = getFmsSyncReviewDetailRows({
+      autoApplyBlocked: true,
+      requiresReview: true,
+      pendingCount: 1,
+      statusLabel: 'Automatic sync did not apply',
+      problemSummaries: ['Shared phone matches an already-mapped tenant.'],
+    });
+    expect(rows).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ label: 'Status', value: 'Automatic sync did not apply' }),
+        expect.objectContaining({ label: 'Problem', value: 'Shared phone matches an already-mapped tenant.' }),
+        expect.objectContaining({ label: 'Next step', value: expect.stringContaining('Review changes') }),
+      ]),
     );
   });
 });

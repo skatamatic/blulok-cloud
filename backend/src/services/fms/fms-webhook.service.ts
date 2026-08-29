@@ -22,6 +22,7 @@ import {
 import { FMSWebhookAuthMode } from '@/types/fms.types';
 import { validateFmsWebhookAuth, type FmsWebhookAuthHeaders } from './fms-webhook-auth';
 import { shouldAutoAcceptChanges } from './fms-auto-accept.utils';
+import { collectFmsReviewProblems } from './fms-review-notification.utils';
 import {
   buildFmsOccupancyContext,
   formatVacantUnitLedgerConflictNote,
@@ -280,6 +281,9 @@ export class FMSWebhookService {
         });
       }
 
+      const { problemSummaries } = collectFmsReviewProblems(changes);
+      const autoApplyAttempted = autoAccept && changes.length > 0;
+
       const eventSummary = {
         ...summary,
         summaryText,
@@ -287,6 +291,8 @@ export class FMSWebhookService {
         changesApplied,
         autoApplied,
         requiresReview,
+        autoApplyAttempted,
+        problemSummaries,
       };
 
       await this.models.webhookEventModel.markProcessed(webhookRecord.id, syncLog.id, eventSummary);
@@ -303,7 +309,10 @@ export class FMSWebhookService {
         raw_payload: rawPayload,
       }, { includeRawPayload: true });
 
-      void this.notifyFmsWebhookReceived(facilityId, payload, webhookFeedItem, displayLabels);
+      void this.notifyFmsWebhookReceived(facilityId, payload, webhookFeedItem, displayLabels, {
+        autoApplyAttempted,
+        problemSummaries,
+      });
       this.core.broadcastFMSSyncUpdate(facilityId, webhookFeedItem);
 
       return {
@@ -563,7 +572,8 @@ export class FMSWebhookService {
     facilityId: string,
     payload: FMSWebhookPayload,
     webhookFeedItem: FMSWebhookFeedItem,
-    display?: FmsWebhookDisplayLabels
+    display?: FmsWebhookDisplayLabels,
+    reviewContext?: { autoApplyAttempted?: boolean; problemSummaries?: string[] }
   ): Promise<void> {
     try {
       const { InAppNotificationDispatcher } = await import(
@@ -589,6 +599,8 @@ export class FMSWebhookService {
           autoApplied: webhookFeedItem.autoApplied,
           requiresReview: webhookFeedItem.requiresReview,
           syncLogId: webhookFeedItem.syncLogId,
+          autoApplyAttempted: reviewContext?.autoApplyAttempted,
+          problemSummaries: reviewContext?.problemSummaries,
         },
         webhookFeedItem.requiresReview ? 'high' : 'low'
       );

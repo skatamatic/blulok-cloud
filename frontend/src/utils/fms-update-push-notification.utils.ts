@@ -110,6 +110,12 @@ export function describeFmsUpdatePushStatusFromMetadata(
 
   if (changesDetected === 0) return 'No action needed';
   if (autoApplied) return 'Applied automatically';
+  if (metadata.autoApplyBlocked === true) {
+    if (changesApplied > 0) {
+      return `${changesApplied} applied · automatic sync stopped`;
+    }
+    return 'Automatic sync did not apply';
+  }
   if (requiresReview) {
     if (changesApplied > 0) {
       const pending = Math.max(0, changesDetected - changesApplied);
@@ -170,11 +176,70 @@ export function getFmsUpdatePushDetailRows(
     value: describeFmsUpdatePushStatusFromMetadata(metadata),
   });
 
+  appendFmsReviewProblemRows(rows, metadata);
+
   const facilityName =
     typeof metadata.facilityName === 'string' ? metadata.facilityName.trim() : undefined;
   if (facilityName) {
     rows.push({ label: 'Facility', value: facilityName });
   }
 
+  return rows;
+}
+
+function firstProblemSummary(metadata: Record<string, unknown>): string | undefined {
+  const summaries = metadata.problemSummaries;
+  if (!Array.isArray(summaries)) return undefined;
+  const first = summaries.find((item) => typeof item === 'string' && item.trim());
+  return typeof first === 'string' ? first.trim() : undefined;
+}
+
+function appendFmsReviewProblemRows(
+  rows: FmsUpdatePushDetailRow[],
+  metadata: Record<string, unknown>,
+): void {
+  const problem = firstProblemSummary(metadata);
+  if (problem) {
+    rows.push({ label: 'Problem', value: problem });
+  }
+  if (metadata.autoApplyBlocked === true || problem) {
+    rows.push({
+      label: 'Next step',
+      value:
+        'Open Review changes to inspect the blocked items. Fix the shared email/phone in your FMS, or remap the user so each BluLok account maps to one FMS tenant.',
+    });
+  } else if (metadata.requiresReview === true) {
+    rows.push({
+      label: 'Next step',
+      value: 'Open Review changes to accept or dismiss these updates.',
+    });
+  }
+}
+
+export function getFmsSyncReviewDetailRows(
+  metadata: Record<string, unknown> | null | undefined,
+): FmsUpdatePushDetailRow[] {
+  if (!metadata) return [];
+
+  const rows: FmsUpdatePushDetailRow[] = [];
+  rows.push({
+    label: 'Status',
+    value:
+      typeof metadata.statusLabel === 'string' && metadata.statusLabel.trim()
+        ? metadata.statusLabel.trim()
+        : metadata.autoApplyBlocked === true
+          ? 'Automatic sync did not apply'
+          : 'Needs your review',
+  });
+
+  const pending = Number(metadata.pendingCount ?? 0);
+  if (pending > 0) {
+    rows.push({
+      label: 'Changes',
+      value: `${pending} need review`,
+    });
+  }
+
+  appendFmsReviewProblemRows(rows, metadata);
   return rows;
 }

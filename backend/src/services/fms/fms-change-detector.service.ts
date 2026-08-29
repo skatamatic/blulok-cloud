@@ -258,6 +258,27 @@ export class FMSChangeDetectorService {
         const user = existingUser;
 
         if (!mapping) {
+          const otherMapping = existingMappings.find(
+            (row) => row.internal_id === user.id && row.external_id !== fmsTenant.externalId
+          );
+          if (otherMapping) {
+            const contact = formatFmsTenantContactLabel(fmsTenant);
+            pendingInserts.push({
+              sync_log_id: syncLogId,
+              change_type: FMSChangeType.TENANT_ADDED,
+              entity_type: 'tenant',
+              external_id: fmsTenant.externalId,
+              after_data: fmsTenant,
+              required_actions: [FMSChangeAction.CREATE_USER],
+              impact_summary: `FMS tenant ${contact} matches an existing BluLok user who is already mapped to a different FMS tenant`,
+              is_valid: false,
+              validation_errors: [
+                `Contact info matches BluLok user ${user.email || user.phone_number || 'this account'}, who is already mapped to a different FMS tenant. Each BluLok user can map to only one FMS tenant. Give this tenant a unique email or phone in your FMS, or remap the user.`,
+              ],
+            });
+            continue;
+          }
+
           logger.warn(
             `[FMS] User ${user.email} exists but has no FMS mapping. Creating mapping.`,
             {
