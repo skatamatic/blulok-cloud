@@ -55,9 +55,9 @@ export const FacilitySchedulesTab: React.FC<FacilitySchedulesTabProps> = ({ faci
     }
   }, [facilityId, currentUserId]);
 
-  const loadSchedules = async () => {
+  const loadSchedules = async (opts?: { silent?: boolean }) => {
     try {
-      setLoading(true);
+      if (!opts?.silent) setLoading(true);
       const response = await apiService.getFacilitySchedules(facilityId);
       const loadedSchedules = response.schedules || [];
       
@@ -72,7 +72,7 @@ export const FacilitySchedulesTab: React.FC<FacilitySchedulesTabProps> = ({ faci
         message: error?.response?.data?.message || 'An error occurred',
       });
     } finally {
-      setLoading(false);
+      if (!opts?.silent) setLoading(false);
     }
   };
 
@@ -141,7 +141,7 @@ export const FacilitySchedulesTab: React.FC<FacilitySchedulesTabProps> = ({ faci
       setCreatingSchedule(false);
       setNewScheduleName('');
       setNewScheduleTimeWindows([]);
-      await loadSchedules();
+      await loadSchedules({ silent: true });
     } catch (error: any) {
       addToast({
         type: 'error',
@@ -178,7 +178,7 @@ export const FacilitySchedulesTab: React.FC<FacilitySchedulesTabProps> = ({ faci
       await apiService.updateSchedule(facilityId, scheduleId, { time_windows: cleanTimeWindows });
       addToast({ type: 'success', title: 'Schedule updated successfully' });
       setEditingSchedule(null);
-      await loadSchedules();
+      await loadSchedules({ silent: true });
       if (userSchedule?.id === scheduleId) {
         await loadUserSchedule();
       }
@@ -219,7 +219,7 @@ export const FacilitySchedulesTab: React.FC<FacilitySchedulesTabProps> = ({ faci
       setDeleteConfirmOpen(false);
       setScheduleToDelete(null);
       setScheduleUsage(null);
-      await loadSchedules();
+      await loadSchedules({ silent: true });
     } catch (error: any) {
       addToast({
         type: 'error',

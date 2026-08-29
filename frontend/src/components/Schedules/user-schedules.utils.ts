@@ -115,6 +115,34 @@ export function filterScheduleUsers(
   });
 }
 
+export function applyUserScheduleAssignment(
+  users: UserWithSchedule[],
+  userId: string,
+  schedule: ScheduleWithTimeWindows | null,
+): UserWithSchedule[] {
+  return users.map((user) =>
+    user.id === userId ? { ...user, currentSchedule: schedule } : user,
+  );
+}
+
+export function attachSchedulesToUsers(
+  users: User[],
+  schedules: ScheduleWithTimeWindows[],
+  assignmentMap: Map<string, string>,
+  unitMap: Map<string, string[]>,
+): UserWithSchedule[] {
+  return users.map((user) => {
+    const assignedId = assignmentMap.get(user.id);
+    return {
+      ...user,
+      currentSchedule: assignedId
+        ? schedules.find((schedule) => schedule.id === assignedId) ?? null
+        : null,
+      unitNumbers: unitMap.get(user.id) || [],
+    };
+  });
+}
+
 export function sortScheduleUsers(
   users: UserWithSchedule[],
   sortBy: 'name' | 'role' | 'units' | 'schedule',

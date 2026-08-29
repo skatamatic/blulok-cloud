@@ -209,9 +209,10 @@ describe('UserSchedulesTab', () => {
     expect(apiService.setUserScheduleForFacility).not.toHaveBeenCalled();
   });
 
-  it('assigns a schedule and reloads user data on success', async () => {
+  it('assigns a schedule optimistically without refetching the roster', async () => {
     render(<UserSchedulesTab facilityId={facilityId} />);
     await waitFor(() => expect(screen.getByText('Alex Tenant')).toBeInTheDocument());
+    expect(apiService.getUsers).toHaveBeenCalledTimes(1);
 
     const row = screen.getByText('Alex Tenant').closest('tr') as HTMLElement;
     fireEvent.click(within(row).getByRole('button', { name: 'Change' }));
@@ -235,7 +236,39 @@ describe('UserSchedulesTab', () => {
       });
     });
 
-    expect(apiService.getUsers.mock.calls.length).toBeGreaterThan(1);
+    expect(within(row).getByText('Default Tenant Schedule')).toBeInTheDocument();
+    expect(apiService.getUsers).toHaveBeenCalledTimes(1);
+    expect(apiService.getFacilityUserScheduleAssignments).toHaveBeenCalledTimes(1);
+  });
+
+  it('rolls the row back when assigning a schedule fails', async () => {
+    (apiService.setUserScheduleForFacility as jest.Mock).mockRejectedValueOnce({
+      response: { data: { message: 'Schedule in use' } },
+    });
+
+    render(<UserSchedulesTab facilityId={facilityId} />);
+    await waitFor(() => expect(screen.getByText('Alex Tenant')).toBeInTheDocument());
+
+    const row = screen.getByText('Alex Tenant').closest('tr') as HTMLElement;
+    fireEvent.click(within(row).getByRole('button', { name: 'Change' }));
+    fireEvent.change(within(row).getByRole('combobox'), {
+      target: { value: 'sched-default-tenant' },
+    });
+
+    await act(async () => {
+      fireEvent.click(within(row).getByRole('button', { name: /Save/i }));
+    });
+
+    await waitFor(() => {
+      expect(addToast).toHaveBeenCalledWith({
+        type: 'error',
+        title: 'Failed to assign schedule',
+        message: 'Schedule in use',
+      });
+    });
+
+    expect(screen.getByText('Weekday Access')).toBeInTheDocument();
+    expect(apiService.getUsers).toHaveBeenCalledTimes(1);
   });
 
   it('filters by search query across name and unit number', async () => {

@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useToast } from '@/contexts/ToastContext';
 import { apiService } from '@/services/api.service';
@@ -7,6 +7,8 @@ import { User, UserRole } from '@/types/auth.types';
 import { SortableTableTh } from '@/components/Common/SortableTableTh';
 import { MagnifyingGlassIcon, CheckIcon, XMarkIcon, ExclamationTriangleIcon } from '@heroicons/react/24/outline';
 import {
+  applyUserScheduleAssignment,
+  attachSchedulesToUsers,
   defaultScheduleForUser,
   filterScheduleUsers,
   mergeFacilityScheduleUsers,
@@ -21,6 +23,8 @@ import {
 
 interface UserSchedulesTabProps {
   facilityId: string;
+  /** When false the tab stays mounted but hidden; used to refresh the schedule catalog on show. */
+  active?: boolean;
 }
 
 type SortKey = 'name' | 'role' | 'units' | 'schedule';
@@ -42,104 +46,139 @@ async function fetchAllPages<T>(
   return rows;
 }
 
-export const UserSchedulesTab: React.FC<UserSchedulesTabProps> = ({ facilityId }) => {
+export const UserSchedulesTab: React.FC<UserSchedulesTabProps> = ({ facilityId, active = true }) => {
   const { authState } = useAuth();
   const { addToast } = useToast();
   const [users, setUsers] = useState<UserWithSchedule[]>([]);
   const [schedules, setSchedules] = useState<ScheduleWithTimeWindows[]>([]);
   const [loading, setLoading] = useState(true);
+  const [savingUserId, setSavingUserId] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [roleFilter, setRoleFilter] = useState<ScheduleRoleFilter>('all');
   const [sortBy, setSortBy] = useState<SortKey>('name');
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc');
   const [editingUserId, setEditingUserId] = useState<string | null>(null);
   const [selectedScheduleId, setSelectedScheduleId] = useState<string>('');
+  const toastRef = useRef(addToast);
+  toastRef.current = addToast;
+  const loadGeneration = useRef(0);
+  const hasRoster = useRef(false);
 
   const canEdit =
     authState.user?.role === 'admin' ||
     authState.user?.role === 'dev_admin' ||
     authState.user?.role === 'facility_admin';
 
-  const loadData = useCallback(async () => {
-    try {
-      setLoading(true);
-      const [listedUsers, units, schedulesResponse, assignmentsResponse] = await Promise.all([
-        fetchAllPages<User>(USER_PAGE_SIZE, async (offset, limit) => {
-          const res = await apiService.getUsers({
-            facility: facilityId,
-            limit,
-            offset,
-            sortBy: 'name',
-            sortOrder: 'asc',
-          });
-          return { rows: res.users || [], total: res.total ?? (res.users || []).length };
-        }),
-        fetchAllPages<any>(UNIT_PAGE_SIZE, async (offset, limit) => {
-          const res = await apiService.getUnits({ facility_id: facilityId, limit, offset });
-          return { rows: res.units || [], total: res.total ?? (res.units || []).length };
-        }),
-        apiService.getFacilitySchedules(facilityId),
-        apiService.getFacilityUserScheduleAssignments(facilityId),
-      ]);
+  useEffect(() => {
+    if (!canEdit) return;
 
-      const facilitySchedules: ScheduleWithTimeWindows[] = schedulesResponse.schedules || [];
-      const assignmentMap = new Map<string, string>(
-        (assignmentsResponse.assignments || []).map((row: { userId: string; scheduleId: string }) => [
-          row.userId,
-          row.scheduleId,
-        ]),
-      );
-      const unitMap = buildUserUnitMap(units);
-      const merged = mergeFacilityScheduleUsers(listedUsers, units);
+    const generation = ++loadGeneration.current;
+    setLoading(true);
+    setUsers([]);
+    setSchedules([]);
+    hasRoster.current = false;
 
-      setUsers(
-        merged.map((user) => {
-          const assignedId = assignmentMap.get(user.id);
-          return {
-            ...user,
-            currentSchedule: assignedId
-              ? facilitySchedules.find((s) => s.id === assignedId) ?? null
-              : null,
-            unitNumbers: unitMap.get(user.id) || [],
-          };
-        }),
-      );
-      setSchedules(facilitySchedules);
-    } catch (error: any) {
-      addToast({
-        type: 'error',
-        title: 'Failed to load user schedules',
-        message: error?.response?.data?.message || 'An error occurred',
-      });
-    } finally {
-      setLoading(false);
-    }
-  }, [addToast, facilityId]);
+    void (async () => {
+      try {
+        const [listedUsers, units, schedulesResponse, assignmentsResponse] = await Promise.all([
+          fetchAllPages<User>(USER_PAGE_SIZE, async (offset, limit) => {
+            const res = await apiService.getUsers({
+              facility: facilityId,
+              limit,
+              offset,
+              sortBy: 'name',
+              sortOrder: 'asc',
+            });
+            return { rows: res.users || [], total: res.total ?? (res.users || []).length };
+          }),
+          fetchAllPages<any>(UNIT_PAGE_SIZE, async (offset, limit) => {
+            const res = await apiService.getUnits({ facility_id: facilityId, limit, offset });
+            return { rows: res.units || [], total: res.total ?? (res.units || []).length };
+          }),
+          apiService.getFacilitySchedules(facilityId),
+          apiService.getFacilityUserScheduleAssignments(facilityId),
+        ]);
+
+        if (generation !== loadGeneration.current) return;
+
+        const facilitySchedules: ScheduleWithTimeWindows[] = schedulesResponse.schedules || [];
+        const assignmentMap = new Map<string, string>(
+          (assignmentsResponse.assignments || []).map((row: { userId: string; scheduleId: string }) => [
+            row.userId,
+            row.scheduleId,
+          ]),
+        );
+        setUsers(
+          attachSchedulesToUsers(
+            mergeFacilityScheduleUsers(listedUsers, units),
+            facilitySchedules,
+            assignmentMap,
+            buildUserUnitMap(units),
+          ),
+        );
+        setSchedules(facilitySchedules);
+        hasRoster.current = true;
+      } catch (error: any) {
+        if (generation !== loadGeneration.current) return;
+        toastRef.current({
+          type: 'error',
+          title: 'Failed to load user schedules',
+          message: error?.response?.data?.message || 'An error occurred',
+        });
+      } finally {
+        if (generation === loadGeneration.current) {
+          setLoading(false);
+        }
+      }
+    })();
+  }, [canEdit, facilityId]);
 
   useEffect(() => {
-    if (canEdit) {
-      void loadData();
-    }
-  }, [canEdit, loadData]);
+    if (!active || !canEdit || !hasRoster.current) return;
+    let cancelled = false;
+    void apiService
+      .getFacilitySchedules(facilityId)
+      .then((response) => {
+        if (!cancelled) setSchedules(response.schedules || []);
+      })
+      .catch(() => {
+        /* roster is already on screen; catalog refresh is best-effort */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [active, canEdit, facilityId]);
 
   const handleAssignSchedule = async (userId: string) => {
     if (!selectedScheduleId) {
-      addToast({ type: 'error', title: 'Please select a schedule' });
+      toastRef.current({ type: 'error', title: 'Please select a schedule' });
       return;
     }
 
+    const nextSchedule = schedules.find((schedule) => schedule.id === selectedScheduleId) ?? null;
+    if (!nextSchedule) {
+      toastRef.current({ type: 'error', title: 'Please select a schedule' });
+      return;
+    }
+
+    const previousUsers = users;
+    setUsers(applyUserScheduleAssignment(users, userId, nextSchedule));
+    setEditingUserId(null);
+    setSelectedScheduleId('');
+    setSavingUserId(userId);
+
     try {
-      await apiService.setUserScheduleForFacility(userId, facilityId, selectedScheduleId);
-      addToast({ type: 'success', title: 'Schedule assigned successfully' });
-      setEditingUserId(null);
-      setSelectedScheduleId('');
-      await loadData();
+      await apiService.setUserScheduleForFacility(userId, facilityId, nextSchedule.id);
+      toastRef.current({ type: 'success', title: 'Schedule assigned successfully' });
     } catch (error: any) {
-      addToast({
+      setUsers(previousUsers);
+      toastRef.current({
         type: 'error',
         title: 'Failed to assign schedule',
         message: error?.response?.data?.message || 'An error occurred',
       });
+    } finally {
+      setSavingUserId((current) => (current === userId ? null : current));
     }
   };
 
@@ -165,7 +204,9 @@ export const UserSchedulesTab: React.FC<UserSchedulesTabProps> = ({ facilityId }
     );
   }
 
-  if (loading) {
+  const showInitialSpinner = loading && users.length === 0;
+
+  if (showInitialSpinner) {
     return (
       <div className="flex items-center justify-center p-8">
         <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary-600"></div>
@@ -332,8 +373,9 @@ export const UserSchedulesTab: React.FC<UserSchedulesTabProps> = ({ facilityId }
                         <div className="inline-flex gap-2">
                           <button
                             type="button"
-                            onClick={() => handleAssignSchedule(user.id)}
-                            className="inline-flex items-center gap-1 px-2.5 py-1.5 text-sm font-medium text-white bg-primary-600 hover:bg-primary-700 rounded-lg"
+                            disabled={savingUserId === user.id}
+                            onClick={() => void handleAssignSchedule(user.id)}
+                            className="inline-flex items-center gap-1 px-2.5 py-1.5 text-sm font-medium text-white bg-primary-600 hover:bg-primary-700 rounded-lg disabled:opacity-50"
                           >
                             <CheckIcon className="h-4 w-4" />
                             Save

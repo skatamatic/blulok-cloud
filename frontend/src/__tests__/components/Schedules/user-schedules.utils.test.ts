@@ -1,5 +1,6 @@
 import { UserRole } from '@/types/auth.types';
 import {
+  applyUserScheduleAssignment,
   buildUserUnitMap,
   filterScheduleUsers,
   mergeFacilityScheduleUsers,
@@ -55,5 +56,18 @@ describe('user-schedules utils', () => {
     ];
     expect(filterScheduleUsers(users, '', 'tenant')).toHaveLength(1);
     expect(filterScheduleUsers(users, '12', 'all').map((u) => u.id)).toEqual(['1']);
+  });
+
+  it('applies a schedule assignment without touching other rows', () => {
+    const next = applyUserScheduleAssignment(
+      [
+        { id: '1', email: 'a@x.com', firstName: 'Ada', lastName: 'L', role: UserRole.TENANT, currentSchedule: null },
+        { id: '2', email: 'b@x.com', firstName: 'Bo', lastName: 'L', role: UserRole.TENANT, currentSchedule: null },
+      ],
+      '1',
+      { id: 'sched-1', name: 'Nights', facility_id: 'f', schedule_type: 'custom', is_active: true, time_windows: [] },
+    );
+    expect(next[0].currentSchedule?.name).toBe('Nights');
+    expect(next[1].currentSchedule).toBeNull();
   });
 });

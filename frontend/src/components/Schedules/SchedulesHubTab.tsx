@@ -13,6 +13,17 @@ type SchedulesSubTab = 'facility' | 'users';
 
 export function SchedulesHubTab({ facilityId, userId, canManageUserSchedules }: SchedulesHubTabProps) {
   const [activeSubTab, setActiveSubTab] = useState<SchedulesSubTab>('facility');
+  const [visited, setVisited] = useState<Set<SchedulesSubTab>>(() => new Set(['facility']));
+
+  const showSubTab = (key: SchedulesSubTab) => {
+    setActiveSubTab(key);
+    setVisited((prev) => {
+      if (prev.has(key)) return prev;
+      const next = new Set(prev);
+      next.add(key);
+      return next;
+    });
+  };
 
   const tabs = useMemo(
     () => [
@@ -30,7 +41,7 @@ export function SchedulesHubTab({ facilityId, userId, canManageUserSchedules }: 
             <button
               key={key}
               type="button"
-              onClick={() => setActiveSubTab(key)}
+              onClick={() => showSubTab(key)}
               className={`inline-flex items-center rounded-lg px-3 py-2 text-sm font-medium transition-colors ${
                 activeSubTab === key
                   ? 'bg-primary-600 text-white'
@@ -44,11 +55,15 @@ export function SchedulesHubTab({ facilityId, userId, canManageUserSchedules }: 
         </div>
       </div>
 
-      {activeSubTab === 'facility' && (
-        <FacilitySchedulesTab facilityId={facilityId} userId={userId} />
+      {visited.has('facility') && (
+        <div hidden={activeSubTab !== 'facility'}>
+          <FacilitySchedulesTab facilityId={facilityId} userId={userId} />
+        </div>
       )}
-      {activeSubTab === 'users' && canManageUserSchedules && (
-        <UserSchedulesTab facilityId={facilityId} />
+      {canManageUserSchedules && visited.has('users') && (
+        <div hidden={activeSubTab !== 'users'}>
+          <UserSchedulesTab facilityId={facilityId} active={activeSubTab === 'users'} />
+        </div>
       )}
     </div>
   );
