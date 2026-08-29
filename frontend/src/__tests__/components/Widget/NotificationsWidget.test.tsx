@@ -12,6 +12,13 @@ const mockMarkAllNotificationsRead = jest.fn();
 const mockHideAllNotifications = jest.fn();
 const mockAddToast = jest.fn();
 const mockOpenPendingReview = jest.fn();
+const mockGetSyncDetails = jest.fn();
+
+jest.mock('@/services/fms.service', () => ({
+  fmsService: {
+    getSyncDetails: (...args: unknown[]) => mockGetSyncDetails(...args),
+  },
+}));
 
 jest.mock('@/contexts/ToastContext', () => ({
   ...jest.requireActual('@/contexts/ToastContext'),
@@ -116,6 +123,7 @@ const baseNotification = (over: Partial<UserNotificationApi>): UserNotificationA
 describe('NotificationsWidget', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    localStorage.clear();
     mockSubscribe.mockReturnValue('sub-1');
     mockGetNotifications.mockResolvedValue({
       success: true,
@@ -143,6 +151,11 @@ describe('NotificationsWidget', () => {
     mockMarkNotificationRead.mockResolvedValue({ success: true });
     mockDeleteNotification.mockResolvedValue({ success: true });
     mockMarkAllNotificationsRead.mockResolvedValue({ success: true, markedCount: 2 });
+    mockGetSyncDetails.mockImplementation(async (id: unknown) => ({
+      id: String(id),
+      changes_pending: 1,
+      sync_status: 'pending_review',
+    }));
   });
 
   it('loads from notifications API with historical scope', async () => {
@@ -433,6 +446,101 @@ describe('NotificationsWidget', () => {
     await waitFor(() => {
       expect(mockOpenPendingReview).toHaveBeenCalledWith('fac-123', 'sync-hq-1', '621 Sandbox');
     });
+  });
+
+  it('combines repeated FMS update pushes into one expandable card', async () => {
+    mockGetNotifications.mockResolvedValueOnce({
+      success: true,
+      notifications: [
+        baseNotification({
+          id: 'lead-1',
+          type: 'fms_webhook_received',
+          title: 'FMS Update Push',
+          message:
+            'BluLok HQ received a lead move-in update. 3 changes need your review before they take effect. (Tester Three · Unit 100)',
+          priority: 'high',
+          metadata: {
+            eventType: 'lead.moved-in',
+            requiresReview: true,
+            syncLogId: 'sync-a',
+            subjectLabel: 'Tester Three · Unit 100',
+            facilityName: 'BluLok HQ',
+          },
+        }),
+        baseNotification({
+          id: 'move-1',
+          type: 'fms_webhook_received',
+          title: 'FMS Update Push',
+          message:
+            'BluLok HQ received a tenant move-in update. 3 changes need your review before they take effect. (Tester Three · Unit 100)',
+          priority: 'high',
+          metadata: {
+            eventType: 'ledger.moved-in',
+            requiresReview: true,
+            syncLogId: 'sync-b',
+            subjectLabel: 'Tester Three · Unit 100',
+            facilityName: 'BluLok HQ',
+          },
+        }),
+      ],
+      total: 2,
+      unreadCount: 2,
+      limit: 50,
+      offset: 0,
+    });
+
+    renderWithProviders(<NotificationsWidget id="w1" title="Notifications" initialSize="large" />);
+
+    await waitFor(() => expect(screen.getByText('2 updates')).toBeInTheDocument());
+    expect(screen.getAllByText('FMS Update Push')).toHaveLength(1);
+
+    fireEvent.click(screen.getByText('FMS Update Push'));
+    expect(screen.getByText('Lead move-in')).toBeInTheDocument();
+    expect(screen.getByText('Tenant move-in')).toBeInTheDocument();
+
+    await waitFor(() => expect(mockMarkNotificationRead).toHaveBeenCalled());
+    expect(screen.getByText('2 updates')).toBeInTheDocument();
+    expect(screen.getAllByText('FMS Update Push')).toHaveLength(1);
+  });
+
+  it('hides Review changes and rewrites copy when the review queue is already dismissed', async () => {
+    mockGetSyncDetails.mockResolvedValue({
+      id: 'sync-wh-1',
+      changes_pending: 0,
+      sync_status: 'completed',
+    });
+    mockGetNotifications.mockResolvedValueOnce({
+      success: true,
+      notifications: [
+        baseNotification({
+          id: 'wh-review',
+          type: 'fms_webhook_received',
+          title: 'FMS Update Push',
+          message:
+            'BluLok HQ received a tenant move-in update. 3 changes need your review before they take effect. (Tester Three · Unit 100)',
+          priority: 'high',
+          metadata: {
+            requiresReview: true,
+            syncLogId: 'sync-wh-1',
+            eventType: 'ledger.moved-in',
+            subjectLabel: 'Tester Three · Unit 100',
+          },
+        }),
+      ],
+      total: 1,
+      unreadCount: 1,
+      limit: 50,
+      offset: 0,
+    });
+
+    renderWithProviders(<NotificationsWidget id="w1" title="Notifications" initialSize="large" />);
+
+    await waitFor(() => {
+      expect(
+        screen.getByText(/Those changes have already been reviewed or dismissed/),
+      ).toBeInTheDocument();
+    });
+    expect(screen.queryByRole('button', { name: 'Review changes' })).not.toBeInTheDocument();
   });
 
   it('hides a notification from the widget when delete is clicked', async () => {

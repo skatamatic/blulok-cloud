@@ -36,7 +36,7 @@ function notificationNeedsFmsReview(metadata?: Record<string, unknown> | null): 
   return Number(metadata.pendingCount ?? 0) > 0;
 }
 
-function resolveFmsReviewSyncLogId(notification: {
+export function resolveFmsReviewSyncLogId(notification: {
   reference?: { type: string; id: string } | null;
   metadata?: Record<string, unknown> | null;
 }): string | null {
@@ -50,18 +50,76 @@ function resolveFmsReviewSyncLogId(notification: {
   return null;
 }
 
-export function getFmsNotificationReviewTarget(notification: {
-  notificationType: string;
-  facilityId?: string | null;
-  reference?: { type: string; id: string } | null;
-  metadata?: Record<string, unknown> | null;
-}): { facilityId: string; syncLogId: string } | null {
+export function collectFmsReviewSyncLogIds(
+  notifications: Array<{
+    notificationType: string;
+    reference?: { type: string; id: string } | null;
+    metadata?: Record<string, unknown> | null;
+  }>,
+): string[] {
+  const ids = new Set<string>();
+  for (const notification of notifications) {
+    if (!FMS_REVIEW_NOTIFICATION_TYPES.has(notification.notificationType)) continue;
+    const syncLogId = resolveFmsReviewSyncLogId(notification);
+    if (syncLogId) ids.add(syncLogId);
+  }
+  return [...ids];
+}
+
+export function getFmsNotificationReviewTarget(
+  notification: {
+    notificationType: string;
+    facilityId?: string | null;
+    reference?: { type: string; id: string } | null;
+    metadata?: Record<string, unknown> | null;
+  },
+  options?: { openSyncLogIds?: Set<string> | null },
+): { facilityId: string; syncLogId: string } | null {
   if (!FMS_REVIEW_NOTIFICATION_TYPES.has(notification.notificationType)) return null;
   if (!notificationNeedsFmsReview(notification.metadata)) return null;
   const facilityId = notification.facilityId;
   const syncLogId = resolveFmsReviewSyncLogId(notification);
   if (!facilityId || !syncLogId) return null;
+  if (options && 'openSyncLogIds' in options) {
+    if (options.openSyncLogIds == null) return null;
+    if (!options.openSyncLogIds.has(syncLogId)) return null;
+  }
   return { facilityId, syncLogId };
+}
+
+/** Stored metadata still says "needs review" after apply/dismiss. */
+export function isFmsNotificationReviewSettled(
+  notification: {
+    notificationType: string;
+    reference?: { type: string; id: string } | null;
+    metadata?: Record<string, unknown> | null;
+  },
+  openSyncLogIds: Set<string> | null,
+): boolean {
+  if (openSyncLogIds == null) return false;
+  if (!notificationNeedsFmsReview(notification.metadata)) return false;
+  const syncLogId = resolveFmsReviewSyncLogId(notification);
+  if (!syncLogId) return false;
+  return !openSyncLogIds.has(syncLogId);
+}
+
+export function formatSettledFmsReviewMessage(message: string): string {
+  const rewritten = message
+    .replace(
+      /\d+\s+changes?\s+need(?:s)?\s+your\s+review(?:\s+before\s+they\s+take\s+effect)?/gi,
+      'Those changes have already been reviewed or dismissed',
+    )
+    .replace(
+      /Open Review changes to see the cause and how to fix it\.?/gi,
+      'Nothing is left to review.',
+    )
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (rewritten !== message.trim()) return rewritten;
+  if (!/reviewed or dismissed/i.test(message)) {
+    return `${message.replace(/\s+/g, ' ').trim()} Those changes have already been reviewed or dismissed.`;
+  }
+  return rewritten;
 }
 
 export const FMS_PENDING_REVIEW_CHANGED = 'fms-pending-review-changed';

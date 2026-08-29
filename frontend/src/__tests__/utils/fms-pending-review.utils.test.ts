@@ -1,5 +1,6 @@
 import {
   formatPendingReviewLabel,
+  formatSettledFmsReviewMessage,
   getFmsNotificationReviewTarget,
   pickOpenPendingReviewLog,
 } from '@/utils/fms-pending-review.utils';
@@ -82,5 +83,28 @@ describe('getFmsNotificationReviewTarget', () => {
         metadata: { autoApplyBlocked: true, syncLogId: 'sync-2' },
       }),
     ).toEqual({ facilityId: 'fac-1', syncLogId: 'sync-2' });
+  });
+
+  it('hides the review target once live pending logs say that batch is gone', () => {
+    expect(
+      getFmsNotificationReviewTarget(
+        {
+          notificationType: 'fms_webhook_received',
+          facilityId: 'fac-1',
+          metadata: { requiresReview: true, syncLogId: 'sync-1' },
+        },
+        { openSyncLogIds: new Set() },
+      ),
+    ).toBeNull();
+  });
+
+  it('rewrites stored review copy after the queue is dismissed', () => {
+    expect(
+      formatSettledFmsReviewMessage(
+        'BluLok HQ received a tenant move-in update. 3 changes need your review before they take effect. (Tester Three · Unit 100)',
+      ),
+    ).toBe(
+      'BluLok HQ received a tenant move-in update. Those changes have already been reviewed or dismissed. (Tester Three · Unit 100)',
+    );
   });
 });

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useLayoutEffect, useCallback, useMemo, useRef } from 'react';
 import {
   BellIcon,
   ExclamationTriangleIcon,
@@ -24,7 +24,21 @@ import { useGlobalFacility } from '@/contexts/GlobalFacilityContext';
 import { useToast } from '@/contexts/ToastContext';
 import { useFMSSync } from '@/contexts/FMSSyncContext';
 import { apiService } from '@/services/api.service';
-import { getFmsNotificationReviewTarget } from '@/utils/fms-pending-review.utils';
+import {
+  FMS_PENDING_REVIEW_CHANGED,
+  collectFmsReviewSyncLogIds,
+  getFmsNotificationReviewTarget,
+} from '@/utils/fms-pending-review.utils';
+import {
+  describeFmsNotificationInstance,
+  groupDashboardNotifications,
+  loadRecordedFmsNotificationGroups,
+  pickGroupedFmsReviewTarget,
+  recordedFmsGroupsEqual,
+  rememberUnreadFmsNotificationGroups,
+  saveRecordedFmsNotificationGroups,
+} from '@/utils/fms-notification-group.utils';
+import { fmsService } from '@/services/fms.service';
 import { useWebSocketSubscription } from '@/hooks/useWebSocketSubscription';
 import type { UserNotificationApi } from '@/types/notifications.types';
 import {
@@ -132,6 +146,7 @@ function NotificationToneIcon({
 
 const NotificationCard: React.FC<{
   notification: DisplayNotification;
+  instances?: DisplayNotification[];
   expanded: boolean;
   compact: boolean;
   index: number;
@@ -143,6 +158,7 @@ const NotificationCard: React.FC<{
   formatTimestamp: (timestamp: Date, compact?: boolean) => string;
 }> = ({
   notification,
+  instances,
   expanded,
   compact,
   index,
@@ -153,13 +169,14 @@ const NotificationCard: React.FC<{
   onReviewFms,
   formatTimestamp,
 }) => {
+  const grouped = (instances?.length ?? 1) > 1;
   const expandable = notificationMessageNeedsExpansion(notification.message);
   const detailLines = getNotificationDetailLines(notification);
-  const structuredDetails = getNotificationStructuredDetails(notification);
+  const structuredDetails = grouped ? null : getNotificationStructuredDetails(notification);
   const visual = getNotificationCardVisual(notification);
   const urgencyBadge = getNotificationUrgencyBadge(notification);
   const hasExpandableDetails =
-    structuredDetails != null || detailLines.length > 1 || expandable;
+    grouped || structuredDetails != null || detailLines.length > 1 || expandable;
 
   return (
     <motion.div
@@ -209,6 +226,11 @@ const NotificationCard: React.FC<{
                 >
                   {notification.title}
                 </h4>
+                {grouped && (
+                  <span className="inline-flex items-center rounded-full px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide bg-gray-200 text-gray-600 dark:bg-gray-700 dark:text-gray-300">
+                    {instances!.length} updates
+                  </span>
+                )}
                 {urgencyBadge && (
                   <span
                     className={`inline-flex items-center rounded-full px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide ${urgencyBadge.className}`}
@@ -260,7 +282,33 @@ const NotificationCard: React.FC<{
                   >
                     {notification.message}
                   </p>
-                  {structuredDetails ? (
+                  {grouped && instances ? (
+                    <div className="rounded-lg border border-gray-100 bg-white/70 px-2.5 py-2 dark:border-gray-700/80 dark:bg-gray-900/50">
+                      <p className="text-[10px] font-semibold uppercase tracking-wide text-gray-400 dark:text-gray-500">
+                        Each update
+                      </p>
+                      <ul className="mt-1.5 space-y-2">
+                        {instances.map((instance) => {
+                          const described = describeFmsNotificationInstance(instance);
+                          return (
+                            <li key={instance.id} className="text-[11px] leading-snug">
+                              <div className="flex items-baseline justify-between gap-2">
+                                <span className="font-medium text-gray-700 dark:text-gray-200">
+                                  {described.eventLabel}
+                                </span>
+                                <span className="shrink-0 tabular-nums text-gray-400 dark:text-gray-500">
+                                  {formatTimestamp(instance.timestamp, true)}
+                                </span>
+                              </div>
+                              <p className="mt-0.5 text-gray-600 dark:text-gray-400">
+                                {described.message}
+                              </p>
+                            </li>
+                          );
+                        })}
+                      </ul>
+                    </div>
+                  ) : structuredDetails ? (
                     <div className="rounded-lg border border-gray-100 bg-white/70 px-2.5 py-2 dark:border-gray-700/80 dark:bg-gray-900/50">
                       <p className="text-[10px] font-semibold uppercase tracking-wide text-gray-400 dark:text-gray-500">
                         Details
@@ -422,6 +470,8 @@ export const NotificationsWidget: React.FC<NotificationsWidgetProps> = ({
   const [error, setError] = useState<string | null>(null);
   const [filter, setFilter] = useState<NotificationFilter>('all');
   const [expandedIds, setExpandedIds] = useState<Set<string>>(() => new Set());
+  const [openFmsReviewLogIds, setOpenFmsReviewLogIds] = useState<Set<string> | null>(null);
+  const [recordedFmsGroups, setRecordedFmsGroups] = useState(loadRecordedFmsNotificationGroups);
 
   const markAsRead = useCallback(
     async (notificationId: string) => {
@@ -450,23 +500,48 @@ export const NotificationsWidget: React.FC<NotificationsWidgetProps> = ({
   );
 
   const handleNotificationToggle = useCallback(
-    (notificationId: string) => {
+    (itemKey: string, instanceIds: string[]) => {
       setExpandedIds((prev) => {
-        const willExpand = !prev.has(notificationId);
+        const willExpand = !prev.has(itemKey);
         if (willExpand && !readOnly) {
-          void markAsRead(notificationId);
+          for (const instanceId of instanceIds) {
+            void markAsRead(instanceId);
+          }
         }
         const next = new Set(prev);
         if (willExpand) {
-          next.add(notificationId);
+          next.add(itemKey);
         } else {
-          next.delete(notificationId);
+          next.delete(itemKey);
         }
         return next;
       });
     },
     [readOnly, markAsRead],
   );
+
+  const refreshOpenFmsReviews = useCallback(async (notifications: DisplayNotification[]) => {
+    const syncLogIds = collectFmsReviewSyncLogIds(notifications);
+    if (syncLogIds.length === 0) {
+      setOpenFmsReviewLogIds(new Set());
+      return;
+    }
+
+    const open = new Set<string>();
+    await Promise.all(
+      syncLogIds.map(async (syncLogId) => {
+        try {
+          const log = await fmsService.getSyncDetails(syncLogId);
+          if (log.sync_status !== 'failed' && (log.changes_pending ?? 0) > 0) {
+            open.add(syncLogId);
+          }
+        } catch {
+          // Missing or unreadable log — treat as already reviewed/dismissed.
+        }
+      }),
+    );
+    setOpenFmsReviewLogIds(open);
+  }, []);
 
   const visibleForViewer = useCallback(
     (items: UserNotificationApi[]) => filterNotificationsForViewer(items, viewerRole),
@@ -600,9 +675,29 @@ export const NotificationsWidget: React.FC<NotificationsWidgetProps> = ({
     setRows([]);
     setTotalAvailable(0);
     setLoadedOffset(0);
+    setOpenFmsReviewLogIds(null);
     setIsLoading(true);
     void loadNotifications({ offset: 0 });
   }, [facilityFilter, includeHiddenInFetch, matchesScope, loadNotifications]);
+
+  const rowsRef = useRef(rows);
+  rowsRef.current = rows;
+  const fmsReviewLogKey = useMemo(
+    () => collectFmsReviewSyncLogIds(rows).sort().join(','),
+    [rows],
+  );
+
+  useEffect(() => {
+    void refreshOpenFmsReviews(rowsRef.current);
+  }, [fmsReviewLogKey, refreshOpenFmsReviews]);
+
+  useEffect(() => {
+    const onPendingReviewChanged = () => {
+      void refreshOpenFmsReviews(rowsRef.current);
+    };
+    window.addEventListener(FMS_PENDING_REVIEW_CHANGED, onPendingReviewChanged);
+    return () => window.removeEventListener(FMS_PENDING_REVIEW_CHANGED, onPendingReviewChanged);
+  }, [refreshOpenFmsReviews]);
 
   const handleWs = useCallback(
     (message: WsNotificationEvent) => {
@@ -729,7 +824,19 @@ export const NotificationsWidget: React.FC<NotificationsWidgetProps> = ({
     );
   }, [filteredNotifications]);
 
-  const displayedNotifications = sortedNotifications.slice(0, layout.listCap);
+  const groupedItems = useMemo(
+    () => groupDashboardNotifications(sortedNotifications, openFmsReviewLogIds, recordedFmsGroups),
+    [sortedNotifications, openFmsReviewLogIds, recordedFmsGroups],
+  );
+
+  useLayoutEffect(() => {
+    const next = rememberUnreadFmsNotificationGroups(groupedItems, recordedFmsGroups);
+    if (recordedFmsGroupsEqual(next, recordedFmsGroups)) return;
+    setRecordedFmsGroups(next);
+    saveRecordedFmsNotificationGroups(next);
+  }, [groupedItems, recordedFmsGroups]);
+
+  const displayedItems = groupedItems.slice(0, layout.listCap);
   const visibleRows = useMemo(() => rows.filter((n) => !n.isHidden), [rows]);
   const unreadCount = useMemo(() => visibleRows.filter((n) => !n.isRead).length, [visibleRows]);
   const hiddenCount = useMemo(() => rows.filter((n) => n.isHidden).length, [rows]);
@@ -773,24 +880,42 @@ export const NotificationsWidget: React.FC<NotificationsWidgetProps> = ({
   );
 
   const handleReviewFms = useCallback(
-    async (notification: DisplayNotification) => {
-      const target = getFmsNotificationReviewTarget(notification);
+    async (instances: DisplayNotification[]) => {
+      const target = pickGroupedFmsReviewTarget(instances, openFmsReviewLogIds);
       if (!target) return;
       try {
         await openPendingReview(
           target.facilityId,
           target.syncLogId,
-          resolveFacilityLabel(notification.facilityId) ?? undefined,
+          resolveFacilityLabel(instances[0]?.facilityId) ?? undefined,
         );
       } catch (error) {
+        const message = error instanceof Error ? error.message : 'Please try again';
+        if (/no pending changes/i.test(message)) {
+          setOpenFmsReviewLogIds((prev) => {
+            const next = new Set(prev ?? []);
+            next.delete(target.syncLogId);
+            return next;
+          });
+          return;
+        }
         addToast({
           type: 'error',
           title: 'Could not open review',
-          message: error instanceof Error ? error.message : 'Please try again',
+          message,
         });
       }
     },
-    [addToast, openPendingReview, resolveFacilityLabel],
+    [addToast, openFmsReviewLogIds, openPendingReview, resolveFacilityLabel],
+  );
+
+  const hideNotificationGroup = useCallback(
+    (instanceIds: string[]) => {
+      for (const instanceId of instanceIds) {
+        void hideNotification(instanceId);
+      }
+    },
+    [hideNotification],
   );
 
   return (
@@ -893,23 +1018,29 @@ export const NotificationsWidget: React.FC<NotificationsWidgetProps> = ({
             </button>
           </div>
         ) : size !== 'small' ? (
-          displayedNotifications.length > 0 ? (
+          displayedItems.length > 0 ? (
           <div className={`${WIDGET_LIST_SCROLL_CLASS} space-y-2`}>
             <AnimatePresence>
-                {displayedNotifications.map((notification, index) => (
+                {displayedItems.map((item, index) => (
                   <NotificationCard
-                    key={notification.id}
-                    notification={notification}
-                    expanded={expandedIds.has(notification.id)}
+                    key={item.key}
+                    notification={item.notification}
+                    instances={item.instances}
+                    expanded={expandedIds.has(item.key)}
                     compact={size === 'medium'}
                     index={index}
-                    facilityLabel={resolveFacilityLabel(notification.facilityId)}
+                    facilityLabel={resolveFacilityLabel(item.notification.facilityId)}
                     readOnly={readOnly}
-                    onToggle={() => handleNotificationToggle(notification.id)}
-                    onHide={() => void hideNotification(notification.id)}
+                    onToggle={() =>
+                      handleNotificationToggle(
+                        item.key,
+                        item.instances.map((instance) => instance.id),
+                      )
+                    }
+                    onHide={() => hideNotificationGroup(item.instances.map((instance) => instance.id))}
                     onReviewFms={
-                      getFmsNotificationReviewTarget(notification)
-                        ? () => void handleReviewFms(notification)
+                      pickGroupedFmsReviewTarget(item.instances, openFmsReviewLogIds)
+                        ? () => void handleReviewFms(item.instances)
                         : undefined
                     }
                     formatTimestamp={formatTimestamp}
@@ -945,7 +1076,7 @@ export const NotificationsWidget: React.FC<NotificationsWidgetProps> = ({
           )
         ) : null}
 
-        {hasMoreNotifications && displayedNotifications.length > 0 && (
+        {hasMoreNotifications && displayedItems.length > 0 && (
           <div className="mt-2 shrink-0">
             <button
               type="button"
