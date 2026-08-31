@@ -2761,6 +2761,166 @@ async function run() {
     created.users.push(phoneTenantUser.id);
     ok(`Phone-only FMS tenant synced: user=${phoneTenantUser.id} login=${phoneLoginId}`);
 
+    step('FMS shared phone + distinct emails creates two loginable users');
+    const sharedPhone = `+1250${String(nowTs).slice(-7)}`;
+    const sharedEmailA = `e2e-shared-a-${nowTs}@example.com`;
+    const sharedEmailB = `e2e-shared-b-${nowTs}@example.com`;
+    const extSharedA = `ext-shared-a-${nowTs}`;
+    const extSharedB = `ext-shared-b-${nowTs}`;
+    const extSharedReject = `ext-shared-reject-${nowTs}`;
+    datasetPhase1.tenants.push(
+      {
+        id: extSharedA,
+        email: sharedEmailA,
+        first_name: 'SharedA',
+        last_name: 'Tenant',
+        phone_numbers: [{ number: sharedPhone, primary: true }],
+        active: true,
+      },
+      {
+        id: extSharedB,
+        email: sharedEmailB,
+        first_name: 'SharedB',
+        last_name: 'Tenant',
+        phone_numbers: [{ number: sharedPhone, primary: true }],
+        active: true,
+      },
+    );
+    const sharedSyncRes = await axios.post(`${API_BASE}/fms/sync/${facilityId}`, {}, { headers: { Authorization: `Bearer ${token}` } });
+    const sharedSyncLogId = sharedSyncRes.data?.result?.syncLogId;
+    if (!sharedSyncLogId) throw new Error('Shared-phone FMS sync missing syncLogId');
+    const sharedPending = await axios.get(`${API_BASE}/fms/changes/${sharedSyncLogId}/pending`, { headers: { Authorization: `Bearer ${token}` } });
+    const sharedAdds = (sharedPending.data?.changes || []).filter(
+      (c) => c.entity_type === 'tenant'
+        && c.change_type === 'tenant_added'
+        && [extSharedA, extSharedB].includes(c.after_data?.externalId),
+    );
+    if (sharedAdds.length !== 2) throw new Error(`Expected 2 shared-phone tenant_added rows, got ${sharedAdds.length}`);
+    if (sharedAdds.some((c) => c.is_valid === false)) {
+      throw new Error(`Shared-phone tenants incorrectly invalid: ${JSON.stringify(sharedAdds.map((c) => c.validation_errors))}`);
+    }
+    const sharedIds = sharedAdds.map((c) => c.id);
+    await axios.post(`${API_BASE}/fms/changes/review`, {
+      syncLogId: sharedSyncLogId,
+      changeIds: sharedIds,
+      accepted: true,
+    }, { headers: { Authorization: `Bearer ${token}` } });
+    const sharedApply = await axios.post(`${API_BASE}/fms/changes/apply`, {
+      syncLogId: sharedSyncLogId,
+      changeIds: sharedIds,
+    }, { headers: { Authorization: `Bearer ${token}` } });
+    if (sharedApply.data?.result?.changesFailed > 0) {
+      throw new Error(`Shared-phone apply failed: ${JSON.stringify(sharedApply.data?.result?.errors || [])}`);
+    }
+
+    async function findUserByEmail(authToken, email) {
+      const res = await axios.get(`${API_BASE}/users`, {
+        headers: { Authorization: `Bearer ${authToken}` },
+        params: { search: email, limit: 20 },
+      });
+      return (res.data?.users || []).find((u) => (u.email || '').toLowerCase() === email.toLowerCase()) || null;
+    }
+
+    const sharedUserA = await findUserByEmail(token, sharedEmailA);
+    const sharedUserB = await findUserByEmail(token, sharedEmailB);
+    if (!sharedUserA?.id || !sharedUserB?.id) throw new Error('Shared-phone FMS users were not created');
+    async function loginIdentifierFor(user) {
+      const fromList = (user.loginIdentifier || user.login_identifier || '').toLowerCase();
+      if (fromList) return fromList;
+      const details = await axios.get(`${API_BASE}/users/${user.id}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const row = details.data?.user || {};
+      return (row.loginIdentifier || row.login_identifier || '').toLowerCase();
+    }
+    const loginA = await loginIdentifierFor(sharedUserA);
+    const loginB = await loginIdentifierFor(sharedUserB);
+    if (loginA !== sharedEmailA.toLowerCase() || loginB !== sharedEmailB.toLowerCase()) {
+      throw new Error(`Expected email login identifiers, got A=${loginA} B=${loginB}`);
+    }
+    created.users.push(sharedUserA.id, sharedUserB.id);
+
+    const loginEmailA = await axios.post(`${API_BASE}/auth/login`, {
+      identifier: sharedEmailA,
+      password: 'wrong-password',
+    }).catch((err) => err.response);
+    if (!loginEmailA || loginEmailA.status === 404) {
+      throw new Error('Email identifier was not resolved for shared-phone user A');
+    }
+    if ((loginEmailA.data?.message || '').match(/Email or phone is required/i)) {
+      throw new Error('Shared-phone user A email was not accepted as a login identifier');
+    }
+    const loginSharedPhone = await axios.post(`${API_BASE}/auth/login`, {
+      identifier: sharedPhone,
+      password: 'wrong-password',
+    }).catch((err) => err.response);
+    if (loginSharedPhone?.data?.success === true) {
+      throw new Error('Shared phone unexpectedly worked as a login identifier');
+    }
+    ok(`Shared-phone tenants created with email logins (${sharedEmailA}, ${sharedEmailB})`);
+
+    step('FMS rejects a third tenant with no exclusive handle');
+    datasetPhase1.tenants.push({
+      id: extSharedReject,
+      email: null,
+      first_name: 'SharedReject',
+      last_name: 'Tenant',
+      phone_numbers: [{ number: sharedPhone, primary: true }],
+      active: true,
+    });
+    const rejectSyncRes = await axios.post(`${API_BASE}/fms/sync/${facilityId}`, {}, { headers: { Authorization: `Bearer ${token}` } });
+    const rejectSyncLogId = rejectSyncRes.data?.result?.syncLogId;
+    if (!rejectSyncLogId) throw new Error('Third-tenant FMS sync missing syncLogId');
+    const rejectPending = await axios.get(`${API_BASE}/fms/changes/${rejectSyncLogId}/pending`, { headers: { Authorization: `Bearer ${token}` } });
+    const rejectChange = (rejectPending.data?.changes || []).find(
+      (c) => c.entity_type === 'tenant'
+        && c.change_type === 'tenant_added'
+        && c.after_data?.externalId === extSharedReject,
+    );
+    if (!rejectChange) throw new Error('Third shared-phone tenant change not detected');
+    if (rejectChange.is_valid !== false) {
+      throw new Error('Third tenant with no exclusive handle was incorrectly valid');
+    }
+    if (!(rejectChange.validation_errors || []).join(' ').match(/unique email or a unique phone/i)) {
+      throw new Error(`Third tenant missing handle error: ${JSON.stringify(rejectChange.validation_errors)}`);
+    }
+    ok('Third tenant with shared email+phone flagged NO_UNIQUE_LOGIN_HANDLE');
+
+    step('Manual Add User allows unique email + shared phone and rejects phone-only / stolen handle');
+    const manualSharedEmail = `e2e-manual-shared-${nowTs}@example.com`;
+    const manualCreate = await axios.post(`${API_BASE}/users`, {
+      email: manualSharedEmail,
+      password: 'TestUser123!',
+      firstName: 'Manual',
+      lastName: 'Shared',
+      role: 'tenant',
+      phoneNumber: sharedPhone,
+      facilityIds: [facilityId],
+    }, { headers: { Authorization: `Bearer ${token}` }, validateStatus: () => true });
+    if (!manualCreate.data?.success) {
+      throw new Error(`Manual unique-email + shared-phone create failed: ${manualCreate.data?.message}`);
+    }
+    created.users.push(manualCreate.data.userId);
+    const phoneOnlyCreate = await axios.post(`${API_BASE}/users`, {
+      password: 'TestUser123!',
+      firstName: 'PhoneOnly',
+      lastName: 'Shared',
+      role: 'tenant',
+      phoneNumber: sharedPhone,
+      facilityIds: [facilityId],
+    }, { headers: { Authorization: `Bearer ${token}` }, validateStatus: () => true });
+    if (phoneOnlyCreate.status < 400) {
+      throw new Error('Phone-only create with a shared phone should have failed');
+    }
+    const stealHandle = await axios.put(`${API_BASE}/users/${sharedUserB.id}`, {
+      email: sharedEmailA,
+      phoneNumber: sharedPhone,
+    }, { headers: { Authorization: `Bearer ${token}` }, validateStatus: () => true });
+    if (stealHandle.status !== 400 || stealHandle.data?.code !== 'NO_UNIQUE_LOGIN_HANDLE') {
+      throw new Error(`Expected NO_UNIQUE_LOGIN_HANDLE on stolen handle PUT, got ${stealHandle.status} ${JSON.stringify(stealHandle.data)}`);
+    }
+    ok('Manual user allow/deny and PUT last-handle reject');
+
     step('FMS sync creates placeholder tenant (no email or phone)');
     const extPlaceholderTenantId = `ext-placeholder-tenant-${nowTs}`;
     datasetPhase1.tenants.push({

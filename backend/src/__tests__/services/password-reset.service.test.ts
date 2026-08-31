@@ -85,7 +85,7 @@ describe('PasswordResetService', () => {
 
   describe('requestReset', () => {
     it('should generate token and send SMS when user has phone', async () => {
-      (UserModel.findByEmail as jest.Mock).mockResolvedValue(mockUser);
+      (UserModel.findByLoginIdentifier as jest.Mock).mockResolvedValue(mockUser);
 
       const result = await service.requestReset({ email: 'test@example.com' });
 
@@ -110,7 +110,7 @@ describe('PasswordResetService', () => {
     });
 
     it('should send email when SMS is disabled but email is enabled', async () => {
-      (UserModel.findByEmail as jest.Mock).mockResolvedValue({ ...mockUser, phone_number: null });
+      (UserModel.findByLoginIdentifier as jest.Mock).mockResolvedValue({ ...mockUser, phone_number: null });
       (mockNotificationService.sendPasswordReset as jest.Mock).mockResolvedValue({
         delivered: ['email'],
         errors: [],
@@ -127,7 +127,7 @@ describe('PasswordResetService', () => {
     });
 
     it('passes both contacts so the notification service owns channel selection', async () => {
-      (UserModel.findByEmail as jest.Mock).mockResolvedValue(mockUser);
+      (UserModel.findByLoginIdentifier as jest.Mock).mockResolvedValue(mockUser);
 
       await service.requestReset({ email: 'test@example.com' });
 
@@ -140,7 +140,7 @@ describe('PasswordResetService', () => {
     });
 
     it('propagates delivery failure instead of reporting a successful reset', async () => {
-      (UserModel.findByEmail as jest.Mock).mockResolvedValue(mockUser);
+      (UserModel.findByLoginIdentifier as jest.Mock).mockResolvedValue(mockUser);
       (mockNotificationService.sendPasswordReset as jest.Mock).mockRejectedValue(
         new Error('Failed to send text.'),
       );
@@ -151,14 +151,25 @@ describe('PasswordResetService', () => {
     });
 
     it('should throw error when user is not found', async () => {
-      (UserModel.findByEmail as jest.Mock).mockResolvedValue(null);
+      (UserModel.findByLoginIdentifier as jest.Mock).mockResolvedValue(null);
+      (UserModel.findAllByEmail as jest.Mock).mockResolvedValue([]);
 
       await expect(service.requestReset({ email: 'nonexistent@example.com' }))
         .rejects.toThrow('If an account exists');
     });
 
+    it('rejects reset when the contact is not a login identifier', async () => {
+      (UserModel.findByLoginIdentifier as jest.Mock).mockResolvedValue(null);
+      (UserModel.findAllByEmail as jest.Mock).mockResolvedValue([
+        { ...mockUser, login_identifier: '+15551234567' },
+      ]);
+
+      await expect(service.requestReset({ email: 'test@example.com' }))
+        .rejects.toMatchObject({ code: 'AMBIGUOUS_CONTACT' });
+    });
+
     it('should reject FMS placeholder users with generic missing-account message', async () => {
-      (UserModel.findByEmail as jest.Mock).mockResolvedValue({
+      (UserModel.findByLoginIdentifier as jest.Mock).mockResolvedValue({
         ...mockUser,
         is_placeholder: true,
         login_identifier: 'fms-ph:fac:ext',
@@ -173,7 +184,7 @@ describe('PasswordResetService', () => {
 
     it('should throw error when user is inactive', async () => {
       const inactiveUser = { ...mockUser, is_active: false };
-      (UserModel.findByEmail as jest.Mock).mockResolvedValue(inactiveUser);
+      (UserModel.findByLoginIdentifier as jest.Mock).mockResolvedValue(inactiveUser);
 
       await expect(service.requestReset({ email: 'test@example.com' }))
         .rejects.toThrow('Account is not active');

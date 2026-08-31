@@ -19,7 +19,7 @@ export function isFmsMappingMarkedRemoved(
  */
 export function isFmsUserRemovedFromFacility(
   mapping: { metadata?: Record<string, unknown> | null | undefined } | null | undefined,
-  user: { is_active?: boolean | number } | null | undefined,
+  user: { is_active?: boolean | number | null } | null | undefined,
   facilityAssignmentCount: number,
 ): boolean {
   if (mapping && isFmsMappingMarkedRemoved(mapping.metadata)) {

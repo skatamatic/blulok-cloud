@@ -1,5 +1,4 @@
 import {
-  buildFacilityUserLookupMaps,
   deriveFmsTenantValidationErrors,
   findExistingUserForFmsTenant,
   formatFmsTenantContactLabel,
@@ -182,16 +181,12 @@ describe('fms-tenant-validation.utils', () => {
         login_identifier: 'known@test.com',
       },
     ];
-    const maps = buildFacilityUserLookupMaps(users);
 
     it('matches existing user by normalized phone when email is missing', () => {
       const found = findExistingUserForFmsTenant(
         { email: null, phone: '3450899583' },
         undefined,
-        maps.usersById,
-        maps.usersByEmail,
-        maps.usersByPhone,
-        maps.usersByLoginIdentifier,
+        users,
       );
       expect(found?.id).toBe('user-phone');
     });
@@ -200,12 +195,27 @@ describe('fms-tenant-validation.utils', () => {
       const found = findExistingUserForFmsTenant(
         { email: 'known@test.com', phone: '+13450899583' },
         { internal_id: 'user-phone' },
-        maps.usersById,
-        maps.usersByEmail,
-        maps.usersByPhone,
-        maps.usersByLoginIdentifier,
+        users,
       );
       expect(found?.id).toBe('user-phone');
+    });
+
+    it('does not match a shared phone when the tenant also has an email', () => {
+      const shared = [
+        ...users,
+        {
+          id: 'user-shared-phone',
+          email: 'other@test.com',
+          phone_number: '+13450899583',
+          login_identifier: 'other@test.com',
+        },
+      ];
+      const found = findExistingUserForFmsTenant(
+        { email: 'brand-new@test.com', phone: '+13450899583' },
+        undefined,
+        shared,
+      );
+      expect(found).toBeUndefined();
     });
   });
 });

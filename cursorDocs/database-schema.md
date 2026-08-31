@@ -29,7 +29,9 @@ BluLok Cloud uses MySQL as the primary database with Knex.js as the query builde
 ```sql
 CREATE TABLE users (
   id VARCHAR(36) PRIMARY KEY DEFAULT (UUID()),
-  email VARCHAR(255) NOT NULL UNIQUE,
+  email VARCHAR(255) NULL,
+  login_identifier VARCHAR(255) NOT NULL UNIQUE,
+  phone_number VARCHAR(32) NULL,
   password_hash VARCHAR(255) NOT NULL,
   first_name VARCHAR(100) NOT NULL,
   last_name VARCHAR(100) NOT NULL,
@@ -50,7 +52,7 @@ CREATE TABLE users (
 
 **Purpose**: Store user authentication and profile information  
 **Key Features**: 
-- Email-based authentication
+- Unique `login_identifier` (exclusive email or exclusive phone). Email and phone are shareable contacts (migration `105_drop_user_contact_uniques`)
 - Role-based access control
 - Soft delete capability
 - Login tracking

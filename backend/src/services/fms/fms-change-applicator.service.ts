@@ -300,6 +300,7 @@ export class FMSChangeApplicatorService {
         ? phoneE164.toLowerCase()
         : '';
     const isPlaceholderCreate = !preferredIdentifier;
+    const { UserLoginIdentityService } = await import('@/services/user-login-identity.service');
 
     const {
       buildFmsPlaceholderLoginIdentifier,
@@ -318,27 +319,25 @@ export class FMSChangeApplicatorService {
       existingUser = (await UserModel.findById(priorMapping.internal_id)) as User | undefined;
     }
 
-    if (!existingUser && preferredIdentifier) {
-      existingUser = await UserModel.findByLoginIdentifier(preferredIdentifier);
-    }
-    if (!existingUser && (rawEmail || phoneE164)) {
-      const byEmail = rawEmail ? await UserModel.findByEmail(rawEmail.toLowerCase()) : undefined;
-      const byPhone = phoneE164 ? await UserModel.findByPhone(phoneE164) : undefined;
-
-      if (byEmail && byPhone && byEmail.id !== byPhone.id) {
+    if (!existingUser) {
+      const match = await UserLoginIdentityService.matchFmsTenant(
+        { email: rawEmail || null, phone: rawPhone || null },
+        priorMapping ? { internal_id: priorMapping.internal_id } : undefined,
+        [],
+      );
+      if (match.kind === 'conflict') {
         logger.error('[FMS] Tenant email/phone conflict with existing users', {
           fms_sync: true,
           sync_log_id: change.sync_log_id,
           facility_id: facilityId,
           tenant_email: rawEmail || null,
           tenant_phone: rawPhone || null,
-          email_user_id: byEmail.id,
-          phone_user_id: byPhone.id,
         });
-        throw new Error('FMS tenant email/phone conflict with existing users');
+        throw new Error(match.message);
       }
-
-      existingUser = byEmail || byPhone;
+      if (match.kind === 'user') {
+        existingUser = (await UserModel.findById(match.user.id)) as User | undefined;
+      }
     }
 
     let user: User;
@@ -360,6 +359,7 @@ export class FMSChangeApplicatorService {
       const { requirePlaceholderUpgradeUpdates } = await import(
         '@/services/fms/fms-placeholder-upgrade'
       );
+      let rebalance: Array<{ id: string; loginIdentifier: string }> = [];
 
       if (wasPlaceholder && preferredIdentifier) {
         const upgrade = await requirePlaceholderUpgradeUpdates(existingUser.id, {
@@ -367,23 +367,22 @@ export class FMSChangeApplicatorService {
           phoneE164: phoneE164 || null,
         });
         if (upgrade) {
-          Object.assign(updates, upgrade);
+          Object.assign(updates, upgrade.updates);
+          rebalance = upgrade.rebalance;
         }
-      } else {
-        if (normalizedEmail && existingUser.email !== normalizedEmail) {
-          updates.email = normalizedEmail;
+      } else if (preferredIdentifier) {
+        const plan = await UserLoginIdentityService.planContactChange({
+          userId: existingUser.id,
+          email: normalizedEmail,
+          phone: phoneE164 || null,
+        });
+        if (!plan.ok) {
+          throw new Error(plan.message);
         }
-        if (phoneE164 && existingUser.phone_number !== phoneE164) {
-          updates.phone_number = phoneE164;
-        }
-        const newLoginIdentifier =
-          preferredIdentifier ||
-          existingUser.email ||
-          existingUser.phone_number ||
-          existingUser.login_identifier;
-        if (newLoginIdentifier && existingUser.login_identifier !== newLoginIdentifier) {
-          updates.login_identifier = newLoginIdentifier.toLowerCase();
-        }
+        updates.email = normalizedEmail;
+        updates.phone_number = phoneE164 || null;
+        updates.login_identifier = plan.loginIdentifier;
+        rebalance = plan.rebalance;
       }
 
       if (tenantData.firstName && existingUser.first_name !== tenantData.firstName) {
@@ -395,6 +394,7 @@ export class FMSChangeApplicatorService {
 
       if (Object.keys(updates).length > 0) {
         await UserModel.updateById(existingUser.id, updates as any);
+        await UserLoginIdentityService.applyRebalance(rebalance);
         user = (await UserModel.findById(existingUser.id)) as User;
       } else {
         user = existingUser;
@@ -424,8 +424,15 @@ export class FMSChangeApplicatorService {
           }
         );
       } else {
+        const createPlan = await UserLoginIdentityService.planContactChange({
+          email: rawEmail || null,
+          phone: phoneE164 || null,
+        });
+        if (!createPlan.ok) {
+          throw new Error(createPlan.message);
+        }
         user = (await UserModel.create({
-          login_identifier: preferredIdentifier,
+          login_identifier: createPlan.loginIdentifier || preferredIdentifier,
           email: rawEmail || null,
           phone_number: phoneE164 || null,
           first_name: tenantData.firstName,
@@ -436,6 +443,7 @@ export class FMSChangeApplicatorService {
           is_placeholder: false,
           requires_password_reset: true,
         })) as any;
+        await UserLoginIdentityService.applyRebalance(createPlan.rebalance);
 
         logger.info(
           `[FMS] Created tenant user: ${user.email || user.phone_number} (${user.id}) by ${performedBy}`,
@@ -750,28 +758,35 @@ export class FMSChangeApplicatorService {
       ...(tenantData.lastName != null ? { last_name: tenantData.lastName } : {}),
     };
 
+    const { UserLoginIdentityService } = await import('@/services/user-login-identity.service');
     const wasPlaceholder = isPlaceholderUser(user as User);
+    let updateRebalance: Array<{ id: string; loginIdentifier: string }> = [];
     if (wasPlaceholder && preferredIdentifier) {
       const upgrade = await requirePlaceholderUpgradeUpdates(change.internal_id, {
         email: rawEmail ? rawEmail.toLowerCase() : null,
         phoneE164: phoneE164 || null,
       });
       if (upgrade) {
-        Object.assign(profileUpdates, upgrade);
+        Object.assign(profileUpdates, upgrade.updates);
+        updateRebalance = upgrade.rebalance;
       }
     } else if (preferredIdentifier) {
-      if (rawEmail && (user as User).email !== rawEmail.toLowerCase()) {
-        profileUpdates.email = rawEmail.toLowerCase();
+      const plan = await UserLoginIdentityService.planContactChange({
+        userId: change.internal_id,
+        email: rawEmail ? rawEmail.toLowerCase() : null,
+        phone: phoneE164 || null,
+      });
+      if (!plan.ok) {
+        throw new Error(plan.message);
       }
-      if (phoneE164 && (user as User).phone_number !== phoneE164) {
-        profileUpdates.phone_number = phoneE164;
-      }
-      if ((user as User).login_identifier !== preferredIdentifier) {
-        profileUpdates.login_identifier = preferredIdentifier;
-      }
+      profileUpdates.email = rawEmail ? rawEmail.toLowerCase() : null;
+      profileUpdates.phone_number = phoneE164 || null;
+      profileUpdates.login_identifier = plan.loginIdentifier;
+      updateRebalance = plan.rebalance;
     }
 
     await UserModel.updateById(change.internal_id, profileUpdates as any);
+    await UserLoginIdentityService.applyRebalance(updateRebalance);
 
     const config = ctx.config ?? (await this.models.fmsConfigModel.findByFacilityId(facilityId));
 

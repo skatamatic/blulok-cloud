@@ -11,6 +11,10 @@ describe('AuthService', () => {
     jest.clearAllMocks();
   });
 
+  afterEach(() => {
+    jest.restoreAllMocks();
+  });
+
   describe('login', () => {
     it('should login with correct credentials', async () => {
       const userData = {
@@ -115,13 +119,13 @@ describe('AuthService', () => {
       expect(r.message).toMatch(/Database temporarily unavailable/i);
     });
 
-    it('falls back to findByEmail when login identifier misses', async () => {
+    it('falls back to findByEmail only when login_identifier is missing', async () => {
       jest.spyOn(phoneUtil, 'toE164').mockReturnValue('');
       jest.spyOn(UserModel, 'findByLoginIdentifier').mockResolvedValue(undefined as any);
       jest.spyOn(UserModel, 'findByEmail').mockResolvedValue({
         id: 'u-legacy',
         email: 'legacy@example.com',
-        login_identifier: 'legacy@example.com',
+        login_identifier: null,
         password_hash: 'hashed-password',
         first_name: 'L',
         last_name: 'E',
@@ -134,6 +138,25 @@ describe('AuthService', () => {
 
       const r = await AuthService.login({ identifier: 'legacy@example.com', password: 'password123' });
       expect(r.success).toBe(true);
+    });
+
+    it('does not log in via a shared email contact when login_identifier is set', async () => {
+      jest.spyOn(phoneUtil, 'toE164').mockReturnValue('');
+      jest.spyOn(UserModel, 'findByLoginIdentifier').mockResolvedValue(undefined as any);
+      jest.spyOn(UserModel, 'findByEmail').mockResolvedValue({
+        id: 'u-shared',
+        email: 'shared@example.com',
+        login_identifier: '+15551234567',
+        password_hash: 'hashed-password',
+        first_name: 'S',
+        last_name: 'H',
+        role: UserRole.TENANT,
+        is_active: true,
+      } as any);
+
+      const r = await AuthService.login({ identifier: 'shared@example.com', password: 'password123' });
+      expect(r.success).toBe(false);
+      expect(r.message).toMatch(/Invalid email or password/i);
     });
   });
 
@@ -272,7 +295,9 @@ describe('AuthService', () => {
         role: UserRole.TENANT,
       };
 
-      jest.spyOn(UserModel, 'findByEmail').mockResolvedValue(undefined);
+      jest.spyOn(UserModel, 'findAllByEmail').mockResolvedValue([]);
+      jest.spyOn(UserModel, 'findAllByPhone').mockResolvedValue([]);
+      jest.spyOn(UserModel, 'findAllByLoginIdentifiers').mockResolvedValue([]);
       jest.spyOn(UserModel, 'create').mockResolvedValue({ id: 'new-user-id' } as any);
 
       const result = await AuthService.createUser(userData);
@@ -290,10 +315,16 @@ describe('AuthService', () => {
         role: UserRole.TENANT,
       };
 
-      jest.spyOn(UserModel, 'findByEmail').mockResolvedValue({
+      const existing = {
         id: 'existing-user',
+        email: 'existing@example.com',
+        login_identifier: 'existing@example.com',
         is_active: true,
-      } as any);
+      };
+      jest.spyOn(UserModel, 'findAllByEmail').mockResolvedValue([existing] as any);
+      jest.spyOn(UserModel, 'findAllByPhone').mockResolvedValue([]);
+      jest.spyOn(UserModel, 'findAllByLoginIdentifiers').mockResolvedValue([existing] as any);
+      jest.spyOn(UserModel, 'findById').mockResolvedValue(existing as any);
 
       const result = await AuthService.createUser(userData);
 
@@ -302,15 +333,20 @@ describe('AuthService', () => {
     });
 
     it('returns USER_INACTIVE when email matches an inactive user', async () => {
-      jest.spyOn(UserModel, 'findByEmail').mockResolvedValue({
+      const inactive = {
         id: 'inactive-1',
         email: 'gone@example.com',
+        login_identifier: 'gone@example.com',
         first_name: 'Gone',
         last_name: 'User',
         role: UserRole.TENANT,
         is_active: false,
         phone_number: null,
-      } as any);
+      };
+      jest.spyOn(UserModel, 'findAllByEmail').mockResolvedValue([inactive] as any);
+      jest.spyOn(UserModel, 'findAllByPhone').mockResolvedValue([]);
+      jest.spyOn(UserModel, 'findAllByLoginIdentifiers').mockResolvedValue([inactive] as any);
+      jest.spyOn(UserModel, 'findById').mockResolvedValue(inactive as any);
 
       const result = await AuthService.createUser({
         email: 'gone@example.com',
@@ -342,8 +378,12 @@ describe('AuthService', () => {
         is_active: false,
         phone_number: null,
       };
-      jest.spyOn(UserModel, 'findByEmail').mockResolvedValue(inactive as any);
+      jest.spyOn(UserModel, 'findAllByEmail').mockResolvedValue([inactive] as any);
+      jest.spyOn(UserModel, 'findAllByPhone').mockResolvedValue([]);
+      jest.spyOn(UserModel, 'findAllByLoginIdentifiers').mockResolvedValue([inactive] as any);
+      jest.spyOn(UserModel, 'findById').mockResolvedValue(inactive as any);
       jest.spyOn(UserModel, 'updateById').mockResolvedValue(undefined as any);
+      jest.spyOn(UserModel, 'setPhoneNumber').mockResolvedValue(undefined as any);
       jest.spyOn(UserModel, 'activateUser').mockResolvedValue({ ...inactive, is_active: true } as any);
 
       const result = await AuthService.createUser(
@@ -373,18 +413,22 @@ describe('AuthService', () => {
       expect(UserModel.activateUser).toHaveBeenCalledWith('inactive-1');
     });
 
-    it('returns USER_INACTIVE when phone matches an inactive user', async () => {
-      jest.spyOn(UserModel, 'findByEmail').mockResolvedValue(undefined as any);
-      jest.spyOn(phoneUtil, 'toE164').mockReturnValue('+15551234567');
-      jest.spyOn(UserModel, 'findByPhone').mockResolvedValue({
+    it('rejects creating a new email on a phone-only user’s exclusive phone', async () => {
+      const inactivePhone = {
         id: 'inactive-phone',
-        email: 'old@example.com',
+        email: null,
+        login_identifier: '+15551234567',
         first_name: 'Old',
         last_name: 'Phone',
         role: UserRole.TENANT,
         is_active: false,
         phone_number: '+15551234567',
-      } as any);
+      };
+      jest.spyOn(UserModel, 'findAllByEmail').mockResolvedValue([]);
+      jest.spyOn(phoneUtil, 'toE164').mockReturnValue('+15551234567');
+      jest.spyOn(UserModel, 'findAllByPhone').mockResolvedValue([inactivePhone] as any);
+      jest.spyOn(UserModel, 'findAllByLoginIdentifiers').mockResolvedValue([inactivePhone] as any);
+      jest.spyOn(UserModel, 'findById').mockResolvedValue(inactivePhone as any);
 
       const result = await AuthService.createUser({
         email: 'brandnew@example.com',
@@ -396,20 +440,33 @@ describe('AuthService', () => {
       });
 
       expect(result.success).toBe(false);
-      expect(result.code).toBe('USER_INACTIVE');
-      expect(result.inactiveUser?.id).toBe('inactive-phone');
+      expect(result.code).toBe('NO_UNIQUE_LOGIN_HANDLE');
     });
 
     it('rejects when email and phone belong to different users', async () => {
-      jest.spyOn(UserModel, 'findByEmail').mockResolvedValue({
+      const userA = {
         id: 'user-a',
-        is_active: false,
-      } as any);
-      jest.spyOn(phoneUtil, 'toE164').mockReturnValue('+15559876543');
-      jest.spyOn(UserModel, 'findByPhone').mockResolvedValue({
+        email: 'a@example.com',
+        phone_number: '+15550000001',
+        login_identifier: 'a@example.com',
+        is_active: true,
+      };
+      const userB = {
         id: 'user-b',
-        is_active: false,
-      } as any);
+        email: 'b@example.com',
+        phone_number: '+15559876543',
+        login_identifier: '+15559876543',
+        is_active: true,
+      };
+      jest.spyOn(UserModel, 'findAllByEmail').mockResolvedValue([userA] as any);
+      jest.spyOn(phoneUtil, 'toE164').mockImplementation((value: string) => (
+        String(value).startsWith('+') ? String(value) : '+15559876543'
+      ));
+      jest.spyOn(UserModel, 'findAllByPhone').mockResolvedValue([userB] as any);
+      jest.spyOn(UserModel, 'findAllByLoginIdentifiers').mockResolvedValue([userA, userB] as any);
+      jest.spyOn(UserModel, 'findById').mockImplementation(async (id: string) => (
+        id === userA.id ? userA : id === userB.id ? userB : undefined
+      ) as any);
 
       const result = await AuthService.createUser({
         email: 'a@example.com',
@@ -439,13 +496,18 @@ describe('AuthService', () => {
       expect(r.message).toMatch(/Invalid phone number/i);
     });
 
-    it('rejects duplicate phone', async () => {
-      jest.spyOn(UserModel, 'findByEmail').mockResolvedValue(undefined as any);
-      jest.spyOn(phoneUtil, 'toE164').mockReturnValue('+15559876543');
-      jest.spyOn(UserModel, 'findByPhone').mockResolvedValue({
+    it('rejects a shared phone when the new user has no exclusive handle left for the peer', async () => {
+      const other = {
         id: 'other',
+        email: null,
+        phone_number: '+15559876543',
+        login_identifier: '+15559876543',
         is_active: true,
-      } as any);
+      };
+      jest.spyOn(UserModel, 'findAllByEmail').mockResolvedValue([]);
+      jest.spyOn(phoneUtil, 'toE164').mockReturnValue('+15559876543');
+      jest.spyOn(UserModel, 'findAllByPhone').mockResolvedValue([other] as any);
+      jest.spyOn(UserModel, 'findAllByLoginIdentifiers').mockResolvedValue([other] as any);
       const r = await AuthService.createUser({
         email: 'newphone@example.com',
         password: 'password123',
@@ -455,11 +517,45 @@ describe('AuthService', () => {
         phoneNumber: '(555) 987-6543',
       });
       expect(r.success).toBe(false);
-      expect(r.message).toMatch(/Phone number already in use/i);
+      expect(r.code).toBe('NO_UNIQUE_LOGIN_HANDLE');
+    });
+
+    it('allows unique email with a shared phone', async () => {
+      const peer = {
+        id: 'peer',
+        email: 'peer@example.com',
+        phone_number: '+15559876543',
+        login_identifier: 'peer@example.com',
+        is_active: true,
+      };
+      jest.spyOn(UserModel, 'findAllByEmail').mockResolvedValue([]);
+      jest.spyOn(phoneUtil, 'toE164').mockReturnValue('+15559876543');
+      jest.spyOn(UserModel, 'findAllByPhone').mockResolvedValue([peer] as any);
+      jest.spyOn(UserModel, 'findAllByLoginIdentifiers').mockResolvedValue([]);
+      const createSpy = jest.spyOn(UserModel, 'create').mockResolvedValue({ id: 'new-shared-phone' } as any);
+
+      const r = await AuthService.createUser({
+        email: 'unique@example.com',
+        password: 'password123',
+        firstName: 'U',
+        lastName: 'N',
+        role: UserRole.TENANT,
+        phoneNumber: '(555) 987-6543',
+      });
+
+      expect(r.success).toBe(true);
+      expect(createSpy).toHaveBeenCalledWith(
+        expect.objectContaining({
+          login_identifier: 'unique@example.com',
+          phone_number: '+15559876543',
+        }),
+      );
     });
 
     it('creates provisional user without password (requires reset)', async () => {
-      jest.spyOn(UserModel, 'findByEmail').mockResolvedValue(undefined as any);
+      jest.spyOn(UserModel, 'findAllByEmail').mockResolvedValue([]);
+      jest.spyOn(UserModel, 'findAllByPhone').mockResolvedValue([]);
+      jest.spyOn(UserModel, 'findAllByLoginIdentifiers').mockResolvedValue([]);
       const createSpy = jest.spyOn(UserModel, 'create').mockResolvedValue({ id: 'prov-1' } as any);
 
       const r = await AuthService.createUser({
@@ -480,7 +576,9 @@ describe('AuthService', () => {
     });
 
     it('returns generic error when create throws', async () => {
-      jest.spyOn(UserModel, 'findByEmail').mockResolvedValue(undefined as any);
+      jest.spyOn(UserModel, 'findAllByEmail').mockResolvedValue([]);
+      jest.spyOn(UserModel, 'findAllByPhone').mockResolvedValue([]);
+      jest.spyOn(UserModel, 'findAllByLoginIdentifiers').mockResolvedValue([]);
       jest.spyOn(UserModel, 'create').mockRejectedValueOnce(new Error('fail'));
       const r = await AuthService.createUser({
         email: 'err@example.com',

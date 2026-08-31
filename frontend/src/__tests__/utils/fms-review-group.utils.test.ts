@@ -80,11 +80,29 @@ describe('groupFmsReviewChanges', () => {
     expect(groups[0].primary.change_type).toBe(FMSChangeType.TENANT_ADDED);
 
     const presented = presentFmsReviewGroup(groups[0]);
-    expect(presented.title).toBe('Shared tenant contact');
+    expect(presented.title).toBe('Already mapped to another FMS tenant');
     expect(presented.impact).toMatch(/t3@blulok.com/);
     expect(presented.impact).toMatch(/t2@blulok.com/);
     expect(presented.errors[0]).toMatch(/already mapped to a different FMS tenant/);
     expect(presented.relatedSummaries).toEqual(['Update unit 100', 'Update unit 109']);
+  });
+
+  it('classifies shared contacts without a unique login separately from mapped collisions', () => {
+    const rows = [
+      change({
+        id: 't4',
+        change_type: FMSChangeType.TENANT_ADDED,
+        impact_summary: 'New tenant: Tester Four (t4@blulok.com)',
+        validation_errors: [
+          't4@blulok.com and +12504882375 are already used by other BluLok users. Each account needs a unique email or a unique phone to log in.',
+        ],
+      }),
+    ];
+
+    const groups = groupFmsReviewChanges(rows);
+    expect(groups).toHaveLength(1);
+    expect(groups[0].kind).toBe('no-unique-login');
+    expect(presentFmsReviewGroup(groups[0]).title).toBe('No unique login handle');
   });
 
   it('collapses vacant-ledger assigns for the same tenant', () => {

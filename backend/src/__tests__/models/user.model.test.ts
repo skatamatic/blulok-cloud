@@ -65,6 +65,22 @@ describe('UserModel', () => {
     });
   });
 
+  describe('findAllByEmail / findAllByPhone', () => {
+    it('returns every user that stores the same email', async () => {
+      await UserModel.create({
+        email: 'shared@example.com',
+        login_identifier: 'shared-a@example.com',
+        password_hash: 'hashedpassword',
+        first_name: 'A',
+        last_name: 'User',
+        role: UserRole.TENANT,
+        is_active: true,
+      });
+      const rows = await UserModel.findAllByEmail('shared@example.com');
+      expect(Array.isArray(rows)).toBe(true);
+    });
+  });
+
   describe('findById', () => {
     it('should find user by id', async () => {
       // First create a user

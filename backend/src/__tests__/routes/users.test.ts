@@ -744,15 +744,15 @@ describe('Users Routes', () => {
       sendInviteSpy.mockRestore();
     });
 
-    it('should return 400 when setting email on a non-placeholder user', async () => {
+    it('allows email edits on a loginable user when the new email is exclusive', async () => {
       const response = await request(app)
         .put(`/api/v1/users/${testData.users.tenant.id}`)
         .set('Authorization', `Bearer ${testData.users.admin.token}`)
         .send({ email: 'newemail@test.com' })
-        .expect(400);
+        .expect(200);
 
-      expectBadRequest(response);
-      expect(response.body.message).toMatch(/placeholder/i);
+      expectSuccess(response);
+      expect(response.body.user.email).toBe('newemail@test.com');
     });
 
     it('should return 400 when clearing contact on a placeholder without replacement', async () => {

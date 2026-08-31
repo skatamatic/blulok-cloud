@@ -11,6 +11,11 @@ import { GatewayEventsService } from '@/services/gateway/gateway-events.service'
 import { config } from '@/config/environment';
 import { UserRole } from '@/types/auth.types';
 import { UserFacilityAssociationModel } from '@/models/user-facility-association.model';
+import { UserLoginIdentityService } from '@/services/user-login-identity.service';
+import {
+  LOGIN_IDENTITY_CODES,
+  LoginIdentityError,
+} from '@/services/user-login-identity.utils';
 import { AccessControlZoneAccessService } from '@/services/access-control-zone-access.service';
 
 export class KeySharingService {
@@ -51,12 +56,30 @@ export class KeySharingService {
     // to know the invitee never received a code.
     let inviteWarning: string | undefined;
 
-    // Find or create invitee by phone
-    let invitee = await UserModel.findByPhone(phoneE164);
+    const phoneOwners = await UserModel.findAllByPhone(phoneE164);
+    const loginOwner = await UserModel.findByLoginIdentifier(phoneE164.toLowerCase());
+    const uniqueOwners = new Map(phoneOwners.map((user) => [user.id, user]));
+    if (loginOwner) uniqueOwners.set(loginOwner.id, loginOwner);
+    const matches = [...uniqueOwners.values()];
+    if (matches.length > 1) {
+      throw new LoginIdentityError(
+        LOGIN_IDENTITY_CODES.AMBIGUOUS_CONTACT,
+        'This phone number is used by more than one account. Share with a specific user instead.',
+      );
+    }
+
+    let invitee = matches[0];
     let createdUser = false;
     if (!invitee) {
+      const plan = await UserLoginIdentityService.planContactChange({
+        email: null,
+        phone: phoneE164,
+      });
+      if (!plan.ok) {
+        throw new LoginIdentityError(plan.code, plan.message);
+      }
       const created = await UserModel.create({
-        login_identifier: phoneE164.toLowerCase(),
+        login_identifier: plan.loginIdentifier || phoneE164.toLowerCase(),
         email: null,
         phone_number: phoneE164,
         password_hash: '!',
@@ -68,6 +91,7 @@ export class KeySharingService {
       }) as User;
       invitee = created;
       createdUser = true;
+      await UserLoginIdentityService.applyRebalance(plan.rebalance);
 
       // Automatically associate newly created share invitees with the facility
       // that owns the shared unit. This ensures they can see/access that facility

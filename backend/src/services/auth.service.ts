@@ -16,6 +16,8 @@ import {
 } from '@/types/auth.types';
 import { logger } from '@/utils/logger';
 import { toE164 } from '@/utils/phone.util';
+import { UserLoginIdentityService } from '@/services/user-login-identity.service';
+import { LOGIN_IDENTITY_CODES } from '@/services/user-login-identity.utils';
 
 /**
  * Authentication Service
@@ -73,9 +75,12 @@ export class AuthService {
           if (user) break;
         }
 
-        // Backward compatibility for any users missing login_identifier.
+        // Legacy rows that never received login_identifier can still match by email.
         if (!user && loginIdentifier.includes('@')) {
-          user = await UserModel.findByEmail(loginIdentifier);
+          const byEmail = await UserModel.findByEmail(loginIdentifier);
+          if (byEmail && !byEmail.login_identifier) {
+            user = byEmail;
+          }
         }
 
         if (!user) {
@@ -250,59 +255,81 @@ export class AuthService {
         }
       }
 
-      const emailOwner = await UserModel.findByEmail(normalizedEmail);
-      const phoneOwner = normalizedPhone
-        ? await UserModel.findByPhone(normalizedPhone)
-        : undefined;
+      const match = await UserLoginIdentityService.matchFmsTenant(
+        { email: normalizedEmail, phone: normalizedPhone },
+        undefined,
+        [],
+      );
 
-      if (
-        emailOwner &&
-        phoneOwner &&
-        emailOwner.id !== phoneOwner.id
-      ) {
+      if (match.kind === 'conflict') {
         return {
           success: false,
-          code: 'IDENTITY_CONFLICT',
-          message: 'Email and phone belong to different existing users',
+          code: LOGIN_IDENTITY_CODES.IDENTITY_CONFLICT,
+          message: match.message,
         };
       }
 
-      if (emailOwner?.is_active) {
-        return {
-          success: false,
-          message: 'User with this email already exists',
-        };
-      }
-
-      if (phoneOwner?.is_active && (!emailOwner || phoneOwner.id !== emailOwner.id)) {
-        return {
-          success: false,
-          message: 'Phone number already in use',
-        };
-      }
-
-      const inactiveCandidate = !emailOwner?.is_active && emailOwner
-        ? emailOwner
-        : !phoneOwner?.is_active && phoneOwner
-          ? phoneOwner
-          : undefined;
-
-      if (inactiveCandidate) {
-        if (!reactivateIfInactive) {
-          return this.inactiveConflictResult(
-            inactiveCandidate,
-            emailOwner?.id === inactiveCandidate.id ? 'email' : 'phone',
-          );
+      if (match.kind === 'user') {
+        const existing = (await UserModel.findById(match.user.id)) as User | undefined;
+        if (!existing) {
+          return {
+            success: false,
+            message: 'An error occurred while creating user',
+          };
         }
 
-        return this.reactivateInactiveUser(inactiveCandidate, {
+        if (existing.is_active) {
+          const matchedByEmail =
+            (existing.email || '').trim().toLowerCase() === normalizedEmail;
+          return {
+            success: false,
+            message: matchedByEmail
+              ? 'User with this email already exists'
+              : 'Phone number already in use',
+          };
+        }
+
+        if (!reactivateIfInactive) {
+          const matchedByEmail =
+            (existing.email || '').trim().toLowerCase() === normalizedEmail;
+          return this.inactiveConflictResult(existing, matchedByEmail ? 'email' : 'phone');
+        }
+
+        const reactivatePlan = await UserLoginIdentityService.planContactChange({
+          userId: existing.id,
+          email: normalizedEmail,
+          phone: normalizedPhone,
+        });
+        if (!reactivatePlan.ok) {
+          return {
+            success: false,
+            code: reactivatePlan.code,
+            message: reactivatePlan.message,
+          };
+        }
+
+        return this.reactivateInactiveUser(existing, {
           normalizedEmail,
           normalizedPhone,
           password,
           firstName,
           lastName,
           role,
+          loginIdentifier: reactivatePlan.loginIdentifier,
+          rebalance: reactivatePlan.rebalance,
         });
+      }
+
+      const createPlan = await UserLoginIdentityService.planContactChange({
+        email: normalizedEmail,
+        phone: normalizedPhone,
+      });
+      if (!createPlan.ok) {
+        return {
+          success: false,
+          code: createPlan.code,
+          message: createPlan.message,
+        };
       }
 
       const trimmedPassword = typeof password === 'string' ? password.trim() : '';
@@ -321,7 +348,7 @@ export class AuthService {
 
       const newUser = await UserModel.create({
         email: normalizedEmail,
-        login_identifier: normalizedEmail,
+        login_identifier: createPlan.loginIdentifier,
         password_hash: passwordHash,
         first_name: firstName,
         last_name: lastName,
@@ -330,6 +357,7 @@ export class AuthService {
         ...(normalizedPhone ? { phone_number: normalizedPhone } : {}),
         requires_password_reset: requiresPasswordReset,
       }) as User;
+      await UserLoginIdentityService.applyRebalance(createPlan.rebalance);
 
       logger.info(`User created: ${email} with role ${role}`);
 
@@ -356,6 +384,8 @@ export class AuthService {
       firstName: string;
       lastName: string;
       role: UserRole;
+      loginIdentifier: string;
+      rebalance: Array<{ id: string; loginIdentifier: string }>;
     },
   ): Promise<CreateUserResult> {
     const trimmedPassword =
@@ -364,7 +394,7 @@ export class AuthService {
 
     const updates: Record<string, unknown> = {
       email: fields.normalizedEmail,
-      login_identifier: fields.normalizedEmail,
+      login_identifier: fields.loginIdentifier,
       first_name: fields.firstName,
       last_name: fields.lastName,
       role: fields.role,
@@ -384,7 +414,10 @@ export class AuthService {
 
     if (fields.normalizedPhone) {
       await UserModel.setPhoneNumber(existing.id, fields.normalizedPhone);
+    } else {
+      await UserModel.setPhoneNumber(existing.id, null);
     }
+    await UserLoginIdentityService.applyRebalance(fields.rebalance);
 
     // Ensure model hooks run for status_change (denylist / related listeners).
     await UserModel.activateUser(existing.id);

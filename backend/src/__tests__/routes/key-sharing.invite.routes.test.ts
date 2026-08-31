@@ -153,7 +153,8 @@ describe('Key Sharing Invite Route', () => {
   it('reactivates existing share idempotently', async () => {
     // Mock UserModel.findByPhone to return existing user
     const { UserModel } = await import('@/models/user.model');
-    (UserModel.findByPhone as jest.Mock).mockResolvedValueOnce({ id: 'user-x', phone_number: '+15551230000', role: 'tenant' });
+    (UserModel.findAllByPhone as jest.Mock).mockResolvedValueOnce([{ id: 'user-x', phone_number: '+15551230000', role: 'tenant' }]);
+    (UserModel.findByLoginIdentifier as jest.Mock).mockResolvedValueOnce({ id: 'user-x', phone_number: '+15551230000', role: 'tenant' });
 
     (DatabaseService.getInstance as jest.Mock).mockReturnValue({ connection: createMockKnex({ isPrimaryTenant: true, existingShare: true, existingUserByPhone: true }) });
     const res = await request(app)

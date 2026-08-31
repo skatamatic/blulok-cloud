@@ -120,6 +120,7 @@ export function shouldOmitOccupiedUnitReview(
   return ctx.blockedTenantErrorsByExternalId.has(tenantId);
 }
 
+/** Already-mapped-to-another-FMS-id review. Shared contacts with a unique login are not collisions. */
 export function buildIdentityCollisionReview(options: {
   userLabel: string;
   tenants: Array<FmsOccupancyTenantInfo & { externalId: string }>;

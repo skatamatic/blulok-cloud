@@ -72,7 +72,9 @@ TENANT (Lowest Privilege)
 ```sql
 CREATE TABLE users (
   id VARCHAR(36) PRIMARY KEY DEFAULT (UUID()),
-  email VARCHAR(255) NOT NULL UNIQUE,
+  email VARCHAR(255) NULL,
+  login_identifier VARCHAR(255) NOT NULL UNIQUE,
+  phone_number VARCHAR(32) NULL,
   password_hash VARCHAR(255) NOT NULL,
   first_name VARCHAR(100) NOT NULL,
   last_name VARCHAR(100) NOT NULL,
@@ -92,18 +94,22 @@ CREATE TABLE users (
 ### Field Descriptions
 
 - **id**: UUID primary key for user identification
-- **email**: Unique email address used for login
+- **email**: Contact email. May be shared across users. Not a unique login key.
+- **phone_number**: Contact phone (E.164). May be shared. Not a unique login key.
+- **login_identifier**: The unique login handle. Either the user’s exclusive email or exclusive phone. Authentication, password reset, and invite-by-phone resolve this column only.
 - **password_hash**: bcrypt hashed password (12 salt rounds)
 - **first_name/last_name**: User's display name
 - **role**: User's permission level (see roles above)
-- **is_active**: Soft-deactivation flag — inactive users cannot login. “Delete user” in the admin UI deactivates (`is_active = false`); the row and unique identifiers (`email`, `login_identifier`, `phone_number`) are retained.
+- **is_active**: Soft-deactivation flag — inactive users cannot login. “Delete user” in the admin UI deactivates (`is_active = false`); the row and `login_identifier` are retained. Email and phone may already be shared with other accounts.
 - **simplified_ui**: Presentation-only preference (API field `simplifiedUi`). Intended for `facility_admin` users who should see a simpler Cloud UI. **Not an authorization boundary** — REST/WS permissions remain those of `facility_admin`. Only `admin` / `dev_admin` may set it via `PUT /api/v1/users/:id`. Cleared automatically when the user’s role is no longer `facility_admin`. Returned on login and live on `GET /auth/profile` / verify-token / refresh-token. **Cloud UI gating (current):** Facility Setup hides Gateway and Access Groups / Access Codes tabs; FMS tab uses a sync-history–focused layout (test / sync / review, live WS updates in the history grid) without configuration/webhook technical surfaces. More surfaces may be gated over time.
 - **last_login**: Timestamp of most recent successful login
 - **created_at/updated_at**: Audit timestamps
 
 #### Re-adding a deactivated user (`POST /api/v1/users`)
 
-Creating a user whose email or phone matches an **inactive** account returns **409** with:
+`POST /api/v1/users` and `PUT /api/v1/users/:id` go through `UserLoginIdentityService`. Each loginable user must keep **exactly one exclusive contact** as `login_identifier` (email if that address is exclusive, otherwise phone). Shared phones with distinct emails are allowed. Stable error codes: `NO_UNIQUE_LOGIN_HANDLE`, `IDENTITY_CONFLICT`, `USER_INACTIVE`. Password reset and key-share invite resolve `login_identifier` only; a contact that is not a login handle returns `AMBIGUOUS_CONTACT`.
+
+Creating a user whose **exclusive** email or phone matches an **inactive** account returns **409** with:
 
 ```json
 {
@@ -199,7 +205,7 @@ Single-user reads (`GET /users/:id`, `/details`) use `UserListScopeService.canRe
    - **FMS placeholder rejection**: users with `is_placeholder=true` (or reserved `fms-ph:` login) always fail with generic “Invalid email or password” — they have no usable login identity until upgraded
    - Password hash comparison (bcrypt)
 
-   Placeholder tenants are also blocked from invite accept / set-password and password-reset request/complete paths (defense-in-depth). Upgrade via FMS sync or admin **Enable login** (`PUT /users/:id` with email/phone) uses shared `preparePlaceholderUpgrade` uniqueness checks.
+   Login is resolved by `login_identifier` only (email fallback only when that column is missing). A shared phone that nobody uses as their handle is invalid credentials. Placeholder tenants are also blocked from invite accept / set-password and password-reset request/complete paths (defense-in-depth). Upgrade via FMS sync or admin **Enable login** (`PUT /users/:id` with email/phone) uses `UserLoginIdentityService` (shared contacts are allowed when the upgraded user still has an exclusive handle).
 3. **Success Response**:
    ```json
    {
@@ -433,7 +439,7 @@ npm run db:setup            # Full setup: init + migrate + seed
 
 ## Admin user provisioning (dashboard / operator UI)
 
-- **Phone number**: Stored as normalized E.164 in `users.phone_number` (unique when set). Admin APIs:
+- **Phone number**: Stored as normalized E.164 in `users.phone_number` (shareable contact). Admin APIs:
   - `POST /api/v1/users` accepts optional `phoneNumber`, optional `password`, optional `sendInvite`, and optional **`facilityIds`** (UUID array).
   - `PUT /api/v1/users/:id` accepts optional `phoneNumber`; empty string clears the number.
 - **Facility assignment on create**: For roles that are **not** globally scoped (`admin`, `dev_admin`), the API requires **at least one** `facilityId`. Associations are applied with `UserFacilityAssociationModel.addUserToFacility` per ID (same behavior as `PUT /user-facilities/:userId`). Global roles must send **no** `facilityIds` (empty array). If association insert fails (e.g. invalid FK), the user row is rolled back via `UserModel.deleteById`.

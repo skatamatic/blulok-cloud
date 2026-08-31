@@ -98,7 +98,8 @@ describe('KeySharingService.inviteByPhone - denylist removal on re-grant', () =>
     (DatabaseService.getInstance as jest.Mock).mockReturnValue({ connection: mockKnex });
 
     // Mock models/services
-    (UserModel.findByPhone as any) = jest.fn().mockResolvedValue({ id: 'invitee-1', phone_number: '+15551234567' });
+    (UserModel.findAllByPhone as any) = jest.fn().mockResolvedValue([{ id: 'invitee-1', phone_number: '+15551234567' }]);
+    (UserModel.findByLoginIdentifier as any) = jest.fn().mockResolvedValue({ id: 'invitee-1', phone_number: '+15551234567' });
 
     mockDenylistModel = {
       findByUser: jest.fn().mockResolvedValue([

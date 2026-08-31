@@ -10,7 +10,7 @@ import { ModelHooksService } from '../services/model-hooks.service';
  *
  * Security Considerations:
  * - Passwords are stored as bcrypt hashes only
- * - Email addresses must be unique across the system
+ * - Login uniqueness is enforced on login_identifier; email/phone may be shared
  * - Role-based access control governs all operations
  * - Account status (active/inactive) controls authentication
  * - Audit logging captures all user lifecycle events
@@ -84,7 +84,7 @@ export class UserModel extends BaseModel {
 
   /**
    * Find user by email address.
-   * Used during authentication to locate user accounts.
+   * Contact lookup only — authentication must use findByLoginIdentifier.
    *
    * @param email - User's email address
    * @returns User object if found, undefined otherwise
@@ -105,6 +105,20 @@ export class UserModel extends BaseModel {
    */
   public static async findByPhone(phoneE164: string): Promise<User | undefined> {
     return this.query().where('phone_number', phoneE164).first() as Promise<User | undefined>;
+  }
+
+  public static async findAllByEmail(email: string): Promise<User[]> {
+    return this.query().where('email', email.toLowerCase()) as Promise<User[]>;
+  }
+
+  public static async findAllByPhone(phoneE164: string): Promise<User[]> {
+    return this.query().where('phone_number', phoneE164) as Promise<User[]>;
+  }
+
+  public static async findAllByLoginIdentifiers(identifiers: string[]): Promise<User[]> {
+    const keys = [...new Set(identifiers.map((value) => value.trim().toLowerCase()).filter(Boolean))];
+    if (keys.length === 0) return [];
+    return this.query().whereIn('login_identifier', keys) as Promise<User[]>;
   }
 
   /**

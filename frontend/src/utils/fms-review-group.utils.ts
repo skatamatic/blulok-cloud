@@ -2,6 +2,7 @@ import { FMSChange, FMSChangeType } from '@/types/fms.types';
 
 export type FmsReviewProblemKind =
   | 'identity-collision'
+  | 'no-unique-login'
   | 'ledger-vacant'
   | 'ledger-occupied'
   | 'incomplete-tenant'
@@ -28,7 +29,8 @@ const OPAQUE_ID_RE =
   /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi;
 
 const PROBLEM_TITLES: Record<FmsReviewProblemKind, string> = {
-  'identity-collision': 'Shared tenant contact',
+  'identity-collision': 'Already mapped to another FMS tenant',
+  'no-unique-login': 'No unique login handle',
   'ledger-vacant': 'Unit status and ledger disagree',
   'ledger-occupied': 'Unit status and ledger disagree',
   'incomplete-tenant': 'Incomplete tenant record',
@@ -73,6 +75,13 @@ export function getFmsReviewProblemKind(change: FmsReviewableChange): FmsReviewP
   if (change.is_valid !== false) return null;
   const text = changeText(change);
 
+  if (
+    /already used by other BluLok users/i.test(text)
+    || /unique email or a unique phone to log in/i.test(text)
+    || /without a unique email or phone to log in/i.test(text)
+  ) {
+    return 'no-unique-login';
+  }
   if (/already mapped to a different FMS tenant/i.test(text) || /matches BluLok user /i.test(text)) {
     return 'identity-collision';
   }
@@ -118,6 +127,8 @@ export function getFmsReviewProblemGroupKey(change: FmsReviewableChange): string
   switch (kind) {
     case 'identity-collision':
       return `identity:${extractBluLokUser(text) ?? 'shared-contact'}`;
+    case 'no-unique-login':
+      return `no-unique-login:${change.external_id}`;
     case 'ledger-vacant':
       return `ledger-vacant:${extractLedgerTenant(text) ?? change.external_id}`;
     case 'ledger-occupied':

@@ -36,12 +36,11 @@ import {
   stampFmsMappingRemoved,
 } from './fms-tenant-removal.utils';
 import {
-  buildFacilityUserLookupMaps,
-  findExistingUserForFmsTenant,
   formatFmsTenantContactLabel,
   hasFmsTenantLoginIdentity,
   validateFmsTenantSyncFields,
 } from './fms-tenant-validation.utils';
+import { UserLoginIdentityService } from '@/services/user-login-identity.service';
 import { isPlaceholderUser } from './fms-placeholder-user.utils';
 import { toE164 } from '@/utils/phone.util';
 import { logger } from '@/utils/logger';
@@ -156,9 +155,7 @@ export class FMSChangeDetectorService {
       supplementUsers = (await UserModel.findByIds(missingMappedIds)) as any;
     }
     const allRelevantUsers = [...facilityUsers, ...supplementUsers];
-
-    const { usersById, usersByEmail, usersByPhone, usersByLoginIdentifier } =
-      buildFacilityUserLookupMaps(allRelevantUsers);
+    const usersById = new Map(allRelevantUsers.map((u) => [u.id, u]));
 
     const allFacilityAssignments = await this.models.unitAssignmentModel.findByFacilityId(facilityId);
     const assignmentsByTenantId = new Map<string, typeof allFacilityAssignments>();
@@ -200,21 +197,42 @@ export class FMSChangeDetectorService {
       }
 
       const mapping = mappingsByExternalId.get(fmsTenant.externalId);
-      const existingUser = findExistingUserForFmsTenant(
+      const match = await UserLoginIdentityService.matchFmsTenant(
         fmsTenant,
         mapping,
-        usersById,
-        usersByEmail,
-        usersByPhone,
-        usersByLoginIdentifier
+        allRelevantUsers,
       );
+      const existingUser = match.kind === 'user' ? match.user : undefined;
 
       processed++;
       if (onProgress && (processed % 10 === 0 || processed === total)) {
         onProgress(Math.round((processed / total) * 100));
       }
 
+      if (match.kind === 'conflict') {
+        pendingInserts.push({
+          sync_log_id: syncLogId,
+          change_type: FMSChangeType.TENANT_ADDED,
+          entity_type: 'tenant',
+          external_id: fmsTenant.externalId,
+          after_data: fmsTenant,
+          required_actions: [FMSChangeAction.CREATE_USER],
+          impact_summary: `Cannot add ${formatFmsTenantContactLabel(fmsTenant)} — email and phone belong to different BluLok users`,
+          is_valid: false,
+          validation_errors: [match.message],
+        });
+        continue;
+      }
+
       if (!existingUser) {
+        const handlePlan = await UserLoginIdentityService.planContactChange({
+          email: fmsTenant.email,
+          phone: fmsTenant.phone,
+          allowPlaceholder: !hasFmsTenantLoginIdentity(fmsTenant),
+          extraUsers: allRelevantUsers,
+        });
+        const handleErrors = handlePlan.ok ? [] : [handlePlan.message];
+        const tenantValid = isValid && handleErrors.length === 0;
         const { occupiableUnitIds, vacantConflicts } = partitionTenantUnitIdsByOccupancy(
           fmsTenant.unitIds,
           fmsUnitsByExternalId
@@ -235,8 +253,8 @@ export class FMSChangeDetectorService {
           impact_summary:
             `New tenant: ${fmsTenant.firstName || 'Unknown'} ${fmsTenant.lastName || 'Unknown'} (${formatFmsTenantContactLabel(fmsTenant)}) - Will be added to ${occupiableUnitIds.length} unit(s)` +
             conflictNote,
-          is_valid: isValid,
-          validation_errors: validationErrors,
+          is_valid: tenantValid,
+          validation_errors: [...validationErrors, ...handleErrors],
         });
 
         if (vacantConflicts.length > 0) {
@@ -347,6 +365,13 @@ export class FMSChangeDetectorService {
           needsPlaceholderUpgrade;
 
         if (needsFmsRestore || hasInfoChanges || needsReactivation) {
+          const updatePlan = await UserLoginIdentityService.planContactChange({
+            userId: user.id,
+            email: fmsTenant.email ?? user.email,
+            phone: fmsTenant.phone ?? user.phone_number,
+            extraUsers: allRelevantUsers,
+          });
+          const updateHandleErrors = updatePlan.ok ? [] : [updatePlan.message];
           logger.debug(
             needsFmsRestore
               ? `[FMS] Tenant ${fmsTenant.email} restored in FMS`
@@ -375,8 +400,8 @@ export class FMSChangeDetectorService {
                 : needsReactivation && !hasInfoChanges
                   ? `Reactivate tenant present in FMS: ${formatFmsTenantContactLabel(fmsTenant)}`
                   : `Updated tenant info for: ${formatFmsTenantContactLabel(fmsTenant)}`,
-            is_valid: isValid,
-            validation_errors: validationErrors,
+            is_valid: isValid && updateHandleErrors.length === 0,
+            validation_errors: [...validationErrors, ...updateHandleErrors],
           });
         }
 

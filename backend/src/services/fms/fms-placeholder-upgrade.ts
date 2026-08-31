@@ -1,27 +1,32 @@
 /**
- * Shared FMS placeholder upgrade: uniqueness checks + column updates + invite.
+ * Shared FMS placeholder upgrade: identity-handle checks + column updates + invite.
  * Used by admin PUT /users and FMS applyTenantAdded / applyTenantUpdated.
  */
 
-import { UserModel, User } from '@/models/user.model';
+import { User } from '@/models/user.model';
 import { logger } from '@/utils/logger';
 import {
   buildPlaceholderUpgradeUpdates,
   isPlaceholderUser,
   UpgradePlaceholderInput,
 } from '@/services/fms/fms-placeholder-user.utils';
+import { UserLoginIdentityService } from '@/services/user-login-identity.service';
+import { LOGIN_IDENTITY_CODES } from '@/services/user-login-identity.utils';
 import type { FMSProviderConfig } from '@/types/fms.types';
 
 export type PlaceholderUpgradeFailureReason =
   | 'no_contact'
   | 'email_in_use'
   | 'phone_in_use'
-  | 'login_in_use';
+  | 'login_in_use'
+  | typeof LOGIN_IDENTITY_CODES.NO_UNIQUE_LOGIN_HANDLE
+  | typeof LOGIN_IDENTITY_CODES.IDENTITY_CONFLICT;
 
 export type PlaceholderUpgradePrepareResult =
   | {
       ok: true;
       updates: NonNullable<ReturnType<typeof buildPlaceholderUpgradeUpdates>>;
+      rebalance: Array<{ id: string; loginIdentifier: string }>;
     }
   | {
       ok: false;
@@ -30,8 +35,8 @@ export type PlaceholderUpgradePrepareResult =
     };
 
 /**
- * Validate contact uniqueness and build the user-column updates for a placeholder upgrade.
- * Does not write to the DB — callers apply via UserModel.updateById.
+ * Validate login-handle exclusivity and build the user-column updates for a placeholder upgrade.
+ * Does not write to the DB — callers apply via UserModel.updateById + applyRebalance.
  */
 export async function preparePlaceholderUpgrade(
   userId: string,
@@ -46,55 +51,41 @@ export async function preparePlaceholderUpgrade(
     };
   }
 
-  if (upgrade.email) {
-    const byEmail = await UserModel.findByEmail(upgrade.email);
-    if (byEmail && byEmail.id !== userId) {
-      return {
-        ok: false,
-        reason: 'email_in_use',
-        message: 'Email already in use',
-      };
-    }
-  }
-
-  if (upgrade.phone_number) {
-    const byPhone = await UserModel.findByPhone(upgrade.phone_number);
-    if (byPhone && byPhone.id !== userId) {
-      return {
-        ok: false,
-        reason: 'phone_in_use',
-        message: 'Phone number already in use',
-      };
-    }
-  }
-
-  const byLogin = await UserModel.findByLoginIdentifier(upgrade.login_identifier!);
-  if (byLogin && byLogin.id !== userId) {
+  const plan = await UserLoginIdentityService.planContactChange({
+    userId,
+    email: upgrade.email ?? null,
+    phone: upgrade.phone_number ?? null,
+  });
+  if (!plan.ok) {
     return {
       ok: false,
-      reason: 'login_in_use',
-      message: 'Login identity already in use',
+      reason: plan.code,
+      message: plan.message,
     };
   }
 
-  return { ok: true, updates: upgrade };
+  return {
+    ok: true,
+    updates: {
+      ...upgrade,
+      login_identifier: plan.loginIdentifier,
+    },
+    rebalance: plan.rebalance,
+  };
 }
 
 /** FMS apply paths: throw on conflict so the change fails loudly. */
 export async function requirePlaceholderUpgradeUpdates(
   userId: string,
   input: UpgradePlaceholderInput,
-): Promise<NonNullable<ReturnType<typeof buildPlaceholderUpgradeUpdates>> | null> {
+): Promise<{
+  updates: NonNullable<ReturnType<typeof buildPlaceholderUpgradeUpdates>>;
+  rebalance: Array<{ id: string; loginIdentifier: string }>;
+} | null> {
   const result = await preparePlaceholderUpgrade(userId, input);
-  if (result.ok) return result.updates;
+  if (result.ok) return { updates: result.updates, rebalance: result.rebalance };
   if (result.reason === 'no_contact') return null;
-  if (result.reason === 'email_in_use') {
-    throw new Error('FMS tenant email conflicts with an existing user; cannot upgrade placeholder');
-  }
-  if (result.reason === 'phone_in_use') {
-    throw new Error('FMS tenant phone conflicts with an existing user; cannot upgrade placeholder');
-  }
-  throw new Error('FMS tenant login identity conflicts with an existing user; cannot upgrade placeholder');
+  throw new Error(result.message);
 }
 
 /**

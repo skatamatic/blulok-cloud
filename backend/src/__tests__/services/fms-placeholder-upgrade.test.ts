@@ -3,9 +3,10 @@
  */
 jest.mock('@/models/user.model', () => ({
   UserModel: {
-    findByEmail: jest.fn(),
-    findByPhone: jest.fn(),
-    findByLoginIdentifier: jest.fn(),
+    findById: jest.fn(),
+    findAllByEmail: jest.fn(),
+    findAllByPhone: jest.fn(),
+    findAllByLoginIdentifiers: jest.fn(),
   },
 }));
 
@@ -19,17 +20,28 @@ import {
   requirePlaceholderUpgradeUpdates,
   queueInviteAfterPlaceholderUpgrade,
 } from '@/services/fms/fms-placeholder-upgrade';
+import { LOGIN_IDENTITY_CODES } from '@/services/user-login-identity.utils';
 
-const findByEmail = UserModel.findByEmail as jest.Mock;
-const findByPhone = UserModel.findByPhone as jest.Mock;
-const findByLoginIdentifier = UserModel.findByLoginIdentifier as jest.Mock;
+const findById = UserModel.findById as jest.Mock;
+const findAllByEmail = UserModel.findAllByEmail as jest.Mock;
+const findAllByPhone = UserModel.findAllByPhone as jest.Mock;
+const findAllByLoginIdentifiers = UserModel.findAllByLoginIdentifiers as jest.Mock;
+
+const placeholder = {
+  id: 'u1',
+  email: null,
+  phone_number: null,
+  login_identifier: 'fms-ph:a:b',
+  is_placeholder: true,
+};
 
 describe('fms-placeholder-upgrade', () => {
   beforeEach(() => {
     jest.clearAllMocks();
-    findByEmail.mockResolvedValue(undefined);
-    findByPhone.mockResolvedValue(undefined);
-    findByLoginIdentifier.mockResolvedValue(undefined);
+    findById.mockResolvedValue(placeholder);
+    findAllByEmail.mockResolvedValue([]);
+    findAllByPhone.mockResolvedValue([]);
+    findAllByLoginIdentifiers.mockResolvedValue([]);
   });
 
   describe('preparePlaceholderUpgrade', () => {
@@ -49,27 +61,47 @@ describe('fms-placeholder-upgrade', () => {
       }
     });
 
-    it('returns email_in_use when email belongs to another user', async () => {
-      findByEmail.mockResolvedValue({ id: 'other' });
+    it('returns NO_UNIQUE_LOGIN_HANDLE when email is already an exclusive login', async () => {
+      findAllByEmail.mockResolvedValue([
+        { id: 'other', email: 'a@b.com', login_identifier: 'a@b.com', phone_number: null },
+      ]);
+      findAllByLoginIdentifiers.mockResolvedValue([
+        { id: 'other', email: 'a@b.com', login_identifier: 'a@b.com', phone_number: null },
+      ]);
       const result = await preparePlaceholderUpgrade('u1', { email: 'a@b.com' });
       expect(result.ok).toBe(false);
-      if (!result.ok) expect(result.reason).toBe('email_in_use');
+      if (!result.ok) expect(result.reason).toBe(LOGIN_IDENTITY_CODES.NO_UNIQUE_LOGIN_HANDLE);
     });
 
-    it('returns login_in_use when login_identifier belongs to another user', async () => {
-      findByLoginIdentifier.mockResolvedValue({ id: 'other' });
-      const result = await preparePlaceholderUpgrade('u1', { phoneE164: '+15551234567' });
-      expect(result.ok).toBe(false);
-      if (!result.ok) expect(result.reason).toBe('login_in_use');
+    it('succeeds with unique email even when the phone is already stored on another user', async () => {
+      findAllByPhone.mockResolvedValue([
+        {
+          id: 'other',
+          email: 'peer@example.com',
+          phone_number: '+15551234567',
+          login_identifier: 'peer@example.com',
+        },
+      ]);
+      const result = await preparePlaceholderUpgrade('u1', {
+        email: 'a@b.com',
+        phoneE164: '+15551234567',
+      });
+      expect(result.ok).toBe(true);
+      if (result.ok) expect(result.updates.login_identifier).toBe('a@b.com');
     });
   });
 
   describe('requirePlaceholderUpgradeUpdates', () => {
-    it('throws FMS conflict message for email collisions', async () => {
-      findByEmail.mockResolvedValue({ id: 'other' });
+    it('throws identity message for exclusive email collisions', async () => {
+      findAllByEmail.mockResolvedValue([
+        { id: 'other', email: 'a@b.com', login_identifier: 'a@b.com', phone_number: null },
+      ]);
+      findAllByLoginIdentifiers.mockResolvedValue([
+        { id: 'other', email: 'a@b.com', login_identifier: 'a@b.com', phone_number: null },
+      ]);
       await expect(
         requirePlaceholderUpgradeUpdates('u1', { email: 'a@b.com' }),
-      ).rejects.toThrow(/email conflicts/i);
+      ).rejects.toThrow(/already used by other BluLok users/i);
     });
 
     it('returns null for no contact', async () => {
@@ -84,7 +116,6 @@ describe('fms-placeholder-upgrade', () => {
         is_placeholder: true,
         login_identifier: 'fms-ph:a:b',
       } as any);
-      // No throw; FirstTimeUserService not loaded for placeholders
     });
   });
 });

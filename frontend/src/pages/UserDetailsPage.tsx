@@ -34,6 +34,7 @@ import { formatUserContactSubtitle } from '@/utils/userDisplay.utils';
 interface UserDetails {
   id: string;
   email: string | null;
+  loginIdentifier?: string | null;
   phoneNumber?: string | null;
   firstName: string;
   lastName: string;
@@ -449,8 +450,8 @@ export default function UserDetailsPage() {
         phoneNumber: editForm.phoneNumber.trim() === '' ? '' : editForm.phoneNumber.trim(),
         role: editForm.role,
       };
+      payload.email = editForm.email.trim() === '' ? '' : editForm.email.trim().toLowerCase();
       if (userDetails.isPlaceholder) {
-        payload.email = editForm.email.trim() === '' ? '' : editForm.email.trim().toLowerCase();
         if (!payload.email && !editForm.phoneNumber.trim()) {
           addToast({
             type: 'error',
@@ -814,6 +815,13 @@ export default function UserDetailsPage() {
                             ? 'None — placeholder (no login)'
                             : (userDetails.email || '—')}
                         </p>
+                        {!userDetails.isPlaceholder && userDetails.loginIdentifier ? (
+                          <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                            {userDetails.loginIdentifier.includes('@')
+                              ? 'Signs in with email'
+                              : 'Signs in with phone'}
+                          </p>
+                        ) : null}
                       </div>
                       <div>
                         <label className="text-xs text-gray-500 dark:text-gray-400 uppercase tracking-wide">Phone</label>
@@ -1188,21 +1196,22 @@ export default function UserDetailsPage() {
                     className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
                   />
                 </div>
-                {userDetails.isPlaceholder && (
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-                      Email <span className="text-gray-400 font-normal">(optional if phone is set)</span>
-                    </label>
-                    <input
-                      type="email"
-                      autoComplete="off"
-                      value={editForm.email}
-                      onChange={(e) => setEditForm({ ...editForm, email: e.target.value })}
-                      className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
-                      placeholder="tenant@example.com"
-                    />
-                  </div>
-                )}
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                    Email{' '}
+                    <span className="text-gray-400 font-normal">
+                      {userDetails.isPlaceholder ? '(optional if phone is set)' : '(optional)'}
+                    </span>
+                  </label>
+                  <input
+                    type="email"
+                    autoComplete="off"
+                    value={editForm.email}
+                    onChange={(e) => setEditForm({ ...editForm, email: e.target.value })}
+                    className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+                    placeholder="tenant@example.com"
+                  />
+                </div>
                 <div>
                   <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
                     Phone number{' '}

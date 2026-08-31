@@ -5,6 +5,10 @@ import { NotificationService } from '@/services/notifications/notification.servi
 import { UserModel, User } from '@/models/user.model';
 import { logger } from '@/utils/logger';
 import { toE164 } from '@/utils/phone.util';
+import {
+  LOGIN_IDENTITY_CODES,
+  LoginIdentityError,
+} from '@/services/user-login-identity.utils';
 
 const TOKEN_EXPIRY_MINUTES = parseInt(process.env.PASSWORD_RESET_TOKEN_EXPIRY_MINUTES || '30', 10);
 const SALT_ROUNDS = 12;
@@ -54,18 +58,40 @@ export class PasswordResetService {
       throw new Error('Email or phone is required');
     }
 
-    // Find user by email or phone
-    let user: User | null = null;
-    
-    if (email) {
-      user = await UserModel.findByEmail(email) as User | null;
-    } else if (phone) {
+    const raw = (email || phone || '').trim();
+    const candidates = [raw.toLowerCase()];
+    if (phone) {
       const normalizedPhone = toE164(phone, 'US');
-      user = await this.db('users').where('phone_number', normalizedPhone).first() as User | null;
+      if (normalizedPhone && !candidates.includes(normalizedPhone.toLowerCase())) {
+        candidates.push(normalizedPhone.toLowerCase());
+      }
+    }
+
+    let user: User | null = null;
+    for (const candidate of candidates) {
+      const found = await UserModel.findByLoginIdentifier(candidate);
+      if (found) {
+        user = found;
+        break;
+      }
     }
 
     if (!user) {
-      // Don't reveal if user exists - return generic message
+      const contactHits: User[] = [];
+      if (email) {
+        contactHits.push(...(await UserModel.findAllByEmail(email.toLowerCase())));
+      } else if (phone) {
+        const normalizedPhone = toE164(phone, 'US');
+        if (normalizedPhone) {
+          contactHits.push(...(await UserModel.findAllByPhone(normalizedPhone)));
+        }
+      }
+      if (contactHits.length > 0) {
+        throw new LoginIdentityError(
+          LOGIN_IDENTITY_CODES.AMBIGUOUS_CONTACT,
+          'This contact is shared and is not a login. Use the email or phone this account signs in with.',
+        );
+      }
       logger.warn(`Password reset requested for non-existent user: ${email || phone}`);
       throw new Error('If an account exists with this information, you will receive a reset link');
     }

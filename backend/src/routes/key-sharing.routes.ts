@@ -692,6 +692,14 @@ registerPost(
       ...(inviteWarning ? { invite_sent: false, invite_warning: inviteWarning } : {}),
     });
   } catch (error: any) {
+    if (typeof error?.statusCode === 'number') {
+      res.status(error.statusCode).json({
+        success: false,
+        message: error.message,
+        ...(error.code ? { code: error.code } : {}),
+      });
+      return;
+    }
     logger.error('Error processing key share invite:', error);
     res.status(500).json({ success: false, message: 'Failed to process invite' });
   }

@@ -38,7 +38,10 @@ describe('KeySharingService.inviteByPhone SMS behavior', () => {
 
   it('sends invite SMS when creating a brand new user by phone', async () => {
     // No existing user; create + invite
-    (UserModel.findByPhone as any) = jest.fn().mockResolvedValue(undefined);
+    (UserModel.findAllByPhone as any) = jest.fn().mockResolvedValue([]);
+    (UserModel.findByLoginIdentifier as any) = jest.fn().mockResolvedValue(undefined);
+    (UserModel.findAllByEmail as any) = jest.fn().mockResolvedValue([]);
+    (UserModel.findAllByLoginIdentifiers as any) = jest.fn().mockResolvedValue([]);
     (UserModel.create as any) = jest.fn().mockResolvedValue({
       id: 'new-user-id',
       phone_number: '+15551230000',
@@ -69,7 +72,12 @@ describe('KeySharingService.inviteByPhone SMS behavior', () => {
   });
 
   it('sends invite SMS for existing user that still requires password reset', async () => {
-    (UserModel.findByPhone as any) = jest.fn().mockResolvedValue({
+    (UserModel.findAllByPhone as any) = jest.fn().mockResolvedValue([{
+      id: 'existing-user-id',
+      phone_number: '+15551230001',
+      requires_password_reset: true,
+    }]);
+    (UserModel.findByLoginIdentifier as any) = jest.fn().mockResolvedValue({
       id: 'existing-user-id',
       phone_number: '+15551230001',
       requires_password_reset: true,

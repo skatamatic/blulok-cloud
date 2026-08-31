@@ -1664,6 +1664,25 @@ jest.mock('../models/user.model', () => {
         const user = Array.from(mockUsers.values()).find(u => u.phone_number === phone);
         return Promise.resolve(user || undefined);
       }),
+      findAllByEmail: jest.fn().mockImplementation((email: string) => {
+        const key = (email || '').toLowerCase();
+        return Promise.resolve(
+          Array.from(mockUsers.values()).filter((u) => (u.email || '').toLowerCase() === key),
+        );
+      }),
+      findAllByPhone: jest.fn().mockImplementation((phone: string) => {
+        return Promise.resolve(
+          Array.from(mockUsers.values()).filter((u) => u.phone_number === phone),
+        );
+      }),
+      findAllByLoginIdentifiers: jest.fn().mockImplementation((identifiers: string[]) => {
+        const keys = new Set((identifiers || []).map((value) => String(value).toLowerCase()));
+        return Promise.resolve(
+          Array.from(mockUsers.values()).filter((u) =>
+            keys.has((u.login_identifier || '').toLowerCase()),
+          ),
+        );
+      }),
     },
   };
 });

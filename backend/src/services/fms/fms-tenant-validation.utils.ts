@@ -1,4 +1,5 @@
 import { toE164 } from '@/utils/phone.util';
+import { matchUserForFmsTenant } from '@/services/user-login-identity.utils';
 
 export type FmsTenantValidationPayload = {
   email?: string | null;
@@ -195,32 +196,14 @@ type FacilityUserLike = {
   login_identifier?: string | null;
 };
 
-/** Resolve an existing facility user for an incoming FMS tenant (mapping, email, or phone). */
+/** Resolve an existing facility user for an incoming FMS tenant (mapping or exclusive handle). */
 export function findExistingUserForFmsTenant<T extends FacilityUserLike>(
   fmsTenant: { email?: string | null; phone?: string | null },
   mapping: { internal_id: string } | undefined,
-  usersById: Map<string, T>,
-  usersByEmail: Map<string, T>,
-  usersByPhone: Map<string, T>,
-  usersByLoginIdentifier: Map<string, T>,
+  users: T[],
 ): T | undefined {
-  if (mapping) {
-    return usersById.get(mapping.internal_id);
-  }
-
-  const email = fmsTenant.email?.trim();
-  if (email) {
-    const byEmail = usersByEmail.get(email.toLowerCase());
-    if (byEmail) return byEmail;
-  }
-
-  const phone = fmsTenant.phone?.trim();
-  if (phone) {
-    const phoneKey = toE164(phone).toLowerCase();
-    return usersByPhone.get(phoneKey) ?? usersByLoginIdentifier.get(phoneKey);
-  }
-
-  return undefined;
+  const match = matchUserForFmsTenant(fmsTenant, mapping, users);
+  return match.kind === 'user' ? match.user : undefined;
 }
 
 export function buildFacilityUserLookupMaps<T extends FacilityUserLike>(

@@ -1116,7 +1116,7 @@ describe('FMSChangeReviewModal', () => {
 
       expect(screen.getAllByTestId('fms-change-card')).toHaveLength(2);
       expect(screen.getByText('2 problems could not be applied')).toBeInTheDocument();
-      expect(screen.getByText('Shared tenant contact')).toBeInTheDocument();
+      expect(screen.getByText('Already mapped to another FMS tenant')).toBeInTheDocument();
       expect(screen.getByText('Unit status and ledger disagree')).toBeInTheDocument();
       expect(screen.getByText('Invalid (2)')).toBeInTheDocument();
     });

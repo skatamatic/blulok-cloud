@@ -121,14 +121,14 @@ export interface LoginResponse {
  * Audit: User creation is logged with performing user details.
  */
 export interface CreateUserRequest {
-  /** User's email address (must be unique) */
+  /** User's email address (contact; login uniqueness is on login_identifier) */
   email: string;
   /**
    * Initial password (bcrypt-hashed). If omitted or empty, a placeholder hash is stored and
    * `requires_password_reset` is set so the user completes first-time / invite flow.
    */
   password?: string;
-  /** Normalized E.164 phone (optional; must be unique when set) */
+  /** Normalized E.164 phone (optional contact; may be shared) */
   phoneNumber?: string | null;
   /** User's first name */
   firstName: string;
@@ -139,7 +139,7 @@ export interface CreateUserRequest {
 }
 
 /** Structured create/reactivate outcome from AuthService.createUser */
-export type CreateUserConflictCode = 'USER_INACTIVE' | 'IDENTITY_CONFLICT';
+export type CreateUserConflictCode = 'USER_INACTIVE' | 'IDENTITY_CONFLICT' | 'NO_UNIQUE_LOGIN_HANDLE';
 
 export interface InactiveUserSummary {
   id: string;

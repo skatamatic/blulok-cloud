@@ -204,6 +204,7 @@ registerGet(
       id: user.id,
       email: user.email,
       phoneNumber: user.phone_number ?? null,
+      loginIdentifier: user.login_identifier ?? null,
       firstName: user.first_name,
       lastName: user.last_name,
       role: user.role,
@@ -278,6 +279,7 @@ registerGet(
       id: user.id,
       email: user.email,
       phoneNumber: user.phone_number ?? null,
+      loginIdentifier: user.login_identifier ?? null,
       firstName: user.first_name,
       lastName: user.last_name,
       role: user.role,
@@ -340,6 +342,7 @@ registerGet(
         id: user.id,
         email: user.email,
         phoneNumber: user.phone_number ?? null,
+        loginIdentifier: user.login_identifier ?? null,
         firstName: user.first_name,
         lastName: user.last_name,
         role: user.role,
@@ -807,13 +810,6 @@ registerPut(
   let nextPhone = existingUser.phone_number ?? null;
 
   if (updateData.email !== undefined) {
-    if (!wasPlaceholder && existingUser.email) {
-      res.status(400).json({
-        success: false,
-        message: 'Email can only be set when upgrading a placeholder tenant',
-      });
-      return;
-    }
     const rawEmail =
       updateData.email === null ? '' : String(updateData.email).trim().toLowerCase();
     if (rawEmail === '') {
@@ -856,21 +852,8 @@ registerPut(
     return;
   }
 
-  // Non-placeholder phone updates: write immediately (nullable clear supported).
-  // Placeholder phone is applied atomically with the upgrade payload below.
-  if (updateData.phoneNumber !== undefined && !wasPlaceholder) {
-    if (nextPhone) {
-      const other = await UserModel.findByPhone(nextPhone);
-      if (other && other.id !== id) {
-        res.status(400).json({
-          success: false,
-          message: 'Phone number already in use',
-        });
-        return;
-      }
-    }
-    await UserModel.setPhoneNumber(id, nextPhone);
-  }
+  const contactsChanged =
+    updateData.email !== undefined || updateData.phoneNumber !== undefined;
 
   // Update user (non-phone fields)
   const activating =
@@ -906,19 +889,43 @@ registerPut(
   }
 
   const identityUpdates: Record<string, unknown> = {};
-  if (wasPlaceholder && (nextEmail || nextPhone)) {
-    const prepared = await preparePlaceholderUpgrade(id, {
-      email: nextEmail,
-      phoneE164: nextPhone,
-    });
-    if (!prepared.ok) {
-      res.status(400).json({
-        success: false,
-        message: prepared.message,
+  let identityRebalance: Array<{ id: string; loginIdentifier: string }> = [];
+  if (contactsChanged) {
+    if (wasPlaceholder && (nextEmail || nextPhone)) {
+      const prepared = await preparePlaceholderUpgrade(id, {
+        email: nextEmail,
+        phoneE164: nextPhone,
       });
-      return;
+      if (!prepared.ok) {
+        res.status(400).json({
+          success: false,
+          code: prepared.reason,
+          message: prepared.message,
+        });
+        return;
+      }
+      Object.assign(identityUpdates, prepared.updates);
+      identityRebalance = prepared.rebalance;
+    } else if (!wasPlaceholder) {
+      const { UserLoginIdentityService } = await import('@/services/user-login-identity.service');
+      const plan = await UserLoginIdentityService.planContactChange({
+        userId: id,
+        email: nextEmail,
+        phone: nextPhone,
+      });
+      if (!plan.ok) {
+        res.status(400).json({
+          success: false,
+          code: plan.code,
+          message: plan.message,
+        });
+        return;
+      }
+      identityUpdates.email = nextEmail;
+      identityUpdates.phone_number = nextPhone;
+      identityUpdates.login_identifier = plan.loginIdentifier;
+      identityRebalance = plan.rebalance;
     }
-    Object.assign(identityUpdates, prepared.updates);
   }
 
   const updatedUser = await UserModel.updateById(id, {
@@ -929,6 +936,10 @@ registerPut(
     simplified_ui: simplifiedUiUpdate,
     ...identityUpdates,
   }) as User;
+  if (identityRebalance.length > 0) {
+    const { UserLoginIdentityService } = await import('@/services/user-login-identity.service');
+    await UserLoginIdentityService.applyRebalance(identityRebalance);
+  }
 
   if (activating) {
     void runUserActivationSideEffects(id);
@@ -948,6 +959,7 @@ registerPut(
       id: updatedUser.id,
       email: updatedUser.email,
       phoneNumber: updatedUser.phone_number ?? null,
+      loginIdentifier: updatedUser.login_identifier ?? null,
       firstName: updatedUser.first_name,
       lastName: updatedUser.last_name,
       role: updatedUser.role,
