@@ -155,6 +155,75 @@ describe('GatewayEventsService inbound WebSocket → gateways.status sync', () =
     expect(offlineSpy).not.toHaveBeenCalled();
   });
 
+  it('does not persist offline when another instance AUTH updates last_seen during grace', async () => {
+    jest.useFakeTimers();
+    const disconnectAt = Date.now();
+    jest.spyOn(GatewayModel.prototype, 'findByFacilityId')
+      .mockResolvedValueOnce({
+        id: 'gw-physical-1',
+        name: '621 Test Gateway',
+        status: 'online',
+        last_seen: new Date(disconnectAt - 3_600_000),
+        gateway_type: 'physical',
+      } as any)
+      .mockResolvedValue({
+        id: 'gw-physical-1',
+        name: '621 Test Gateway',
+        status: 'online',
+        last_seen: new Date(disconnectAt + 5_000),
+        gateway_type: 'physical',
+      } as any);
+    const offlineSpy = jest.spyOn(GatewayModel.prototype, 'updateStatus').mockResolvedValue(undefined as any);
+
+    const ws = WebSocketService.getInstance();
+    const broadcastSpy = jest.spyOn(ws, 'broadcastGatewayStatusUpdate').mockResolvedValue(undefined);
+
+    connectionCallback({
+      facilityId: 'fac-hq',
+      connected: false,
+      timestamp: disconnectAt,
+      reason: 'close_event',
+    });
+    await flushPromises();
+    expect(offlineSpy).not.toHaveBeenCalled();
+
+    await jest.advanceTimersByTimeAsync(GATEWAY_OFFLINE_GRACE_MS);
+    await flushPromises();
+
+    expect(offlineSpy).not.toHaveBeenCalled();
+    expect(broadcastSpy).toHaveBeenCalledTimes(1);
+    expect(GatewayEventsService.getInstance().getFacilityProductLiveness('fac-hq').connected).toBe(false);
+  });
+
+  it('persists offline when last_seen is still from before the disconnect', async () => {
+    jest.useFakeTimers();
+    const disconnectAt = Date.now();
+    jest.spyOn(GatewayModel.prototype, 'findByFacilityId').mockResolvedValue({
+      id: 'gw-physical-1',
+      name: '621 Test Gateway',
+      status: 'online',
+      last_seen: new Date(disconnectAt - 3_600_000),
+      gateway_type: 'physical',
+    } as any);
+    const offlineSpy = jest.spyOn(GatewayModel.prototype, 'updateStatus').mockResolvedValue(undefined as any);
+
+    const ws = WebSocketService.getInstance();
+    jest.spyOn(ws, 'broadcastGatewayStatusUpdate').mockResolvedValue(undefined);
+
+    connectionCallback({
+      facilityId: 'fac-hq',
+      connected: false,
+      timestamp: disconnectAt,
+      reason: 'close_event',
+    });
+    await flushPromises();
+
+    await jest.advanceTimersByTimeAsync(GATEWAY_OFFLINE_GRACE_MS);
+    await flushPromises();
+
+    expect(offlineSpy).toHaveBeenCalledWith('gw-physical-1', 'offline');
+  });
+
   it('drives http gateway DB status from inbound WS (outbound polling is deprecated)', async () => {
     jest.spyOn(GatewayModel.prototype, 'findByFacilityId').mockResolvedValue({
       id: 'gw-http-1',

@@ -15,3 +15,9 @@ export const GATEWAY_OFFLINE_GRACE_MS = DEFAULT_GATEWAY_OFFLINE_GRACE_MS;
 /** Allowed range for POST /api/v1/dev/gateway-offline-grace overrides. */
 export const GATEWAY_OFFLINE_GRACE_OVERRIDE_MIN_MS = 0;
 export const GATEWAY_OFFLINE_GRACE_OVERRIDE_MAX_MS = 120_000;
+
+/**
+ * Allow Cloud Run instance clocks to differ slightly when comparing
+ * `gateways.last_seen` (written on AUTH) to the local disconnect timestamp.
+ */
+export const GATEWAY_OFFLINE_CONFIRM_CLOCK_SKEW_MS = 2_000;

@@ -17,12 +17,14 @@ import {
   isOperationalOutboundBlockedDuringRecovery,
   summarizeOutboundPayload,
 } from '@/utils/gateway-recovery-outbound.utils';
+import { inboundLastSeenShowsReconnectAfterDisconnect } from '@/utils/gateway-offline-confirm.utils';
 
 type PendingOfflineEntry = {
   timer: NodeJS.Timeout;
   gatewayId: string;
   gatewayName: string;
   previousStatus: string;
+  disconnectedAtMs: number;
   reason?: string;
 };
 
@@ -373,9 +375,10 @@ export class GatewayEventsService {
       return;
     }
 
+    const disconnectedAtMs = Date.now();
     const timer = setTimeout(() => {
       this.pendingOfflineByFacility.delete(facilityId);
-      void this.applyPendingGatewayOffline(facilityId);
+      void this.applyPendingGatewayOffline(facilityId, disconnectedAtMs);
     }, this.getOfflineGraceMs());
     timer.unref?.();
 
@@ -384,11 +387,15 @@ export class GatewayEventsService {
       gatewayId: gateway.id,
       gatewayName: gateway.name,
       previousStatus: gateway.status,
+      disconnectedAtMs,
       reason,
     });
   }
 
-  private async applyPendingGatewayOffline(facilityId: string): Promise<void> {
+  private async applyPendingGatewayOffline(
+    facilityId: string,
+    disconnectedAtMs: number,
+  ): Promise<void> {
     if (this.getFacilityConnectionStatus(facilityId).connected) {
       return;
     }
@@ -396,6 +403,15 @@ export class GatewayEventsService {
     try {
       const gw = await this.gatewayModel.findByFacilityId(facilityId);
       if (!gw) return;
+
+      if (inboundLastSeenShowsReconnectAfterDisconnect(gw.last_seen, disconnectedAtMs)) {
+        logger.info(
+          `applyPendingGatewayOffline skipped facility=${facilityId} gateway=${gw.id} ` +
+            `last_seen=${gw.last_seen ? new Date(gw.last_seen).toISOString() : 'null'} ` +
+            `disconnectedAt=${new Date(disconnectedAtMs).toISOString()}`,
+        );
+        return;
+      }
 
       const previousStatus = gw.status;
       if (previousStatus === 'offline') {
