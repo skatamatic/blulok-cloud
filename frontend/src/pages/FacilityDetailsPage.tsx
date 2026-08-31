@@ -39,7 +39,7 @@ import { FacilityFMSTab } from '@/components/FMS/FacilityFMSTab';
 import { FacilityLockTimeoutSetting } from '@/components/Facility/FacilityLockTimeoutSetting';
 import { FacilityProvisioningDataTab } from '@/components/Facility/FacilityProvisioningDataTab';
 import FacilityGatewayTab from '@/components/Gateway/FacilityGatewayTab';
-import { SchedulesHubTab } from '@/components/Schedules/SchedulesHubTab';
+import { SchedulesHubTab, type SchedulesSubTab } from '@/components/Schedules/SchedulesHubTab';
 import { MyAccessCodes } from '@/components/AccessCodes/MyAccessCodes';
 import { DeviceGroupManager } from '@/components/AccessCodes/DeviceGroupManager';
 import { readFacilityAccessGroupId, FACILITY_ACCESS_GROUP_ID_PARAM } from '@/components/AccessCodes/access-groups.utils';
@@ -203,6 +203,8 @@ const normalizeFacilityTab = (value: string | null): FacilityTab | null => {
   const [showAddDeviceModal, setShowAddDeviceModal] = useState(false);
   const [showAddUnitModal, setShowAddUnitModal] = useState(false);
   const [showCreateDeviceGroup, setShowCreateDeviceGroup] = useState(false);
+  const [showCreateSchedule, setShowCreateSchedule] = useState(false);
+  const [schedulesSubTab, setSchedulesSubTab] = useState<SchedulesSubTab>('facility');
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [deleteImpact, setDeleteImpact] = useState<{ units: number; devices: number; gateways: number } | null>(null);
   const [loadingImpact, setLoadingImpact] = useState(false);
@@ -553,6 +555,11 @@ const normalizeFacilityTab = (value: string | null): FacilityTab | null => {
   }, [activeTab, facility?.id, canManage, loadDeviceGroups]);
 
   useEffect(() => {
+    if (activeTab === 'schedules') return;
+    setShowCreateSchedule(false);
+  }, [activeTab]);
+
+  useEffect(() => {
     if (activeTab !== 'units') return;
     loadFacilityUnitsPageData();
   }, [activeTab, loadFacilityUnitsPageData]);
@@ -755,8 +762,16 @@ const normalizeFacilityTab = (value: string | null): FacilityTab | null => {
         />
       );
     }
+    if (activeTab === 'schedules' && schedulesSubTab === 'facility') {
+      return (
+        <DetailsPagePrimaryAction
+          label="Add Schedule"
+          onClick={() => setShowCreateSchedule(true)}
+        />
+      );
+    }
     return null;
-  }, [activeTab, canManage, isNetworkInfraDeviceScope]);
+  }, [activeTab, canManage, isNetworkInfraDeviceScope, schedulesSubTab]);
 
   if (loading) {
     return (
@@ -1794,6 +1809,9 @@ const normalizeFacilityTab = (value: string | null): FacilityTab | null => {
           facilityId={facility.id}
           userId={authState.user?.id}
           canManageUserSchedules={!isTenant && canManage}
+          createDialogOpen={showCreateSchedule}
+          onCreateDialogChange={setShowCreateSchedule}
+          onActiveSubTabChange={setSchedulesSubTab}
         />
       )}
 

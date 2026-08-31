@@ -1,22 +1,39 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { CalendarDaysIcon, UserGroupIcon } from '@heroicons/react/24/outline';
 import { FacilitySchedulesTab } from '@/components/Schedules/FacilitySchedulesTab';
 import { UserSchedulesTab } from '@/components/Schedules/UserSchedulesTab';
+
+export type SchedulesSubTab = 'facility' | 'users';
 
 interface SchedulesHubTabProps {
   facilityId: string;
   userId?: string;
   canManageUserSchedules: boolean;
+  createDialogOpen?: boolean;
+  onCreateDialogChange?: (open: boolean) => void;
+  onActiveSubTabChange?: (tab: SchedulesSubTab) => void;
 }
 
-type SchedulesSubTab = 'facility' | 'users';
-
-export function SchedulesHubTab({ facilityId, userId, canManageUserSchedules }: SchedulesHubTabProps) {
+export function SchedulesHubTab({
+  facilityId,
+  userId,
+  canManageUserSchedules,
+  createDialogOpen = false,
+  onCreateDialogChange,
+  onActiveSubTabChange,
+}: SchedulesHubTabProps) {
   const [activeSubTab, setActiveSubTab] = useState<SchedulesSubTab>('facility');
   const [visited, setVisited] = useState<Set<SchedulesSubTab>>(() => new Set(['facility']));
 
+  useEffect(() => {
+    onActiveSubTabChange?.(activeSubTab);
+  }, [activeSubTab, onActiveSubTabChange]);
+
   const showSubTab = (key: SchedulesSubTab) => {
     setActiveSubTab(key);
+    if (key !== 'facility') {
+      onCreateDialogChange?.(false);
+    }
     setVisited((prev) => {
       if (prev.has(key)) return prev;
       const next = new Set(prev);
@@ -57,7 +74,12 @@ export function SchedulesHubTab({ facilityId, userId, canManageUserSchedules }: 
 
       {visited.has('facility') && (
         <div hidden={activeSubTab !== 'facility'}>
-          <FacilitySchedulesTab facilityId={facilityId} userId={userId} />
+          <FacilitySchedulesTab
+            facilityId={facilityId}
+            userId={userId}
+            createDialogOpen={createDialogOpen}
+            onCreateDialogChange={onCreateDialogChange}
+          />
         </div>
       )}
       {canManageUserSchedules && visited.has('users') && (

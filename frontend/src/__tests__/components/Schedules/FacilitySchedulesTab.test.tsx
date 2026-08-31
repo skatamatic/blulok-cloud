@@ -128,13 +128,19 @@ describe('FacilitySchedulesTab', () => {
       total: 1,
     });
 
-    render(<FacilitySchedulesTab facilityId={mockFacilityId} />);
+    render(
+      <FacilitySchedulesTab
+        facilityId={mockFacilityId}
+        createDialogOpen
+        onCreateDialogChange={jest.fn()}
+      />,
+    );
 
     expect(await screen.findByText('Weekend Access')).toBeInTheDocument();
     expect(screen.getByText('Custom Schedules')).toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole('button', { name: /Create Schedule/i }));
+    expect(screen.queryByRole('button', { name: /Create Schedule/i })).not.toBeInTheDocument();
     expect(screen.getByPlaceholderText('Enter schedule name')).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Add Schedule' })).toBeInTheDocument();
   });
 
   it('opens delete confirmation with usage details', async () => {
