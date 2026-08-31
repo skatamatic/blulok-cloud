@@ -14,7 +14,7 @@ export interface FMSSyncProgressPayload {
   /** Sync log identifier for tracking */
   syncLogId: string;
   /** Current synchronization step */
-  step: 'connecting' | 'fetching' | 'detecting' | 'preparing' | 'complete' | 'cancelled' | 'failed';
+  step: 'connecting' | 'fetching' | 'detecting' | 'preparing' | 'applying' | 'complete' | 'cancelled' | 'failed';
   /** Progress percentage (0-100) */
   percent: number;
   /** Optional human-readable status message */

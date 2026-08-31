@@ -21,53 +21,872 @@
  */
 
 import { Router, Response } from 'express';
-import Joi from 'joi';
-import { authenticateToken, requireDevAdmin } from '@/middleware/auth.middleware';
+import { authenticateToken, requireDevAdmin, requireAdmin } from '@/middleware/auth.middleware';
 import { AuthenticatedRequest } from '@/types/auth.types';
 import { asyncHandler } from '@/middleware/error.middleware';
 import { GatewayEventsService } from '@/services/gateway/gateway-events.service';
-import { validate } from '@/middleware/validator.middleware';
-import rateLimit from 'express-rate-limit';
+import { GatewayService } from '@/services/gateway/gateway.service';
+import { LockCommandService } from '@/services/lock-command.service';
 import { adminWriteLimiter } from '@/middleware/security-limits';
+import { DatabaseService } from '@/services/database.service';
+import { resolveLockCommandExpiresAtForFacility } from '@/utils/facility-lock-timeout.utils';
+import { UnitModel } from '@/models/unit.model';
+import { v4 as uuidv4 } from 'uuid';
+import { config } from '@/config/environment';
+import { RateLimitBypassService } from '@/services/rate-limit-bypass.service';
+import { generateKeyPair, exportJWK, KeyLike } from 'jose';
+import { Ed25519Service } from '@/services/crypto/ed25519.service';
+import { DenylistService } from '@/services/denylist.service';
+import { GatewayDebugService } from '@/services/gateway/gateway-debug.service';
+import { logger } from '@/utils/logger';
+import { handleAdminIssueRoutePass } from '@/routes/admin-issue-route-pass.handler';
+import { registerDelete, registerGet, registerPost } from '@/openapi/register-route';
+import {
+  rateLimitBypassBodySchema,
+  notificationsTestModeBodySchema,
+  gatewayPingBodySchema,
+  issueRoutePassBodySchema,
+  gatewayCommandBodySchema,
+  deviceDeletionOutboxQuerySchema,
+  adminUserIdParamSchema,
+  adminFacilityIdParamSchema,
+} from '@/schemas/admin.schemas';
 
 const router = Router();
-
-const rotationSchema = Joi.object({
-  payload: Joi.object({
-    cmd_type: Joi.string().valid('ROTATE_OPERATIONS_KEY').required(),
-    new_ops_pubkey: Joi.string().base64().required(),
-    ts: Joi.number().integer().required(),
-  }).required(),
-  signature: Joi.string().required(),
-});
+const MOUNT = '/api/v1/admin';
 
 // Rate limit sensitive admin endpoint
 const rotationLimiter = adminWriteLimiter;
 
-// POST /api/v1/admin/ops-key-rotation/broadcast
-router.post('/ops-key-rotation/broadcast', authenticateToken, requireDevAdmin, rotationLimiter, validate(rotationSchema), asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
-  const value = req.body as any;
-
-  // Monotonic ts: persist last in system_settings
-  const { DatabaseService } = await import('@/services/database.service');
+registerPost(
+  router,
+  '/ops-key-rotation/broadcast',
+  {
+    openApiPath: `${MOUNT}/ops-key-rotation/broadcast`,
+    tags: ['Admin'],
+    summary: 'Broadcast operations key rotation to gateways',
+    security: 'bearer',
+  },
+  authenticateToken,
+  requireDevAdmin,
+  rotationLimiter,
+  asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  const body = (req.body || {});
   const db = DatabaseService.getInstance().connection;
   const settingKey = 'security.last_root_rotation_ts';
-  const row = await db('system_settings').where({ key: settingKey }).first();
-  const lastTs = row ? parseInt(row.value, 10) || 0 : 0;
-  if (value.payload.ts <= lastTs) {
-    res.status(409).json({ success: false, message: 'Rotation ts must be greater than last recorded' });
+
+  const persistTimestamp = async (ts: number) => {
+    const row = await db('system_settings').where({ key: settingKey }).first();
+    const lastTs = row ? parseInt(row.value, 10) || 0 : 0;
+    if (ts <= lastTs) {
+      throw new Error('Rotation ts must be greater than last recorded');
+    }
+    if (row) {
+      await db('system_settings').where({ key: settingKey }).update({ value: String(ts), updated_at: db.fn.now() });
+    } else {
+      await db('system_settings').insert({ key: settingKey, value: String(ts), created_at: db.fn.now(), updated_at: db.fn.now() });
+    }
+  };
+
+  const broadcast = (payload: any, signature: string) => {
+    GatewayEventsService.getInstance().broadcast([payload, signature]);
+  };
+
+  // Legacy passthrough (pre-managed flow)
+  if (body.payload && body.signature) {
+    if (
+      !body.payload ||
+      body.payload.cmd_type !== 'ROTATE_OPERATIONS_KEY' ||
+      typeof body.payload.new_ops_pubkey !== 'string' ||
+      typeof body.payload.ts !== 'number' ||
+      typeof body.signature !== 'string'
+    ) {
+      res.status(400).json({ success: false, message: 'Invalid rotation packet' });
+      return;
+    }
+    try {
+      await persistTimestamp(body.payload.ts);
+    } catch (err: any) {
+      res.status(409).json({ success: false, message: err.message || 'Rotation ts must be greater than last recorded' });
+      return;
+    }
+    broadcast(body.payload, body.signature);
+    res.json({ success: true });
     return;
   }
-  // Broadcast as-is (locks verify with Root key)
-  GatewayEventsService.getInstance().broadcast([value.payload, value.signature]);
-  if (row) {
-    await db('system_settings').where({ key: settingKey }).update({ value: String(value.payload.ts), updated_at: db.fn.now() });
-  } else {
-    await db('system_settings').insert({ key: settingKey, value: String(value.payload.ts), created_at: db.fn.now(), updated_at: db.fn.now() });
+
+  // Managed rotation flow
+  if (typeof body.root_private_key_b64 !== 'string') {
+    res.status(400).json({ success: false, message: 'root_private_key_b64 is required' });
+    return;
   }
-  res.json({ success: true });
-}));
+
+  const rootPrivateKeyB64: string = body.root_private_key_b64;
+  const customOpsPublicKeyB64: string | undefined = body.custom_ops_public_key_b64;
+
+  const normalizedRootKey = Ed25519Service.normalizeBase64(rootPrivateKeyB64);
+  let newOpsPublicKey = customOpsPublicKeyB64 ? Ed25519Service.normalizeBase64(customOpsPublicKeyB64) : undefined;
+  let generatedOpsKeyPair: { private_key_b64: string; public_key_b64: string } | undefined;
+
+  if (!newOpsPublicKey) {
+    const { privateKey, publicKey } = await generateKeyPair('EdDSA');
+    const jwkPriv = await exportJWK(privateKey as unknown as KeyLike);
+    const jwkPub = await exportJWK(publicKey as unknown as KeyLike);
+    if (!jwkPriv.d || !jwkPub.x) {
+      throw new Error('Generated key pair is invalid');
+    }
+    generatedOpsKeyPair = {
+      private_key_b64: jwkPriv.d,
+      public_key_b64: jwkPub.x,
+    };
+    newOpsPublicKey = jwkPub.x;
+  } else {
+    newOpsPublicKey = Ed25519Service.normalizeBase64(newOpsPublicKey);
+  }
+
+  const payload = {
+    cmd_type: 'ROTATE_OPERATIONS_KEY',
+    new_ops_pubkey: newOpsPublicKey,
+    ts: Math.floor(Date.now() / 1000),
+  };
+
+  let signature: string;
+  try {
+    ({ signature } = await Ed25519Service.signPayloadWithRootKey(normalizedRootKey, payload));
+  } catch (error) {
+    res.status(400).json({ success: false, message: 'Invalid root private key' });
+    return;
+  }
+
+  // For managed flow, treat timestamp monotonicity as best-effort: we persist it,
+  // but do not fail the rotation if an older ts is used (to avoid blocking tooling).
+  try {
+    await persistTimestamp(payload.ts);
+  } catch {
+    // Swallow timestamp conflicts for managed flows
+  }
+
+  broadcast(payload, signature);
+
+  res.json({
+    success: true,
+    payload,
+    signature,
+    generated_ops_key_pair: generatedOpsKeyPair,
+  });
+  }),
+);
+
+registerPost(
+  router,
+  '/rate-limits/bypass',
+  {
+    openApiPath: `${MOUNT}/rate-limits/bypass`,
+    tags: ['Admin'],
+    summary: 'Temporarily bypass rate limiting for local testing',
+    security: 'bearer',
+    body: rateLimitBypassBodySchema,
+  },
+  authenticateToken,
+  requireDevAdmin,
+  asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  if ((config.nodeEnv || '').toLowerCase() === 'production') {
+    res.status(403).json({ success: false, message: 'Rate limit bypass is disabled in production' });
+    return;
+  }
+  const value = req.body;
+  const svc = RateLimitBypassService.getInstance();
+  if (!value.enabled) {
+    svc.disable();
+    res.json({ success: true, message: 'Rate limit bypass disabled' });
+    return;
+  }
+  const durationMs = value.durationSeconds * 1000;
+  const effectiveIp = value.ip || req.ip || req.socket?.remoteAddress || null;
+  svc.enable({
+    durationMs,
+    ip: effectiveIp,
+    reason: value.reason || `dev_admin:${req.user?.userId || 'unknown'}`
+  });
+  const state = svc.getState();
+  res.json({
+    success: true,
+    message: 'Rate limit bypass enabled',
+    expiresAt: state.expiresAt,
+    ip: state.ip
+  });
+  }),
+);
+
+registerPost(
+  router,
+  '/dev-tools/notifications-test-mode',
+  {
+    openApiPath: `${MOUNT}/dev-tools/notifications-test-mode`,
+    tags: ['Admin'],
+    summary: 'Enable or disable notification debug test mode',
+    security: 'bearer',
+    body: notificationsTestModeBodySchema,
+  },
+  authenticateToken,
+  requireDevAdmin,
+  asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  if ((config.nodeEnv || '').toLowerCase() === 'production') {
+    res.status(403).json({ success: false, message: 'Notifications test mode is disabled in production' });
+    return;
+  }
+  const value = req.body;
+  const { NotificationDebugService } = await import('@/services/notifications/notification-debug.service');
+  const svc = NotificationDebugService.getInstance();
+  if (value.enabled) {
+    svc.enable();
+  } else {
+    svc.disable();
+  }
+  res.json({ success: true, enabled: svc.isEnabled() });
+  }),
+);
+
+registerPost(
+  router,
+  '/dev-tools/gateway-ping',
+  {
+    openApiPath: `${MOUNT}/dev-tools/gateway-ping`,
+    tags: ['Admin'],
+    summary: 'Force an immediate PING to a connected gateway',
+    security: 'bearer',
+    body: gatewayPingBodySchema,
+  },
+  authenticateToken,
+  requireDevAdmin,
+  asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  if ((config.nodeEnv || '').toLowerCase() === 'production') {
+    res.status(403).json({ success: false, message: 'Gateway dev ping is disabled in production' });
+    return;
+  }
+
+  const value = req.body;
+  const facilityId = String(value.facilityId);
+  // Use the same command shape that the heartbeat uses so gateways can treat it uniformly.
+  GatewayEventsService.getInstance().unicastToFacility(facilityId, { type: 'PING' });
+  res.json({ success: true, facilityId });
+  }),
+);
+
+registerPost(
+  router,
+  '/dev-tools/issue-route-pass',
+  {
+    openApiPath: `${MOUNT}/dev-tools/issue-route-pass`,
+    tags: ['Admin'],
+    summary: 'Issue a route pass for a specific user (non-production debug)',
+    security: 'bearer',
+    body: issueRoutePassBodySchema,
+  },
+  authenticateToken,
+  requireDevAdmin,
+  asyncHandler(handleAdminIssueRoutePass),
+);
+
+registerGet(
+  router,
+  '/dev-tools/device-deletion-outbox',
+  {
+    openApiPath: `${MOUNT}/dev-tools/device-deletion-outbox`,
+    tags: ['Admin'],
+    summary: 'Inspect latest tombstone outbox row',
+    security: 'bearer',
+    query: deviceDeletionOutboxQuerySchema,
+  },
+  authenticateToken,
+  requireDevAdmin,
+  asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  if ((config.nodeEnv || '').toLowerCase() === 'production') {
+    res.status(403).json({ success: false, message: 'Device deletion outbox dev lookup is disabled in production' });
+    return;
+  }
+
+  const value = req.query;
+  const { DeviceDeletionOutboxService } = await import('@/services/device-deletion-outbox.service');
+  const outbox = DeviceDeletionOutboxService.getInstance();
+  const facilityId = String(value.facilityId);
+
+  const row = value.lockId
+    ? await outbox.findLatestOutboxForBlulok(facilityId, String(value.lockId))
+    : await outbox.findLatestOutboxForAccessControl(
+        facilityId,
+        String(value.accessId),
+        Number(value.relayChannel),
+      );
+
+  res.json({
+    success: true,
+    row: row
+      ? {
+          id: row.id,
+          status: row.status,
+          device_kind: row.device_kind,
+          lock_id: row.lock_id,
+          access_id: row.access_id,
+          relay_channel: row.relay_channel,
+          attempt_count: row.attempt_count,
+          last_error: row.last_error,
+        }
+      : null,
+  });
+  }),
+);
+
+registerDelete(
+  router,
+  '/users/:id/hard',
+  {
+    openApiPath: `${MOUNT}/users/{id}/hard`,
+    tags: ['Admin'],
+    summary: 'Hard delete user and related rows',
+    security: 'bearer',
+    params: adminUserIdParamSchema,
+  },
+  authenticateToken,
+  requireDevAdmin,
+  asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  const { id } = req.params;
+  const db = DatabaseService.getInstance().connection;
+  const unitModel = new UnitModel();
+  await db.transaction(async (trx) => {
+    // Collect user_device ids for cleanup in distributions
+    const userDeviceIds = await trx('user_devices').where({ user_id: id }).pluck('id');
+    if (userDeviceIds.length > 0) {
+      await trx('device_key_distributions').whereIn('user_device_id', userDeviceIds).del().catch(() => {});
+    }
+    // Remove denylists
+    await trx('denylist_entries').where({ user_id: id }).del().catch(() => {});
+    // Remove invites and otps
+    await trx('user_invites').where({ user_id: id }).del().catch(() => {});
+    await trx('user_otps').where({ user_id: id }).del().catch(() => {});
+    // Remove user devices
+    await trx('user_devices').where({ user_id: id }).del().catch(() => {});
+    // Remove facility associations
+    await trx('user_facility_associations').where({ user_id: id }).del().catch(() => {});
+    const affectedUnitIds: string[] = await trx('unit_assignments').where({ tenant_id: id }).distinct('unit_id').pluck('unit_id');
+    // Remove unit assignments where tenant_id matches
+    await trx('unit_assignments').where({ tenant_id: id }).del().catch(() => {});
+    for (const uid of affectedUnitIds) {
+      await unitModel.syncUnitOccupancyStatusFromAssignments(uid, trx);
+    }
+    // Remove key_sharing where user is owner or shared_with
+    await trx('key_sharing').where({ primary_tenant_id: id }).del().catch(() => {});
+    await trx('key_sharing').where({ shared_with_user_id: id }).del().catch(() => {});
+    // Finally delete user
+    await trx('users').where({ id }).del().catch(() => {});
+  });
+  res.json({ success: true, message: 'User hard-deleted' });
+  }),
+);
+
+registerDelete(
+  router,
+  '/facilities/:id/hard',
+  {
+    openApiPath: `${MOUNT}/facilities/{id}/hard`,
+    tags: ['Admin'],
+    summary: 'Hard delete a facility and all related data',
+    security: 'bearer',
+    params: adminFacilityIdParamSchema,
+  },
+  authenticateToken,
+  requireDevAdmin,
+  asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  const { id: facilityId } = req.params;
+  const db = DatabaseService.getInstance().connection;
+  LockCommandService.getInstance().cancelPendingCommandsForFacility(facilityId);
+  await db.transaction(async (trx) => {
+    // Collect units in facility
+    const unitIds: string[] = await trx('units').where({ facility_id: facilityId }).pluck('id');
+
+    if (unitIds.length > 0) {
+      // Remove key sharing for units
+      await trx('key_sharing').whereIn('unit_id', unitIds).del().catch(() => {});
+      // Remove unit assignments
+      await trx('unit_assignments').whereIn('unit_id', unitIds).del().catch(() => {});
+    }
+
+    // Devices: find gateways for this facility then delete device distributions, then devices, then gateways
+    const gatewayIds: string[] = await trx('gateways').where({ facility_id: facilityId }).pluck('id');
+
+    if (gatewayIds.length > 0) {
+      const blulokDeviceIds: string[] = await trx('blulok_devices').whereIn('gateway_id', gatewayIds).pluck('id').catch(() => []);
+      if (blulokDeviceIds.length > 0) {
+        const userDeviceIds: string[] = await trx('device_key_distributions').whereIn('blulok_device_id', blulokDeviceIds).pluck('user_device_id').catch(() => []);
+        if (userDeviceIds.length > 0) {
+          await trx('device_key_distributions').whereIn('user_device_id', userDeviceIds).del().catch(() => {});
+        }
+        await trx('blulok_devices').whereIn('id', blulokDeviceIds).del().catch(() => {});
+      }
+      // Access control devices if present
+      await trx('access_control_devices').whereIn('gateway_id', gatewayIds).del().catch(() => {});
+      await trx('gateways').whereIn('id', gatewayIds).del().catch(() => {});
+    }
+
+    // Finally remove units then facility
+    if (unitIds.length > 0) {
+      await trx('units').whereIn('id', unitIds).del().catch(() => {});
+    }
+
+    await trx('user_facility_associations').where({ facility_id: facilityId }).del().catch(() => {});
+
+    await trx('facilities').where({ id: facilityId }).del().catch(() => {});
+  });
+  res.json({ success: true, message: 'Facility hard-deleted' });
+  }),
+);
+
+registerPost(
+  router,
+  '/facilities',
+  {
+    openApiPath: `${MOUNT}/facilities`,
+    tags: ['Admin'],
+    summary: 'Create a facility (test utility)',
+    security: 'bearer',
+  },
+  authenticateToken,
+  requireDevAdmin,
+  asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  const db = DatabaseService.getInstance().connection;
+  const body = req.body || {};
+  const name = body.name || `E2E Facility ${Date.now()}`;
+  const address = body.address || '100 Test Ave, Test City, TS 00000';
+  const status = body.status || 'active';
+  const id = uuidv4();
+  await db('facilities').insert({
+    id,
+    name,
+    address,
+    status,
+    created_at: db.fn.now(),
+    updated_at: db.fn.now(),
+  });
+  res.status(201).json({ success: true, facility: { id, name, address, status } });
+  }),
+);
+
+registerPost(
+  router,
+  '/dev-tools/gateway-command',
+  {
+    openApiPath: `${MOUNT}/dev-tools/gateway-command`,
+    tags: ['Admin'],
+    summary: 'Send test gateway commands',
+    security: 'bearer',
+    body: gatewayCommandBodySchema,
+  },
+  authenticateToken,
+  requireDevAdmin,
+  asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  if ((config.nodeEnv || '').toLowerCase() === 'production') {
+    res.status(403).json({ success: false, message: 'Gateway dev commands are disabled in production' });
+    return;
+  }
+
+  const value = req.body;
+  const { facilityId, command, targetDeviceIds, userId, expirationSeconds } = value;
+  const gateway = GatewayEventsService.getInstance();
+  const debugService = GatewayDebugService.getInstance();
+
+  // Log the raw input values for debugging
+  const debugInfo = {
+    command,
+    facilityId,
+    userId: userId ? `${userId.substring(0, 20)}... (length: ${userId.length})` : undefined,
+    targetDeviceIds: targetDeviceIds?.map((id: string) => `${id.substring(0, 20)}... (length: ${id.length})`),
+    rawUserId: userId,
+    rawTargetDeviceIds: targetDeviceIds,
+  };
+  logger.info(`[DEBUG] Gateway command received:`, debugInfo);
+  
+  // Publish to gateway debug stream for live view
+  debugService.publish({
+    kind: 'command_sent',
+    facilityId,
+    userId: req.user?.userId,
+    type: command,
+    direction: 'outgoing',
+    ts: Date.now(),
+    meta: debugInfo,
+  });
+
+  try {
+    const toUtcIso = (unixSeconds: unknown): string | null => {
+      if (typeof unixSeconds !== 'number' || !Number.isFinite(unixSeconds)) return null;
+      return new Date(unixSeconds * 1000).toISOString();
+    };
+    const db = DatabaseService.getInstance().connection;
+    const lockCommandExpiresAt = await resolveLockCommandExpiresAtForFacility(db, facilityId);
+
+    switch (command) {
+      case 'DENYLIST_ADD': {
+        // Default expiration: 1 year from now
+        const now = Math.floor(Date.now() / 1000);
+        const exp = expirationSeconds ? now + expirationSeconds : now + 86400 * 365;
+        // Log values before creating entries
+        logger.info(`[DEBUG] DENYLIST_ADD - Before creating entries:`, {
+          userId,
+          userIdType: typeof userId,
+          userIdLength: userId?.length,
+          targetDeviceIds,
+          targetDeviceIdsTypes: targetDeviceIds?.map((id: any) => typeof id),
+          targetDeviceIdsLengths: targetDeviceIds?.map((id: string | any[]) => id?.length),
+        });
+
+        const entries = [{ sub: userId, exp }];
+        
+        // Log entries before passing to buildDenylistAdd
+        logger.info(`[DEBUG] DENYLIST_ADD - Entries to pass:`, {
+          entries,
+          targetDeviceIds,
+        });
+        
+        const jwt = await DenylistService.buildDenylistAdd(entries, targetDeviceIds);
+        
+        // Decode and log the created JWT payload to see what actually got encoded
+        let payload: any = null;
+        try {
+          const parts = jwt.split('.');
+          if (parts.length === 3) {
+            const payloadB64 = parts[1];
+            payload = JSON.parse(Buffer.from(payloadB64, 'base64url').toString('utf8'));
+            logger.info(`[DEBUG] DENYLIST_ADD - Decoded JWT payload:`, {
+              cmd_type: payload.cmd_type,
+              iat: payload.iat,
+              iat_utc: toUtcIso(payload.iat),
+              exp: payload.exp,
+              exp_utc: toUtcIso(payload.exp),
+              denylist_add: payload.denylist_add,
+              denylist_add_exp_utc: toUtcIso(payload.denylist_add?.[0]?.exp),
+              target: payload.target,
+              denylist_add_sub: payload.denylist_add?.[0]?.sub,
+              denylist_add_sub_type: typeof payload.denylist_add?.[0]?.sub,
+              denylist_add_sub_length: payload.denylist_add?.[0]?.sub?.length,
+              target_types: payload.target?.map((t: string) => typeof t),
+              target_lengths: payload.target?.map((t: string) => t?.length),
+            });
+          }
+        } catch (e) {
+          logger.error(`[DEBUG] Failed to decode JWT payload:`, e);
+        }
+        
+        gateway.unicastToFacility(facilityId, jwt);
+        logger.info(`Dev gateway command: DENYLIST_ADD sent to facility ${facilityId}`, { userId, targetDeviceIds });
+        
+        // Publish to gateway debug stream
+        debugService.publish({
+          kind: 'command_sent',
+          facilityId,
+          userId: req.user?.userId,
+          type: 'DENYLIST_ADD',
+          direction: 'outgoing',
+          ts: Date.now(),
+          meta: {
+            userId,
+            targetDeviceIds,
+            payload,
+            jwtLength: jwt.length,
+          },
+        });
+        
+        res.json({ success: true, command, jwt, payload });
+        break;
+      }
+
+      case 'DENYLIST_REMOVE': {
+        // Log values before creating entries
+        logger.info(`[DEBUG] DENYLIST_REMOVE - Before creating entries:`, {
+          userId,
+          userIdType: typeof userId,
+          userIdLength: userId?.length,
+          targetDeviceIds,
+          targetDeviceIdsTypes: targetDeviceIds?.map((id: any) => typeof id),
+          targetDeviceIdsLengths: targetDeviceIds?.map((id: string | any[]) => id?.length),
+        });
+
+        const entries = [{ sub: userId, exp: 0 }]; // exp not used for remove
+        
+        // Log entries before passing to buildDenylistRemove
+        logger.info(`[DEBUG] DENYLIST_REMOVE - Entries to pass:`, {
+          entries,
+          targetDeviceIds,
+        });
+        
+        const jwt = await DenylistService.buildDenylistRemove(entries, targetDeviceIds);
+        
+        // Decode and log the created JWT payload to see what actually got encoded
+        let payload: any = null;
+        try {
+          const parts = jwt.split('.');
+          if (parts.length === 3) {
+            const payloadB64 = parts[1];
+            payload = JSON.parse(Buffer.from(payloadB64, 'base64url').toString('utf8'));
+            logger.info(`[DEBUG] DENYLIST_REMOVE - Decoded JWT payload:`, {
+              cmd_type: payload.cmd_type,
+              iat: payload.iat,
+              iat_utc: toUtcIso(payload.iat),
+              exp: payload.exp,
+              exp_utc: toUtcIso(payload.exp),
+              denylist_remove: payload.denylist_remove,
+              denylist_remove_exp_utc: toUtcIso(payload.denylist_remove?.[0]?.exp),
+              target: payload.target,
+              denylist_remove_sub: payload.denylist_remove?.[0]?.sub,
+              denylist_remove_sub_type: typeof payload.denylist_remove?.[0]?.sub,
+              denylist_remove_sub_length: payload.denylist_remove?.[0]?.sub?.length,
+              target_types: payload.target?.map((t: string) => typeof t),
+              target_lengths: payload.target?.map((t: string) => t?.length),
+            });
+          }
+        } catch (e) {
+          logger.error(`[DEBUG] Failed to decode JWT payload:`, e);
+        }
+        
+        gateway.unicastToFacility(facilityId, jwt);
+        logger.info(`Dev gateway command: DENYLIST_REMOVE sent to facility ${facilityId}`, { userId, targetDeviceIds });
+        
+        // Publish to gateway debug stream
+        debugService.publish({
+          kind: 'command_sent',
+          facilityId,
+          userId: req.user?.userId,
+          type: 'DENYLIST_REMOVE',
+          direction: 'outgoing',
+          ts: Date.now(),
+          meta: {
+            userId,
+            targetDeviceIds,
+            payload,
+            jwtLength: jwt.length,
+          },
+        });
+        
+        res.json({ success: true, command, jwt, payload });
+        break;
+      }
+
+      case 'LOCK': {
+        // Dev-tools only: bypasses LockCommandService pending attribution (no Access History stamp).
+        // Production operator unlock/lock must use PUT /devices/.../lock.
+        const jwts: string[] = [];
+        const gatewaySvc = GatewayService.getInstance();
+        for (const deviceId of targetDeviceIds) {
+          const jwtDeviceClaim = await gatewaySvc.resolveDeviceIdForLockCommandJwt(deviceId);
+          const jwt = await Ed25519Service.signCommandJwt({
+            cmd_type: 'LOCK',
+            device_id: jwtDeviceClaim,
+            expires_at: lockCommandExpiresAt,
+          });
+          gateway.unicastToFacility(facilityId, jwt);
+          jwts.push(jwt);
+        }
+        logger.info(`Dev gateway command: LOCK sent to facility ${facilityId}`, { targetDeviceIds });
+        
+        // Publish to gateway debug stream
+        debugService.publish({
+          kind: 'command_sent',
+          facilityId,
+          userId: req.user?.userId,
+          type: 'LOCK',
+          direction: 'outgoing',
+          ts: Date.now(),
+          meta: {
+            targetDeviceIds,
+            deviceCount: targetDeviceIds.length,
+          },
+        });
+        
+        // Don't return jwts in response to avoid confusion - developers might copy them as device IDs
+        res.json({ success: true, command, targetDeviceIds, message: `LOCK command sent to ${targetDeviceIds.length} device(s)` });
+        break;
+      }
+
+      case 'UNLOCK': {
+        // Dev-tools only: bypasses LockCommandService pending attribution (no Access History stamp).
+        const jwts: string[] = [];
+        const gatewaySvc = GatewayService.getInstance();
+        for (const deviceId of targetDeviceIds) {
+          const jwtDeviceClaim = await gatewaySvc.resolveDeviceIdForLockCommandJwt(deviceId);
+          const jwt = await Ed25519Service.signCommandJwt({
+            cmd_type: 'UNLOCK',
+            device_id: jwtDeviceClaim,
+            expires_at: lockCommandExpiresAt,
+          });
+          gateway.unicastToFacility(facilityId, jwt);
+          jwts.push(jwt);
+        }
+        logger.info(`Dev gateway command: UNLOCK sent to facility ${facilityId}`, { targetDeviceIds });
+        
+        // Publish to gateway debug stream
+        debugService.publish({
+          kind: 'command_sent',
+          facilityId,
+          userId: req.user?.userId,
+          type: 'UNLOCK',
+          direction: 'outgoing',
+          ts: Date.now(),
+          meta: {
+            targetDeviceIds,
+            deviceCount: targetDeviceIds.length,
+          },
+        });
+        
+        // Don't return jwts in response to avoid confusion - developers might copy them as device IDs
+        res.json({ success: true, command, targetDeviceIds, message: `UNLOCK command sent to ${targetDeviceIds.length} device(s)` });
+        break;
+      }
+
+      default:
+        res.status(400).json({ success: false, message: `Unknown command: ${command}` });
+    }
+  } catch (err: any) {
+    logger.error(`Failed to send dev gateway command: ${err.message}`, err);
+    res.status(500).json({ success: false, message: err.message || 'Failed to send gateway command' });
+  }
+  }),
+);
+
+registerPost(
+  router,
+  '/data-prune',
+  {
+    openApiPath: `${MOUNT}/data-prune`,
+    tags: ['Admin'],
+    summary: 'Manually trigger data pruning',
+    security: 'bearer',
+  },
+  authenticateToken,
+  requireAdmin,
+  asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  const user = req.user!;
+
+  try {
+    const { DataPruningService } = await import('@/services/data-pruning.service');
+    const pruningService = DataPruningService.getInstance();
+    const results = await pruningService.prune();
+
+    logger.info(`Manual data pruning triggered by ${user.userId}`, results);
+
+    res.json({
+      success: true,
+      message: 'Data pruning completed',
+      results,
+    });
+  } catch (error: any) {
+    logger.error('Error during manual data pruning:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to prune data',
+      error: error?.message || 'Unknown error',
+    });
+  }
+  }),
+);
+
+registerPost(
+  router,
+  '/access-sessions/backfill',
+  {
+    openApiPath: `${MOUNT}/access-sessions/backfill`,
+    tags: ['Admin'],
+    summary: 'Backfill access_sessions from activity_logs (last N days)',
+    security: 'bearer',
+  },
+  authenticateToken,
+  requireDevAdmin,
+  asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+    const user = req.user!;
+    const dryRun = req.body?.dryRun === true || req.body?.dry_run === true;
+    const daysRaw = Number(req.body?.days);
+    const days = Number.isFinite(daysRaw) && daysRaw > 0 ? daysRaw : undefined;
+    const cursorRaw = req.body?.cursor;
+    const cursor =
+      cursorRaw
+      && typeof cursorRaw.afterOccurredAt === 'string'
+      && typeof cursorRaw.afterId === 'string'
+        ? {
+            afterOccurredAt: cursorRaw.afterOccurredAt,
+            afterId: cursorRaw.afterId,
+          }
+        : undefined;
+
+    try {
+      const {
+        AccessSessionBackfillService,
+      } = await import('@/services/access/access-session-backfill.service');
+      const { BACKFILL_HTTP_MAX_RUNTIME_MS } = await import(
+        '@/services/access/access-session-backfill.utils'
+      );
+      // Time-budgeted chunks keep each HTTP response under Cloud Run / edge limits.
+      // Browser "CORS" failures on long writes are usually killed requests with no headers.
+      const results = await AccessSessionBackfillService.getInstance().run({
+        days,
+        dryRun,
+        cursor,
+        maxRuntimeMs: BACKFILL_HTTP_MAX_RUNTIME_MS,
+      });
+      logger.info(`Access session backfill triggered by ${user.userId}`, results);
+      if (results.skippedBusy) {
+        res.status(409).json({
+          success: false,
+          message: 'Access session backfill already running',
+          results,
+        });
+        return;
+      }
+      res.json({
+        success: true,
+        message: results.done
+          ? (dryRun ? 'Access session backfill dry-run completed' : 'Access session backfill completed')
+          : (dryRun ? 'Access session backfill dry-run chunk completed' : 'Access session backfill chunk completed'),
+        results,
+      });
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : 'Unknown error';
+      logger.error('Error during access session backfill:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to backfill access sessions',
+        error: message,
+      });
+    }
+  }),
+);
+
+registerPost(
+  router,
+  '/route-pass-prune',
+  {
+    openApiPath: `${MOUNT}/route-pass-prune`,
+    tags: ['Admin'],
+    summary: 'Manually trigger route pass pruning',
+    security: 'bearer',
+  },
+  authenticateToken,
+  requireAdmin,
+  asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  const user = req.user!;
+
+  try {
+    const { RoutePassPruningService } = await import('@/services/route-pass-pruning.service');
+    const pruningService = RoutePassPruningService.getInstance();
+    const results = await pruningService.prune();
+
+    logger.info(`Manual route pass pruning triggered by ${user.userId}, removed: ${JSON.stringify(results)}`);
+    res.json({ success: true, message: 'Route pass pruning initiated', results });
+  } catch (error: any) {
+    logger.error('Error during manual route pass pruning:', error);
+    res.status(500).json({ success: false, message: 'Failed to prune route passes', error: error?.message || 'Unknown error' });
+  }
+  }),
+);
 
 export { router as adminRouter };
+
 
 

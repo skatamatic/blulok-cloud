@@ -4,6 +4,21 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Hide scrollbar but keep scrollability */
+.scrollbar-hide {
+  -ms-overflow-style: none;  /* IE and Edge */
+  scrollbar-width: none;  /* Firefox */
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+.scrollbar-hide::-webkit-scrollbar {
+  display: none;  /* Chrome, Safari and Opera */
+  width: 0;
+  height: 0;
+  background: transparent;
+}
+
 @keyframes toast-progress {
   from {
     width: 100%;
@@ -133,8 +148,8 @@
     @apply bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 border-gray-300 dark:border-gray-600;
   }
 
-  /* Fix button elements in dark mode */
-  button:not(.btn-primary):not(.btn-secondary) {
+  /* Neutral text for unstyled buttons only — themed/solid buttons set their own colors */
+  button:not(.btn-primary):not(.btn-secondary):not(.btn-danger):not(.btn-warning):not(.btn-ghost):not([class*='text-white']) {
     @apply text-gray-700 dark:text-gray-200;
   }
 
@@ -164,11 +179,27 @@
 
 @layer components {
   .btn-primary {
-    @apply inline-flex items-center justify-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-primary-600 hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors duration-200;
+    @apply inline-flex items-center justify-center px-4 py-2 border border-transparent text-sm font-medium rounded-lg text-white bg-[#147FD4] hover:bg-[#126bb3] focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-[#147FD4] dark:focus:ring-offset-gray-900 disabled:cursor-not-allowed disabled:bg-gray-300 disabled:text-gray-600 disabled:hover:bg-gray-300 dark:disabled:bg-gray-600 dark:disabled:text-gray-300 dark:disabled:hover:bg-gray-600 transition-colors duration-200;
   }
-  
+
   .btn-secondary {
-    @apply inline-flex items-center justify-center px-4 py-2 border border-gray-300 dark:border-gray-600 text-sm font-medium rounded-md text-gray-700 dark:text-gray-200 bg-white dark:bg-gray-700 hover:bg-gray-50 dark:hover:bg-gray-600 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors duration-200;
+    @apply inline-flex items-center justify-center px-4 py-2 border border-gray-300 dark:border-gray-600 text-sm font-medium rounded-lg text-gray-700 dark:text-gray-200 bg-white dark:bg-gray-800 hover:bg-gray-50 dark:hover:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-[#147FD4] dark:focus:ring-offset-gray-900 disabled:cursor-not-allowed disabled:opacity-60 disabled:text-gray-400 dark:disabled:text-gray-500 transition-colors duration-200;
+  }
+
+  .btn-ghost {
+    @apply inline-flex items-center justify-center px-4 py-2 border border-transparent text-sm font-medium rounded-lg text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700/60 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-[#147FD4] dark:focus:ring-offset-gray-900 disabled:cursor-not-allowed disabled:opacity-60 transition-colors duration-200;
+  }
+
+  .btn-danger {
+    @apply inline-flex items-center justify-center px-4 py-2 border border-transparent text-sm font-medium rounded-lg text-white bg-red-600 hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500 dark:focus:ring-offset-gray-900 disabled:cursor-not-allowed disabled:bg-red-400 disabled:text-red-50 dark:disabled:bg-red-900/40 dark:disabled:text-red-200/70 transition-colors duration-200;
+  }
+
+  .btn-warning {
+    @apply inline-flex items-center justify-center px-4 py-2 border border-transparent text-sm font-medium rounded-lg text-white bg-yellow-600 hover:bg-yellow-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-yellow-500 dark:focus:ring-offset-gray-900 disabled:cursor-not-allowed disabled:bg-yellow-400 disabled:text-yellow-50 dark:disabled:bg-yellow-900/40 dark:disabled:text-yellow-200/70 transition-colors duration-200;
+  }
+
+  .btn-sm {
+    @apply px-3 py-1.5 text-xs rounded-lg;
   }
   
   .input {
@@ -188,6 +219,39 @@
   .widget-grid .react-grid-item .card {
     overflow: hidden; /* Content overflow hidden */
     position: relative;
+    /*
+     * Intentionally NO z-index: keeps the card from creating a stacking
+     * context, so descendant absolute elements (e.g. the ⋮ menu) can use
+     * z-index values that compete with the resize handles which are siblings
+     * of the card on .react-grid-item.
+     */
+    flex: 1 1 auto;
+    min-height: 0;
+    pointer-events: none;
+  }
+
+  .widget-grid .react-grid-item .card .widget-header {
+    position: relative;
+    pointer-events: auto;
+    /* No isolation — same reason as above. */
+  }
+
+  .widget-grid .react-grid-item .card .drag-handle,
+  .widget-grid .react-grid-item .card .widget-header-actions,
+  .widget-grid .react-grid-item .card .widget-header-actions *,
+  .widget-grid .react-grid-item .card .widget-content,
+  .widget-grid .react-grid-item .card .widget-content > *,
+  .widget-grid .react-grid-item .card .dropdown-container,
+  .widget-grid .react-grid-item .card .dropdown-container *,
+  .widget-grid .react-grid-item .card button,
+  .widget-grid .react-grid-item .card input,
+  .widget-grid .react-grid-item .card select,
+  .widget-grid .react-grid-item .card textarea,
+  .widget-grid .react-grid-item .card a,
+  .widget-grid .react-grid-item .card .no-drag,
+  .widget-grid .react-grid-item .card .compact-widget-body,
+  .widget-grid .react-grid-item .card .widget-body {
+    pointer-events: auto;
   }
 
   /* Ensure dropdowns appear above other widgets */
@@ -230,6 +294,28 @@
     opacity: 0.8;
   }
 
+  /* Invalid drag/resize placement — overlaps or blocked by dock min size */
+  .widget-grid.widget-grid--placement-invalid .react-grid-item.react-grid-placeholder,
+  .widget-grid--placement-invalid .widget-grid .react-grid-item.react-grid-placeholder {
+    @apply bg-red-50 dark:bg-red-950/30 border-red-500 dark:border-red-400;
+    opacity: 0.9;
+  }
+
+  .widget-grid.widget-grid--placement-invalid .react-grid-item.react-draggable-dragging .card,
+  .widget-grid.widget-grid--placement-invalid .react-grid-item.resizing .card,
+  .widget-grid--placement-invalid .widget-grid .react-grid-item.react-draggable-dragging .card,
+  .widget-grid--placement-invalid .widget-grid .react-grid-item.resizing .card {
+    outline: 2px dashed theme('colors.red.500');
+    outline-offset: -2px;
+  }
+
+  .dark .widget-grid.widget-grid--placement-invalid .react-grid-item.react-draggable-dragging .card,
+  .dark .widget-grid.widget-grid--placement-invalid .react-grid-item.resizing .card,
+  .dark .widget-grid--placement-invalid .widget-grid .react-grid-item.react-draggable-dragging .card,
+  .dark .widget-grid--placement-invalid .widget-grid .react-grid-item.resizing .card {
+    outline-color: theme('colors.red.400');
+  }
+
   /* Dragging widget follows cursor smoothly */
   .widget-grid .react-grid-item.react-draggable-dragging {
     @apply z-40 shadow-2xl;
@@ -259,21 +345,12 @@
     user-select: none;
   }
 
-  .widget-grid .drag-handle:hover {
-    background-color: rgba(0, 0, 0, 0.02);
-  }
-
-  .dark .widget-grid .drag-handle:hover {
-    background-color: rgba(255, 255, 255, 0.02);
-  }
-
   .widget-grid .react-grid-item.react-draggable-dragging .drag-handle {
     cursor: grabbing;
-    background-color: rgba(0, 0, 0, 0.05);
   }
 
   .dark .widget-grid .react-grid-item.react-draggable-dragging .drag-handle {
-    background-color: rgba(255, 255, 255, 0.05);
+    cursor: grabbing;
   }
 
   /* Widget content scrolling */
@@ -319,33 +396,202 @@
     pointer-events: none !important;
   }
 
-  /* 2. Re-enable pointer events on the drag handle so it can be grabbed. */
+  /* 2. Re-enable pointer events on the drag handle and header actions. */
   .react-grid-item .drag-handle {
     pointer-events: auto !important;
     cursor: grab !important;
   }
+
+  .react-grid-item .widget-header-actions {
+    pointer-events: auto !important;
+    cursor: default !important;
+  }
+
+  .react-grid-item .widget-header-actions button {
+    cursor: pointer !important;
+  }
+
+  /* Resize handles are siblings of .card on .react-grid-item.react-resizable */
+  .react-grid-item .react-resizable-handle {
+    pointer-events: auto !important;
+    touch-action: none;
+  }
+
+  /* All four resize handles sit above the card content. */
+  .react-grid-item .react-resizable-handle-sw,
+  .react-grid-item .react-resizable-handle-se,
+  .react-grid-item .react-resizable-handle-nw,
+  .react-grid-item .react-resizable-handle-ne {
+    z-index: 300 !important;
+  }
+
+  /*
+   * The ⋮ menu wins click priority over the NE resize handle by sitting at a
+   * higher z-index than the handle (handle = 300, menu = 400). Because .card
+   * does NOT create a stacking context, this z-index competes directly with
+   * the handle in the grid item's stacking context.
+   */
+  .widget-grid .widget-header .widget-header-actions {
+    pointer-events: auto !important;
+    cursor: default !important;
+    position: relative;
+    z-index: 400;
+  }
+
+  /* Compact/tiny tiles: menu floats in the corner — must not become in-flow */
+  .widget-grid .compact-widget .widget-header-actions {
+    pointer-events: auto !important;
+    cursor: default !important;
+    position: absolute !important;
+    z-index: 400;
+  }
+
+  .widget-grid .widget-header .widget-header-actions button,
+  .widget-grid .compact-widget .widget-header-actions button,
+  .widget-grid .widget-header-actions .dropdown-container,
+  .widget-grid .widget-header-actions .dropdown-container button {
+    cursor: pointer !important;
+  }
+
+  .widget-grid .react-resizable-handle-sw,
+  .widget-grid .react-resizable-handle-se,
+  .widget-grid .react-resizable-handle-nw,
+  .widget-grid .react-resizable-handle-ne {
+    position: absolute;
+    width: 28px;
+    height: 28px;
+    background-image: none !important;
+    padding: 0;
+    transform: none !important;
+    z-index: 300 !important;
+  }
+
+  .widget-grid .react-resizable-handle-sw::before,
+  .widget-grid .react-resizable-handle-se::before,
+  .widget-grid .react-resizable-handle-nw::before,
+  .widget-grid .react-resizable-handle-ne::before {
+    display: none !important;
+  }
+
+  .widget-grid .react-resizable-handle-se {
+    right: 0;
+    bottom: 0;
+    cursor: se-resize !important;
+  }
+
+  .widget-grid .react-resizable-handle-sw {
+    left: 0;
+    bottom: 0;
+    cursor: sw-resize !important;
+  }
+
+  .widget-grid .react-resizable-handle-nw {
+    left: 0;
+    top: 0;
+    cursor: nw-resize !important;
+  }
+
+  .widget-grid .react-resizable-handle-ne {
+    right: 0;
+    top: 0;
+    cursor: ne-resize !important;
+  }
+
+  .widget-grid .react-resizable-handle-sw::after,
+  .widget-grid .react-resizable-handle-se::after,
+  .widget-grid .react-resizable-handle-nw::after,
+  .widget-grid .react-resizable-handle-ne::after {
+    content: '';
+    position: absolute;
+    width: 14px;
+    height: 14px;
+    opacity: 0;
+    transition: opacity 0.15s ease, transform 0.15s ease;
+    pointer-events: none;
+  }
+
+  .widget-grid .react-resizable-handle-se::after {
+    right: 5px;
+    bottom: 5px;
+    border-right: 3px solid theme('colors.primary.500');
+    border-bottom: 3px solid theme('colors.primary.500');
+    border-top: none;
+    border-left: none;
+    border-radius: 0 0 3px 0;
+    box-shadow: 2px 2px 0 rgba(20, 127, 212, 0.15);
+  }
+
+  .widget-grid .react-resizable-handle-sw::after {
+    left: 5px;
+    bottom: 5px;
+    border-left: 3px solid theme('colors.primary.500');
+    border-bottom: 3px solid theme('colors.primary.500');
+    border-top: none;
+    border-right: none;
+    border-radius: 0 0 0 3px;
+    box-shadow: -2px 2px 0 rgba(20, 127, 212, 0.15);
+  }
+
+  .widget-grid .react-resizable-handle-nw::after {
+    left: 5px;
+    top: 5px;
+    border-left: 3px solid theme('colors.primary.500');
+    border-top: 3px solid theme('colors.primary.500');
+    border-right: none;
+    border-bottom: none;
+    border-radius: 3px 0 0 0;
+    box-shadow: -2px -2px 0 rgba(20, 127, 212, 0.15);
+  }
+
+  .widget-grid .react-resizable-handle-ne::after {
+    right: 5px;
+    top: 5px;
+    border-right: 3px solid theme('colors.primary.500');
+    border-top: 3px solid theme('colors.primary.500');
+    border-left: none;
+    border-bottom: none;
+    border-radius: 0 3px 0 0;
+    box-shadow: 2px -2px 0 rgba(20, 127, 212, 0.15);
+  }
+
+  .widget-grid .react-resizable-handle-sw:hover::after,
+  .widget-grid .react-resizable-handle-se:hover::after,
+  .widget-grid .react-resizable-handle-nw:hover::after,
+  .widget-grid .react-resizable-handle-ne:hover::after,
+  .widget-grid .react-grid-item.resizing > .react-resizable-handle-se::after,
+  .widget-grid .react-grid-item.resizing > .react-resizable-handle-sw::after,
+  .widget-grid .react-grid-item.resizing > .react-resizable-handle-nw::after,
+  .widget-grid .react-grid-item.resizing > .react-resizable-handle-ne::after {
+    opacity: 1;
+    transform: scale(1.05);
+  }
+
+  .dark .widget-grid .react-resizable-handle-se::after {
+    border-color: theme('colors.primary.400');
+    box-shadow: 2px 2px 0 rgba(20, 127, 212, 0.25);
+  }
+
+  .dark .widget-grid .react-resizable-handle-sw::after {
+    border-color: theme('colors.primary.400');
+    box-shadow: -2px 2px 0 rgba(20, 127, 212, 0.25);
+  }
+
+  .dark .widget-grid .react-resizable-handle-nw::after {
+    border-color: theme('colors.primary.400');
+    box-shadow: -2px -2px 0 rgba(20, 127, 212, 0.25);
+  }
+
+  .dark .widget-grid .react-resizable-handle-ne::after {
+    border-color: theme('colors.primary.400');
+    box-shadow: 2px -2px 0 rgba(20, 127, 212, 0.25);
+  }
+
   .react-grid-item.react-draggable-dragging .drag-handle {
     cursor: grabbing !important;
   }
 
-  /* 3. Re-enable pointer events on the content area and any interactive elements within it. */
-  .react-grid-item .widget-content,
-  .react-grid-item .widget-content *,
-  .react-grid-item .dropdown-container,
-  .react-grid-item .dropdown-container *,
-  .react-grid-item button,
-  .react-grid-item input,
-  .react-grid-item select,
-  .react-grid-item textarea,
-  .react-grid-item a {
-    pointer-events: auto !important;
-  }
-
-  /* 4. Ensure the widget body (non-header area) cannot be dragged */
-  .react-grid-item .widget-body,
-  .react-grid-item .card > *:not(.drag-handle),
-  .react-grid-item .no-drag {
-    pointer-events: auto !important;
+  /* 3. Default cursor on card chrome (drag-handle keeps grab above) */
+  .react-grid-item .card > *:not(.drag-handle):not(.widget-header-actions) {
     cursor: default !important;
   }
   /* --- END OF FIX --- */
@@ -365,13 +611,19 @@
     50% { opacity: 0.4; }
   }
 
-  /* Better drag handle visibility */
-  .widget-grid .react-grid-item:hover .drag-handle {
-    background-color: rgba(0, 0, 0, 0.02);
+  /* Compact widget specific styles */
+  .compact-widget .drag-handle {
+    border-radius: 8px;
   }
 
-  .dark .widget-grid .react-grid-item:hover .drag-handle {
-    background-color: rgba(255, 255, 255, 0.02);
+  /* Title overlay for compact widgets */
+  .compact-widget .title-overlay {
+    backdrop-filter: blur(4px);
+    background-color: rgba(255, 255, 255, 0.9);
+  }
+
+  .dark .compact-widget .title-overlay {
+    background-color: rgba(31, 41, 55, 0.9);
   }
 
   /* Hamburger menu visibility - only on header hover */
@@ -421,34 +673,43 @@
     overflow: hidden;
   }
 
-  /* Ensure widgets maintain their aspect ratio during animations */
-  .widget-grid .react-grid-item > div {
-    height: 100%;
+  /* Grid item hosts .card + resize handle (flex; .react-resizable sets position:relative) */
+  .widget-grid .react-grid-item.react-resizable {
     display: flex;
     flex-direction: column;
   }
 
-  /* Compact widget specific styles */
-  .compact-widget .drag-handle {
-    border-radius: 8px;
+  .widget-grid .react-grid-item.react-resizable > .card {
+    width: 100%;
   }
 
-  .compact-widget:hover .drag-handle {
-    background-color: rgba(0, 0, 0, 0.01);
+  /* RGL child wrapper must fill the grid cell */
+  .widget-grid .react-grid-item > div {
+    height: 100%;
+    min-height: 0;
   }
 
-  .dark .compact-widget:hover .drag-handle {
-    background-color: rgba(255, 255, 255, 0.01);
+  /* Tiny stat tiles — edge-to-edge content, no phantom header row */
+  .widget-grid .compact-widget--tiny .compact-widget-body {
+    padding: 3px;
   }
 
-  /* Title overlay for compact widgets */
-  .compact-widget .title-overlay {
-    backdrop-filter: blur(4px);
-    background-color: rgba(255, 255, 255, 0.9);
+  /* Footer drag strip — label stays compact; ::before extends grab area into content */
+  .widget-grid .compact-widget--tiny .tiny-widget-footer-drag {
+    position: relative;
+    z-index: 2;
+    flex: 0 0 auto;
+    min-height: 0;
+    overflow: visible;
   }
 
-  .dark .compact-widget .title-overlay {
-    background-color: rgba(31, 41, 55, 0.9);
+  .widget-grid .compact-widget--tiny .tiny-widget-footer-drag::before {
+    content: '';
+    position: absolute;
+    left: -2px;
+    right: -2px;
+    bottom: 0;
+    top: -0.75rem;
   }
 
   /* Ensure all colored buttons always have white text */
@@ -484,5 +745,164 @@
   .bg-yellow-600 button, .bg-yellow-700 button,
   .bg-gray-600 button, .bg-gray-700 button {
     color: white !important;
+  }
+
+  /* Facility Map page - override DashboardLayout overflow behavior */
+  /* Use :has() selector to target main when it contains facility-map-page */
+  main:has(.facility-map-page) {
+    overflow: hidden !important;
+  }
+
+  main:has(.facility-map-page) > div {
+    height: 100%;
+    max-height: 100%;
+    padding-top: 0 !important;
+    padding-bottom: 0 !important;
+    /* Keep horizontal padding structure for margins */
+  }
+
+  main:has(.facility-map-page) > div > div {
+    height: 100%;
+    max-height: 100%;
+    /* Match horizontal padding to vertical padding (py-6 = 1.5rem = 24px) */
+    padding-left: 1.5rem !important;
+    padding-right: 1.5rem !important;
+  }
+
+  /* Ensure facility-map-page fills available space */
+  .facility-map-page {
+    height: 100vh;
+    max-height: 100vh;
+  }
+
+  /* Voice waveform bar anti-aliasing */
+  .voice-waveform-bar {
+    transform: translateZ(0);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    image-rendering: -webkit-optimize-contrast;
+    image-rendering: crisp-edges;
+    backface-visibility: hidden;
+    /* Force pixel-perfect rendering */
+    box-sizing: border-box;
+    border: none;
+    outline: none;
+    /* Prevent sub-pixel rendering */
+    -webkit-transform: translateZ(0);
+    -moz-transform: translateZ(0);
+    -ms-transform: translateZ(0);
+  }
+
+  /* Facility Map card scrollbar handling - hide scrollbars by default */
+  .facility-map-card {
+    scrollbar-width: none; /* Firefox - hide scrollbar */
+    -ms-overflow-style: none; /* IE and Edge - hide scrollbar */
+  }
+
+  .facility-map-card::-webkit-scrollbar {
+    display: none; /* Chrome, Safari, Opera - hide scrollbar */
+    width: 0;
+    height: 0;
+  }
+
+  /* Show scrollbars when viewport is small (half size - ~960px) */
+  @media (max-width: 960px) {
+    .facility-map-card {
+      scrollbar-width: thin; /* Firefox - show thin scrollbar */
+      -ms-overflow-style: auto; /* IE and Edge - show scrollbar */
+    }
+
+    .facility-map-card::-webkit-scrollbar {
+      display: block; /* Chrome, Safari, Opera - show scrollbar */
+      width: 8px;
+      height: 8px;
+    }
+
+    .facility-map-card::-webkit-scrollbar-track {
+      background: transparent;
+    }
+
+    .facility-map-card::-webkit-scrollbar-thumb {
+      background-color: theme('colors.gray.400');
+      border-radius: 4px;
+    }
+
+    .dark .facility-map-card::-webkit-scrollbar-thumb {
+      background-color: theme('colors.gray.600');
+    }
+  }
+
+  /* Status area scrollbar styling */
+  .status-area-scrollbar {
+    scrollbar-width: thin; /* Firefox */
+    scrollbar-color: theme('colors.gray.300') transparent; /* Firefox - thumb and track */
+  }
+
+  .status-area-scrollbar::-webkit-scrollbar {
+    width: 8px;
+  }
+
+  .status-area-scrollbar::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  .status-area-scrollbar::-webkit-scrollbar-thumb {
+    background-color: theme('colors.gray.300');
+    border-radius: 4px;
+    transition: background-color 0.2s ease;
+  }
+
+  .status-area-scrollbar::-webkit-scrollbar-thumb:hover {
+    background-color: theme('colors.gray.400');
+  }
+
+  /* Dark mode scrollbar styling */
+  .dark .status-area-scrollbar {
+    scrollbar-color: theme('colors.gray.700') transparent; /* Firefox - thumb and track */
+  }
+
+  .dark .status-area-scrollbar::-webkit-scrollbar-thumb {
+    background-color: theme('colors.gray.700');
+  }
+
+  .dark .status-area-scrollbar::-webkit-scrollbar-thumb:hover {
+    background-color: theme('colors.gray.600');
+  }
+
+  /* Video player range slider styling */
+  .slider {
+    -webkit-appearance: none;
+    appearance: none;
+    outline: none;
+  }
+
+  .slider::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    background: #3b82f6;
+    cursor: pointer;
+    border: 2px solid white;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+  }
+
+  .slider::-webkit-slider-thumb:hover {
+    background: #2563eb;
+  }
+
+  .slider::-moz-range-thumb {
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    background: #3b82f6;
+    cursor: pointer;
+    border: 2px solid white;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+  }
+
+  .slider::-moz-range-thumb:hover {
+    background: #2563eb;
   }
 }

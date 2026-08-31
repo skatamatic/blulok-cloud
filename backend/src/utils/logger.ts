@@ -17,27 +17,31 @@ const transports: winston.transport[] = [
   }),
 ];
 
-// Add file transports for all environments
-transports.push(
-  new winston.transports.File({
-    filename: 'logs/error.log',
-    level: 'error',
-    format: logFormat,
-  }),
-  new winston.transports.File({
-    filename: 'logs/combined.log',
-    format: logFormat,
-  })
-);
+// File transports keep handles open and prevent Jest workers from exiting cleanly.
+if (process.env.NODE_ENV !== 'test') {
+  transports.push(
+    new winston.transports.File({
+      filename: 'logs/error.log',
+      level: 'error',
+      format: logFormat,
+    }),
+    new winston.transports.File({
+      filename: 'logs/combined.log',
+      format: logFormat,
+    })
+  );
+}
 
 export const logger = winston.createLogger({
   level: config.logLevel,
   format: logFormat,
   transports,
-  exceptionHandlers: [
-    new winston.transports.File({ filename: 'logs/exceptions.log' }),
-  ],
-  rejectionHandlers: [
-    new winston.transports.File({ filename: 'logs/rejections.log' }),
-  ],
+  exceptionHandlers:
+    process.env.NODE_ENV === 'test'
+      ? []
+      : [new winston.transports.File({ filename: 'logs/exceptions.log' })],
+  rejectionHandlers:
+    process.env.NODE_ENV === 'test'
+      ? []
+      : [new winston.transports.File({ filename: 'logs/rejections.log' })],
 });

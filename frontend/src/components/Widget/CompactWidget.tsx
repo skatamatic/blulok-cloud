@@ -8,8 +8,10 @@ export interface CompactWidgetProps {
   size: WidgetSize;
   availableSizes: WidgetSize[];
   onSizeChange: (size: WidgetSize) => void;
+  /** @deprecated parent controls grid sizing via onSizeChange */
   onGridSizeChange?: (gridSize: { w: number; h: number }) => void;
   onRemove?: () => void;
+  readOnly?: boolean;
   children: React.ReactNode;
   className?: string;
   isDragging?: boolean;
@@ -22,28 +24,14 @@ export const CompactWidget: React.FC<CompactWidgetProps> = ({
   size,
   availableSizes,
   onSizeChange,
-  onGridSizeChange,
   onRemove,
+  readOnly = false,
   children,
   className = '',
   isDragging = false,
   suppressTitleOverlay = false,
 }) => {
-  const sizeToGrid = {
-    tiny: { w: 1, h: 1 },      // 136×136px - Single metric
-    small: { w: 2, h: 1 },     // 288×136px - Compact horizontal
-    medium: { w: 3, h: 2 },    // 440×288px - Standard widget
-    'medium-tall': { w: 3, h: 5 },  // 440×680px - Tall narrow widget
-    large: { w: 4, h: 3 },     // 592×424px - Extended content
-    huge: { w: 6, h: 4 },      // 880×544px - Maximum dashboard real estate
-    'large-wide': { w: 6, h: 3 },  // 880×424px - Wide extended content
-    'huge-wide': { w: 9, h: 4 },   // 1304×544px - Ultra-wide dashboard
-  };
-
-  const handleSizeChange = (newSize: WidgetSize) => {
-    onSizeChange(newSize);
-    onGridSizeChange?.(sizeToGrid[newSize]);
-  };
+  const isTiny = size === 'tiny';
 
   return (
     <motion.div
@@ -51,41 +39,50 @@ export const CompactWidget: React.FC<CompactWidgetProps> = ({
       initial={{ opacity: 0, scale: 0.9 }}
       animate={{ opacity: 1, scale: 1 }}
       transition={{ duration: 0.3, ease: 'easeOut' }}
-      className={`card h-full group relative compact-widget ${isDragging ? 'shadow-lg scale-105 z-10' : ''} ${className}`}
-      style={{
-        transformOrigin: 'center',
-      }}
+      data-size={size}
+      className={`card compact-widget h-full min-h-0 flex flex-col overflow-hidden group relative ${
+        isTiny ? 'compact-widget--tiny' : ''
+      } ${isDragging ? 'shadow-lg scale-105 z-10' : ''} ${className}`}
+      aria-label={title}
+      style={{ transformOrigin: 'center' }}
     >
-      {/* Drag Handle - Entire Widget for Compact Sizes */}
-      <div className="drag-handle h-full cursor-grab hover:bg-gray-50 dark:hover:bg-gray-700/30 transition-colors duration-200 relative">
-        
-        {/* Size Control - Top Right Corner */}
-        <div 
-          className="absolute top-2 right-2"
+      <div className="flex h-full min-h-0 flex-col relative transition-colors duration-200">
+        <div
+          className="widget-header-actions no-drag absolute top-1 right-1 z-30"
           onMouseDown={(e) => e.stopPropagation()}
           onClick={(e) => e.stopPropagation()}
-          style={{ pointerEvents: 'auto', zIndex: 100 }}
+          style={{ pointerEvents: 'auto' }}
         >
-          <div className="opacity-0 group-hover:opacity-100 transition-opacity duration-200">
+          <div
+            className={`opacity-0 group-hover:opacity-100 transition-opacity duration-200 origin-top-right ${
+              isTiny ? 'scale-90' : 'scale-75'
+            }`}
+          >
+            {!readOnly && (
             <WidgetSizeDropdown
               widgetId={id}
               currentSize={size}
               availableSizes={availableSizes}
-              onSizeChange={handleSizeChange}
+              onSizeChange={onSizeChange}
               onRemove={onRemove}
+              actionPadding={isTiny ? 'p-1' : 'p-0.5'}
+              iconSize={isTiny ? 'h-3 w-3' : 'h-2.5 w-2.5'}
             />
+            )}
           </div>
         </div>
 
-        {/* Widget Content - Full Area */}
-        <div className="p-3 h-full pointer-events-none">
-          {children}
+        <div
+          className={`compact-widget-body no-drag flex-1 min-h-0 w-full overflow-hidden pointer-events-auto ${
+            isTiny ? 'p-[3px]' : 'p-2 pr-9'
+          }`}
+        >
+          <div className="h-full w-full min-h-0">{children}</div>
         </div>
 
-        {/* Title Overlay - Only show on hover when not suppressed */}
         {!suppressTitleOverlay && (
-          <div className={`absolute ${size === 'tiny' ? 'bottom-2 left-2' : 'top-2 left-2'} pointer-events-none z-20`}>
-            <div className="title-overlay text-xs font-medium text-gray-700 dark:text-gray-300 px-2 py-1 rounded-md shadow-sm opacity-0 group-hover:opacity-100 transition-all duration-200 transform group-hover:scale-105">
+          <div className="pointer-events-none absolute inset-x-1 bottom-1 z-20 flex justify-center">
+            <div className="title-overlay max-w-full truncate rounded px-1.5 py-0.5 text-[10px] font-medium text-gray-700 opacity-0 shadow-sm transition-opacity duration-200 group-hover:opacity-100 dark:text-gray-300">
               {title}
             </div>
           </div>

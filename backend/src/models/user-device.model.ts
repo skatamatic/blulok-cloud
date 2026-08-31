@@ -1,4 +1,5 @@
 import { DatabaseService } from '@/services/database.service';
+import { randomUUID } from 'crypto';
 
 /**
  * App Platform Types
@@ -92,6 +93,21 @@ export class UserDeviceModel {
   }
 
   /**
+   * Find an active (non-revoked) device registration by user and app device ID.
+   * Used for login checks and device verification where revoked devices should not count.
+   *
+   * @param userId - Owner of the device
+   * @param appDeviceId - Device identifier from the mobile app
+   * @returns Active device registration if found, undefined otherwise
+   */
+  async findActiveByUserAndAppDeviceId(userId: string, appDeviceId: string): Promise<UserDevice | undefined> {
+    return this.db('user_devices')
+      .where({ user_id: userId, app_device_id: appDeviceId })
+      .whereIn('status', ['pending_key', 'active'])
+      .first();
+  }
+
+  /**
    * List all device registrations for a user.
    * Used for device management interfaces and user preferences.
    *
@@ -127,13 +143,16 @@ export class UserDeviceModel {
    * @returns Created device registration object
    */
   async create(data: Omit<UserDevice, 'id' | 'created_at' | 'updated_at'>): Promise<UserDevice> {
-    const [created] = await this.db('user_devices')
-      .insert({
-        ...data,
-        created_at: this.db.fn.now(),
-        updated_at: this.db.fn.now(),
-      })
-      .returning('*');
+    // Generate UUID in application to ensure we can retrieve the created record
+    const id = randomUUID();
+    await this.db('user_devices').insert({
+      id,
+      ...data,
+      created_at: this.db.fn.now(),
+      updated_at: this.db.fn.now(),
+    });
+
+    const created = await this.db('user_devices').where({ id }).first();
     return created as UserDevice;
   }
 
@@ -150,10 +169,10 @@ export class UserDeviceModel {
   async upsertByUserAndAppDeviceId(userId: string, appDeviceId: string, data: Partial<UserDevice>): Promise<UserDevice> {
     const existing = await this.findByUserAndAppDeviceId(userId, appDeviceId);
     if (existing) {
-      const [updated] = await this.db('user_devices')
+      await this.db('user_devices')
         .where({ id: existing.id })
-        .update({ ...data, updated_at: this.db.fn.now() })
-        .returning('*');
+        .update({ ...data, updated_at: this.db.fn.now() });
+      const updated = await this.db('user_devices').where({ id: existing.id }).first();
       return updated as UserDevice;
     }
     return this.create({
@@ -176,10 +195,10 @@ export class UserDeviceModel {
    * @returns Updated device registration, or undefined if not found
    */
   async updateById(id: string, data: Partial<UserDevice>): Promise<UserDevice | undefined> {
-    const [updated] = await this.db('user_devices')
+    await this.db('user_devices')
       .where({ id })
-      .update({ ...data, updated_at: this.db.fn.now() })
-      .returning('*');
+      .update({ ...data, updated_at: this.db.fn.now() });
+    const updated = await this.db('user_devices').where({ id }).first();
     return updated as UserDevice | undefined;
   }
 
@@ -195,6 +214,7 @@ export class UserDeviceModel {
       .where({ id })
       .update({ status: 'revoked', updated_at: this.db.fn.now() });
   }
+
 }
 
 

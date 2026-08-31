@@ -2,6 +2,11 @@ import { DenylistEntryModel, DeviceDenylistEntry } from '@/models/denylist-entry
 import { DatabaseService } from '@/services/database.service';
 
 jest.mock('@/services/database.service');
+jest.mock('@/services/access-control-zone-access.service', () => ({
+  AccessControlZoneAccessService: {
+    getDenylistRemovalTargetsForUserGrant: jest.fn(),
+  },
+}));
 
 describe('DenylistEntryModel', () => {
   let model: DenylistEntryModel;
@@ -24,8 +29,9 @@ describe('DenylistEntryModel', () => {
     mockKnex = jest.fn((table: string) => {
       if (table === 'blulok_devices') {
         return {
-          whereIn: jest.fn().mockReturnThis(),
-          select: jest.fn().mockResolvedValue([{ id: 'device-1' }, { id: 'device-2' }]),
+          select: jest.fn().mockReturnValue({
+            whereIn: jest.fn().mockResolvedValue([{ id: 'device-1' }, { id: 'device-2' }]),
+          }),
         };
       }
       return mockQueryBuilder;
@@ -33,6 +39,7 @@ describe('DenylistEntryModel', () => {
 
     // Add fn property for date functions
     mockKnex.fn = { now: () => new Date() };
+    mockKnex.raw = jest.fn((sql: string, bindings?: any[]) => ({ sql, bindings }));
 
     (DatabaseService.getInstance as jest.Mock).mockReturnValue({
       connection: mockKnex,
@@ -50,6 +57,7 @@ describe('DenylistEntryModel', () => {
       const mockEntry: DeviceDenylistEntry = {
         id: 'entry-1',
         device_id: 'device-1',
+        device_type: 'blulok',
         user_id: 'user-1',
         expires_at: new Date('2024-12-31'),
         created_at: new Date(),
@@ -79,6 +87,7 @@ describe('DenylistEntryModel', () => {
 
       const result = await model.create({
         device_id: 'device-1',
+        device_type: 'blulok',
         user_id: 'user-1',
         expires_at: new Date('2024-12-31'),
         source: 'unit_unassignment',
@@ -94,6 +103,7 @@ describe('DenylistEntryModel', () => {
       const mockEntry: DeviceDenylistEntry = {
         id: 'entry-1',
         device_id: 'device-1',
+        device_type: 'blulok',
         user_id: 'user-1',
         expires_at: null,
         created_at: new Date(),
@@ -123,6 +133,7 @@ describe('DenylistEntryModel', () => {
 
       await model.create({
         device_id: 'device-1',
+        device_type: 'blulok',
         user_id: 'user-1',
         expires_at: null,
         source: 'user_deactivation',
@@ -138,6 +149,7 @@ describe('DenylistEntryModel', () => {
         {
           id: 'entry-1',
           device_id: 'device-1',
+          device_type: 'blulok',
           user_id: 'user-1',
           expires_at: new Date('2024-12-31'),
           created_at: new Date(),
@@ -170,6 +182,7 @@ describe('DenylistEntryModel', () => {
         {
           id: 'entry-1',
           device_id: 'device-1',
+          device_type: 'blulok',
           user_id: 'user-1',
           expires_at: new Date('2024-12-31'),
           created_at: new Date(),
@@ -201,6 +214,7 @@ describe('DenylistEntryModel', () => {
       const mockEntry: DeviceDenylistEntry = {
         id: 'entry-1',
         device_id: 'device-1',
+        device_type: 'blulok',
         user_id: 'user-1',
         expires_at: new Date('2024-12-31'),
         created_at: new Date(),
@@ -298,15 +312,14 @@ describe('DenylistEntryModel', () => {
 
   describe('removeForUnits', () => {
     it('removes entries for devices in specified units', async () => {
+      const { AccessControlZoneAccessService } = await import('@/services/access-control-zone-access.service');
+      (AccessControlZoneAccessService.getDenylistRemovalTargetsForUserGrant as jest.Mock).mockResolvedValue([
+        { device_id: 'device-1', device_type: 'blulok' },
+        { device_id: 'device-2', device_type: 'blulok' },
+      ]);
+
       const delMock = jest.fn().mockResolvedValue(2);
       mockKnex.mockImplementation((table: string) => {
-        if (table === 'blulok_devices') {
-          return {
-            whereIn: jest.fn().mockReturnValue({
-              select: jest.fn().mockResolvedValue([{ id: 'device-1' }, { id: 'device-2' }]),
-            }),
-          };
-        }
         if (table === 'device_denylist_entries') {
           return {
             where: jest.fn().mockReturnValue({
@@ -324,16 +337,10 @@ describe('DenylistEntryModel', () => {
     });
 
     it('returns 0 if no devices found for units', async () => {
-      mockKnex.mockImplementation((table: string) => {
-        if (table === 'blulok_devices') {
-          return {
-            whereIn: jest.fn().mockReturnValue({
-              select: jest.fn().mockResolvedValue([]),
-            }),
-          };
-        }
-        return {};
-      });
+      const { AccessControlZoneAccessService } = await import('@/services/access-control-zone-access.service');
+      (AccessControlZoneAccessService.getDenylistRemovalTargetsForUserGrant as jest.Mock).mockResolvedValue([]);
+
+      mockKnex.mockImplementation(() => ({}));
 
       const result = await model.removeForUnits(['unit-1'], 'user-1');
       expect(result).toBe(0);
@@ -342,10 +349,16 @@ describe('DenylistEntryModel', () => {
 
   describe('findByUnitsAndUser', () => {
     it('finds entries for devices in specified units', async () => {
+      const { AccessControlZoneAccessService } = await import('@/services/access-control-zone-access.service');
+      (AccessControlZoneAccessService.getDenylistRemovalTargetsForUserGrant as jest.Mock).mockResolvedValue([
+        { device_id: 'device-1', device_type: 'blulok' },
+      ]);
+
       const mockEntries: DeviceDenylistEntry[] = [
         {
           id: 'entry-1',
           device_id: 'device-1',
+          device_type: 'blulok',
           user_id: 'user-1',
           expires_at: new Date('2024-12-31'),
           created_at: new Date(),
@@ -356,13 +369,6 @@ describe('DenylistEntryModel', () => {
       ];
 
       mockKnex.mockImplementation((table: string) => {
-        if (table === 'blulok_devices') {
-          return {
-            whereIn: jest.fn().mockReturnValue({
-              select: jest.fn().mockResolvedValue([{ id: 'device-1' }]),
-            }),
-          };
-        }
         if (table === 'device_denylist_entries') {
           const builder: any = Promise.resolve(mockEntries);
           builder.where = jest.fn().mockReturnValue(builder);
@@ -376,6 +382,114 @@ describe('DenylistEntryModel', () => {
 
       const result = await model.findByUnitsAndUser(['unit-1'], 'user-1');
       expect(result).toEqual(mockEntries);
+    });
+  });
+
+  describe('bulkCreate', () => {
+    it('bulk creates multiple denylist entries in a single insert', async () => {
+      const delMock = jest.fn().mockResolvedValue(0);
+      const insertMock = jest.fn().mockResolvedValue([1, 2, 3]);
+
+      mockKnex.mockImplementation((table: string) => {
+        if (table === 'device_denylist_entries') {
+          const builder: any = {
+            where: jest.fn().mockImplementation((cbOrVal: any) => {
+              if (typeof cbOrVal === 'function') {
+                cbOrVal(builder);
+              }
+              return builder;
+            }),
+            orWhere: jest.fn().mockReturnThis(),
+            del: delMock,
+            insert: insertMock,
+          };
+          return builder;
+        }
+        return {};
+      });
+
+      await model.bulkCreate([
+        { device_id: 'device-1', user_id: 'user-1', expires_at: new Date('2024-12-31'), source: 'unit_unassignment', created_by: 'admin-1' },
+        { device_id: 'device-2', user_id: 'user-1', expires_at: new Date('2024-12-31'), source: 'unit_unassignment', created_by: 'admin-1' },
+        { device_id: 'device-3', user_id: 'user-1', expires_at: new Date('2024-12-31'), source: 'unit_unassignment', created_by: 'admin-1' },
+      ]);
+
+      // Should delete existing entries in one query
+      expect(delMock).toHaveBeenCalledTimes(1);
+      // Should insert all entries in one query
+      expect(insertMock).toHaveBeenCalledTimes(1);
+      const insertCall = insertMock.mock.calls[0][0];
+      expect(insertCall).toHaveLength(3);
+      expect(insertCall[0].device_id).toBe('device-1');
+      expect(insertCall[1].device_id).toBe('device-2');
+      expect(insertCall[2].device_id).toBe('device-3');
+    });
+
+    it('does nothing when entries array is empty', async () => {
+      const delMock = jest.fn();
+      const insertMock = jest.fn();
+
+      mockKnex.mockImplementation((table: string) => {
+        if (table === 'device_denylist_entries') {
+          return {
+            where: jest.fn().mockReturnThis(),
+            del: delMock,
+            insert: insertMock,
+          };
+        }
+        return {};
+      });
+
+      await model.bulkCreate([]);
+
+      expect(delMock).not.toHaveBeenCalled();
+      expect(insertMock).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('bulkRemove', () => {
+    it('bulk removes multiple denylist entries in a single delete', async () => {
+      const delMock = jest.fn().mockResolvedValue(3);
+
+      mockKnex.mockImplementation((table: string) => {
+        if (table === 'device_denylist_entries') {
+          return {
+            whereIn: jest.fn().mockReturnValue({
+              where: jest.fn().mockReturnValue({
+                del: delMock,
+              }),
+            }),
+          };
+        }
+        return {};
+      });
+
+      const result = await model.bulkRemove(['device-1', 'device-2', 'device-3'], 'user-1');
+
+      expect(result).toBe(3);
+      expect(delMock).toHaveBeenCalledTimes(1);
+    });
+
+    it('returns 0 when deviceIds array is empty', async () => {
+      const delMock = jest.fn();
+
+      mockKnex.mockImplementation((table: string) => {
+        if (table === 'device_denylist_entries') {
+          return {
+            whereIn: jest.fn().mockReturnValue({
+              where: jest.fn().mockReturnValue({
+                del: delMock,
+              }),
+            }),
+          };
+        }
+        return {};
+      });
+
+      const result = await model.bulkRemove([], 'user-1');
+
+      expect(result).toBe(0);
+      expect(delMock).not.toHaveBeenCalled();
     });
   });
 });

@@ -45,7 +45,22 @@ import { EventEmitter } from 'events';
  * Defines the available size options for dashboard widgets.
  * Sizes determine grid layout and responsive behavior.
  */
-export type WidgetSize = 'tiny' | 'small' | 'medium' | 'medium-tall' | 'large' | 'huge' | 'large-wide' | 'huge-wide';
+export type WidgetSize =
+  | 'tiny'
+  | 'small'
+  | 'medium'
+  | 'medium-tall'
+  | 'large'
+  | 'huge'
+  | 'large-wide'
+  | 'huge-wide'
+  | 'mega-tall'
+  | 'dock-top'
+  | 'dock-bottom'
+  | 'dock-left'
+  | 'dock-right'
+  | 'dock-bottom-two-thirds'
+  | 'dock-full';
 
 /**
  * Widget Category Enumeration
@@ -78,6 +93,8 @@ export interface WidgetTypeDefinition {
   category: WidgetCategory;
   /** Required user permissions to access this widget */
   requiredPermissions?: string[];
+  /** When true, the widget can enter a runtime fullscreen "focus" mode covering the entire dashboard. */
+  supportsFullscreen?: boolean;
 }
 
 /**
@@ -101,8 +118,6 @@ export const WIDGET_TYPES = {
   // Activity & Monitoring Widgets
   /** Real-time activity log and system monitoring */
   'activity-monitor': 'activity-monitor',
-  /** Recent system activity feed with filtering */
-  'activity-feed': 'activity-feed',
   /** Access history for user's units and permissions */
   'access-history': 'access-history',
 
@@ -117,22 +132,24 @@ export const WIDGET_TYPES = {
   'lock-status': 'lock-status',
   /** Shared access key management overview */
   'shared-keys': 'shared-keys',
-  /** Overall system health and status dashboard */
-  'system-status': 'system-status',
+  /** Daily keypad access code viewer and refresh */
+  'daily-access-codes': 'daily-access-codes',
 
   // System Administration Widgets
   /** Remote facility gate control interface */
   'remote-gate': 'remote-gate',
   /** FMS synchronization status and controls */
   'sync-fms': 'sync-fms',
-  /** System performance metrics and monitoring */
-  'performance-stats': 'performance-stats',
 
-  // Development & Testing Widgets
-  /** Demo widget for scrollable content testing */
-  'test-scroll': 'test-scroll',
+  // Analytics Widgets
   /** Activity histogram visualization over time */
   'histogram': 'histogram',
+
+  /** Facility 3D visualization */
+  'facility-viewer': 'facility-viewer',
+
+  // Management widgets
+  'units-manager': 'units-manager',
 } as const;
 
 /**
@@ -159,7 +176,7 @@ export const WIDGET_REGISTRY: Record<WidgetType, WidgetTypeDefinition> = {
     availableSizes: ['tiny', 'small', 'medium', 'large'],
     allowMultiple: false,
     category: 'analytics',
-    requiredPermissions: ['admin', 'facility_admin']
+    requiredPermissions: ['admin', 'facility_admin', 'maintenance']
   },
   'stats-devices': {
     type: 'stats-devices',
@@ -169,7 +186,7 @@ export const WIDGET_REGISTRY: Record<WidgetType, WidgetTypeDefinition> = {
     availableSizes: ['tiny', 'small', 'medium', 'large'],
     allowMultiple: false,
     category: 'analytics',
-    requiredPermissions: ['admin', 'facility_admin']
+    requiredPermissions: ['admin', 'facility_admin', 'maintenance']
   },
   'stats-users': {
     type: 'stats-users',
@@ -179,7 +196,7 @@ export const WIDGET_REGISTRY: Record<WidgetType, WidgetTypeDefinition> = {
     availableSizes: ['tiny', 'small', 'medium', 'large'],
     allowMultiple: false,
     category: 'analytics',
-    requiredPermissions: ['admin', 'facility_admin']
+    requiredPermissions: ['admin', 'facility_admin', 'maintenance']
   },
   'stats-alerts': {
     type: 'stats-alerts',
@@ -189,27 +206,17 @@ export const WIDGET_REGISTRY: Record<WidgetType, WidgetTypeDefinition> = {
     availableSizes: ['tiny', 'small', 'medium', 'large'],
     allowMultiple: false,
     category: 'status',
-    requiredPermissions: ['admin', 'facility_admin']
+    requiredPermissions: ['admin', 'facility_admin', 'maintenance']
   },
   'activity-monitor': {
     type: 'activity-monitor',
     name: 'Activity Monitor',
     description: 'Real-time activity log and monitoring',
     defaultSize: 'medium-tall',
-    availableSizes: ['medium', 'medium-tall', 'large', 'large-wide', 'huge', 'huge-wide'],
+    availableSizes: ['medium', 'medium-tall', 'large', 'large-wide', 'huge', 'huge-wide', 'dock-top', 'dock-bottom', 'dock-left', 'dock-right', 'dock-bottom-two-thirds'],
     allowMultiple: false,
     category: 'activity',
-    requiredPermissions: ['admin', 'facility_admin']
-  },
-  'activity-feed': {
-    type: 'activity-feed',
-    name: 'Recent Activity',
-    description: 'Latest system activity',
-    defaultSize: 'large',
-    availableSizes: ['medium', 'medium-tall', 'large', 'huge', 'large-wide', 'huge-wide'],
-    allowMultiple: false,
-    category: 'activity',
-    requiredPermissions: ['admin', 'facility_admin']
+    requiredPermissions: ['admin', 'facility_admin', 'maintenance']
   },
   'access-history': {
     type: 'access-history',
@@ -219,7 +226,7 @@ export const WIDGET_REGISTRY: Record<WidgetType, WidgetTypeDefinition> = {
     availableSizes: ['small', 'medium', 'large', 'medium-tall'],
     allowMultiple: false,
     category: 'activity',
-    requiredPermissions: ['tenant', 'admin', 'facility_admin']
+    requiredPermissions: ['tenant', 'admin', 'facility_admin', 'maintenance']
   },
   'notifications': {
     type: 'notifications',
@@ -229,7 +236,7 @@ export const WIDGET_REGISTRY: Record<WidgetType, WidgetTypeDefinition> = {
     availableSizes: ['medium', 'medium-tall', 'large', 'large-wide', 'huge', 'huge-wide'],
     allowMultiple: false,
     category: 'status',
-    requiredPermissions: ['tenant', 'admin', 'facility_admin']
+    requiredPermissions: ['tenant', 'admin', 'facility_admin', 'maintenance']
   },
   'battery-status': {
     type: 'battery-status',
@@ -239,7 +246,7 @@ export const WIDGET_REGISTRY: Record<WidgetType, WidgetTypeDefinition> = {
     availableSizes: ['small', 'medium', 'large'],
     allowMultiple: false,
     category: 'activity',
-    requiredPermissions: ['admin', 'facility_admin']
+    requiredPermissions: ['admin', 'facility_admin', 'maintenance', 'tenant']
   },
   'unlocked-units': {
     type: 'unlocked-units',
@@ -249,7 +256,7 @@ export const WIDGET_REGISTRY: Record<WidgetType, WidgetTypeDefinition> = {
     availableSizes: ['small', 'medium', 'large'],
     allowMultiple: false,
     category: 'status',
-    requiredPermissions: ['admin', 'facility_admin']
+    requiredPermissions: ['admin', 'facility_admin', 'maintenance', 'tenant']
   },
   'lock-status': {
     type: 'lock-status',
@@ -259,7 +266,7 @@ export const WIDGET_REGISTRY: Record<WidgetType, WidgetTypeDefinition> = {
     availableSizes: ['small', 'medium', 'large', 'medium-tall'],
     allowMultiple: false,
     category: 'status',
-    requiredPermissions: ['tenant', 'admin', 'facility_admin']
+    requiredPermissions: ['tenant', 'admin', 'facility_admin', 'maintenance']
   },
   'shared-keys': {
     type: 'shared-keys',
@@ -269,17 +276,17 @@ export const WIDGET_REGISTRY: Record<WidgetType, WidgetTypeDefinition> = {
     availableSizes: ['small', 'medium', 'large', 'medium-tall'],
     allowMultiple: false,
     category: 'status',
-    requiredPermissions: ['tenant', 'admin', 'facility_admin']
+    requiredPermissions: ['tenant', 'admin', 'facility_admin', 'maintenance']
   },
-  'system-status': {
-    type: 'system-status',
-    name: 'System Status',
-    description: 'Overall system health',
-    defaultSize: 'large',
-    availableSizes: ['small', 'medium', 'large', 'large-wide'],
+  'daily-access-codes': {
+    type: 'daily-access-codes',
+    name: 'Daily Access Codes',
+    description: 'View and refresh active keypad access codes',
+    defaultSize: 'medium',
+    availableSizes: ['small', 'medium', 'medium-tall', 'large'],
     allowMultiple: false,
     category: 'status',
-    requiredPermissions: ['admin', 'facility_admin']
+    requiredPermissions: ['tenant', 'admin', 'dev_admin', 'facility_admin', 'maintenance']
   },
   'remote-gate': {
     type: 'remote-gate',
@@ -289,48 +296,61 @@ export const WIDGET_REGISTRY: Record<WidgetType, WidgetTypeDefinition> = {
     availableSizes: ['medium', 'large'],
     allowMultiple: false,
     category: 'system',
-    requiredPermissions: ['admin', 'facility_admin']
+    requiredPermissions: ['admin', 'facility_admin', 'maintenance']
   },
   'sync-fms': {
     type: 'sync-fms',
     name: 'FMS Sync',
     description: 'Synchronize customer data with FMS',
     defaultSize: 'medium',
-    availableSizes: ['small', 'medium', 'large'],
+    availableSizes: ['tiny', 'small', 'medium', 'large'],
     allowMultiple: false,
     category: 'system',
-    requiredPermissions: ['admin', 'facility_admin']
-  },
-  'performance-stats': {
-    type: 'performance-stats',
-    name: 'System Performance',
-    description: 'Performance metrics',
-    defaultSize: 'huge',
-    availableSizes: ['medium', 'large', 'huge'],
-    allowMultiple: false,
-    category: 'system',
-    requiredPermissions: ['admin', 'facility_admin']
-  },
-  'test-scroll': {
-    type: 'test-scroll',
-    name: 'Scrollable Content',
-    description: 'Demo scrollable widget',
-    defaultSize: 'large',
-    availableSizes: ['medium', 'medium-tall', 'large', 'huge', 'large-wide', 'huge-wide'],
-    allowMultiple: true,
-    category: 'system',
-    requiredPermissions: ['admin', 'facility_admin']
+    requiredPermissions: ['admin', 'dev_admin', 'facility_admin', 'maintenance']
   },
   'histogram': {
     type: 'histogram',
     name: 'Activity Histogram',
     description: 'Site activity over time',
     defaultSize: 'large-wide',
-    availableSizes: ['medium', 'medium-tall', 'large', 'large-wide', 'huge', 'huge-wide'],
+    availableSizes: ['medium', 'medium-tall', 'large', 'large-wide', 'huge', 'huge-wide', 'dock-top', 'dock-bottom', 'dock-bottom-two-thirds'],
     allowMultiple: true,
     category: 'analytics',
-    requiredPermissions: ['admin', 'facility_admin']
-  }
+    requiredPermissions: ['admin', 'facility_admin', 'maintenance']
+  },
+  'facility-viewer': {
+    type: 'facility-viewer',
+    name: 'Facility 3D View',
+    description: 'Interactive 3D visualization of linked facility with real-time lock status',
+    defaultSize: 'huge',
+    availableSizes: ['huge', 'huge-wide', 'dock-left', 'dock-right', 'dock-bottom-two-thirds', 'dock-full'],
+    allowMultiple: false,
+    category: 'status',
+    requiredPermissions: ['admin', 'facility_admin', 'maintenance'],
+    supportsFullscreen: true,
+  },
+  'units-manager': {
+    type: 'units-manager',
+    name: 'Units Manager',
+    description: 'Live unit grid with lock state, battery, signal, tenant, and one-tap remote unlock',
+    defaultSize: 'dock-bottom',
+    availableSizes: [
+      'large',
+      'large-wide',
+      'huge',
+      'huge-wide',
+      'dock-top',
+      'dock-bottom',
+      'dock-bottom-two-thirds',
+      'dock-left',
+      'dock-right',
+      'dock-full',
+    ],
+    allowMultiple: false,
+    category: 'status',
+    requiredPermissions: ['admin', 'dev_admin', 'facility_admin', 'maintenance'],
+    supportsFullscreen: true,
+  },
 };
 
 /**
@@ -424,6 +444,9 @@ export class WidgetTypeHelper {
    * @returns Canonical widget type string, with safe fallbacks
    */
   static extractWidgetTypeFromId(widgetId: string): string {
+    if (widgetId.includes('units-manager') || widgetId.includes('units_manager')) {
+      return WIDGET_TYPES['units-manager'];
+    }
     // Map old widget ID patterns to new canonical types
     if (widgetId.includes('facilities_stats') || widgetId.includes('facilities')) {
       return WIDGET_TYPES['stats-facilities'];
@@ -440,11 +463,11 @@ export class WidgetTypeHelper {
     if (widgetId.includes('recent_activity') || widgetId.includes('activity')) {
       return WIDGET_TYPES['activity-monitor'];
     }
-    if (widgetId.includes('system_status') || widgetId.includes('status')) {
-      return WIDGET_TYPES['system-status'];
+    if (widgetId.includes('system_status')) {
+      return WIDGET_TYPES['stats-facilities'];
     }
     if (widgetId.includes('performance_stats') || widgetId.includes('performance')) {
-      return WIDGET_TYPES['performance-stats'];
+      return WIDGET_TYPES['stats-devices'];
     }
     if (widgetId.includes('syncfms') || widgetId.includes('sync_fms')) {
       return WIDGET_TYPES['sync-fms'];
@@ -483,8 +506,8 @@ export class WidgetTypeHelper {
     const idLower = widgetId.toLowerCase();
     if (idLower.includes('stats')) return 'stats-facilities'; // Default stats widget
     if (idLower.includes('activity')) return 'activity-monitor';
-    if (idLower.includes('status')) return 'system-status';
-    if (idLower.includes('performance')) return 'performance-stats';
+    if (idLower.includes('status')) return 'stats-facilities';
+    if (idLower.includes('performance')) return 'stats-devices';
     
     // Return a safe default that exists in the registry
     return 'stats-facilities';

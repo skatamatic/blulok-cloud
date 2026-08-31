@@ -1,26 +1,48 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
+import { useWidgetSizeState } from '@/hooks/useWidgetSizeState';
 import { 
   ClockIcon,
-  UserIcon,
   LockClosedIcon,
   LockOpenIcon,
   KeyIcon,
   ExclamationTriangleIcon,
   CheckCircleIcon,
-  ArrowPathIcon,
-  EyeIcon
+  XCircleIcon
 } from '@heroicons/react/24/outline';
 import { Widget } from './Widget';
 import { WidgetSize } from './WidgetSizeDropdown';
 import { motion } from 'framer-motion';
+import { apiService } from '@/services/api.service';
+import { AccessLog } from '@/types/access-history.types';
+import { useAuth } from '@/contexts/AuthContext';
+import { useAccessHistoryLiveUpdates } from '@/hooks/useAccessHistoryLiveUpdates';
+import {
+  getWidgetLayoutProfile,
+  isWideWidgetSize,
+  WIDGET_BODY_CLASS,
+  WIDGET_LIST_SCROLL_CLASS,
+} from '@/utils/widget-layout.utils';
+import {
+  formatAccessAction,
+  formatAccessHistoryDeviceLabel,
+  formatAccessHistoryUnitLabel,
+  formatAccessMethod,
+  getAccessFailureDetail,
+  getAccessLogMetadata,
+  getAccessUserDisplay,
+} from '@/utils/access-history-display.utils';
+import { formatRelativeTime } from '@/utils/datetime.utils';
+import { UNIDENTIFIED_USER_LABEL } from '@/utils/access-session-display.utils';
+
+function isIdentifiedUserName(userName: string): boolean {
+  return userName !== '—' && userName !== UNIDENTIFIED_USER_LABEL;
+}
 
 interface ActivityLogEntry {
   id: string;
   timestamp: Date;
-  type: 'access' | 'lock' | 'unlock' | 'alert' | 'system' | 'user';
+  type: 'access' | 'lock' | 'unlock' | 'alert' | 'system';
   message: string;
-  user?: string;
-  unit?: string;
   facility?: string;
   severity: 'info' | 'warning' | 'error' | 'success';
 }
@@ -29,110 +51,217 @@ interface ActivityMonitorWidgetProps {
   id: string;
   title: string;
   initialSize?: WidgetSize;
+  currentSize?: WidgetSize;
   availableSizes?: WidgetSize[];
+  onSizeChange?: (size: WidgetSize) => void;
   onGridSizeChange?: (gridSize: { w: number; h: number }) => void;
   onRemove?: () => void;
+  readOnly?: boolean;
   facilityFilter?: string;
   maxEntries?: number;
 }
 
-// Mock data generator for realistic activity
-const generateMockActivities = (count: number): ActivityLogEntry[] => {
-  const activities: ActivityLogEntry[] = [];
-  const now = new Date();
-  
-  const templates = [
-    { type: 'access', message: 'Unit {unit} accessed by {user}', severity: 'info' },
-    { type: 'lock', message: 'Unit {unit} locked remotely', severity: 'success' },
-    { type: 'unlock', message: 'Unit {unit} unlocked by {user}', severity: 'info' },
-    { type: 'alert', message: 'Low battery detected on Unit {unit}', severity: 'warning' },
-    { type: 'alert', message: 'Unit {unit} left unlocked for 30+ minutes', severity: 'error' },
-    { type: 'system', message: 'Gateway {facility} came online', severity: 'success' },
-    { type: 'system', message: 'Backup completed successfully', severity: 'success' },
-    { type: 'user', message: 'New user {user} registered', severity: 'info' },
-    { type: 'system', message: 'Scheduled maintenance completed', severity: 'info' },
-    { type: 'alert', message: 'Failed access attempt on Unit {unit}', severity: 'error' },
-  ];
-
-  const users = ['John Smith', 'Sarah Johnson', 'Mike Wilson', 'Lisa Chen', 'David Brown'];
-  const units = ['A-101', 'B-205', 'C-312', 'A-150', 'B-088', 'C-401'];
-  const facilities = ['Downtown Storage', 'Warehouse District', 'Airport Location'];
-
-  for (let i = 0; i < count; i++) {
-    const template = templates[Math.floor(Math.random() * templates.length)];
-    const user = users[Math.floor(Math.random() * users.length)];
-    const unit = units[Math.floor(Math.random() * units.length)];
-    const facility = facilities[Math.floor(Math.random() * facilities.length)];
-    
-    const message = template.message
-      .replace('{user}', user)
-      .replace('{unit}', unit)
-      .replace('{facility}', facility);
-
-    activities.push({
-      id: `activity-${i}`,
-      timestamp: new Date(now.getTime() - (i * 15 * 60 * 1000) - Math.random() * 10 * 60 * 1000),
-      type: template.type as any,
-      message,
-      user: template.message.includes('{user}') ? user : undefined,
-      unit: template.message.includes('{unit}') ? unit : undefined,
-      facility: template.message.includes('{facility}') ? facility : undefined,
-      severity: template.severity as any
-    });
+/**
+ * Transform an AccessLog from the API into an ActivityLogEntry for display
+ */
+const transformAccessLogToActivity = (log: AccessLog): ActivityLogEntry => {
+  // Determine the activity type based on action
+  let type: ActivityLogEntry['type'] = 'access';
+  if (log.action === 'lock') {
+    type = 'lock';
+  } else if (log.action === 'unlock') {
+    type = 'unlock';
+  } else if (
+    log.action === 'access_denied'
+    || log.action === 'unlock_attempt'
+    || log.action === 'lock_attempt'
+    || log.action === 'system_error'
+    || log.action === 'invalid_credential'
+  ) {
+    type = 'alert';
+  } else if (log.action === 'schedule_violation' || log.action === 'timeout') {
+    type = 'system';
   }
 
-  return activities.sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime());
+  // Determine severity based on success and action
+  let severity: ActivityLogEntry['severity'] = 'info';
+  if (!log.success) {
+    severity = 'error';
+  } else if (log.action === 'lock' || log.action === 'access_granted') {
+    severity = 'success';
+  } else if (log.action === 'schedule_violation') {
+    severity = 'warning';
+  }
+
+  // Build a descriptive message
+  let message = '';
+  const userName = getAccessUserDisplay(log).primary;
+  const meta = getAccessLogMetadata(log);
+  const unitNumber =
+    formatAccessHistoryUnitLabel(log, meta)?.replace(/^Unit /, '')
+    || formatAccessHistoryDeviceLabel(log, meta)
+    || 'Unknown location';
+  const failureDetail = getAccessFailureDetail(log);
+
+  switch (log.action) {
+    case 'unlock':
+      message = isIdentifiedUserName(userName)
+        ? `Unit ${unitNumber} unlocked by ${userName}`
+        : `Unit ${unitNumber} unlocked (${formatAccessMethod(log.method)})`;
+      break;
+    case 'lock':
+      message = isIdentifiedUserName(userName)
+        ? `Unit ${unitNumber} locked by ${userName}`
+        : `Unit ${unitNumber} locked (${formatAccessMethod(log.method)})`;
+      break;
+    case 'access_granted':
+      message = `Access granted to ${unitNumber} for ${userName}`;
+      break;
+    case 'unlock_attempt':
+    case 'access_denied':
+      message = `Unlock attempt denied at ${unitNumber}`;
+      if (isIdentifiedUserName(userName)) {
+        message += ` for ${userName}`;
+      }
+      if (failureDetail) {
+        message += ` — ${failureDetail}`;
+      }
+      break;
+    case 'lock_attempt':
+      message = `Lock attempt failed at ${unitNumber}`;
+      if (isIdentifiedUserName(userName)) {
+        message += ` by ${userName}`;
+      }
+      if (failureDetail) {
+        message += ` — ${failureDetail}`;
+      }
+      break;
+    case 'door_open':
+    case 'gate_open':
+      message = `${log.device_name || 'Access point'} opened`;
+      break;
+    case 'door_close':
+    case 'gate_close':
+      message = `${log.device_name || 'Access point'} closed`;
+      break;
+    case 'system_error':
+      message = `System error on ${unitNumber}`;
+      if (log.reason) {
+        message += `: ${log.reason}`;
+      }
+      break;
+    case 'timeout':
+      message = `Timeout on ${unitNumber}`;
+      break;
+    case 'invalid_credential':
+      message = `Invalid credential attempt on ${unitNumber}`;
+      break;
+    case 'schedule_violation':
+      message = `Schedule violation on ${unitNumber} by ${userName}`;
+      break;
+    case 'manual_override':
+      message = `Manual override on ${unitNumber} by ${userName}`;
+      break;
+    default:
+      message = `${formatAccessAction(log)} on ${unitNumber}`;
+      if (failureDetail) {
+        message += ` — ${failureDetail}`;
+      }
+  }
+
+  return {
+    id: log.id,
+    timestamp: new Date(log.occurred_at),
+    type,
+    message,
+    facility: log.facility_name,
+    severity
+  };
 };
 
 export const ActivityMonitorWidget: React.FC<ActivityMonitorWidgetProps> = ({
   id,
   title,
   initialSize = 'medium-tall',
+  currentSize,
   availableSizes = ['medium', 'medium-tall', 'large', 'large-wide', 'huge', 'huge-wide'],
+  onSizeChange,
   onGridSizeChange,
   onRemove,
+  readOnly,
   facilityFilter,
   maxEntries = 50
 }) => {
-  const [size, setSize] = useState<WidgetSize>(initialSize);
-  const [activities, setActivities] = useState<ActivityLogEntry[]>([]);
-  const [isRefreshing, setIsRefreshing] = useState(false);
+  const { authState } = useAuth();
+  const { size, handleSizeChange } = useWidgetSizeState(
+    currentSize,
+    initialSize,
+    onSizeChange
+  );
+  const [logs, setLogs] = useState<AccessLog[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [filter, setFilter] = useState<'all' | 'alerts' | 'access'>('all');
 
-  useEffect(() => {
-    loadActivities();
-    // Simulate real-time updates
-    const interval = setInterval(() => {
-      if (Math.random() > 0.7) { // 30% chance every 30 seconds
-        loadActivities();
-      }
-    }, 30000);
+  const loadActivities = useCallback(async (options?: { background?: boolean }) => {
+    if (!options?.background) {
+      setError(null);
+    }
 
-    return () => clearInterval(interval);
+    try {
+      const response = await apiService.getAccessHistory({
+        facility_id: facilityFilter,
+        limit: maxEntries,
+        offset: 0,
+        view: 'raw',
+      });
+
+      if (response.success && response.logs) {
+        setLogs(response.logs);
+      } else {
+        setLogs([]);
+      }
+    } catch (err) {
+      console.error('Failed to load access history:', err);
+      if (!options?.background) {
+        setError('Failed to load activity data');
+        setLogs([]);
+      }
+    } finally {
+      if (!options?.background) {
+        setIsLoading(false);
+      }
+    }
   }, [facilityFilter, maxEntries]);
 
-  const loadActivities = async () => {
-    setIsRefreshing(true);
-    // Simulate API delay
-    await new Promise(resolve => setTimeout(resolve, 500));
-    
-    const mockActivities = generateMockActivities(maxEntries);
-    setActivities(mockActivities);
-    setIsRefreshing(false);
-  };
+  const loadActivitiesRef = useRef(loadActivities);
+  loadActivitiesRef.current = loadActivities;
 
-  const getMaxDisplayItems = (size: WidgetSize): number => {
-    switch (size) {
-      case 'small': return 3;
-      case 'medium': return 5;
-      case 'medium-tall': return 12;
-      case 'large': return 8;
-      case 'large-wide': return 10;
-      case 'huge': return 15;
-      case 'huge-wide': return 20;
-      default: return 5;
-    }
-  };
+  useEffect(() => {
+    void loadActivities();
+  }, [loadActivities]);
+
+  const liveFilters = useMemo(
+    () => (facilityFilter ? { facility_id: facilityFilter } : {}),
+    [facilityFilter],
+  );
+
+  useAccessHistoryLiveUpdates({
+    enabled: Boolean(authState.user),
+    subscriptionFilters: facilityFilter ? { facility_id: facilityFilter } : undefined,
+    liveFilters,
+    maxRows: maxEntries,
+    canPrepend: true,
+    onPrepend: setLogs,
+    onFallbackRefresh: (options) => loadActivitiesRef.current(options),
+  });
+
+  const activities = useMemo(
+    () => logs.map(transformAccessLogToActivity),
+    [logs],
+  );
+
+  const layout = getWidgetLayoutProfile(size);
 
   const getActivityIcon = (type: string, severity: string) => {
     switch (type) {
@@ -142,11 +271,9 @@ export const ActivityMonitorWidget: React.FC<ActivityMonitorWidgetProps> = ({
         return <LockClosedIcon className="h-4 w-4" />;
       case 'unlock':
         return <LockOpenIcon className="h-4 w-4" />;
-      case 'user':
-        return <UserIcon className="h-4 w-4" />;
       case 'alert':
         return severity === 'error' ? 
-          <ExclamationTriangleIcon className="h-4 w-4" /> : 
+          <XCircleIcon className="h-4 w-4" /> : 
           <ExclamationTriangleIcon className="h-4 w-4" />;
       case 'system':
         return <CheckCircleIcon className="h-4 w-4" />;
@@ -174,22 +301,7 @@ export const ActivityMonitorWidget: React.FC<ActivityMonitorWidgetProps> = ({
     return true;
   });
 
-  const displayedActivities = filteredActivities.slice(0, getMaxDisplayItems(size));
-
-  const formatTimestamp = (timestamp: Date) => {
-    const now = new Date();
-    const diffMs = now.getTime() - timestamp.getTime();
-    const diffMins = Math.floor(diffMs / (1000 * 60));
-    
-    if (diffMins < 1) return 'Just now';
-    if (diffMins < 60) return `${diffMins}m ago`;
-    if (diffMins < 1440) return `${Math.floor(diffMins / 60)}h ago`;
-    return timestamp.toLocaleDateString();
-  };
-
-  const handleRefresh = async () => {
-    await loadActivities();
-  };
+  const displayedActivities = filteredActivities.slice(0, layout.listCap);
 
   return (
     <Widget
@@ -197,20 +309,12 @@ export const ActivityMonitorWidget: React.FC<ActivityMonitorWidgetProps> = ({
       title={title}
       size={size}
       availableSizes={availableSizes}
-      onSizeChange={setSize}
+      onSizeChange={handleSizeChange}
       onGridSizeChange={onGridSizeChange}
       onRemove={onRemove}
+      readOnly={readOnly}
       enhancedMenu={
         <div className="space-y-1">
-          <button
-            onClick={handleRefresh}
-            disabled={isRefreshing}
-            className="w-full px-3 py-2 text-left text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 rounded flex items-center space-x-2 disabled:opacity-50"
-          >
-            <ArrowPathIcon className={`h-4 w-4 ${isRefreshing ? 'animate-spin' : ''}`} />
-            <span>Refresh</span>
-          </button>
-          <div className="border-t border-gray-200 dark:border-gray-600 my-1"></div>
           <button
             onClick={() => setFilter('all')}
             className={`w-full px-3 py-2 text-left text-sm rounded ${
@@ -244,9 +348,9 @@ export const ActivityMonitorWidget: React.FC<ActivityMonitorWidgetProps> = ({
         </div>
       }
     >
-      <div className="space-y-2 h-full overflow-hidden flex flex-col">
-        {/* Filter Tabs (for larger widgets) */}
-        {(size === 'large' || size === 'huge' || size.includes('wide')) && (
+      <div className={`${WIDGET_BODY_CLASS} gap-2`}>
+        {/* Filter Tabs (for larger / wide / dock widgets) */}
+        {(isWideWidgetSize(size) || layout.isTall) && (
           <div className="flex space-x-1 mb-3">
             {[
               { key: 'all', label: 'All', count: activities.length },
@@ -255,7 +359,7 @@ export const ActivityMonitorWidget: React.FC<ActivityMonitorWidgetProps> = ({
             ].map(({ key, label, count }) => (
               <button
                 key={key}
-                onClick={() => setFilter(key as any)}
+                onClick={() => setFilter(key as typeof filter)}
                 className={`px-3 py-1.5 text-xs font-medium rounded-lg transition-colors ${
                   filter === key
                     ? 'bg-primary-100 text-primary-700 dark:bg-primary-900/20 dark:text-primary-400'
@@ -269,8 +373,8 @@ export const ActivityMonitorWidget: React.FC<ActivityMonitorWidgetProps> = ({
         )}
 
         {/* Activity List */}
-        <div className="flex-1 space-y-2 overflow-y-auto">
-          {isRefreshing ? (
+        <div className={`${WIDGET_LIST_SCROLL_CLASS} space-y-1.5`}>
+          {isLoading ? (
             <div className="space-y-2">
               {[...Array(3)].map((_, i) => (
                 <div key={i} className="animate-pulse flex items-center space-x-3 p-2">
@@ -282,6 +386,17 @@ export const ActivityMonitorWidget: React.FC<ActivityMonitorWidgetProps> = ({
                 </div>
               ))}
             </div>
+          ) : error ? (
+            <div className="flex flex-col items-center justify-center h-full text-center py-8">
+              <ExclamationTriangleIcon className="h-8 w-8 text-red-400 mb-2" />
+              <p className="text-sm text-red-500 dark:text-red-400">{error}</p>
+              <button
+                onClick={() => void loadActivities()}
+                className="mt-2 text-xs text-primary-600 dark:text-primary-400 hover:text-primary-700 dark:hover:text-primary-300"
+              >
+                Try again
+              </button>
+            </div>
           ) : displayedActivities.length > 0 ? (
             displayedActivities.map((activity, index) => (
               <motion.div
@@ -289,65 +404,48 @@ export const ActivityMonitorWidget: React.FC<ActivityMonitorWidgetProps> = ({
                 initial={{ opacity: 0, y: 10 }}
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ delay: index * 0.05, duration: 0.3 }}
-                className="flex items-start space-x-3 p-2 hover:bg-gray-50 dark:hover:bg-gray-700/50 rounded-lg transition-colors group"
+                className={`flex items-start gap-2 hover:bg-gray-50 dark:hover:bg-gray-700/50 rounded-lg transition-colors group ${
+                  layout.isDock ? 'p-1.5' : 'p-2'
+                }`}
               >
-                <div className={`p-2 rounded-full ${getSeverityColor(activity.severity)} flex-shrink-0`}>
+                <div
+                  className={`rounded-full ${getSeverityColor(activity.severity)} flex-shrink-0 ${
+                    layout.isDock ? 'p-1' : 'p-2'
+                  }`}
+                >
                   {getActivityIcon(activity.type, activity.severity)}
                 </div>
-                
+
                 <div className="flex-1 min-w-0">
-                  <p className="text-sm text-gray-900 dark:text-white leading-tight">
+                  <p
+                    className={`text-gray-900 dark:text-white leading-tight ${
+                      layout.isDock ? 'text-xs line-clamp-1' : 'text-sm'
+                    }`}
+                  >
                     {activity.message}
                   </p>
-                  <div className="flex items-center space-x-2 mt-1">
-                    <span className="text-xs text-gray-500 dark:text-gray-400">
-                      {formatTimestamp(activity.timestamp)}
+                  <div className="flex items-center gap-2 mt-0.5">
+                    <span className="text-[11px] text-gray-500 dark:text-gray-400 tabular-nums">
+                      {formatRelativeTime(activity.timestamp, { absoluteAfterHours: 24, absoluteStyle: 'date' })}
                     </span>
-                    {activity.facility && (
-                      <span className="text-xs text-gray-400 dark:text-gray-500">
+                    {activity.facility && !layout.isDock && (
+                      <span className="text-[11px] text-gray-400 dark:text-gray-500 truncate">
                         • {activity.facility}
                       </span>
                     )}
                   </div>
                 </div>
 
-                {/* Action button for larger widgets */}
-                {(size === 'large' || size === 'huge' || size.includes('wide')) && (
-                  <button className="opacity-0 group-hover:opacity-100 p-1 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-all">
-                    <EyeIcon className="h-4 w-4" />
-                  </button>
-                )}
               </motion.div>
             ))
           ) : (
             <div className="flex flex-col items-center justify-center h-full text-center py-8">
               <ClockIcon className="h-8 w-8 text-gray-400 mb-2" />
               <p className="text-sm text-gray-500 dark:text-gray-400">No recent activity</p>
-              <button
-                onClick={handleRefresh}
-                className="mt-2 text-xs text-primary-600 dark:text-primary-400 hover:text-primary-700 dark:hover:text-primary-300"
-              >
-                Refresh
-              </button>
             </div>
           )}
         </div>
-
-        {/* Footer with refresh button for smaller widgets */}
-        {!['large', 'huge', 'large-wide', 'huge-wide'].includes(size) && (
-          <div className="border-t border-gray-200 dark:border-gray-700 pt-2 mt-2">
-            <button
-              onClick={handleRefresh}
-              disabled={isRefreshing}
-              className="w-full flex items-center justify-center space-x-2 py-2 text-xs text-gray-600 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200 transition-colors disabled:opacity-50"
-            >
-              <ArrowPathIcon className={`h-3 w-3 ${isRefreshing ? 'animate-spin' : ''}`} />
-              <span>{isRefreshing ? 'Refreshing...' : 'Refresh'}</span>
-            </button>
-          </div>
-        )}
       </div>
     </Widget>
   );
 };
-

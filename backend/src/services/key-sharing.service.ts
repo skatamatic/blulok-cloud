@@ -1,0 +1,587 @@
+import { DatabaseService } from '@/services/database.service';
+import { KeySharingModel } from '@/models/key-sharing.model';
+import { UserModel, User } from '@/models/user.model';
+import { FirstTimeUserService } from '@/services/first-time-user.service';
+import { logger } from '@/utils/logger';
+import { AuthService } from '@/services/auth.service';
+import { DenylistEntryModel } from '@/models/denylist-entry.model';
+import { DenylistOptimizationService } from '@/services/denylist-optimization.service';
+import { DenylistService } from '@/services/denylist.service';
+import { GatewayEventsService } from '@/services/gateway/gateway-events.service';
+import { config } from '@/config/environment';
+import { UserRole } from '@/types/auth.types';
+import { UserFacilityAssociationModel } from '@/models/user-facility-association.model';
+import { UserLoginIdentityService } from '@/services/user-login-identity.service';
+import {
+  LOGIN_IDENTITY_CODES,
+  LoginIdentityError,
+} from '@/services/user-login-identity.utils';
+import { AccessControlZoneAccessService } from '@/services/access-control-zone-access.service';
+
+export class KeySharingService {
+  private static instance: KeySharingService;
+  private db = DatabaseService.getInstance().connection;
+  private keySharings = new KeySharingModel();
+
+  public static getInstance(): KeySharingService {
+    if (!KeySharingService.instance) {
+      KeySharingService.instance = new KeySharingService();
+    }
+    return KeySharingService.instance;
+  }
+
+  private async getDenylistTargetsForUnitRevocation(unitId: string, userId: string) {
+    return AccessControlZoneAccessService.getDenylistTargetsForUserRevocation([unitId], userId);
+  }
+
+  private async getDenylistRemovalTargetsForUnitGrant(unitId: string, userId: string) {
+    return AccessControlZoneAccessService.getDenylistRemovalTargetsForUserGrant([unitId], userId);
+  }
+
+  /**
+   * Invite a user by phone and create or activate a key sharing for a unit.
+   * Assumes caller has already validated authorization.
+   */
+  public async inviteByPhone(params: {
+    unitId: string;
+    phoneE164: string;
+    accessLevel: 'full' | 'limited' | 'temporary';
+    expiresAt?: Date | null;
+    grantedBy: string;
+    primaryTenantIdFallback?: string;
+  }): Promise<{ shareId: string; invitee: User; createdUser: boolean; inviteWarning?: string; }>
+  {
+    const { unitId, phoneE164, accessLevel, expiresAt, grantedBy, primaryTenantIdFallback } = params;
+    // Share creation must not be rolled back by a failed SMS, but the caller has
+    // to know the invitee never received a code.
+    let inviteWarning: string | undefined;
+
+    const phoneOwners = await UserModel.findAllByPhone(phoneE164);
+    const loginOwner = await UserModel.findByLoginIdentifier(phoneE164.toLowerCase());
+    const uniqueOwners = new Map(phoneOwners.map((user) => [user.id, user]));
+    if (loginOwner) uniqueOwners.set(loginOwner.id, loginOwner);
+    const matches = [...uniqueOwners.values()];
+    if (matches.length > 1) {
+      throw new LoginIdentityError(
+        LOGIN_IDENTITY_CODES.AMBIGUOUS_CONTACT,
+        'This phone number is used by more than one account. Share with a specific user instead.',
+      );
+    }
+
+    let invitee = matches[0];
+    let createdUser = false;
+    if (!invitee) {
+      const plan = await UserLoginIdentityService.planContactChange({
+        email: null,
+        phone: phoneE164,
+      });
+      if (!plan.ok) {
+        throw new LoginIdentityError(plan.code, plan.message);
+      }
+      const created = await UserModel.create({
+        login_identifier: plan.loginIdentifier || phoneE164.toLowerCase(),
+        email: null,
+        phone_number: phoneE164,
+        password_hash: '!',
+        first_name: '',
+        last_name: '',
+        role: 'tenant',
+        is_active: true,
+        requires_password_reset: true,
+      }) as User;
+      invitee = created;
+      createdUser = true;
+      await UserLoginIdentityService.applyRebalance(plan.rebalance);
+
+      // Automatically associate newly created share invitees with the facility
+      // that owns the shared unit. This ensures they can see/access that facility
+      // once they complete first-time setup.
+      try {
+        const unitRow = await this.db('units')
+          .where({ id: unitId })
+          .first('facility_id');
+        const facilityId = unitRow?.facility_id as string | undefined;
+        if (facilityId) {
+          await UserFacilityAssociationModel.addUserToFacility(invitee.id, facilityId);
+        } else {
+          logger.warn('KeySharingService.inviteByPhone: no facility found for unit when associating invitee', {
+            unitId,
+            userId: invitee.id,
+          });
+        }
+      } catch (err) {
+        logger.warn('KeySharingService.inviteByPhone: failed to associate invitee to facility', {
+          unitId,
+          userId: invitee.id,
+          error: (err as Error)?.message ?? String(err),
+        });
+      }
+
+      try {
+        const dispatch = await FirstTimeUserService.getInstance().sendInvite(invitee);
+        if (dispatch.warning) inviteWarning = dispatch.warning;
+      } catch (e) {
+        logger.error('Failed to dispatch invite SMS', e);
+        inviteWarning =
+          'Access was shared, but the invite could not be sent. Use Resend invite once notification settings are fixed.';
+      }
+    }
+
+    // Create or reactivate sharing
+    const existing = await this.keySharings.getUnitSharedKeys(unitId, {
+      shared_with_user_id: invitee.id,
+    });
+
+    let shareId: string;
+    let isActive: boolean;
+    let effectiveExpiresAt: Date | null | undefined;
+
+    if (existing.sharings.length > 0) {
+      const current = existing.sharings[0];
+      const updated = await this.keySharings.update(current.id, {
+        is_active: true,
+        access_level: accessLevel,
+        expires_at: expiresAt ?? undefined,
+        granted_by: grantedBy,
+      });
+      shareId = (updated?.id || current.id);
+      isActive = true;
+      effectiveExpiresAt = updated?.expires_at ?? current.expires_at;
+    } else {
+      // Resolve primary tenant for record keeping
+      let primaryTenantId = primaryTenantIdFallback || grantedBy;
+      if (!primaryTenantIdFallback) {
+        const primary = await this.db('unit_assignments').where({ unit_id: unitId, is_primary: true }).first();
+        if (primary?.tenant_id) primaryTenantId = primary.tenant_id;
+      }
+
+      try {
+        const created = await this.keySharings.create({
+          unit_id: unitId,
+          primary_tenant_id: primaryTenantId,
+          shared_with_user_id: invitee.id,
+          access_level: accessLevel,
+          expires_at: expiresAt ?? undefined,
+          granted_by: grantedBy,
+        });
+        shareId = created.id;
+        isActive = true;
+        effectiveExpiresAt = created.expires_at;
+      } catch (e: any) {
+        const msg = String(e?.message || '');
+        // If a duplicate key violation occurs, fall back to fetching the existing row
+        if (msg.includes('Duplicate entry') && msg.includes('key_sharing_unit_id_shared_with_user_id_unique') || msg.includes('key_sharing_unit_id_shared_with_user_id_unique')) {
+          const dupExisting = await this.keySharings.getUnitSharedKeys(unitId, {
+            shared_with_user_id: invitee.id,
+          });
+          if (dupExisting.sharings.length > 0) {
+            const current = dupExisting.sharings[0] as any;
+            shareId = current.id;
+            isActive = Boolean(current.is_active);
+            effectiveExpiresAt = current.expires_at;
+          } else {
+            throw e;
+          }
+        } else {
+          throw e;
+        }
+      }
+    }
+
+    // ---- Denylist removal on (re)grant for active/unexpired share (Flow H) ----
+    try {
+      // Only when share is active and (no expiry or future)
+      const now = new Date();
+      const unexpired = !effectiveExpiresAt || effectiveExpiresAt > now;
+      if (isActive && unexpired) {
+        const { DenylistEntryModel } = await import('@/models/denylist-entry.model');
+        const { DenylistOptimizationService } = await import('@/services/denylist-optimization.service');
+        const { DenylistService } = await import('@/services/denylist.service');
+        const { GatewayEventsService } = await import('@/services/gateway/gateway-events.service');
+
+        const denylistModel = new DenylistEntryModel();
+        const unitTargets = await this.getDenylistRemovalTargetsForUnitGrant(unitId, invitee.id);
+        const unitDeviceIds = unitTargets.map((target) => target.device_id);
+        if (unitDeviceIds.length > 0) {
+          const entries = (await denylistModel.findByUser(invitee.id))
+            .filter((entry) => unitDeviceIds.includes(entry.device_id));
+          if (entries.length > 0) {
+          const entriesToProcess = entries.filter(e => !DenylistOptimizationService.shouldSkipDenylistRemove(e));
+          const deviceIds = entries.map(e => e.device_id);
+          const deviceFacilityMap = await AccessControlZoneAccessService.getDeviceFacilityIds(deviceIds);
+
+          // Bulk remove DB entries (single query instead of N queries)
+          await denylistModel.bulkRemove(deviceIds, invitee.id);
+
+          if (entriesToProcess.length > 0) {
+            const deviceIdsToProcess = new Set(entriesToProcess.map((entry) => entry.device_id));
+            const byFacility = new Map<string, string[]>();
+            deviceIds.forEach((deviceId) => {
+              if (!deviceIdsToProcess.has(deviceId)) return;
+              const facilityId = deviceFacilityMap.get(deviceId);
+              if (!facilityId) return;
+              const list = byFacility.get(facilityId) || [];
+              list.push(deviceId);
+              byFacility.set(facilityId, list);
+            });
+
+            for (const [facilityId, targetDeviceIds] of byFacility.entries()) {
+              const jwt = await DenylistService.buildDenylistRemove([{ sub: invitee.id, exp: 0 }], targetDeviceIds);
+              GatewayEventsService.getInstance().unicastToFacility(facilityId, jwt);
+            }
+          }
+        }
+        }
+      }
+    } catch (e) {
+      logger.error('Failed to process denylist removal on invite grant:', e);
+    }
+
+    // For existing users that still require onboarding, send a fresh invite
+    // so they receive the same SMS/OTP flow as cloud-created invites.
+    if (!createdUser && invitee && invitee.requires_password_reset) {
+      try {
+        const dispatch = await FirstTimeUserService.getInstance().sendInvite(invitee);
+        if (dispatch.warning) inviteWarning = dispatch.warning;
+      } catch (e) {
+        logger.error('Failed to dispatch invite SMS for existing invitee', e);
+        inviteWarning =
+          'Access was shared, but the invite could not be sent. Use Resend invite once notification settings are fixed.';
+      }
+    }
+
+    this.notifyKeySharingChanged(unitId);
+    return { shareId, invitee, createdUser, ...(inviteWarning ? { inviteWarning } : {}) };
+  }
+
+  private async resolveFacilityIdForUnit(unitId: string): Promise<string | undefined> {
+    try {
+      const row = await this.db('units').where({ id: unitId }).first('facility_id');
+      return row?.facility_id;
+    } catch {
+      return undefined;
+    }
+  }
+
+  private notifyKeySharingChanged(unitId: string): void {
+    void (async () => {
+      try {
+        const facilityId = await this.resolveFacilityIdForUnit(unitId);
+        const { WebSocketService } = await import('@/services/websocket.service');
+        await WebSocketService.getInstance().broadcastKeySharingUpdate(facilityId);
+      } catch (err) {
+        logger.warn(`Failed to broadcast key sharing update for unit=${unitId}`, err);
+      }
+    })();
+  }
+
+  // ---- Refactor endpoints into service methods ----
+  public async createShare(ctx: { userId: string; role: UserRole }, dto: {
+    unit_id: string;
+    shared_with_user_id: string;
+    access_level?: 'full' | 'limited' | 'temporary' | 'permanent';
+    expires_at?: Date | null;
+    notes?: string;
+    access_restrictions?: any;
+  }): Promise<any> {
+    const { unit_id, shared_with_user_id, access_level = 'limited', expires_at, notes, access_restrictions } = dto;
+    // Normalize 'permanent' to 'limited' for model compatibility
+    const normalizedLevel: 'full' | 'limited' | 'temporary' =
+      access_level === 'permanent' ? 'limited' : (access_level as 'full' | 'limited' | 'temporary');
+
+    if (ctx.role === UserRole.TENANT) {
+      const hasAccess = await this.keySharings.checkUserHasAccess(ctx.userId, unit_id);
+      if (!hasAccess) {
+        throw new Error('You can only share keys for units you own');
+      }
+    } else if (!AuthService.canManageUsers(ctx.role)) {
+      throw new Error('Insufficient permissions to share keys');
+    }
+
+    // If there is an existing share (active or inactive) for this user+unit:
+    // - If active, reject as duplicate
+    // - If inactive, reactivate and update fields (treat as re-grant)
+    const existingAny = await this.keySharings.getUnitSharedKeys(unit_id, {
+      shared_with_user_id,
+    });
+    if (existingAny.sharings.length > 0) {
+      const current = existingAny.sharings[0] as any;
+      if (current.is_active) {
+        throw new Error('Key sharing already exists for this user and unit');
+      }
+      // Reactivate existing instead of creating a new row (avoids unique constraint collisions)
+      const reactivated = await this.updateShare(
+        ctx,
+        current.id,
+        {
+          is_active: true,
+          access_level: access_level,
+          expires_at: expires_at ?? null,
+          notes,
+          access_restrictions,
+        }
+      );
+      // Ensure non-null return object
+      if (reactivated) return reactivated;
+      const refetched = await this.keySharings.findById(current.id);
+      return refetched;
+    }
+
+    // Resolve primary tenant id for the unit; fallback to ctx.userId
+    let primaryTenantId = ctx.userId;
+    try {
+      const primary = await this.db('unit_assignments')
+        .where({ unit_id, is_primary: true })
+        .first('tenant_id');
+      if (primary?.tenant_id) primaryTenantId = primary.tenant_id;
+    } catch {}
+
+    const sharingData = {
+      unit_id,
+      primary_tenant_id: primaryTenantId,
+      shared_with_user_id,
+      access_level: normalizedLevel,
+      expires_at: expires_at ?? null,
+      granted_by: ctx.userId,
+      notes,
+      access_restrictions,
+    };
+
+    const result = await this.keySharings.create(sharingData);
+
+    // Fire-and-forget: Notify the recipient about the access grant
+    this.notifyAccessGranted(shared_with_user_id, unit_id).catch(err =>
+      logger.error('Failed to send access granted notification:', err)
+    );
+
+    this.notifyKeySharingChanged(unit_id);
+    return result;
+  }
+
+  /**
+   * Send an access-granted notification to the shared user.
+   * Looks up unit and facility details for the notification message.
+   */
+  private async notifyAccessGranted(userId: string, unitId: string): Promise<void> {
+    const { NotificationService } = await import('@/services/notification.service');
+
+    const unit = await this.db('units')
+      .where('id', unitId)
+      .first('unit_number', 'facility_id');
+    if (!unit) return;
+
+    await NotificationService.getInstance().notifyAccessGranted(
+      userId,
+      unit.unit_number,
+      unit.facility_id,
+      unitId
+    );
+  }
+
+  public async updateShare(ctx: { userId: string; role: UserRole }, id: string, dto: {
+    access_level?: 'full' | 'limited' | 'temporary' | 'permanent';
+    expires_at?: Date | null;
+    notes?: string;
+    access_restrictions?: any;
+    is_active?: boolean;
+  }): Promise<any> {
+    const existingSharing = await this.keySharings.findById(id);
+    if (!existingSharing) {
+      throw new Error('Key sharing record not found');
+    }
+
+    if (ctx.role === UserRole.TENANT) {
+      if (existingSharing.primary_tenant_id !== ctx.userId) {
+        throw new Error('You can only modify sharing for units you own');
+      }
+    } else if (!AuthService.canManageUsers(ctx.role)) {
+      throw new Error('Insufficient permissions to modify key sharing');
+    }
+
+    const updateData: any = {};
+    if (dto.access_level !== undefined) {
+      updateData.access_level = dto.access_level === 'permanent' ? 'limited' : dto.access_level;
+    }
+    if (dto.expires_at !== undefined) updateData.expires_at = dto.expires_at ? new Date(dto.expires_at) : null;
+    if (dto.notes !== undefined) updateData.notes = dto.notes;
+    if (dto.access_restrictions !== undefined) updateData.access_restrictions = dto.access_restrictions;
+    if (dto.is_active !== undefined) updateData.is_active = dto.is_active;
+
+    const updatedSharing = await this.keySharings.update(id, updateData);
+
+    // Reactivation: remove invitee from denylist for this unit
+    try {
+      const newIsActive = (dto.is_active !== undefined)
+        ? Boolean(dto.is_active)
+        : (updatedSharing ? Boolean((updatedSharing as any).is_active) : Boolean((existingSharing as any).is_active));
+      const becameActive = newIsActive && !(existingSharing as any).is_active;
+
+      const effectiveExpiresAt: Date | null | undefined =
+        (dto.expires_at !== undefined)
+          ? (dto.expires_at ? new Date(dto.expires_at) : null)
+          : (updatedSharing ? (updatedSharing as any).expires_at : (existingSharing as any).expires_at);
+
+      const now = new Date();
+      const unexpired = !effectiveExpiresAt || effectiveExpiresAt > now;
+
+      if (becameActive && unexpired) {
+        this.notifyAccessGranted(
+          existingSharing.shared_with_user_id,
+          existingSharing.unit_id,
+        ).catch(err =>
+          logger.error('Failed to send access granted notification on share reactivation:', err),
+        );
+
+        const denylistModel = new DenylistEntryModel();
+        const unitTargets = await this.getDenylistRemovalTargetsForUnitGrant(
+          existingSharing.unit_id,
+          existingSharing.shared_with_user_id,
+        );
+        const unitDeviceIds = unitTargets.map((target) => target.device_id);
+        const entries = (await denylistModel.findByUser(existingSharing.shared_with_user_id))
+          .filter((entry) => unitDeviceIds.includes(entry.device_id));
+        if (entries.length > 0) {
+          const deviceIds = Array.from(new Set(entries.map(e => e.device_id)));
+          const deviceFacilityMap = await AccessControlZoneAccessService.getDeviceFacilityIds(deviceIds);
+
+          // Bulk remove all entries (single query instead of N queries)
+          await denylistModel.bulkRemove(deviceIds, existingSharing.shared_with_user_id);
+
+          const facilityToDeviceIds = new Map<string, string[]>();
+          for (const deviceId of deviceIds) {
+            const facilityId = deviceFacilityMap.get(deviceId);
+            if (!facilityId) continue;
+            const list = facilityToDeviceIds.get(facilityId) || [];
+            list.push(deviceId);
+            facilityToDeviceIds.set(facilityId, list);
+          }
+
+          for (const [facilityId, targetDeviceIds] of facilityToDeviceIds.entries()) {
+            const entriesForFacility = entries.filter(e => targetDeviceIds.includes(e.device_id));
+            const entriesToProcess = entriesForFacility.filter(e => !DenylistOptimizationService.shouldSkipDenylistRemove(e as any));
+            if (entriesToProcess.length > 0) {
+              const filteredDeviceIds = Array.from(new Set(entriesToProcess.map((entry) => entry.device_id)));
+              const jwt = await DenylistService.buildDenylistRemove([{ sub: existingSharing.shared_with_user_id, exp: 0 }], filteredDeviceIds);
+              GatewayEventsService.getInstance().unicastToFacility(facilityId, jwt);
+            }
+          }
+        }
+      }
+    } catch (e) {
+      logger.error('Failed to process denylist removal on share reactivation:', e);
+    }
+
+    this.notifyKeySharingChanged(existingSharing.unit_id);
+    if (updatedSharing) return updatedSharing;
+    // Fallback: fetch and return latest row if dialect didn't return updated row
+    const refetched = await this.keySharings.findById(id);
+    return refetched;
+  }
+
+  /**
+   * Revoke all active key shares for a unit (e.g. before unit deletion).
+   * Pushes denylist updates so shared users lose route pass access to the unit lock.
+   */
+  public async revokeAllActiveSharesForUnit(
+    unitId: string,
+    performedBy: string,
+    performerRole: UserRole,
+    options?: { bestEffortGatewayDenylist?: boolean },
+  ): Promise<number> {
+    const { sharings } = await this.keySharings.getUnitSharedKeys(unitId, { is_active: true });
+    let revoked = 0;
+    for (const sharing of sharings) {
+      await this.revokeShare(
+        { userId: performedBy, role: performerRole },
+        sharing.id,
+        performedBy,
+        options,
+      );
+      revoked += 1;
+    }
+    return revoked;
+  }
+
+  public async revokeShare(
+    ctx: { userId: string; role: UserRole },
+    id: string,
+    performedBy: string,
+    options?: { bestEffortGatewayDenylist?: boolean },
+  ): Promise<boolean> {
+    const existingSharing = await this.keySharings.findById(id);
+    if (!existingSharing) {
+      throw new Error('Key sharing record not found');
+    }
+    if (ctx.role === UserRole.TENANT) {
+      if (existingSharing.primary_tenant_id !== ctx.userId) {
+        throw new Error('You can only revoke sharing for units you own');
+      }
+    } else if (!AuthService.canManageUsers(ctx.role)) {
+      throw new Error('Insufficient permissions to revoke key sharing');
+    }
+
+    const success = await this.keySharings.revokeSharing(id);
+    if (!success) return false;
+
+    try {
+      const denylistTargets = await this.getDenylistTargetsForUnitRevocation(
+        existingSharing.unit_id,
+        existingSharing.shared_with_user_id,
+      );
+      if (denylistTargets.length === 0) return true;
+
+      const deviceIds = denylistTargets.map((target) => target.device_id);
+      const deviceFacilityMap = await AccessControlZoneAccessService.getDeviceFacilityIds(deviceIds);
+
+      const nowEpoch = Math.floor(Date.now() / 1000);
+      const ttlSeconds = (config.security.routePassTtlHours || 24) * 60 * 60;
+      const exp = nowEpoch + ttlSeconds;
+      const denylistModel = new DenylistEntryModel();
+
+      // Bulk create denylist entries (single query instead of N queries)
+      await denylistModel.bulkCreate(denylistTargets.map((target) => ({
+        device_id: target.device_id,
+        device_type: target.device_type,
+        user_id: existingSharing.shared_with_user_id,
+        expires_at: this.db.raw('FROM_UNIXTIME(?)', [exp]),
+        source: 'key_sharing_revocation' as const,
+        created_by: performedBy,
+      })));
+
+      const shouldSkip = await DenylistOptimizationService.shouldSkipDenylistAdd(existingSharing.shared_with_user_id);
+      if (!shouldSkip) {
+        const byFacility = new Map<string, string[]>();
+        deviceIds.forEach((deviceId) => {
+          const facilityId = deviceFacilityMap.get(deviceId);
+          if (!facilityId) return;
+          const list = byFacility.get(facilityId) || [];
+          list.push(deviceId);
+          byFacility.set(facilityId, list);
+        });
+
+        for (const [facilityId, targetDeviceIds] of byFacility.entries()) {
+          const jwt = await DenylistService.buildDenylistAdd([{ sub: existingSharing.shared_with_user_id, exp }], targetDeviceIds);
+          logger.info(`Sending DENYLIST_ADD for revoked share user=${existingSharing.shared_with_user_id} devices=${targetDeviceIds.length} facility=${facilityId}`);
+          GatewayEventsService.getInstance().unicastToFacility(facilityId, jwt);
+        }
+      } else {
+        logger.info(`Skipping DENYLIST_ADD after share revocation user=${existingSharing.shared_with_user_id} (no active route pass)`);
+      }
+    } catch (error) {
+      logger.error('Failed to push denylist on key sharing revocation:', error);
+      if (options?.bestEffortGatewayDenylist) {
+        logger.warn(
+          `Continuing after share revocation denylist push failure shareId=${id} unitId=${existingSharing.unit_id}`,
+        );
+        this.notifyKeySharingChanged(existingSharing.unit_id);
+        return true;
+      }
+      throw new Error('Failed to enforce share revocation denylist');
+    }
+
+    this.notifyKeySharingChanged(existingSharing.unit_id);
+    return true;
+  }
+}
+
+

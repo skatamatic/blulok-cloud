@@ -6,7 +6,7 @@ interface ModalProps {
   onClose: () => void;
   title?: string;
   children: React.ReactNode;
-  size?: 'sm' | 'md' | 'lg' | 'xl';
+  size?: 'sm' | 'md' | 'lg' | 'xl' | '2xl' | '3xl';
   showCloseButton?: boolean;
 }
 
@@ -59,6 +59,8 @@ export const Modal: React.FC<ModalProps> = ({
     md: 'max-w-lg',
     lg: 'max-w-2xl',
     xl: 'max-w-4xl',
+    '2xl': 'max-w-6xl',
+    '3xl': 'max-w-7xl',
   };
 
   const handleBackdropClick = (e: React.MouseEvent) => {
@@ -93,6 +95,7 @@ export const Modal: React.FC<ModalProps> = ({
 
           {/* Content */}
           <div className="px-6 py-4">
+            {title ? <h2 className="mb-4 text-lg font-semibold text-gray-900 dark:text-white">{title}</h2> : null}
             {children}
           </div>
         </div>

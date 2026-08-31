@@ -8,153 +8,224 @@
  * - DELETE /admin/:id: Revoke any user's device (dev admin only)
  */
 import { Router, Response } from 'express';
-import Joi from 'joi';
 import { asyncHandler } from '@/middleware/error.middleware';
-import { authenticateToken, requireDevAdmin, requireTenant } from '@/middleware/auth.middleware';
+import { authenticateToken, requireDevAdmin } from '@/middleware/auth.middleware';
 import { AuthenticatedRequest } from '@/types/auth.types';
 import { UserDeviceModel, UserDeviceStatus, AppPlatform } from '@/models/user-device.model';
 import { DatabaseService } from '@/services/database.service';
+import { SystemSettingsModel } from '@/models/system-settings.model';
+import { registerGet, registerPost, registerDelete } from '@/openapi/register-route';
+import { errorEnvelopeSchema } from '@/openapi/common-schemas';
+import {
+  registerDeviceSchema,
+  rotateDeviceKeySchema,
+  deviceIdParamSchema,
+  userDevicesListResponseSchema,
+  userDeviceResponseSchema,
+  userDeviceSuccessResponseSchema,
+  adminDeleteDeviceResponseSchema,
+} from '@/schemas/user-devices.schemas';
 
 const router = Router();
+const MOUNT = '/api/v1/user-devices';
 
-const registerSchema = Joi.object({
-  app_device_id: Joi.string().max(128).required(),
-  platform: Joi.string().valid('ios', 'android', 'web', 'other').required(),
-  device_name: Joi.string().max(255).allow('', null),
-  public_key: Joi.string().base64({ paddingRequired: true }).required(),
-});
+registerGet(
+  router,
+  '/me',
+  {
+    openApiPath: `${MOUNT}/me`,
+    tags: ['App', 'Auth'],
+    summary: 'Get current user registered devices',
+    security: 'bearer',
+    responses: {
+      200: userDevicesListResponseSchema,
+    },
+  },
+  authenticateToken,
+  asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+    const userId = req.user!.userId;
+    const model = new UserDeviceModel();
+    const devices = await model.listByUser(userId);
+    res.json({ success: true, devices });
+  }),
+);
 
-const rotateSchema = Joi.object({
-  public_key: Joi.string().base64({ paddingRequired: true }).required(),
-});
+registerPost(
+  router,
+  '/register-key',
+  {
+    openApiPath: `${MOUNT}/register-key`,
+    tags: ['App', 'Auth'],
+    summary: 'Register device public key',
+    security: 'bearer',
+    body: registerDeviceSchema,
+    responses: {
+      200: userDeviceResponseSchema,
+      400: errorEnvelopeSchema,
+      409: errorEnvelopeSchema,
+    },
+  },
+  authenticateToken,
+  asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+    const value = req.body;
 
-// GET /api/v1/user-devices/me
-router.get('/me', authenticateToken, requireTenant, asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
-  const userId = req.user!.userId;
-  const model = new UserDeviceModel();
-  const devices = await model.listByUser(userId);
-  res.json({ success: true, devices });
-}));
+    const userId = req.user!.userId;
+    const { app_device_id, platform, device_name, public_key } = value as { app_device_id: string; platform: AppPlatform; device_name?: string; public_key: string };
 
-// POST /api/v1/user-devices/register-key
-router.post('/register-key', authenticateToken, requireTenant, asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
-  const { error, value } = registerSchema.validate(req.body);
-  if (error) {
-    res.status(400).json({ success: false, message: error.message });
-    return;
-  }
+    // Enforce cap from settings (system-wide default 2; 0 = unlimited)
+    const settingsModel = new SystemSettingsModel();
+    const rawSetting = await settingsModel.get('security.max_devices_per_user');
+    const parsedSetting = rawSetting !== undefined ? parseInt(rawSetting, 10) : NaN;
+    const maxDevices = Number.isNaN(parsedSetting) ? 2 : parsedSetting;
+    const enforceDeviceCap = maxDevices > 0;
 
-  const userId = req.user!.userId;
-  const { app_device_id, platform, device_name, public_key } = value as { app_device_id: string; platform: AppPlatform; device_name?: string; public_key: string };
+    const model = new UserDeviceModel();
+    const count = await model.countActiveByUser(userId);
+    const existing = await model.findByUserAndAppDeviceId(userId, app_device_id);
+    const isNew = !existing;
+    if (enforceDeviceCap && isNew && count >= maxDevices) {
+      const current = await model.listByUser(userId);
+      res.status(409).json({ success: false, message: 'Device limit reached', maxDevices, devices: current });
+      return;
+    }
 
-  // Enforce cap from settings (system-wide default 2)
-  const db = DatabaseService.getInstance().connection;
-  const settings = await db('system_settings').where({ key: 'security.max_devices_per_user' }).first();
-  const maxDevices = parseInt(settings?.value || '2', 10) || 2;
+    // Device is immediately active since registration includes public key
+    // No need for a subsequent key rotation step
+    const status: UserDeviceStatus = 'active';
+    const device = await model.upsertByUserAndAppDeviceId(userId, app_device_id, {
+      platform,
+      device_name,
+      public_key,
+      status,
+      last_used_at: new Date(),
+    } as any);
 
-  const model = new UserDeviceModel();
-  const count = await model.countActiveByUser(userId);
-  const existing = await model.findByUserAndAppDeviceId(userId, app_device_id);
-  const isNew = !existing;
-  if (isNew && count >= maxDevices) {
-    const current = await model.listByUser(userId);
-    res.status(409).json({ success: false, message: 'Device limit reached', maxDevices, devices: current });
-    return;
-  }
+    res.json({ success: true, device });
+  }),
+);
 
-  // Device is immediately active since registration includes public key
-  // No need for a subsequent key rotation step
-  const status: UserDeviceStatus = 'active';
-  const device = await model.upsertByUserAndAppDeviceId(userId, app_device_id, {
-    platform,
-    device_name,
-    public_key,
-    status,
-    last_used_at: new Date(),
-  } as any);
+registerDelete(
+  router,
+  '/me/:id',
+  {
+    openApiPath: `${MOUNT}/me/{id}`,
+    tags: ['App', 'Auth'],
+    summary: 'Revoke a device for the current user',
+    security: 'bearer',
+    params: deviceIdParamSchema,
+    responses: {
+      200: userDeviceSuccessResponseSchema,
+      400: errorEnvelopeSchema,
+      404: errorEnvelopeSchema,
+    },
+  },
+  authenticateToken,
+  asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+    const userId = req.user!.userId;
+    const id = req.params.id;
+    if (!id) {
+      res.status(400).json({ success: false, message: 'Device ID is required' });
+      return;
+    }
 
-  res.json({ success: true, device });
-}));
+    const model = new UserDeviceModel();
+    const device = await DatabaseService.getInstance().connection('user_devices').where({ id, user_id: userId }).first();
+    if (!device) {
+      res.status(404).json({ success: false, message: 'Device not found' });
+      return;
+    }
+    await model.revoke(id);
+    res.json({ success: true });
+  }),
+);
 
-// DELETE /api/v1/user-devices/me/:id
-router.delete('/me/:id', authenticateToken, requireTenant, asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
-  const userId = req.user!.userId;
-  const id = req.params.id;
-  if (!id) {
-    res.status(400).json({ success: false, message: 'Device ID is required' });
-    return;
-  }
+registerPost(
+  router,
+  '/me/rotate-key',
+  {
+    openApiPath: `${MOUNT}/me/rotate-key`,
+    tags: ['App', 'Auth'],
+    summary: 'Rotate device public key',
+    security: 'bearer',
+    body: rotateDeviceKeySchema,
+    responses: {
+      200: userDeviceSuccessResponseSchema,
+      400: errorEnvelopeSchema,
+      404: errorEnvelopeSchema,
+    },
+  },
+  authenticateToken,
+  asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+    const value = req.body;
 
-  const model = new UserDeviceModel();
-  const device = await DatabaseService.getInstance().connection('user_devices').where({ id, user_id: userId }).first();
-  if (!device) {
-    res.status(404).json({ success: false, message: 'Device not found' });
-    return;
-  }
-  await model.revoke(id);
-  res.json({ success: true });
-}));
+    // Require device id from header (same mechanism as first-time login)
+    const appDeviceId = (req.header('X-App-Device-Id') || '').trim();
+    if (!appDeviceId) {
+      res.status(400).json({ success: false, message: 'X-App-Device-Id header is required' });
+      return;
+    }
 
-// POST /api/v1/user-devices/me/rotate-key
-router.post('/me/rotate-key', authenticateToken, requireTenant, asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
-  const { error, value } = rotateSchema.validate(req.body);
-  if (error) {
-    res.status(400).json({ success: false, message: error.message });
-    return;
-  }
+    const userId = req.user!.userId;
+    const { public_key } = value as { public_key: string };
 
-  // Require device id from header (same mechanism as first-time login)
-  const appDeviceId = (req.header('X-App-Device-Id') || '').trim();
-  if (!appDeviceId) {
-    res.status(400).json({ success: false, message: 'X-App-Device-Id header is required' });
-    return;
-  }
+    const model = new UserDeviceModel();
+    const device = await model.findByUserAndAppDeviceId(userId, appDeviceId);
+    if (!device) {
+      res.status(404).json({ success: false, message: 'Device not found for user' });
+      return;
+    }
 
-  const userId = req.user!.userId;
-  const { public_key } = value as { public_key: string };
+    // Update device public key and activate
+    await model.upsertByUserAndAppDeviceId(userId, appDeviceId, {
+      public_key,
+      status: 'active',
+      last_used_at: new Date(),
+    } as any);
 
-  const model = new UserDeviceModel();
-  const device = await model.findByUserAndAppDeviceId(userId, appDeviceId);
-  if (!device) {
-    res.status(404).json({ success: false, message: 'Device not found for user' });
-    return;
-  }
+    res.json({ success: true });
+  }),
+);
 
-  // Update device public key and activate
-  await model.upsertByUserAndAppDeviceId(userId, appDeviceId, {
-    public_key,
-    status: 'active',
-    last_used_at: new Date(),
-  } as any);
+registerDelete(
+  router,
+  '/admin/:id',
+  {
+    openApiPath: `${MOUNT}/admin/{id}`,
+    tags: ['App', 'Auth'],
+    summary: 'Delete any user device (dev admin only)',
+    security: 'bearer',
+    params: deviceIdParamSchema,
+    responses: {
+      200: adminDeleteDeviceResponseSchema,
+      400: errorEnvelopeSchema,
+      404: errorEnvelopeSchema,
+    },
+  },
+  authenticateToken,
+  requireDevAdmin,
+  asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+    const deviceId = req.params.id;
+    if (!deviceId) {
+      res.status(400).json({ success: false, message: 'Device ID is required' });
+      return;
+    }
 
-  res.json({ success: true });
-}));
+    const model = new UserDeviceModel();
 
-// DELETE /api/v1/user-devices/admin/:id - Delete any user device (dev admin only)
-router.delete('/admin/:id', authenticateToken, requireDevAdmin, asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
-  const deviceId = req.params.id;
-  if (!deviceId) {
-    res.status(400).json({ success: false, message: 'Device ID is required' });
-    return;
-  }
+    // Check if device exists
+    const device = await DatabaseService.getInstance().connection('user_devices').where({ id: deviceId }).first();
+    if (!device) {
+      res.status(404).json({ success: false, message: 'Device not found' });
+      return;
+    }
 
-  const model = new UserDeviceModel();
+    await model.revoke(deviceId);
 
-  // Check if device exists
-  const device = await DatabaseService.getInstance().connection('user_devices').where({ id: deviceId }).first();
-  if (!device) {
-    res.status(404).json({ success: false, message: 'Device not found' });
-    return;
-  }
-
-  await model.revoke(deviceId);
-
-  res.json({
-    success: true,
-    message: 'Device deleted successfully'
-  });
-}));
+    res.json({
+      success: true,
+      message: 'Device deleted successfully'
+    });
+  }),
+);
 
 export { router as userDevicesRouter };
-
-

@@ -32,6 +32,7 @@ jest.mock('@heroicons/react/24/outline', () => ({
   DevicePhoneMobileIcon: () => <div data-testid="device-phone-mobile-icon" />,
   KeyIcon: () => <div data-testid="key-icon" />,
   TrashIcon: () => <div data-testid="trash-icon" />,
+  NoSymbolIcon: () => <div data-testid="no-symbol-icon" />,
   ExclamationTriangleIcon: () => <div data-testid="exclamation-triangle-icon" />,
   TicketIcon: () => <div data-testid="ticket-icon" />,
   ClockIcon: () => <div data-testid="clock-icon" />,
@@ -102,6 +103,25 @@ const mockUserDetails = {
           unit_number: '101',
           facility_name: 'Main Office Building',
           key_status: 'added',
+        },
+      ],
+    },
+  ],
+  accessControlDevices: [
+    {
+      id: 'ac-1',
+      facility_id: 'facility-1',
+      name: 'Front Gate',
+      device_type: 'gate',
+      location_description: 'Main entrance',
+      access_methods: ['app', 'keypad'],
+      codes: [
+        {
+          code: '111111',
+          valid_from: '2026-01-01T00:00:00.000Z',
+          valid_until: '2026-02-01T00:00:00.000Z',
+          schedule_id: null,
+          schedule_name: null,
         },
       ],
     },
@@ -182,7 +202,7 @@ describe('UserDetailsPage', () => {
       renderUserDetailsPage();
 
       await waitFor(() => {
-        expect(screen.getByText('Error Loading User Details')).toBeInTheDocument();
+        expect(screen.getByText('Error loading user')).toBeInTheDocument();
         expect(screen.getByText('Failed to load user details')).toBeInTheDocument();
       });
     });
@@ -229,7 +249,7 @@ describe('UserDetailsPage', () => {
       });
 
       fireEvent.click(screen.getByText('Back to Users'));
-      expect(mockNavigate).toHaveBeenCalledWith('/users');
+      expect(mockNavigate).toHaveBeenCalledWith('/users', { replace: true });
     });
   });
 
@@ -276,6 +296,106 @@ describe('UserDetailsPage', () => {
 
       expect(screen.getByText('John\'s iPhone')).toBeInTheDocument();
       expect(screen.getByText('Associated Locks (1)')).toBeInTheDocument();
+    });
+  });
+
+  describe('Route Passes Tab', () => {
+    it('derives route pass status from expiry when isExpired is absent', async () => {
+      const now = Date.now();
+      mockApiService.getUserRoutePassHistory = jest.fn().mockResolvedValue({
+        success: true,
+        data: [
+          {
+            id: 'pass-expired',
+            issued_at: new Date(now - 7200_000).toISOString(),
+            expires_at: new Date(now - 1000).toISOString(),
+            device_id: 'device-1',
+            audiences: ['lock:1'],
+          },
+          {
+            id: 'pass-active',
+            issued_at: new Date(now - 3600_000).toISOString(),
+            expires_at: new Date(now + 3600_000).toISOString(),
+            device_id: 'device-2',
+            audiences: ['lock:2'],
+          },
+        ],
+        pagination: { total: 2, limit: 50, offset: 0, hasMore: false },
+      });
+
+      renderUserDetailsPage();
+
+      await waitFor(() => {
+        expect(screen.getByText('Route Passes')).toBeInTheDocument();
+      });
+      fireEvent.click(screen.getByText('Route Passes'));
+
+      await waitFor(() => {
+        expect(screen.getByText('Expired')).toBeInTheDocument();
+        expect(screen.getAllByText('Active').length).toBeGreaterThan(0);
+      });
+    });
+
+    it('reloads route pass history when pagination offset changes', async () => {
+      // Use implementation (not once-chains): tab effect may call load more than once.
+      mockApiService.getUserRoutePassHistory = jest.fn().mockImplementation(async (_userId, filters: { offset?: number }) => {
+        const offset = filters?.offset ?? 0;
+        if (offset === 0) {
+          return {
+            success: true,
+            data: [
+              {
+                id: 'pass-1',
+                issued_at: new Date().toISOString(),
+                expires_at: new Date(Date.now() + 3600_000).toISOString(),
+                device_id: 'device-1',
+                audiences: ['lock:1'],
+                isExpired: false,
+              },
+            ],
+            pagination: { total: 60, limit: 50, offset: 0, hasMore: true },
+          };
+        }
+        return {
+          success: true,
+          data: [
+            {
+              id: 'pass-2',
+              issued_at: new Date().toISOString(),
+              expires_at: new Date(Date.now() + 3600_000).toISOString(),
+              device_id: 'device-2',
+              audiences: ['lock:2'],
+              isExpired: false,
+            },
+          ],
+          pagination: { total: 60, limit: 50, offset: 50, hasMore: false },
+        };
+      });
+
+      renderUserDetailsPage();
+      await waitFor(() => {
+        expect(screen.getByText('Route Passes')).toBeInTheDocument();
+      });
+      fireEvent.click(screen.getByText('Route Passes'));
+
+      await waitFor(() => {
+        expect(mockApiService.getUserRoutePassHistory).toHaveBeenCalledWith('test-user-id', expect.objectContaining({
+          limit: 50,
+          offset: 0,
+        }));
+      });
+
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: 'Next' })).toBeInTheDocument();
+      });
+      fireEvent.click(screen.getByRole('button', { name: 'Next' }));
+
+      await waitFor(() => {
+        expect(mockApiService.getUserRoutePassHistory).toHaveBeenCalledWith('test-user-id', expect.objectContaining({
+          limit: 50,
+          offset: 50,
+        }));
+      });
     });
   });
 
@@ -326,6 +446,14 @@ describe('UserDetailsPage', () => {
 
     it('should show primary unit badge', async () => {
       expect(screen.getByText('Primary')).toBeInTheDocument();
+    });
+
+    it('renders access-control entitlement methods and codes', async () => {
+      expect(screen.getByText('Access Control Devices (1)')).toBeInTheDocument();
+      expect(screen.getByText('Front Gate')).toBeInTheDocument();
+      expect(screen.getByText('app')).toBeInTheDocument();
+      expect(screen.getByText('keypad')).toBeInTheDocument();
+      expect(screen.getByText('111111')).toBeInTheDocument();
     });
   });
 
@@ -506,7 +634,6 @@ describe('UserDetailsPage', () => {
         canManageUsers: jest.fn().mockReturnValue(false),
       });
 
-      const { render } = require('@testing-library/react');
       render(
         <MemoryRouter initialEntries={['/users/test-user-id/details']}>
           <ToastProvider>
@@ -544,6 +671,200 @@ describe('UserDetailsPage', () => {
       });
 
       expect(screen.getByText('No Devices Registered')).toBeInTheDocument();
+    });
+  });
+
+  describe('Simplified UI preference', () => {
+    it('should toggle Simplified UI instantly from Summary for admin', async () => {
+      mockApiService.getUserDetails.mockResolvedValue({
+        success: true,
+        user: {
+          ...mockUserDetails,
+          role: UserRole.FACILITY_ADMIN,
+          simplifiedUi: false,
+          devices: [],
+          facilities: [],
+        },
+      });
+      mockApiService.updateUser = jest.fn().mockResolvedValue({ success: true });
+
+      (useAuth as jest.MockedFunction<typeof useAuth>).mockReturnValue({
+        authState: {
+          ...mockAuthState,
+          user: { ...mockAuthState.user!, role: UserRole.ADMIN },
+        },
+        login: jest.fn(),
+        logout: jest.fn(),
+        isLoading: false,
+        hasRole: jest.fn(),
+        isAdmin: jest.fn().mockReturnValue(true),
+        canManageUsers: jest.fn().mockReturnValue(true),
+      });
+
+      render(
+        <MemoryRouter initialEntries={['/users/test-user-id/details']}>
+          <ToastProvider>
+            <Routes>
+              <Route path="/users/:userId/details" element={<UserDetailsPage />} />
+            </Routes>
+          </ToastProvider>
+        </MemoryRouter>
+      );
+
+      await waitFor(() => {
+        expect(screen.getByRole('switch', { name: 'Simplified UI' })).toBeInTheDocument();
+      });
+
+      expect(screen.getByText('Advanced UI')).toBeInTheDocument();
+      fireEvent.click(screen.getByRole('switch', { name: 'Simplified UI' }));
+
+      await waitFor(() => {
+        expect(mockApiService.updateUser).toHaveBeenCalledWith('test-user-id', {
+          simplifiedUi: true,
+        });
+      });
+    });
+
+    it('should not show Simplified UI controls for facility admin editors', async () => {
+      mockApiService.getUserDetails.mockResolvedValue({
+        success: true,
+        user: {
+          ...mockUserDetails,
+          role: UserRole.FACILITY_ADMIN,
+          simplifiedUi: true,
+          devices: [],
+          facilities: [],
+        },
+      });
+
+      (useAuth as jest.MockedFunction<typeof useAuth>).mockReturnValue({
+        authState: {
+          ...mockAuthState,
+          user: { ...mockAuthState.user!, role: UserRole.FACILITY_ADMIN },
+        },
+        login: jest.fn(),
+        logout: jest.fn(),
+        isLoading: false,
+        hasRole: jest.fn(),
+        isAdmin: jest.fn().mockReturnValue(false),
+        canManageUsers: jest.fn().mockReturnValue(true),
+      });
+
+      render(
+        <MemoryRouter initialEntries={['/users/test-user-id/details']}>
+          <ToastProvider>
+            <Routes>
+              <Route path="/users/:userId/details" element={<UserDetailsPage />} />
+            </Routes>
+          </ToastProvider>
+        </MemoryRouter>
+      );
+
+      await waitFor(() => {
+        expect(screen.getByText('Edit')).toBeInTheDocument();
+      });
+      expect(screen.queryByRole('switch', { name: 'Simplified UI' })).not.toBeInTheDocument();
+      fireEvent.click(screen.getByText('Edit'));
+
+      await waitFor(() => {
+        expect(screen.getByText('Edit User')).toBeInTheDocument();
+      });
+      expect(screen.queryByRole('switch', { name: 'Simplified UI' })).not.toBeInTheDocument();
+    });
+
+    it('saves profile fields without an Active checkbox or isActive payload', async () => {
+      mockApiService.updateUser = jest.fn().mockResolvedValue({ success: true, user: mockUserDetails });
+
+      renderUserDetailsPage();
+
+      await waitFor(() => {
+        expect(screen.getByText('Edit')).toBeInTheDocument();
+      });
+      fireEvent.click(screen.getByText('Edit'));
+
+      await waitFor(() => {
+        expect(screen.getByText('Edit User')).toBeInTheDocument();
+      });
+      expect(screen.queryByRole('checkbox', { name: /active/i })).not.toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'Deactivate' })).toBeInTheDocument();
+
+      fireEvent.click(screen.getByRole('button', { name: 'Save Changes' }));
+
+      await waitFor(() => {
+        expect(mockApiService.updateUser).toHaveBeenCalledWith(
+          'test-user-id',
+          expect.not.objectContaining({ isActive: expect.anything() }),
+        );
+      });
+      expect(mockApiService.updateUser).toHaveBeenCalledWith(
+        'test-user-id',
+        expect.objectContaining({
+          firstName: 'John',
+          lastName: 'Doe',
+          role: UserRole.TENANT,
+        }),
+      );
+    });
+  });
+
+  describe('FMS placeholder tenants', () => {
+    const placeholderUser = {
+      ...mockUserDetails,
+      email: null,
+      phoneNumber: null,
+      isPlaceholder: true,
+      lastLogin: undefined,
+    };
+
+    it('shows No login badge and upgrade CTA on summary', async () => {
+      mockApiService.getUserDetails.mockResolvedValue({
+        success: true,
+        user: placeholderUser,
+      });
+
+      renderUserDetailsPage();
+
+      await waitFor(() => {
+        expect(screen.getByText('FMS placeholder — no login')).toBeInTheDocument();
+      });
+      expect(screen.getAllByText('No login').length).toBeGreaterThan(0);
+      expect(screen.getByText('Add email or phone')).toBeInTheDocument();
+      expect(screen.getByText('Enable login')).toBeInTheDocument();
+    });
+
+    it('opens edit form with email field and upgrades via updateUser', async () => {
+      mockApiService.getUserDetails.mockResolvedValue({
+        success: true,
+        user: placeholderUser,
+      });
+      mockApiService.updateUser = jest.fn().mockResolvedValue({
+        success: true,
+        user: { ...placeholderUser, email: 'upgraded@test.com', isPlaceholder: false },
+      });
+
+      renderUserDetailsPage();
+
+      await waitFor(() => {
+        expect(screen.getByText('Add email or phone')).toBeInTheDocument();
+      });
+      fireEvent.click(screen.getByText('Add email or phone'));
+
+      await waitFor(() => {
+        expect(screen.getByPlaceholderText('tenant@example.com')).toBeInTheDocument();
+      });
+
+      fireEvent.change(screen.getByPlaceholderText('tenant@example.com'), {
+        target: { value: 'upgraded@test.com' },
+      });
+      const enableButtons = screen.getAllByRole('button', { name: 'Enable login' });
+      fireEvent.click(enableButtons[enableButtons.length - 1]);
+
+      await waitFor(() => {
+        expect(mockApiService.updateUser).toHaveBeenCalledWith(
+          'test-user-id',
+          expect.objectContaining({ email: 'upgraded@test.com' }),
+        );
+      });
     });
   });
 });

@@ -1,5 +1,8 @@
+import { v4 as uuidv4 } from 'uuid';
 import { DatabaseService } from '../services/database.service';
 import { DeviceEventService } from '../services/device-event.service';
+import { diffBluLokStateUpdate } from '../utils/blulok-state-update.utils';
+import { logger } from '../utils/logger';
 
 /**
  * Device Models
@@ -53,14 +56,32 @@ export interface AccessControlDevice {
   location_description?: string;
   /** Relay channel number for control */
   relay_channel: number;
+  /** Manufacturer / gateway-reported hardware serial */
+  device_serial: string;
   /** Current operational status */
   status: 'online' | 'offline' | 'error' | 'maintenance';
   /** Current lock state of the device */
   is_locked: boolean;
+  /**
+   * When true, cloud may issue remote lock (CLOSE) commands. Default false: unlock-only from cloud.
+   */
+  supports_remote_lock?: boolean;
+  /**
+   * When true, Remote Gate widget may send timed OPEN commands with open_until (unix UTC seconds).
+   */
+  supports_widget_timed_open?: boolean;
+  /** Whether the hardware reports authoritative open/closed state. Defaults to true. */
+  has_lock_feedback: boolean;
+  /** Cloud-owned open window in seconds when lock feedback is unavailable. */
+  no_feedback_open_timeout_sec: number;
+  /** Durable deadline for the current cloud-owned open window. */
+  no_feedback_unlock_until?: Date | null;
   /** Timestamp of last device activity */
   last_activity?: Date;
   /** Device-specific configuration settings */
   device_settings?: Record<string, any>;
+  /** Enabled access methods for the device */
+  access_methods?: AccessMethod[];
   /** Additional metadata for extensibility */
   metadata?: Record<string, any>;
   /** Automatic record creation timestamp */
@@ -68,6 +89,8 @@ export interface AccessControlDevice {
   /** Automatic record update timestamp */
   updated_at: Date;
 }
+
+export type AccessMethod = 'app' | 'keypad' | 'fob';
 
 /**
  * BluLok Device Interface
@@ -84,14 +107,28 @@ export interface BluLokDevice {
   unit_id: string | null;
   /** Manufacturer-assigned serial number */
   device_serial: string;
+  /** Gateway-provided serial number (optional, separate from device_serial) */
+  serial?: string;
   /** Current firmware version installed */
   firmware_version?: string;
   /** Current lock mechanism status */
-  lock_status: 'locked' | 'unlocked' | 'error' | 'maintenance' | 'unknown';
+  lock_status: 'locked' | 'unlocked' | 'locking' | 'unlocking' | 'error' | 'maintenance' | 'unknown';
+  /**
+   * When true, cloud may issue remote lock (CLOSE) commands. Default false: unlock-only from cloud.
+   */
+  supports_remote_lock?: boolean;
   /** Overall device connectivity and health status */
   device_status: 'online' | 'offline' | 'low_battery' | 'error';
   /** Battery charge level (0-100) */
   battery_level?: number;
+  /** Wireless signal strength in dBm */
+  signal_strength?: number;
+  /** Device temperature reading */
+  temperature?: number;
+  /** Error code for error states */
+  error_code?: string | null;
+  /** Human-readable error description */
+  error_message?: string | null;
   /** Timestamp of last device command/activity */
   last_activity?: Date;
   /** Timestamp of last successful communication */
@@ -102,16 +139,68 @@ export interface BluLokDevice {
   updated_at: Date;
 }
 
+/**
+ * Partial device state update interface for gateway state updates.
+ * All fields except lock_id are optional to support partial updates.
+ * 
+ * Matches the gateway payload format:
+ * - state: 'CLOSED' | 'OPENED' (maps to lock_status)
+ * - locked: Boolean lock status when `state` is omitted
+ * - battery_level: Raw value in mV (not percentage)
+ * - battery_unit: Unit for battery (e.g., 'mV')
+ * - temperature_value: Temperature reading
+ * - temperature_unit: Unit for temperature (e.g., '°C')
+ */
+export interface DeviceStateUpdate {
+  /** Lock identifier (UUID or serial) - required */
+  lock_id: string;
+  /** Gateway inventory lock number (not operator-facing) */
+  lock_number?: number;
+  /** Device serial number (optional identifier) */
+  serial?: string;
+  /** Device state from gateway: 'CLOSED' = locked, 'OPENED' = unlocked */
+  state?: 'CLOSED' | 'OPENED' | 'ERROR' | 'UNKNOWN';
+  /** Boolean lock status when `state` is omitted */
+  locked?: boolean;
+  /** Battery level in raw units (mV) - no longer 0-100 */
+  battery_level?: number;
+  /** Battery unit (e.g., 'mV') */
+  battery_unit?: string;
+  /** Device online status */
+  online?: boolean;
+  /** Signal strength */
+  signal_strength?: number;
+  /** Temperature value */
+  temperature?: number;
+  /** Temperature value (alternative field name) */
+  temperature_value?: number;
+  /** Temperature unit (e.g., '°C') */
+  temperature_unit?: string;
+  /** Firmware version string */
+  firmware_version?: string;
+  /** Last seen timestamp */
+  last_seen?: string | Date;
+  /** Error code */
+  error_code?: string | null;
+  /** Human-readable error message */
+  error_message?: string | null;
+  /** Source of the update */
+  source?: 'GATEWAY' | 'USER' | 'CLOUD';
+}
+
 export interface DeviceWithContext extends BluLokDevice {
+  /** Facility ID (derived from gateway's facility) */
+  facility_id: string;
   unit_number: string | null; // Nullable for devices not yet assigned to units
   unit_type?: string | null;
   facility_name: string | null; // Nullable for devices without units (can get from gateway)
   gateway_name: string;
   primary_tenant?: {
     id: string;
-    firstName: string;
-    lastName: string;
-    email: string;
+    first_name: string;
+    last_name: string;
+    email: string | null;
+    is_placeholder?: boolean;
   };
 }
 
@@ -121,6 +210,41 @@ export interface CreateAccessControlDeviceData {
   device_type: 'gate' | 'elevator' | 'door';
   location_description?: string;
   relay_channel: number;
+  device_serial: string;
+  device_settings?: Record<string, any>;
+  access_methods?: AccessMethod[];
+  metadata?: Record<string, any>;
+  supports_remote_lock?: boolean;
+  supports_widget_timed_open?: boolean;
+  has_lock_feedback?: boolean;
+  no_feedback_open_timeout_sec?: number;
+}
+
+export interface UpdateAccessControlDeviceData {
+  name?: string;
+  location_description?: string;
+  relay_channel?: number;
+  device_serial?: string;
+  device_type?: 'gate' | 'elevator' | 'door';
+  status?: 'online' | 'offline' | 'error' | 'maintenance';
+  is_locked?: boolean;
+  supports_remote_lock?: boolean;
+  supports_widget_timed_open?: boolean;
+  has_lock_feedback?: boolean;
+  no_feedback_open_timeout_sec?: number;
+  no_feedback_unlock_until?: Date | null;
+  /** Gateway `last_seen` maps here (access_control has no last_seen column). */
+  last_activity?: Date;
+  device_settings?: Record<string, any>;
+  access_methods?: AccessMethod[];
+  metadata?: Record<string, any>;
+}
+
+export interface UpdateBluLokDeviceData {
+  device_serial?: string;
+  serial?: string;
+  firmware_version?: string;
+  supports_remote_lock?: boolean;
   device_settings?: Record<string, any>;
   metadata?: Record<string, any>;
 }
@@ -129,27 +253,55 @@ export interface CreateBluLokDeviceData {
   gateway_id: string;
   unit_id?: string; // Optional - devices can exist without unit association
   device_serial: string;
+  serial?: string;
   firmware_version?: string;
+  /** When true, cloud may issue remote CLOSE; omit/false uses DB default (false). */
+  supports_remote_lock?: boolean;
   device_settings?: Record<string, any>;
   metadata?: Record<string, any>;
 }
 
 export interface DeviceFilters {
   facility_id?: string;
+  /** When set (and `facility_id` is not), restrict to these facilities (e.g. all of a scoped user’s assignments). */
+  facility_ids?: string[];
   gateway_id?: string;
   unit_id?: string;
   device_type?: 'access_control' | 'blulok' | 'all';
+  /** Filter access control devices by sub-type (door, gate, elevator) */
+  access_control_type?: 'door' | 'gate' | 'elevator';
   status?: string;
   search?: string;
   sortBy?: 'name' | 'unit_number' | 'facility_name' | 'gateway_name' | 'device_type' | 'status' | 'last_activity' | 'created_at';
   sortOrder?: 'asc' | 'desc';
   limit?: number;
   offset?: number;
+  /** When true, skip per-row primary-tenant lookup in BluLok list (lighter payloads, e.g. id-only projection). */
+  skipPrimaryTenantEnrichment?: boolean;
 }
+
+// Valid columns for sorting access control devices (facility/gateway use joined tables)
+const VALID_ACCESS_CONTROL_SORT_COLUMNS = [
+  'name',
+  'device_serial',
+  'device_type',
+  'status',
+  'last_activity',
+  'created_at',
+  'facility_name',
+  'gateway_name',
+];
 
 export class DeviceModel {
   private db = DatabaseService.getInstance();
   private eventService = DeviceEventService.getInstance();
+
+  /**
+   * Escape LIKE pattern special characters to prevent SQL pattern injection
+   */
+  private escapeLikePattern(value: string): string {
+    return value.replace(/[%_\\]/g, '\\$&');
+  }
 
   /**
    * Safely parse JSON fields that may already be parsed objects or still be strings
@@ -177,15 +329,27 @@ export class DeviceModel {
   async findAccessControlDevices(filters: DeviceFilters = {}): Promise<AccessControlDevice[]> {
     const knex = this.db.connection;
     let query = knex('access_control_devices')
-      .select('access_control_devices.*')
-      .join('gateways', 'access_control_devices.gateway_id', 'gateways.id');
+      .select(
+        'access_control_devices.*',
+        'gateways.facility_id as facility_id',
+        'facilities.name as facility_name',
+        'gateways.name as gateway_name'
+      )
+      .join('gateways', 'access_control_devices.gateway_id', 'gateways.id')
+      .leftJoin('facilities', 'gateways.facility_id', 'facilities.id');
 
     if (filters.facility_id) {
       query = query.where('gateways.facility_id', filters.facility_id);
+    } else if (filters.facility_ids && filters.facility_ids.length > 0) {
+      query = query.whereIn('gateways.facility_id', filters.facility_ids);
     }
 
     if (filters.gateway_id) {
       query = query.where('access_control_devices.gateway_id', filters.gateway_id);
+    }
+
+    if (filters.access_control_type) {
+      query = query.where('access_control_devices.device_type', filters.access_control_type);
     }
 
     if (filters.status) {
@@ -193,15 +357,26 @@ export class DeviceModel {
     }
 
     if (filters.search) {
+      const escapedSearch = this.escapeLikePattern(filters.search);
       query = query.where(function(this: any) {
-        this.where('access_control_devices.name', 'like', `%${filters.search}%`)
-            .orWhere('access_control_devices.location_description', 'like', `%${filters.search}%`);
+        this.where('access_control_devices.name', 'like', `%${escapedSearch}%`)
+            .orWhere('access_control_devices.location_description', 'like', `%${escapedSearch}%`)
+            .orWhere('access_control_devices.device_serial', 'like', `%${escapedSearch}%`);
       });
     }
 
-    const sortBy = filters.sortBy || 'name';
+    // Validate sortBy to prevent column injection
+    const sortBy = filters.sortBy && VALID_ACCESS_CONTROL_SORT_COLUMNS.includes(filters.sortBy)
+      ? filters.sortBy
+      : 'name';
     const sortOrder = filters.sortOrder || 'asc';
-    query = query.orderBy(`access_control_devices.${sortBy}`, sortOrder);
+    if (sortBy === 'facility_name') {
+      query = query.orderBy('facilities.name', sortOrder);
+    } else if (sortBy === 'gateway_name') {
+      query = query.orderBy('gateways.name', sortOrder);
+    } else {
+      query = query.orderBy(`access_control_devices.${sortBy}`, sortOrder);
+    }
 
     // Apply pagination
     if (filters.limit) {
@@ -211,7 +386,31 @@ export class DeviceModel {
       query = query.offset(filters.offset);
     }
 
-    return await query;
+    const rows = await query;
+    return rows.map((row) => this.deserializeAccessControlRow(row));
+  }
+
+  private deserializeAccessControlRow(row: Record<string, unknown>): AccessControlDevice {
+    return {
+      ...(row as unknown as AccessControlDevice),
+      // mysql2 returns TINYINT(1) as 0/1 — normalize so API/clients never see numeric booleans.
+      is_locked: Boolean(row.is_locked),
+      supports_remote_lock: Boolean(row.supports_remote_lock),
+      supports_widget_timed_open: Boolean(row.supports_widget_timed_open),
+      has_lock_feedback:
+        row.has_lock_feedback === undefined || row.has_lock_feedback === null
+          ? true
+          : Boolean(row.has_lock_feedback),
+      no_feedback_open_timeout_sec: Number(row.no_feedback_open_timeout_sec ?? 0),
+      no_feedback_unlock_until: row.no_feedback_unlock_until
+        ? row.no_feedback_unlock_until instanceof Date
+          ? row.no_feedback_unlock_until
+          : new Date(String(row.no_feedback_unlock_until))
+        : null,
+      device_settings: this.safeParseJson(row.device_settings),
+      access_methods: this.safeParseJson(row.access_methods) || ['app'],
+      metadata: this.safeParseJson(row.metadata),
+    };
   }
 
   async findBluLokDevices(filters: DeviceFilters = {}): Promise<DeviceWithContext[]> {
@@ -229,9 +428,15 @@ export class DeviceModel {
       .join('gateways', 'blulok_devices.gateway_id', 'gateways.id')
       .join('facilities', 'gateways.facility_id', 'facilities.id'); // Facility via gateway - authoritative source
 
+    if ((filters as any).id) {
+      query = query.where('blulok_devices.id', (filters as any).id);
+    }
+
     if (filters.facility_id) {
       // Filter by gateway's facility - this is the authoritative facility for the device
       query = query.where('gateways.facility_id', filters.facility_id);
+    } else if (filters.facility_ids && filters.facility_ids.length > 0) {
+      query = query.whereIn('gateways.facility_id', filters.facility_ids);
     }
 
     if (filters.gateway_id) {
@@ -243,9 +448,10 @@ export class DeviceModel {
     }
 
     if (filters.search) {
+      const escapedSearch = this.escapeLikePattern(filters.search);
       query = query.where(function(this: any) {
-        this.where('units.unit_number', 'like', `%${filters.search}%`)
-            .orWhere('blulok_devices.device_serial', 'like', `%${filters.search}%`);
+        this.where('units.unit_number', 'like', `%${escapedSearch}%`)
+            .orWhere('blulok_devices.device_serial', 'like', `%${escapedSearch}%`);
       });
     }
 
@@ -273,19 +479,22 @@ export class DeviceModel {
     }
 
     const results = await query;
-    
-    // Get primary tenant data separately for each device
+
+    const enrichTenant = filters.skipPrimaryTenantEnrichment !== true;
+
+    // Get primary tenant data separately for each device (unless skipped for lightweight list)
     const mapped: DeviceWithContext[] = [];
     for (const row of results) {
       // Get primary tenant for this unit (only if unit_id is not null)
       let primaryTenant = null;
-      if (row.unit_id) {
+      if (enrichTenant && row.unit_id) {
         primaryTenant = await knex('unit_assignments')
           .select(
             'users.id',
             'users.first_name',
             'users.last_name',
-            'users.email'
+            'users.email',
+            'users.is_placeholder'
           )
           .join('users', 'unit_assignments.tenant_id', 'users.id')
           .where('unit_assignments.unit_id', row.unit_id)
@@ -296,12 +505,19 @@ export class DeviceModel {
       const base: any = {
         id: row.id,
         gateway_id: row.gateway_id,
+        facility_id: row.gateway_facility_id,
         unit_id: row.unit_id,
         device_serial: row.device_serial,
+        serial: row.serial,
         firmware_version: row.firmware_version,
         lock_status: row.lock_status,
+        supports_remote_lock: Boolean(row.supports_remote_lock),
         device_status: row.device_status,
         battery_level: row.battery_level,
+        signal_strength: row.signal_strength,
+        temperature: row.temperature,
+        error_code: row.error_code,
+        error_message: row.error_message,
         last_activity: row.last_activity,
         last_seen: row.last_seen,
         device_settings: this.safeParseJson(row.device_settings),
@@ -317,9 +533,10 @@ export class DeviceModel {
       if (primaryTenant) {
         base.primary_tenant = {
           id: primaryTenant.id,
-          firstName: primaryTenant.first_name,
-          lastName: primaryTenant.last_name,
+          first_name: primaryTenant.first_name,
+          last_name: primaryTenant.last_name,
           email: primaryTenant.email,
+          is_placeholder: Boolean(primaryTenant.is_placeholder),
         };
       }
 
@@ -329,18 +546,532 @@ export class DeviceModel {
     return mapped;
   }
 
+  async findBluLokDeviceById(id: string): Promise<DeviceWithContext | null> {
+    const results = await this.findBluLokDevices({ ...(undefined as any), id });
+    return results[0] || null;
+  }
+
+  /**
+   * Find an access control device by ID
+   */
+  async findAccessControlDeviceById(id: string): Promise<AccessControlDevice | null> {
+    const knex = this.db.connection;
+    const device = await knex('access_control_devices').where('id', id).first();
+    if (!device) return null;
+    return this.deserializeAccessControlRow(device as Record<string, unknown>);
+  }
+
+  /**
+   * Find an access control device by ID with gateway info (single query, avoids N+1)
+   */
+  async findAccessControlDeviceWithGateway(id: string): Promise<(AccessControlDevice & { facility_id: string; gateway_name: string }) | null> {
+    const knex = this.db.connection;
+    const result = await knex('access_control_devices')
+      .select(
+        'access_control_devices.*',
+        'gateways.facility_id',
+        'gateways.name as gateway_name'
+      )
+      .leftJoin('gateways', 'access_control_devices.gateway_id', 'gateways.id')
+      .where('access_control_devices.id', id)
+      .first();
+    if (!result) return null;
+    return this.deserializeAccessControlRow(result as Record<string, unknown>) as AccessControlDevice & {
+      facility_id: string;
+      gateway_name: string;
+    };
+  }
+
+  /**
+   * Find a gateway by ID
+   */
+  async findGatewayById(id: string): Promise<{ id: string; facility_id: string; name: string } | null> {
+    const knex = this.db.connection;
+    const gateway = await knex('gateways').where('id', id).select('id', 'facility_id', 'name').first();
+    return gateway || null;
+  }
+
   async createAccessControlDevice(data: CreateAccessControlDeviceData): Promise<AccessControlDevice> {
     const knex = this.db.connection;
-    const [id] = await knex('access_control_devices').insert(data);
+    const id = uuidv4();
+    await knex('access_control_devices').insert({
+      id,
+      ...data,
+      device_settings: data.device_settings ? JSON.stringify(data.device_settings) : undefined,
+      access_methods: data.access_methods ? JSON.stringify(data.access_methods) : JSON.stringify(['app']),
+      metadata: data.metadata ? JSON.stringify(data.metadata) : undefined,
+    });
     const device = await knex('access_control_devices').where('id', id).first();
-    return device as AccessControlDevice;
+    return this.deserializeAccessControlRow(device as Record<string, unknown>);
+  }
+
+  async findAccessControlBySerialAndRelay(
+    gatewayId: string,
+    deviceSerial: string,
+    relayChannel: number
+  ): Promise<AccessControlDevice | null> {
+    const knex = this.db.connection;
+    const device = await knex('access_control_devices')
+      .where({
+        gateway_id: gatewayId,
+        device_serial: deviceSerial,
+        relay_channel: relayChannel,
+      })
+      .first();
+    if (!device) return null;
+    return this.deserializeAccessControlRow(device as Record<string, unknown>);
+  }
+
+  /**
+   * Resolve an access-control device by hardware access_id / serial within a facility.
+   * When multiple relays share a serial, pass relayChannel (or expect exactly one match).
+   */
+  async findAccessControlBySerialInFacility(
+    facilityId: string,
+    deviceSerial: string,
+    relayChannel?: number,
+  ): Promise<(AccessControlDevice & { facility_id: string }) | null> {
+    const knex = this.db.connection;
+    const serial = deviceSerial.trim();
+    if (!serial) return null;
+
+    let query = knex('access_control_devices')
+      .select('access_control_devices.*', 'gateways.facility_id')
+      .join('gateways', 'access_control_devices.gateway_id', 'gateways.id')
+      .where('gateways.facility_id', facilityId)
+      .where('access_control_devices.device_serial', serial);
+
+    if (relayChannel != null && Number.isFinite(relayChannel)) {
+      query = query.where('access_control_devices.relay_channel', relayChannel);
+    }
+
+    const rows = await query;
+    if (!Array.isArray(rows) || rows.length !== 1) return null;
+    const row = rows[0] as Record<string, unknown>;
+    return this.deserializeAccessControlRow(row) as AccessControlDevice & { facility_id: string };
+  }
+
+  async findAccessControlByRelayChannel(
+    gatewayId: string,
+    relayChannel: number
+  ): Promise<AccessControlDevice | null> {
+    const knex = this.db.connection;
+    const device = await knex('access_control_devices')
+      .where({ gateway_id: gatewayId, relay_channel: relayChannel })
+      .first();
+    if (!device) return null;
+    return this.deserializeAccessControlRow(device as Record<string, unknown>);
+  }
+
+  async findNoFeedbackAccessControlDevicesWithOpenWindow(): Promise<
+    Array<AccessControlDevice & { facility_id: string }>
+  > {
+    const knex = this.db.connection;
+    const rows = await knex('access_control_devices')
+      .join('gateways', 'access_control_devices.gateway_id', 'gateways.id')
+      .where('access_control_devices.has_lock_feedback', false)
+      .whereNotNull('access_control_devices.no_feedback_unlock_until')
+      .select('access_control_devices.*', 'gateways.facility_id');
+
+    return rows.map(
+      (row) =>
+        this.deserializeAccessControlRow(row as Record<string, unknown>) as AccessControlDevice & {
+          facility_id: string;
+        },
+    );
+  }
+
+  async bulkCreateAccessControlDevices(
+    devices: CreateAccessControlDeviceData[]
+  ): Promise<number> {
+    if (devices.length === 0) return 0;
+    const knex = this.db.connection;
+    const rows = devices.map((data) => ({
+      id: uuidv4(),
+      ...data,
+      device_settings: data.device_settings ? JSON.stringify(data.device_settings) : undefined,
+      access_methods: data.access_methods ? JSON.stringify(data.access_methods) : JSON.stringify(['app']),
+      metadata: data.metadata ? JSON.stringify(data.metadata) : undefined,
+    }));
+    await knex('access_control_devices').insert(rows);
+    return rows.length;
+  }
+
+  async updateAccessControlDeviceBySerialAndRelay(
+    gatewayId: string,
+    deviceSerial: string,
+    relayChannel: number,
+    data: UpdateAccessControlDeviceData
+  ): Promise<AccessControlDevice | null> {
+    const existing = await this.findAccessControlBySerialAndRelay(
+      gatewayId,
+      deviceSerial,
+      relayChannel
+    );
+    if (!existing) return null;
+    const safeData =
+      !existing.has_lock_feedback && data.is_locked !== undefined
+        ? { ...data, is_locked: undefined }
+        : data;
+    return this.updateAccessControlDevice(existing.id, safeData);
+  }
+
+  async updateAccessControlDeviceByRelayChannel(
+    gatewayId: string,
+    relayChannel: number,
+    data: UpdateAccessControlDeviceData
+  ): Promise<AccessControlDevice | null> {
+    const existing = await this.findAccessControlByRelayChannel(gatewayId, relayChannel);
+    if (!existing) return null;
+    return this.updateAccessControlDevice(existing.id, data);
+  }
+
+  async updateAccessControlDevice(deviceId: string, data: UpdateAccessControlDeviceData): Promise<AccessControlDevice | null> {
+    const knex = this.db.connection;
+
+    const hasTelemetryChange =
+      data.status !== undefined ||
+      data.is_locked !== undefined ||
+      data.last_activity !== undefined ||
+      data.has_lock_feedback !== undefined;
+
+    const hasMetadataChange =
+      data.name !== undefined ||
+      data.location_description !== undefined ||
+      data.device_type !== undefined;
+
+    const before = hasTelemetryChange || hasMetadataChange
+      ? await this.findAccessControlDeviceWithGateway(deviceId)
+      : null;
+
+    const updatePayload: Record<string, unknown> = { updated_at: new Date() };
+
+    if (data.name !== undefined) updatePayload.name = data.name;
+    if (data.location_description !== undefined) updatePayload.location_description = data.location_description;
+    if (data.relay_channel !== undefined) updatePayload.relay_channel = data.relay_channel;
+    if (data.device_serial !== undefined) updatePayload.device_serial = data.device_serial;
+    if (data.device_type !== undefined) updatePayload.device_type = data.device_type;
+    if (data.status !== undefined) updatePayload.status = data.status;
+    if (data.is_locked !== undefined) updatePayload.is_locked = data.is_locked;
+    if (data.last_activity !== undefined) updatePayload.last_activity = data.last_activity;
+    if (data.supports_remote_lock !== undefined) updatePayload.supports_remote_lock = data.supports_remote_lock;
+    if (data.supports_widget_timed_open !== undefined) {
+      updatePayload.supports_widget_timed_open = data.supports_widget_timed_open;
+    }
+    if (data.has_lock_feedback !== undefined) {
+      updatePayload.has_lock_feedback = data.has_lock_feedback;
+    }
+    if (data.no_feedback_open_timeout_sec !== undefined) {
+      updatePayload.no_feedback_open_timeout_sec = data.no_feedback_open_timeout_sec;
+    }
+    if (data.no_feedback_unlock_until !== undefined) {
+      updatePayload.no_feedback_unlock_until = data.no_feedback_unlock_until;
+    }
+
+    // Side effects only when feedback mode actually changes — repeating
+    // has_lock_feedback:false on ordinary metadata edits must not kill an open window.
+    const previousHasLockFeedback =
+      before?.has_lock_feedback === undefined || before?.has_lock_feedback === null
+        ? true
+        : Boolean(before.has_lock_feedback);
+    if (data.has_lock_feedback !== undefined && data.has_lock_feedback !== previousHasLockFeedback) {
+      updatePayload.no_feedback_unlock_until = null;
+      if (data.has_lock_feedback === false) {
+        updatePayload.is_locked = true;
+      } else {
+        updatePayload.no_feedback_open_timeout_sec = 0;
+        // Leave virtual-open behind; hardware will own state after feedback returns.
+        updatePayload.is_locked = true;
+      }
+    }
+    if (data.device_settings !== undefined) updatePayload.device_settings = JSON.stringify(data.device_settings);
+    if (data.access_methods !== undefined) updatePayload.access_methods = JSON.stringify(data.access_methods);
+    if (data.metadata !== undefined) updatePayload.metadata = JSON.stringify(data.metadata);
+
+    const meaningfulKeys = Object.keys(updatePayload).filter((k) => k !== 'updated_at');
+    if (meaningfulKeys.length === 0) {
+      return this.findAccessControlDeviceById(deviceId);
+    }
+
+    await knex('access_control_devices').where('id', deviceId).update(updatePayload);
+
+    if (before) {
+      const gatewayId = before.gateway_id;
+      const facilityId = before.facility_id;
+      let statusChanged = false;
+
+      if (data.status !== undefined && data.status !== before.status) {
+        this.eventService.emitDeviceStatusChanged({
+          deviceId,
+          deviceType: 'access_control',
+          oldStatus: before.status || 'unknown',
+          newStatus: data.status,
+          gatewayId,
+        });
+        statusChanged = true;
+      }
+
+      const effectiveIsLocked =
+        updatePayload.is_locked !== undefined
+          ? Boolean(updatePayload.is_locked)
+          : data.is_locked !== undefined
+            ? Boolean(data.is_locked)
+            : undefined;
+
+      if (effectiveIsLocked !== undefined) {
+        const lockChanged = effectiveIsLocked !== Boolean(before.is_locked);
+        if (lockChanged) {
+          this.eventService.emitDeviceTelemetryUpdated({
+            deviceId,
+            gatewayId,
+            facilityId,
+          });
+          statusChanged = true;
+        }
+
+        const effectiveHasLockFeedback =
+          data.has_lock_feedback !== undefined
+            ? Boolean(data.has_lock_feedback)
+            : previousHasLockFeedback;
+        // Only hardware-driven is_locked updates settle pending remote commands.
+        // Skip cloud-owned no-feedback writes and feedback-mode side-effect resets.
+        const isHardwareLockUpdate =
+          data.is_locked !== undefined && effectiveHasLockFeedback;
+        if (isHardwareLockUpdate) {
+          void import('@/services/lock-command.service').then(({ LockCommandService }) => {
+            const lockCommandService = LockCommandService.getInstance();
+            const hadPendingLockCommand = lockCommandService.hasPendingLockCommand(deviceId);
+            lockCommandService.handleAccessControlLockSettled(deviceId, effectiveIsLocked);
+
+            // Gateway lock feedback while a remote command is in flight must reach clients
+            // even when is_locked is unchanged (e.g. unlock failed — gate stayed closed).
+            if (!lockChanged && hadPendingLockCommand) {
+              this.eventService.emitDeviceTelemetryUpdated({
+                deviceId,
+                gatewayId,
+                facilityId,
+              });
+            }
+          }).catch((err) => {
+            logger.warn('Failed to notify LockCommandService of access-control lock settlement', err);
+          });
+        }
+      }
+
+      if (
+        data.has_lock_feedback !== undefined &&
+        data.has_lock_feedback !== previousHasLockFeedback
+      ) {
+        void import('@/services/access-control-no-feedback.service')
+          .then(({ AccessControlNoFeedbackService }) => {
+            AccessControlNoFeedbackService.getInstance().cancelOpenWindow(deviceId);
+          })
+          .catch((err) => {
+            logger.warn('Failed to cancel no-feedback open window on mode change', err);
+          });
+      }
+
+      if (
+        !statusChanged &&
+        data.last_activity !== undefined &&
+        (before.last_activity == null ||
+          new Date(data.last_activity).getTime() !== new Date(before.last_activity).getTime())
+      ) {
+        this.eventService.emitDeviceTelemetryUpdated({
+          deviceId,
+          gatewayId,
+          facilityId,
+        });
+      }
+
+      const metadataChanged =
+        (data.name !== undefined && data.name !== before.name) ||
+        (data.location_description !== undefined &&
+          data.location_description !== (before.location_description ?? '')) ||
+        (data.device_type !== undefined && data.device_type !== before.device_type);
+
+      if (metadataChanged) {
+        this.eventService.emitDeviceTelemetryUpdated({
+          deviceId,
+          gatewayId,
+          facilityId,
+        });
+      }
+    }
+
+    return this.findAccessControlDeviceById(deviceId);
+  }
+
+  async findUnitFacilityId(unitId: string): Promise<string | null> {
+    const knex = this.db.connection;
+    const unit = await knex('units').where('id', unitId).select('facility_id').first();
+    return unit?.facility_id ? String(unit.facility_id) : null;
+  }
+
+  async findBluLokByUnitId(unitId: string): Promise<BluLokDevice | null> {
+    const knex = this.db.connection;
+    const device = await knex('blulok_devices').where('unit_id', unitId).first();
+    return device ? (device as BluLokDevice) : null;
+  }
+
+  async findBluLokBySerial(
+    deviceSerial: string,
+    excludeId?: string
+  ): Promise<BluLokDevice | null> {
+    const knex = this.db.connection;
+    let query = knex('blulok_devices').where('device_serial', deviceSerial.trim());
+    if (excludeId) {
+      query = query.whereNot('id', excludeId);
+    }
+    const device = await query.first();
+    return device ? (device as BluLokDevice) : null;
+  }
+
+  /**
+   * Find access control row with the same gateway + serial + relay identity (excluding self).
+   * Relay channels are per device (access_id), not globally unique on the gateway.
+   */
+  async findAccessControlIdentityConflict(
+    gatewayId: string,
+    deviceSerial: string,
+    relayChannel: number,
+    excludeId: string
+  ): Promise<{ type: 'serial_relay'; device: AccessControlDevice } | null> {
+    const serialRelay = await this.findAccessControlBySerialAndRelay(
+      gatewayId,
+      deviceSerial,
+      relayChannel
+    );
+    if (serialRelay && serialRelay.id !== excludeId) {
+      return { type: 'serial_relay', device: serialRelay };
+    }
+    return null;
+  }
+
+  async updateBluLokDevice(deviceId: string, data: UpdateBluLokDeviceData): Promise<BluLokDevice | null> {
+    const knex = this.db.connection;
+
+    const before =
+      data.device_settings !== undefined
+        ? await this.findBluLokDeviceById(deviceId)
+        : null;
+
+    const updatePayload: Record<string, unknown> = { updated_at: new Date() };
+
+    if (data.device_serial !== undefined) updatePayload.device_serial = data.device_serial;
+    if (data.serial !== undefined) updatePayload.serial = data.serial;
+    if (data.firmware_version !== undefined) updatePayload.firmware_version = data.firmware_version;
+    if (data.supports_remote_lock !== undefined) {
+      updatePayload.supports_remote_lock = data.supports_remote_lock;
+    }
+    if (data.device_settings !== undefined) {
+      updatePayload.device_settings = JSON.stringify(data.device_settings);
+    }
+    if (data.metadata !== undefined) {
+      updatePayload.metadata = JSON.stringify(data.metadata);
+    }
+
+    if (Object.keys(updatePayload).length <= 1) {
+      const existing = await knex('blulok_devices').where('id', deviceId).first();
+      return existing ? (existing as BluLokDevice) : null;
+    }
+
+    await knex('blulok_devices').where('id', deviceId).update(updatePayload);
+    const device = await knex('blulok_devices').where('id', deviceId).first();
+    if (!device) return null;
+
+    if (before && data.device_settings !== undefined) {
+      const oldSettings = before.device_settings ?? {};
+      const newSettings = data.device_settings ?? {};
+      const settingsChanged =
+        JSON.stringify(oldSettings) !== JSON.stringify(newSettings);
+      if (settingsChanged) {
+        this.eventService.emitDeviceTelemetryUpdated({
+          deviceId: before.id,
+          gatewayId: before.gateway_id,
+          facilityId: before.facility_id,
+        });
+      }
+    }
+
+    return {
+      ...(device as BluLokDevice),
+      device_settings: this.safeParseJson(device.device_settings),
+      metadata: this.safeParseJson(device.metadata),
+    };
   }
 
   async createBluLokDevice(data: CreateBluLokDeviceData): Promise<BluLokDevice> {
     const knex = this.db.connection;
-    const [id] = await knex('blulok_devices').insert(data);
+    const id = uuidv4();
+    if (!data.device_serial || !String(data.device_serial).trim()) {
+      throw new Error('device_serial is required when creating a BluLok device');
+    }
+    const canonicalDeviceSerial = String(data.device_serial).trim();
+    const canonicalSerial = data.serial && String(data.serial).trim()
+      ? String(data.serial).trim()
+      : canonicalDeviceSerial;
+    const normalizedData: CreateBluLokDeviceData = {
+      ...data,
+      device_serial: canonicalDeviceSerial,
+      serial: canonicalSerial,
+    };
+    await knex('blulok_devices').insert({
+      id,
+      gateway_id: normalizedData.gateway_id,
+      unit_id: normalizedData.unit_id ?? null,
+      device_serial: normalizedData.device_serial,
+      serial: normalizedData.serial,
+      firmware_version: normalizedData.firmware_version ?? null,
+      supports_remote_lock: normalizedData.supports_remote_lock,
+      device_settings: normalizedData.device_settings
+        ? JSON.stringify(normalizedData.device_settings)
+        : null,
+      metadata: normalizedData.metadata ? JSON.stringify(normalizedData.metadata) : null,
+    });
     const device = await knex('blulok_devices').where('id', id).first();
     return device as BluLokDevice;
+  }
+
+  /**
+   * Bulk create BluLok devices in a single database operation.
+   * PERFORMANCE: Much more efficient than sequential inserts for gateway provisioning.
+   * 
+   * @param devices - Array of device data to insert
+   * @returns Number of devices successfully created
+   */
+  async bulkCreateBluLokDevices(devices: CreateBluLokDeviceData[]): Promise<number> {
+    if (devices.length === 0) return 0;
+    const knex = this.db.connection;
+    const normalizedDevices = devices.map((device) => {
+      if (!device.device_serial || !String(device.device_serial).trim()) {
+        throw new Error('device_serial is required when bulk creating BluLok devices');
+      }
+      const canonicalDeviceSerial = String(device.device_serial).trim();
+      const canonicalSerial = device.serial && String(device.serial).trim()
+        ? String(device.serial).trim()
+        : canonicalDeviceSerial;
+      return {
+        ...device,
+        device_serial: canonicalDeviceSerial,
+        serial: canonicalSerial,
+      };
+    });
+    await knex('blulok_devices').insert(normalizedDevices);
+    return devices.length;
+  }
+
+  /**
+   * Bulk delete BluLok devices by their IDs.
+   * PERFORMANCE: Much more efficient than sequential deletes.
+   * 
+   * @param deviceIds - Array of device IDs to delete
+   * @returns Number of devices deleted
+   */
+  async bulkDeleteBluLokDevices(deviceIds: string[]): Promise<number> {
+    if (deviceIds.length === 0) return 0;
+    const knex = this.db.connection;
+    return await knex('blulok_devices').whereIn('id', deviceIds).del();
   }
 
   async updateDeviceStatus(deviceId: string, deviceType: 'access_control' | 'blulok', status: string): Promise<void> {
@@ -355,7 +1086,9 @@ export class DeviceModel {
     // Update the device
     await knex(table).where('id', deviceId).update({
       [statusField]: status,
-      last_seen: new Date(),
+      ...(deviceType === 'access_control'
+        ? { last_activity: new Date() }
+        : { last_seen: new Date() }),
       updated_at: new Date()
     });
 
@@ -371,7 +1104,10 @@ export class DeviceModel {
     }
   }
 
-  async updateLockStatus(deviceId: string, lockStatus: 'locked' | 'unlocked' | 'error' | 'maintenance' | 'unknown'): Promise<void> {
+  async updateLockStatus(
+    deviceId: string,
+    lockStatus: 'locked' | 'unlocked' | 'locking' | 'unlocking' | 'error' | 'maintenance' | 'unknown',
+  ): Promise<void> {
     const knex = this.db.connection;
 
     // Get current lock status and unit info before update
@@ -409,11 +1145,18 @@ export class DeviceModel {
   }
 
   /**
-   * Delete an access control device
+   * Delete an access control device and related access-group memberships.
+   * Prefer DevicesService.deleteAccessControlFromInventory for admin/sync paths;
+   * this remains for create-rollback and other low-level callers.
    */
   async deleteAccessControlDevice(deviceId: string): Promise<void> {
     const knex = this.db.connection;
-    await knex('access_control_devices').where('id', deviceId).del();
+    await knex.transaction(async (trx) => {
+      await trx('device_group_members')
+        .where({ device_id: deviceId, device_type: 'access_control' })
+        .del();
+      await trx('access_control_devices').where('id', deviceId).del();
+    });
   }
 
   /**
@@ -439,6 +1182,161 @@ export class DeviceModel {
     if (oldBatteryLevel !== batteryLevel) {
       console.log(`Updated battery level for device ${deviceId}: ${oldBatteryLevel}% -> ${batteryLevel}%`);
     }
+  }
+
+  /**
+   * Update BluLok device state with partial data.
+   * Writes only fields that differ from the current row. last_activity bumps only when
+   * lock_status changes. WebSocket events fire for real lock/status/telemetry/last_seen
+   * changes (including heartbeat last_seen updates).
+   *
+   * @param deviceId - The device ID (can be UUID or serial number)
+   * @param updates - Partial state updates to apply
+   * @returns true if the device was found (even when the patch was a no-op)
+   */
+  async updateBluLokDeviceState(
+    deviceId: string,
+    updates: Partial<{
+      lock_status: 'locked' | 'unlocked' | 'locking' | 'unlocking' | 'error' | 'maintenance' | 'unknown';
+      device_status: 'online' | 'offline' | 'low_battery' | 'error';
+      battery_level: number;
+      signal_strength: number;
+      temperature: number;
+      error_code: string | null;
+      error_message: string | null;
+      firmware_version: string;
+      last_seen: Date;
+      serial: string;
+    }>
+  ): Promise<boolean> {
+    const knex = this.db.connection;
+
+    const selectCols = [
+      'id',
+      'lock_status',
+      'device_status',
+      'gateway_id',
+      'unit_id',
+      'battery_level',
+      'signal_strength',
+      'temperature',
+      'error_code',
+      'error_message',
+      'firmware_version',
+      'last_seen',
+      'serial',
+      'device_serial',
+    ] as const;
+
+    let device = await knex('blulok_devices').where('id', deviceId).select(...selectCols).first();
+
+    if (!device) {
+      device = await knex('blulok_devices')
+        .where('device_serial', deviceId)
+        .select(...selectCols)
+        .first();
+    }
+
+    if (!device) {
+      return false;
+    }
+
+    const diff = diffBluLokStateUpdate(device, updates);
+
+    const oldLockStatus = device.lock_status as BluLokDevice['lock_status'] | null | undefined;
+    const oldDeviceStatus = device.device_status as BluLokDevice['device_status'] | null | undefined;
+    const oldBatteryLevel = device.battery_level as number | null | undefined;
+
+    const hasDbWrite = Object.keys(diff.changedFields).length > 0;
+    if (hasDbWrite) {
+      const updateData: Record<string, unknown> = {
+        ...diff.changedFields,
+        updated_at: new Date(),
+      };
+      if (diff.lockStatusChanged) {
+        updateData.last_activity = new Date();
+      }
+
+      await knex('blulok_devices').where('id', device.id).update(updateData);
+    }
+
+    let statusChanged = false;
+
+    if (diff.lockStatusChanged && updates.lock_status) {
+      this.eventService.emitLockStatusChanged({
+        deviceId: device.id,
+        oldStatus: oldLockStatus || 'unknown',
+        newStatus: updates.lock_status,
+        gatewayId: device.gateway_id,
+        unitId: device.unit_id,
+      });
+      statusChanged = true;
+    } else if (
+      (updates.lock_status === 'locked' || updates.lock_status === 'unlocked') &&
+      updates.lock_status === oldLockStatus
+    ) {
+      // Same terminal re-report: still emit so attribution + access_sessions can settle
+      // (pending remote commands, orphan open/pending sessions). Activity logger no-ops
+      // when there is nothing to settle and skips duplicate success rows.
+      this.eventService.emitLockStatusChanged({
+        deviceId: device.id,
+        oldStatus: oldLockStatus || 'unknown',
+        newStatus: updates.lock_status,
+        gatewayId: device.gateway_id,
+        unitId: device.unit_id,
+      });
+    }
+
+    if (diff.deviceStatusChanged && updates.device_status) {
+      this.eventService.emitDeviceStatusChanged({
+        deviceId: device.id,
+        deviceType: 'blulok',
+        oldStatus: oldDeviceStatus || 'unknown',
+        newStatus: updates.device_status,
+        gatewayId: device.gateway_id,
+      });
+      statusChanged = true;
+    }
+
+    if (diff.batteryChanged && updates.battery_level !== undefined) {
+      void this.maybeNotifyLowBattery(
+        device.id,
+        device.unit_id,
+        device.gateway_id,
+        oldBatteryLevel,
+        updates.battery_level,
+      );
+    }
+
+    // Telemetry / last_seen WS when values actually changed (heartbeats included)
+    if (!statusChanged && (diff.telemetryChanged || diff.lastSeenChanged)) {
+      this.eventService.emitDeviceTelemetryUpdated({
+        deviceId: device.id,
+        gatewayId: device.gateway_id,
+      });
+    }
+
+    return hasDbWrite || statusChanged || diff.telemetryChanged || diff.lastSeenChanged;
+  }
+
+  /**
+   * Find a BluLok device by its ID or serial number.
+   * 
+   * @param lockId - The device ID (UUID) or serial number
+   * @returns Promise resolving to the device or null if not found
+   */
+  async findBluLokDeviceByIdOrSerial(lockId: string): Promise<BluLokDevice | null> {
+    const knex = this.db.connection;
+
+    // Try by ID first
+    let device = await knex('blulok_devices').where('id', lockId).first();
+    
+    if (!device) {
+      // Try by device_serial
+      device = await knex('blulok_devices').where('device_serial', lockId).first();
+    }
+
+    return device || null;
   }
 
   async getFacilityDeviceHierarchy(facilityId: string): Promise<{
@@ -476,14 +1374,16 @@ export class DeviceModel {
 
     if (filters.facility_id) {
       query = query.where('gateways.facility_id', filters.facility_id);
+    } else if (filters.facility_ids && filters.facility_ids.length > 0) {
+      query = query.whereIn('gateways.facility_id', filters.facility_ids);
     }
 
     if (filters.gateway_id) {
       query = query.where('access_control_devices.gateway_id', filters.gateway_id);
     }
 
-    if (filters.device_type && filters.device_type !== 'all') {
-      query = query.where('access_control_devices.device_type', filters.device_type);
+    if (filters.access_control_type) {
+      query = query.where('access_control_devices.device_type', filters.access_control_type);
     }
 
     if (filters.status) {
@@ -491,9 +1391,10 @@ export class DeviceModel {
     }
 
     if (filters.search) {
+      const escapedSearch = this.escapeLikePattern(filters.search);
       query = query.where(function() {
-        this.where('access_control_devices.name', 'like', `%${filters.search}%`)
-          .orWhere('access_control_devices.location_description', 'like', `%${filters.search}%`);
+        this.where('access_control_devices.name', 'like', `%${escapedSearch}%`)
+          .orWhere('access_control_devices.location_description', 'like', `%${escapedSearch}%`);
       });
     }
 
@@ -511,6 +1412,8 @@ export class DeviceModel {
     if (filters.facility_id) {
       // Filter by gateway's facility - this is the authoritative facility for the device
       query = query.where('gateways.facility_id', filters.facility_id);
+    } else if (filters.facility_ids && filters.facility_ids.length > 0) {
+      query = query.whereIn('gateways.facility_id', filters.facility_ids);
     }
 
     if (filters.unit_id) {
@@ -526,10 +1429,11 @@ export class DeviceModel {
     }
 
     if (filters.search) {
+      const escapedSearch = this.escapeLikePattern(filters.search);
       query = query.where(function() {
-        this.where('blulok_devices.device_serial', 'like', `%${filters.search}%`)
-          .orWhere('units.unit_number', 'like', `%${filters.search}%`)
-          .orWhere('facilities.name', 'like', `%${filters.search}%`);
+        this.where('blulok_devices.device_serial', 'like', `%${escapedSearch}%`)
+          .orWhere('units.unit_number', 'like', `%${escapedSearch}%`)
+          .orWhere('facilities.name', 'like', `%${escapedSearch}%`);
       });
     }
 
@@ -595,10 +1499,11 @@ export class DeviceModel {
     }
 
     if (filters.search) {
+      const escapedSearch = this.escapeLikePattern(filters.search);
       query = query.where(function(this: any) {
-        this.where('blulok_devices.device_serial', 'like', `%${filters.search}%`)
-            .orWhere('facilities.name', 'like', `%${filters.search}%`)
-            .orWhere('gateways.name', 'like', `%${filters.search}%`);
+        this.where('blulok_devices.device_serial', 'like', `%${escapedSearch}%`)
+            .orWhere('facilities.name', 'like', `%${escapedSearch}%`)
+            .orWhere('gateways.name', 'like', `%${escapedSearch}%`);
       });
     }
 
@@ -627,8 +1532,10 @@ export class DeviceModel {
     const mapped: DeviceWithContext[] = results.map((row: any) => ({
       id: row.id,
       gateway_id: row.gateway_id,
+      facility_id: row.gateway_facility_id,
       unit_id: null, // Always null for unassigned devices
       device_serial: row.device_serial,
+      serial: row.serial ?? undefined,
       firmware_version: row.firmware_version,
       lock_status: row.lock_status,
       device_status: row.device_status,
@@ -671,14 +1578,55 @@ export class DeviceModel {
     }
 
     if (filters.search) {
+      const escapedSearch = this.escapeLikePattern(filters.search);
       query = query.where(function() {
-        this.where('blulok_devices.device_serial', 'like', `%${filters.search}%`)
-          .orWhere('facilities.name', 'like', `%${filters.search}%`)
-          .orWhere('gateways.name', 'like', `%${filters.search}%`);
+        this.where('blulok_devices.device_serial', 'like', `%${escapedSearch}%`)
+          .orWhere('facilities.name', 'like', `%${escapedSearch}%`)
+          .orWhere('gateways.name', 'like', `%${escapedSearch}%`);
       });
     }
 
     const result = await query.count('* as count').first();
     return parseInt(result?.count as string) || 0;
+  }
+
+  private async maybeNotifyLowBattery(
+    deviceId: string,
+    unitId: string | null | undefined,
+    gatewayId: string,
+    previousLevel: number | null | undefined,
+    nextLevel: number,
+  ): Promise<void> {
+    const { LOW_BATTERY_THRESHOLD_PERCENT } = await import('@/constants/in-app-notification.constants');
+    const crossedThreshold =
+      nextLevel <= LOW_BATTERY_THRESHOLD_PERCENT &&
+      (previousLevel === null || previousLevel === undefined || previousLevel > LOW_BATTERY_THRESHOLD_PERCENT);
+    if (!crossedThreshold) return;
+
+    try {
+      const gateway = await this.findGatewayById(gatewayId);
+      if (!gateway?.facility_id) return;
+
+      const knex = this.db.connection;
+      const deviceRow = await knex('blulok_devices').where('id', deviceId).first('device_serial');
+      const unitRow = unitId
+        ? await knex('units').where('id', unitId).first('unit_number')
+        : null;
+      const label = unitRow?.unit_number
+        ? `Unit ${unitRow.unit_number}`
+        : deviceRow?.device_serial
+          ? `Device ${deviceRow.device_serial}`
+          : 'Device';
+
+      const { InAppNotificationDispatcher } = await import('@/services/notifications/in-app-notification-dispatcher.service');
+      await InAppNotificationDispatcher.getInstance().notifyDeviceLowBattery(
+        gateway.facility_id,
+        deviceId,
+        label,
+        nextLevel,
+      );
+    } catch (err) {
+      logger.warn('Low battery notification failed:', err);
+    }
   }
 }

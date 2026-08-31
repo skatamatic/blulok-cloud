@@ -104,8 +104,9 @@ describe('Data Validation Integration Tests', () => {
         .set('Authorization', 'Bearer mock-token')
         .send({
           gateway_id: 'test-gateway',
+          device_serial: 'TEST-AC-001',
           name: 'Test Device',
-          device_type: 'access_control',
+          device_type: 'door',
           location_description: 'Test location',
           relay_channel: 15 // Invalid: should be 1-8
         });
@@ -122,8 +123,9 @@ describe('Data Validation Integration Tests', () => {
         .set('Authorization', 'Bearer mock-token')
         .send({
           gateway_id: 'test-gateway',
+          device_serial: 'TEST-AC-XSS',
           name: '<script>alert("xss")</script>',
-          device_type: 'access_control',
+          device_type: 'door',
           location_description: 'Test location',
           relay_channel: 1
         });
@@ -154,8 +156,9 @@ describe('Data Validation Integration Tests', () => {
         .set('Authorization', 'Bearer mock-token')
         .send({
           gateway_id: 'test-gateway',
+          device_serial: 'TEST-AC-001',
           name: 'Test Device',
-          device_type: 'access_control',
+          device_type: 'door',
           location_description: 'Test location',
           relay_channel: 'not-a-number'
         });
@@ -188,8 +191,9 @@ describe('Data Validation Integration Tests', () => {
         .set('Authorization', 'Bearer mock-token')
         .send({
           gateway_id: 'test-gateway',
+          device_serial: 'TEST-AC-001',
           name: 'Test Device',
-          device_type: 'access_control',
+          device_type: 'door',
           location_description: 'Test location',
           relay_channel: 1
         });
@@ -204,8 +208,9 @@ describe('Data Validation Integration Tests', () => {
         .set('Authorization', 'Bearer mock-token')
         .send({
           gateway_id: 'test-gateway',
+          device_serial: 'TEST-AC-001',
           name: 'Test Device',
-          device_type: 'access_control',
+          device_type: 'door',
           location_description: 'Test location',
           relay_channel: 8
         });

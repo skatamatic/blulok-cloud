@@ -93,9 +93,18 @@ export abstract class BaseFMSProvider {
   abstract fetchUnit(externalId: string): Promise<FMSUnit | null>;
 
   /**
-   * Validate webhook signature (if supported)
+   * Validate webhook signature (if supported) — legacy; prefer validateWebhookRawBody.
    */
   abstract validateWebhook(payload: FMSWebhookPayload, signature: string): Promise<boolean>;
+
+  /**
+   * Validate webhook HMAC signature against the raw request body bytes.
+   */
+  validateWebhookRawBody(rawBody: Buffer, signatureHeader: string | undefined): boolean {
+    void rawBody;
+    void signatureHeader;
+    return false;
+  }
 
   /**
    * Parse webhook payload into standard format
@@ -130,6 +139,8 @@ export abstract class BaseFMSProvider {
   ): Promise<any> {
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
+      // Storable Edge and many FMS APIs expect Accept; without it some calls fail or misbehave.
+      Accept: 'application/json',
     };
 
     // Add authentication based on auth type
@@ -203,7 +214,24 @@ export abstract class BaseFMSProvider {
       const response = await fetch(url, options);
       
       if (!response.ok) {
-        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        // Try to get the error response body for better debugging
+        let errorDetails = '';
+        try {
+          const errorBody = await response.json();
+          errorDetails = JSON.stringify(errorBody, null, 2);
+        } catch {
+          errorDetails = await response.text();
+        }
+        
+        const errorMessage = `HTTP ${response.status}: ${response.statusText}`;
+        this.logger.error(`FMS API request failed for ${this.getProviderName()}: ${errorMessage}`, {
+          url,
+          status: response.status,
+          statusText: response.statusText,
+          errorDetails,
+        });
+        
+        throw new Error(`${errorMessage}\nDetails: ${errorDetails}`);
       }
 
       return await response.json();
@@ -244,7 +272,7 @@ export abstract class BaseFMSProvider {
         throw new Error(`Token refresh failed: ${response.statusText}`);
       }
 
-      const data = await response.json() as any;
+      const data = await response.json();
       
       // Update the token in config (should be persisted by caller)
       this.config.auth.credentials.bearerToken = data.access_token;

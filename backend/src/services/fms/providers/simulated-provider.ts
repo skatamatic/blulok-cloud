@@ -91,13 +91,12 @@ export class SimulatedProvider extends BaseFMSProvider {
   }
 
   async fetchTenants(): Promise<FMSTenant[]> {
-    // Throttle for better UI visualization (2 seconds)
-    await new Promise(resolve => setTimeout(resolve, 2000));
+    await this.throttleForUi();
     
     const data = this.readSimulatedData();
     
     // Filter tenants for this facility if specified
-    let tenants = data.tenants || [];
+    const tenants = data.tenants || [];
     if (data.metadata?.facilityId && data.metadata.facilityId !== this.facilityId) {
       this.logger.warn(`[Simulated FMS] Data file is for facility ${data.metadata.facilityId}, but syncing ${this.facilityId}`);
     }
@@ -107,19 +106,26 @@ export class SimulatedProvider extends BaseFMSProvider {
   }
 
   async fetchUnits(): Promise<FMSUnit[]> {
-    // Throttle for better UI visualization (2 seconds)
-    await new Promise(resolve => setTimeout(resolve, 2000));
+    await this.throttleForUi();
     
     const data = this.readSimulatedData();
     
     // Filter units for this facility if specified
-    let units = data.units || [];
+    const units = data.units || [];
     if (data.metadata?.facilityId && data.metadata.facilityId !== this.facilityId) {
       this.logger.warn(`[Simulated FMS] Data file is for facility ${data.metadata.facilityId}, but syncing ${this.facilityId}`);
     }
 
     // Map to our standard format
     return units.map(u => this.mapSimulatedUnit(u));
+  }
+
+  /** Artificial delay for demo UI; skipped under Jest so tests stay fast and race-free. */
+  private async throttleForUi(): Promise<void> {
+    if (process.env.JEST_WORKER_ID != null || process.env.NODE_ENV === 'test') {
+      return;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 2000));
   }
 
   async fetchTenant(externalId: string): Promise<FMSTenant | null> {
@@ -143,12 +149,13 @@ export class SimulatedProvider extends BaseFMSProvider {
   }
 
   async parseWebhookPayload(rawPayload: any): Promise<FMSWebhookPayload> {
+    const { randomUUID } = await import('crypto');
     return {
+      externalEventId: rawPayload.id ?? rawPayload.externalEventId ?? randomUUID(),
       event_type: rawPayload.event_type || 'tenant.updated',
       timestamp: rawPayload.timestamp || new Date().toISOString(),
       facility_external_id: rawPayload.facility_id || this.facilityId,
-      data: rawPayload.data || rawPayload,
-      signature: rawPayload.signature,
+      data: rawPayload.data || rawPayload.body || rawPayload,
     };
   }
 

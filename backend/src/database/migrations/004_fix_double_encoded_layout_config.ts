@@ -12,7 +12,7 @@ export async function up(knex: Knex): Promise<void> {
   
   for (const layout of layouts) {
     try {
-      let layoutConfig = layout.layout_config;
+      const layoutConfig = layout.layout_config;
       
       // Check if it's a string (double-encoded)
       if (typeof layoutConfig === 'string') {

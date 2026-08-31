@@ -1,178 +1,466 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect, useCallback, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import { Widget } from './Widget';
 import { WidgetSize } from './WidgetSizeDropdown';
 import { motion } from 'framer-motion';
-import { 
-  CalendarIcon, 
-  BuildingStorefrontIcon,
-  ChevronDownIcon
+import {
+  CalendarIcon,
+  ChevronDownIcon,
+  ArrowPathIcon,
+  ExclamationTriangleIcon,
 } from '@heroicons/react/24/outline';
+import { useWidgetSizeState } from '@/hooks/useWidgetSizeState';
+import { useDashboardFacilityScope, DASHBOARD_FACILITY_SCOPE_LIMIT } from '@/hooks/useDashboardFacilityScope';
+import { apiService } from '@/services/api.service';
+import { useAuth } from '@/contexts/AuthContext';
+import { useWebSocketSubscription } from '@/hooks/useWebSocketSubscription';
+import { getWidgetLayoutProfile, WIDGET_BODY_CLASS } from '@/utils/widget-layout.utils';
+import {
+  getHistogramTypeBreakdown,
+  HISTOGRAM_SKIPPED_ACTIVITY_TYPES,
+  type HistogramActivityType,
+} from '@/utils/histogram-activity-type.utils';
+import {
+  buildHistogramChartEntries,
+  formatHistogramAxisLabel,
+  shouldShowHistogramAxisLabel,
+} from '@/utils/histogram-timeline.utils';
 
 interface HistogramData {
   date: string;
   facilityId: string;
   facilityName: string;
   activityCount: number;
+  byType: Partial<Record<HistogramActivityType, number>>;
 }
 
 interface HistogramWidgetProps {
   id: string;
   title: string;
   initialSize?: WidgetSize;
+  currentSize?: WidgetSize;
   availableSizes?: WidgetSize[];
+  onSizeChange?: (size: WidgetSize) => void;
   onGridSizeChange?: (gridSize: { w: number; h: number }) => void;
   onRemove?: () => void;
-  userFacilities?: { id: string; name: string }[];
+  readOnly?: boolean;
+  facilityFilter?: string;
 }
 
 type TimePeriod = 'day' | 'week' | 'month' | 'year';
 
+const MAX_HISTOGRAM_FACILITIES = DASHBOARD_FACILITY_SCOPE_LIMIT;
+const MAX_LEGEND_FACILITIES = 8;
+
+function normalizeHistogramDateKey(raw: string): string {
+  if (!raw) return raw;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw;
+  if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(raw)) return raw;
+  const parsed = new Date(raw);
+  if (Number.isNaN(parsed.getTime())) return raw;
+  if (raw.includes(':')) {
+    const pad = (n: number) => String(n).padStart(2, '0');
+    return `${parsed.getFullYear()}-${pad(parsed.getMonth() + 1)}-${pad(parsed.getDate())} ${pad(parsed.getHours())}:00:00`;
+  }
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${parsed.getFullYear()}-${pad(parsed.getMonth() + 1)}-${pad(parsed.getDate())}`;
+}
+
+function parseChartDate(dateStr: string): Date {
+  if (/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) {
+    return new Date(`${dateStr}T12:00:00`);
+  }
+  if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(dateStr)) {
+    return new Date(dateStr.replace(' ', 'T'));
+  }
+  return new Date(dateStr);
+}
+
+function formatDateLabel(dateStr: string, timePeriod: TimePeriod, detailed = false): string {
+  const date = parseChartDate(dateStr);
+  if (Number.isNaN(date.getTime())) return dateStr;
+
+  switch (timePeriod) {
+    case 'day':
+      return detailed
+        ? date.toLocaleString(undefined, {
+            weekday: 'short',
+            month: 'short',
+            day: 'numeric',
+            hour: 'numeric',
+            hour12: true,
+          })
+        : date.toLocaleTimeString(undefined, { hour: 'numeric', hour12: true });
+    case 'week':
+    case 'month':
+      return detailed
+        ? date.toLocaleDateString(undefined, {
+            weekday: 'short',
+            month: 'long',
+            day: 'numeric',
+            year: 'numeric',
+          })
+        : date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+    case 'year':
+      return detailed
+        ? date.toLocaleDateString(undefined, { month: 'long', year: 'numeric' })
+        : date.toLocaleDateString(undefined, { month: 'short' });
+    default:
+      return dateStr;
+  }
+}
+
+function HistogramBarTooltipContent({
+  dayData,
+  singleFacilityMode,
+  colorIndex,
+}: {
+  dayData: HistogramData[];
+  singleFacilityMode: boolean;
+  colorIndex: (facilityId: string) => number;
+}) {
+  const total = dayData.reduce((sum, item) => sum + item.activityCount, 0);
+  const facilities = [...dayData].sort((a, b) => b.activityCount - a.activityCount);
+
+  const TypeRows = ({ byType, activityCount }: { byType: HistogramData['byType']; activityCount: number }) => {
+    const rows = getHistogramTypeBreakdown(byType);
+    const displayRows =
+      rows.length > 0
+        ? rows
+        : activityCount > 0
+          ? [{ type: 'access_attempt' as HistogramActivityType, label: 'Activity', count: activityCount }]
+          : [];
+
+    return (
+      <ul className="mt-1.5 space-y-1">
+        {displayRows.map((row) => (
+          <li key={row.type} className="flex items-center justify-between gap-4 text-xs">
+            <span className="text-gray-600 dark:text-gray-300">{row.label}</span>
+            <span className="shrink-0 tabular-nums font-medium text-gray-900 dark:text-white">{row.count}</span>
+          </li>
+        ))}
+      </ul>
+    );
+  };
+
+  if (singleFacilityMode) {
+    const facility = facilities[0];
+    if (!facility) return null;
+    return (
+      <div className="rounded-lg border border-gray-200 bg-white px-3 py-2.5 text-left shadow-lg ring-1 ring-black/5 dark:border-gray-600 dark:bg-gray-900 dark:ring-white/10">
+        <TypeRows byType={facility.byType} activityCount={facility.activityCount} />
+        <div className="mt-2 flex items-center justify-between border-t border-gray-100 pt-2 text-xs dark:border-gray-700">
+          <span className="text-gray-500 dark:text-gray-400">Total</span>
+          <span className="font-semibold tabular-nums text-gray-900 dark:text-white">{total}</span>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="rounded-lg border border-gray-200 bg-white px-3 py-2.5 text-left shadow-lg ring-1 ring-black/5 dark:border-gray-600 dark:bg-gray-900 dark:ring-white/10">
+      <div className="flex divide-x divide-gray-100 dark:divide-gray-700">
+        {facilities.map((facility) => (
+          <div key={facility.facilityId} className="min-w-[108px] px-3 first:pl-0 last:pr-0">
+            <div className="flex min-w-0 items-center gap-1.5">
+              <span
+                className={`h-2 w-2 shrink-0 rounded-sm ${facilityColors[colorIndex(facility.facilityId) % facilityColors.length]}`}
+              />
+              <span className="truncate text-xs font-semibold text-gray-900 dark:text-white" title={facility.facilityName}>
+                {facility.facilityName}
+              </span>
+            </div>
+            <TypeRows byType={facility.byType} activityCount={facility.activityCount} />
+            <div className="mt-2 flex items-center justify-between border-t border-gray-100 pt-1.5 text-[11px] dark:border-gray-700">
+              <span className="text-gray-500 dark:text-gray-400">Subtotal</span>
+              <span className="font-semibold tabular-nums text-gray-900 dark:text-white">{facility.activityCount}</span>
+            </div>
+          </div>
+        ))}
+      </div>
+      <div className="mt-2 flex items-center justify-between border-t border-gray-100 pt-2 text-xs dark:border-gray-700">
+        <span className="text-gray-500 dark:text-gray-400">Total</span>
+        <span className="font-semibold tabular-nums text-gray-900 dark:text-white">{total}</span>
+      </div>
+    </div>
+  );
+}
+
+type HistogramTooltipState = {
+  dayData: HistogramData[];
+  anchorX: number;
+  anchorY: number;
+};
+
+function mergeActivityStatsRows(
+  rows: ActivityStatsResponse['data'],
+): HistogramData[] {
+  const merged = new Map<string, HistogramData>();
+
+  for (const row of rows) {
+    if (row.activity_type && HISTOGRAM_SKIPPED_ACTIVITY_TYPES.has(row.activity_type)) {
+      continue;
+    }
+
+    const date = normalizeHistogramDateKey(row.date);
+    const key = `${date}|${row.facility_id}`;
+    let entry = merged.get(key);
+    if (!entry) {
+      entry = {
+        date,
+        facilityId: row.facility_id,
+        facilityName: row.facility_name,
+        activityCount: 0,
+        byType: {},
+      };
+      merged.set(key, entry);
+    }
+
+    entry.activityCount += row.activity_count;
+    if (row.activity_type) {
+      const type = row.activity_type as HistogramActivityType;
+      entry.byType[type] = (entry.byType[type] ?? 0) + row.activity_count;
+    }
+  }
+
+  return Array.from(merged.values());
+}
 const timePeriodLabels: Record<TimePeriod, string> = {
   day: 'Last 24 Hours',
-  week: 'Last Week', 
+  week: 'Last Week',
   month: 'Last Month',
-  year: 'Last Year'
+  year: 'Last Year',
 };
+
+const facilityColors = [
+  'bg-blue-500',
+  'bg-green-500',
+  'bg-purple-500',
+  'bg-orange-500',
+  'bg-pink-500',
+  'bg-cyan-500',
+  'bg-amber-500',
+  'bg-rose-500',
+  'bg-indigo-500',
+  'bg-teal-500',
+];
+
+interface ActivityStatsResponse {
+  success: boolean;
+  data: Array<{
+    date: string;
+    facility_id: string;
+    facility_name: string;
+    activity_type?: HistogramActivityType;
+    activity_count: number;
+  }>;
+  period: string;
+  endDate?: string;
+}
 
 export const HistogramWidget: React.FC<HistogramWidgetProps> = ({
   id,
   title,
   initialSize = 'medium',
+  currentSize,
   availableSizes = ['medium', 'medium-tall', 'large', 'large-wide', 'huge', 'huge-wide'],
+  onSizeChange,
   onGridSizeChange,
   onRemove,
-  userFacilities = [
-    { id: '1', name: 'Downtown Storage' },
-    { id: '2', name: 'Warehouse District' },
-    { id: '3', name: 'Airport Facility' },
-    { id: '4', name: 'Industrial Park' },
-    { id: '5', name: 'Suburban Center' }
-  ]
+  readOnly,
+  facilityFilter,
 }) => {
-  const [size, setSize] = useState<WidgetSize>(initialSize);
+  const { authState } = useAuth();
+  const { facilityIdsForApi } = useDashboardFacilityScope(facilityFilter);
+  const { size, handleSizeChange } = useWidgetSizeState(currentSize, initialSize, onSizeChange);
   const [timePeriod, setTimePeriod] = useState<TimePeriod>('month');
-  const [selectedFacilities, setSelectedFacilities] = useState<string[]>(['1', '2', '3']);
-  const [showFacilityDropdown, setShowFacilityDropdown] = useState(false);
   const [showTimePeriodDropdown, setShowTimePeriodDropdown] = useState(false);
+  const [histogramData, setHistogramData] = useState<HistogramData[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [tooltip, setTooltip] = useState<HistogramTooltipState | null>(null);
+  const [statsAnchorDate, setStatsAnchorDate] = useState<Date>(() => new Date());
 
-  // Generate mock data based on time period and facilities
-  const histogramData = useMemo(() => {
-    const data: HistogramData[] = [];
-    const now = new Date();
-    let days = 30;
-    let interval = 1;
+  const showBarTooltip = useCallback(
+    (dayData: HistogramData[], anchorX: number, anchorY: number) => {
+      setTooltip({ dayData, anchorX, anchorY });
+    },
+    [],
+  );
 
-    switch (timePeriod) {
-      case 'day':
-        days = 1;
-        interval = 1/24; // hourly
-        break;
-      case 'week':
-        days = 7;
-        interval = 1;
-        break;
-      case 'month':
-        days = 30;
-        interval = 1;
-        break;
-      case 'year':
-        days = 365;
-        interval = 7; // weekly
-        break;
+  const hideBarTooltip = useCallback(() => {
+    setTooltip(null);
+  }, []);
+
+  const chartFacilities = useMemo(() => {
+    const fromAuth =
+      authState.user?.facilityIds?.map((fid, index) => ({
+        id: fid,
+        name: authState.user?.facilityNames?.[index] || fid,
+      })) ?? [];
+    const fromData = Array.from(
+      new Map(histogramData.map((d) => [d.facilityId, { id: d.facilityId, name: d.facilityName }])).values()
+    );
+
+    if (facilityFilter) {
+      const match =
+        fromAuth.find((f) => f.id === facilityFilter) ??
+        fromData.find((f) => f.id === facilityFilter);
+      return match ? [match] : fromData.filter((f) => f.id === facilityFilter);
     }
+    if (fromAuth.length > 0) return fromAuth.slice(0, MAX_HISTOGRAM_FACILITIES);
+    return fromData.slice(0, MAX_HISTOGRAM_FACILITIES);
+  }, [authState.user?.facilityIds, authState.user?.facilityNames, histogramData, facilityFilter]);
 
-    const selectedFacilityData = userFacilities.filter(f => selectedFacilities.includes(f.id));
+  const legendFacilities = useMemo(() => chartFacilities.slice(0, MAX_LEGEND_FACILITIES), [chartFacilities]);
+  const legendOverflow = Math.max(0, chartFacilities.length - MAX_LEGEND_FACILITIES);
+  const showFacilityLegend = !facilityFilter && chartFacilities.length > 1;
+  const singleFacilityMode = chartFacilities.length <= 1;
 
-    for (let i = days; i >= 0; i -= interval) {
-      const date = new Date(now);
-      date.setDate(date.getDate() - i);
-      
-      selectedFacilityData.forEach(facility => {
-        data.push({
-          date: date.toISOString().split('T')[0],
-          facilityId: facility.id,
-          facilityName: facility.name,
-          activityCount: Math.floor(Math.random() * 50) + 10
-        });
+  const facilityColorIndex = useCallback(
+    (facilityId: string) => {
+      const idx = chartFacilities.findIndex((f) => f.id === facilityId);
+      return idx >= 0 ? idx : 0;
+    },
+    [chartFacilities]
+  );
+
+  const loadActivityStats = useCallback(async (options?: { background?: boolean }) => {
+    if (!options?.background) {
+      setIsLoading(true);
+    }
+    setError(null);
+    try {
+      const response: ActivityStatsResponse = await apiService.getActivityStats({
+        period: timePeriod,
+        facility_ids: facilityIdsForApi,
       });
+      if (response.success && response.data) {
+        setHistogramData(mergeActivityStatsRows(response.data));
+        if (response.endDate) {
+          setStatsAnchorDate(new Date(response.endDate));
+        }
+      } else {
+        setHistogramData([]);
+      }
+    } catch (err) {
+      console.error('Failed to load activity stats:', err);
+      if (!options?.background) {
+        setError('Failed to load activity data');
+        setHistogramData([]);
+      }
+    } finally {
+      if (!options?.background) {
+        setIsLoading(false);
+      }
     }
+  }, [timePeriod, facilityIdsForApi]);
 
-    return data;
-  }, [timePeriod, selectedFacilities, userFacilities]);
+  const loadActivityStatsRef = useRef(loadActivityStats);
+  loadActivityStatsRef.current = loadActivityStats;
 
-  // Group data by date for stacked bars
+  useEffect(() => {
+    void loadActivityStats();
+  }, [loadActivityStats]);
+
+  const activityFilters =
+    facilityFilter != null && facilityFilter !== ''
+      ? { facility_id: facilityFilter }
+      : facilityIdsForApi?.length === 1
+        ? { facility_id: facilityIdsForApi[0] }
+        : undefined;
+
+  useWebSocketSubscription(
+    'activity',
+    () => {
+      void loadActivityStatsRef.current({ background: true });
+    },
+    { filters: activityFilters },
+  );
+
   const groupedData = useMemo(() => {
     const grouped: Record<string, HistogramData[]> = {};
-    histogramData.forEach(item => {
-      if (!grouped[item.date]) {
-        grouped[item.date] = [];
-      }
+    const scopeIds = facilityIdsForApi;
+    const filteredData = scopeIds?.length
+      ? histogramData.filter((item) => scopeIds.includes(item.facilityId))
+      : histogramData;
+
+    filteredData.forEach((item) => {
+      if (!grouped[item.date]) grouped[item.date] = [];
       grouped[item.date].push(item);
     });
     return grouped;
-  }, [histogramData]);
+  }, [histogramData, facilityIdsForApi]);
+
+  const chartEntries = useMemo(
+    () => buildHistogramChartEntries(timePeriod, groupedData, statsAnchorDate),
+    [groupedData, timePeriod, statsAnchorDate],
+  );
+
+  const slotCount = chartEntries.length;
+  const chartGridStyle = useMemo(
+    () => ({ gridTemplateColumns: `repeat(${slotCount}, minmax(0, 1fr))` }),
+    [slotCount],
+  );
+
+  const layout = getWidgetLayoutProfile(size);
+  const minChartHeightPx = layout.isDock
+    ? 88
+    : layout.isTall
+      ? 200
+      : layout.density === 'micro' || layout.density === 'compact'
+        ? 120
+        : 160;
 
   const maxValue = useMemo(() => {
-    return Math.max(...Object.values(groupedData).map(dayData => 
-      dayData.reduce((sum, item) => sum + item.activityCount, 0)
-    ));
-  }, [groupedData]);
+    const totals = chartEntries.map(([, dayData]) =>
+      dayData.reduce((sum, item) => sum + item.activityCount, 0),
+    );
+    return Math.max(...totals, 1);
+  }, [chartEntries]);
 
-  const facilityColors = [
-    'bg-blue-500',
-    'bg-green-500', 
-    'bg-purple-500',
-    'bg-orange-500',
-    'bg-pink-500'
-  ];
+  const getBarHeightPercent = useCallback(
+    (value: number): number => {
+      if (value <= 0) return 0;
+      return Math.max(2, (value / maxValue) * 100);
+    },
+    [maxValue],
+  );
 
-  const handleFacilityToggle = (facilityId: string) => {
-    setSelectedFacilities(prev => {
-      if (prev.includes(facilityId)) {
-        return prev.filter(id => id !== facilityId);
-      } else if (prev.length < 3) {
-        return [...prev, facilityId];
-      }
-      return prev;
-    });
-  };
+  const getStackHeightPercent = useCallback(
+    (dayData: HistogramData[]): number =>
+      dayData.reduce((sum, item) => sum + getBarHeightPercent(item.activityCount), 0),
+    [getBarHeightPercent],
+  );
 
-  const getBarHeight = (value: number): string => {
-    if (maxValue === 0) return '0%';
-    return `${(value / maxValue) * 100}%`;
-  };
-
-  const formatDateLabel = (dateStr: string): string => {
-    const date = new Date(dateStr);
-    switch (timePeriod) {
-      case 'day':
-        return date.toLocaleTimeString('en-US', { hour: 'numeric', hour12: true });
-      case 'week':
-      case 'month':
-        return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-      case 'year':
-        return date.toLocaleDateString('en-US', { month: 'short' });
-      default:
-        return dateStr;
-    }
-  };
-
-  const isCompactSize = size === 'tiny' || size === 'small' || size === 'medium';
-  const chartHeight = isCompactSize ? 'h-32' : 'h-48';
+  const positionBarTooltip = useCallback(
+    (dayData: HistogramData[], column: HTMLElement) => {
+      const stack = column.querySelector('[data-bar-stack]');
+      if (!stack) return;
+      const stackRect = stack.getBoundingClientRect();
+      const stackHeightPercent = getStackHeightPercent(dayData);
+      const stackPixelHeight = (stackHeightPercent / 100) * stackRect.height;
+      showBarTooltip(
+        dayData,
+        stackRect.left + stackRect.width / 2,
+        stackRect.bottom - stackPixelHeight,
+      );
+    },
+    [showBarTooltip, getStackHeightPercent],
+  );
 
   return (
-    <Widget 
-      id={id} 
-      title={title} 
+    <Widget
+      id={id}
+      title={title}
       size={size}
       availableSizes={availableSizes}
-      onSizeChange={setSize}
+      onSizeChange={handleSizeChange}
       onGridSizeChange={onGridSizeChange}
       onRemove={onRemove}
-      className="group"
+      readOnly={readOnly}
       enhancedMenu={
-        <div className="space-y-3">
-          {/* Time Period Selector */}
+        <motion.div className="space-y-3">
           <div className="relative">
             <button
               onClick={() => setShowTimePeriodDropdown(!showTimePeriodDropdown)}
@@ -184,7 +472,6 @@ export const HistogramWidget: React.FC<HistogramWidgetProps> = ({
               </div>
               <ChevronDownIcon className="h-4 w-4" />
             </button>
-            
             {showTimePeriodDropdown && (
               <div className="absolute top-full left-0 right-0 mt-1 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-600 rounded-lg shadow-lg z-50">
                 {Object.entries(timePeriodLabels).map(([period, label]) => (
@@ -195,7 +482,9 @@ export const HistogramWidget: React.FC<HistogramWidgetProps> = ({
                       setShowTimePeriodDropdown(false);
                     }}
                     className={`w-full px-3 py-2 text-left text-sm hover:bg-gray-50 dark:hover:bg-gray-700 first:rounded-t-lg last:rounded-b-lg ${
-                      timePeriod === period ? 'bg-primary-50 dark:bg-primary-900 text-primary-600 dark:text-primary-300' : ''
+                      timePeriod === period
+                        ? 'bg-primary-50 dark:bg-primary-900 text-primary-600 dark:text-primary-300'
+                        : ''
                     }`}
                   >
                     {label}
@@ -204,100 +493,155 @@ export const HistogramWidget: React.FC<HistogramWidgetProps> = ({
               </div>
             )}
           </div>
-
-          {/* Facility Selector */}
-          <div className="relative">
-            <button
-              onClick={() => setShowFacilityDropdown(!showFacilityDropdown)}
-              className="flex items-center justify-between w-full px-3 py-2 text-sm bg-gray-50 dark:bg-gray-700 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-600 transition-colors"
-            >
-              <div className="flex items-center space-x-2">
-                <BuildingStorefrontIcon className="h-4 w-4" />
-                <span>{selectedFacilities.length} of {userFacilities.length} facilities</span>
-              </div>
-              <ChevronDownIcon className="h-4 w-4" />
-            </button>
-            
-            {showFacilityDropdown && (
-              <div className="absolute top-full left-0 right-0 mt-1 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-600 rounded-lg shadow-lg z-50 max-h-48 overflow-y-auto">
-                {userFacilities.map((facility, index) => {
-                  const isSelected = selectedFacilities.includes(facility.id);
-                  const isDisabled = !isSelected && selectedFacilities.length >= 3;
-                  
-                  return (
-                    <button
-                      key={facility.id}
-                      onClick={() => !isDisabled && handleFacilityToggle(facility.id)}
-                      disabled={isDisabled}
-                      className={`w-full px-3 py-2 text-left text-sm hover:bg-gray-50 dark:hover:bg-gray-700 first:rounded-t-lg last:rounded-b-lg flex items-center space-x-2 ${
-                        isDisabled ? 'opacity-50 cursor-not-allowed' : ''
-                      } ${isSelected ? 'bg-primary-50 dark:bg-primary-900' : ''}`}
-                    >
-                      <div className={`h-3 w-3 rounded-full ${facilityColors[index % facilityColors.length]}`} />
-                      <span className="flex-1">{facility.name}</span>
-                      {isSelected && <span className="text-primary-600 dark:text-primary-300">✓</span>}
-                    </button>
-                  );
-                })}
-                <div className="px-3 py-2 text-xs text-gray-500 dark:text-gray-400 border-t border-gray-200 dark:border-gray-600">
-                  Select up to 3 facilities
-                </div>
-              </div>
-            )}
-          </div>
-        </div>
+        </motion.div>
       }
     >
-      <div className="h-full flex flex-col">
-        {/* Chart Area */}
-        <div className={`flex-1 ${chartHeight} relative`}>
-          <div className="absolute inset-0 flex items-end justify-between px-1 pb-6">
-            {Object.entries(groupedData).slice(-20).map(([date, dayData], index) => {
-              
-              return (
-                <div key={date} className="flex flex-col items-center flex-1 max-w-8">
-                  <div className="flex flex-col-reverse items-center w-full space-y-reverse space-y-0.5 mb-1">
-                    {dayData.map((item, _facilityIndex) => {
-                      const facilityColorIndex = selectedFacilities.indexOf(item.facilityId);
-                      return (
-                        <motion.div
-                          key={`${item.facilityId}-${date}`}
-                          initial={{ height: 0 }}
-                          animate={{ height: getBarHeight(item.activityCount) }}
-                          transition={{ duration: 0.5, delay: index * 0.05 }}
-                          className={`w-full ${facilityColors[facilityColorIndex % facilityColors.length]} rounded-sm opacity-80`}
-                          title={`${item.facilityName}: ${item.activityCount} activities`}
-                        />
-                      );
-                    })}
-                  </div>
-                  <span className="text-xs text-gray-500 dark:text-gray-400 transform rotate-45 origin-left">
-                    {formatDateLabel(date)}
-                  </span>
-                </div>
-              );
-            })}
+      <div className={WIDGET_BODY_CLASS}>
+        {isLoading && histogramData.length === 0 ? (
+          <div className="flex-1 flex items-center justify-center">
+            <ArrowPathIcon className="h-8 w-8 text-gray-400 animate-spin" />
           </div>
-        </div>
+        ) : error ? (
+          <motion.div className="flex-1 flex flex-col items-center justify-center text-center">
+            <ExclamationTriangleIcon className="h-8 w-8 text-red-400 mb-2" />
+            <p className="text-sm text-red-500 dark:text-red-400">{error}</p>
+          </motion.div>
+        ) : Object.keys(groupedData).length === 0 ? (
+          <div className="flex-1 flex flex-col items-center justify-center text-center">
+            <CalendarIcon className="h-8 w-8 text-gray-400 mb-2" />
+            <p className="text-sm text-gray-500 dark:text-gray-400">No activity data for this period</p>
+          </div>
+        ) : (
+          <div className="flex flex-1 min-h-0 flex-col">
+            <div className="relative flex flex-1 min-h-0 flex-col rounded-lg border border-gray-200/80 bg-gradient-to-b from-gray-50/70 to-white px-2 pb-1.5 pt-2 dark:border-gray-700/80 dark:from-gray-900/35 dark:to-transparent">
+              {showFacilityLegend && (
+                <div className="absolute right-2 top-1.5 z-10 flex max-w-[72%] flex-wrap items-center justify-end gap-x-2.5 gap-y-0.5 rounded-md border border-gray-200/60 bg-white/85 px-2 py-1 shadow-sm backdrop-blur-sm dark:border-gray-600/60 dark:bg-gray-900/85">
+                  {legendFacilities.map((facility, index) => (
+                    <div key={facility.id} className="flex items-center gap-1">
+                      <div className={`h-2 w-2 rounded-sm ${facilityColors[index % facilityColors.length]}`} />
+                      <span className="text-[10px] text-gray-600 dark:text-gray-300 truncate max-w-[96px]">
+                        {facility.name}
+                      </span>
+                    </div>
+                  ))}
+                  {legendOverflow > 0 && (
+                    <span className="text-[10px] text-gray-500 dark:text-gray-400">
+                      +{legendOverflow}
+                    </span>
+                  )}
+                </div>
+              )}
+              <div
+                className="relative grid flex-1 w-full items-end gap-px"
+                style={{ ...chartGridStyle, minHeight: minChartHeightPx }}
+              >
+                <div
+                  aria-hidden
+                  className="pointer-events-none absolute inset-x-0 top-0 bottom-5 flex flex-col justify-between"
+                >
+                  {[0, 1, 2, 3].map((line) => (
+                    <div
+                      key={line}
+                      className="border-t border-gray-200/50 dark:border-gray-700/50"
+                    />
+                  ))}
+                </div>
 
-        {/* Legend */}
-        <div className="pt-4 border-t border-gray-200 dark:border-gray-600">
-          <div className="flex flex-wrap gap-2">
-            {selectedFacilities.map((facilityId, index) => {
-              const facility = userFacilities.find(f => f.id === facilityId);
-              if (!facility) return null;
-              
-              return (
-                <div key={facilityId} className="flex items-center space-x-1">
-                  <div className={`h-3 w-3 rounded-sm ${facilityColors[index % facilityColors.length]}`} />
-                  <span className="text-xs text-gray-600 dark:text-gray-300 truncate">
-                    {facility.name}
+                {chartEntries.map(([date, dayData], index) => {
+                  const totalEvents = dayData.reduce((sum, item) => sum + item.activityCount, 0);
+                  const hasData = totalEvents > 0;
+
+                  return (
+                    <div
+                      key={date}
+                      className={`relative flex h-full min-w-0 flex-col justify-end ${
+                        hasData ? 'hover:z-10 focus-within:z-10' : ''
+                      }`}
+                      tabIndex={hasData ? 0 : -1}
+                      role={hasData ? 'img' : undefined}
+                      aria-label={
+                        hasData
+                          ? `${formatDateLabel(date, timePeriod, true)}: ${totalEvents} events`
+                          : undefined
+                      }
+                      onMouseEnter={
+                        hasData
+                          ? (e) => positionBarTooltip(dayData, e.currentTarget)
+                          : undefined
+                      }
+                      onMouseLeave={hasData ? hideBarTooltip : undefined}
+                      onFocus={
+                        hasData
+                          ? (e) => positionBarTooltip(dayData, e.currentTarget)
+                          : undefined
+                      }
+                      onBlur={hasData ? hideBarTooltip : undefined}
+                    >
+                      <div
+                        data-bar-stack
+                        className="flex h-full w-full flex-col justify-end gap-px px-px"
+                      >
+                        {hasData ? (
+                          dayData.map((item) => (
+                            <motion.div
+                              key={`${item.facilityId}-${date}`}
+                              initial={{ height: 0 }}
+                              animate={{ height: `${getBarHeightPercent(item.activityCount)}%` }}
+                              transition={{ duration: 0.35, delay: index * 0.015 }}
+                              className={`w-full min-h-[2px] ${facilityColors[facilityColorIndex(item.facilityId) % facilityColors.length]} rounded-sm opacity-90 transition-opacity hover:opacity-100`}
+                            />
+                          ))
+                        ) : (
+                          <div className="h-0.5 w-full rounded-full bg-gray-200/60 dark:bg-gray-700/60" />
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+
+              {tooltip &&
+                createPortal(
+                  <div
+                    className={`pointer-events-none fixed z-[9999] w-max ${singleFacilityMode ? 'max-w-[220px]' : 'max-w-[min(92vw,640px)]'}`}
+                    style={{
+                      left: tooltip.anchorX,
+                      top: tooltip.anchorY,
+                      transform: 'translate(-50%, calc(-100% - 10px))',
+                    }}
+                    role="tooltip"
+                  >
+                    <HistogramBarTooltipContent
+                      dayData={tooltip.dayData}
+                      singleFacilityMode={singleFacilityMode}
+                      colorIndex={facilityColorIndex}
+                    />
+                    <div className="mx-auto mt-[-1px] h-2 w-2 rotate-45 border-b border-r border-gray-200 bg-white dark:border-gray-600 dark:bg-gray-900" />
+                  </div>,
+                  document.body,
+                )}
+
+              <div
+                className="mt-1.5 grid w-full gap-px border-t border-gray-200/60 pt-1 dark:border-gray-700/60"
+                style={chartGridStyle}
+              >
+                {chartEntries.map(([date], index) => (
+                  <span
+                    key={`label-${date}`}
+                    className={`min-w-0 text-center text-[7px] leading-none sm:text-[8px] ${
+                      shouldShowHistogramAxisLabel(index, slotCount, timePeriod)
+                        ? 'text-gray-500 dark:text-gray-400'
+                        : 'text-transparent select-none'
+                    }`}
+                    title={formatDateLabel(date, timePeriod, true)}
+                  >
+                    {formatHistogramAxisLabel(date, timePeriod, slotCount)}
                   </span>
-                </div>
-              );
-            })}
+                ))}
+              </div>
+            </div>
           </div>
-        </div>
+        )}
       </div>
     </Widget>
   );

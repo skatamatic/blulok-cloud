@@ -52,33 +52,59 @@ export class BatterySubscriptionManager extends BaseSubscriptionManager {
     return true;
   }
 
+  private getEmptyBatteryData() {
+    return {
+      lowBatteryUnits: [],
+      rankedUnits: [],
+      totalUnits: 0,
+      criticalBatteryUnits: 0,
+      lowBatteryCount: 0,
+      offlineUnits: 0,
+      onlineUnits: 0,
+      lastUpdated: new Date().toISOString(),
+    };
+  }
+
+  private async buildBatteryData(client: SubscriptionClient) {
+    const allUnitsResult = await this.unitsService.getUnits(client.userId, client.userRole);
+    const allUnits = allUnitsResult.units;
+    /** Online units first (lowest battery at top), then offline (lowest first) */
+    const rankedUnits = [...allUnits].sort((a, b) => {
+      const ao = a.is_online ? 0 : 1;
+      const bo = b.is_online ? 0 : 1;
+      if (ao !== bo) return ao - bo;
+      return (a.battery_level ?? 0) - (b.battery_level ?? 0);
+    });
+    const lowBatteryUnits = rankedUnits.filter((u) => (u.battery_level || 0) <= 20);
+    const totalUnits = allUnits.length;
+    const criticalBatteryUnits = allUnits.filter((u) => (u.battery_level || 0) <= 5).length;
+    const lowBatteryCount = allUnits.filter((u) => (u.battery_level || 0) <= 20 && (u.battery_level || 0) > 5).length;
+    const offlineUnits = allUnits.filter((u) => !u.is_online).length;
+    const onlineUnits = allUnits.filter((u) => u.is_online).length;
+    return {
+      /** @deprecated prefer rankedUnits for full dashboard list */
+      lowBatteryUnits,
+      rankedUnits,
+      totalUnits,
+      criticalBatteryUnits,
+      lowBatteryCount,
+      offlineUnits,
+      onlineUnits,
+      lastUpdated: new Date().toISOString(),
+    };
+  }
+
+  private async getBatteryDataForClient(client: SubscriptionClient): Promise<any> {
+    return this.loadInitialData(
+      this.getInitialDataScopeKey(client),
+      () => this.buildBatteryData(client),
+      this.getEmptyBatteryData(),
+    );
+  }
+
   protected async sendInitialData(ws: WebSocket, subscriptionId: string, client: SubscriptionClient): Promise<void> {
     try {
-      // Get all units and filter for low battery units
-      const allUnitsResult = await this.unitsService.getUnits(client.userId, client.userRole);
-      const lowBatteryUnitsResult = await this.unitsService.getUnits(client.userId, client.userRole, { 
-        battery_threshold: 20 // Units with battery <= 20%
-      });
-      
-      // Compute battery stats
-      const allUnits = allUnitsResult.units;
-      const lowBatteryUnits = lowBatteryUnitsResult.units;
-      const totalUnits = allUnits.length;
-      const criticalBatteryUnits = allUnits.filter(u => (u.battery_level || 0) <= 5).length;
-      const lowBatteryCount = allUnits.filter(u => (u.battery_level || 0) <= 20 && (u.battery_level || 0) > 5).length;
-      const offlineUnits = allUnits.filter(u => !u.is_online).length;
-      const onlineUnits = allUnits.filter(u => u.is_online).length;
-      
-      const batteryData = {
-        lowBatteryUnits: lowBatteryUnits,
-        totalUnits,
-        criticalBatteryUnits,
-        lowBatteryCount,
-        offlineUnits,
-        onlineUnits,
-        lastUpdated: new Date().toISOString()
-      };
-      
+      const batteryData = await this.getBatteryDataForClient(client);
       this.sendMessage(ws, {
         type: 'battery_status_update',
         subscriptionId,
@@ -114,32 +140,7 @@ export class BatterySubscriptionManager extends BaseSubscriptionManager {
         const userKey = `${client.userId}-${client.userRole}`;
         if (!userBatteryData.has(userKey)) {
           try {
-            // Get all units and filter for low battery units
-            const allUnitsResult = await this.unitsService.getUnits(client.userId, client.userRole);
-            const lowBatteryUnitsResult = await this.unitsService.getUnits(client.userId, client.userRole, { 
-              battery_threshold: 20 // Units with battery <= 20%
-            });
-            
-            // Compute battery stats
-            const allUnits = allUnitsResult.units;
-            const lowBatteryUnits = lowBatteryUnitsResult.units;
-            const totalUnits = allUnits.length;
-            const criticalBatteryUnits = allUnits.filter(u => (u.battery_level || 0) <= 5).length;
-            const lowBatteryCount = allUnits.filter(u => (u.battery_level || 0) <= 20 && (u.battery_level || 0) > 5).length;
-            const offlineUnits = allUnits.filter(u => !u.is_online).length;
-            const onlineUnits = allUnits.filter(u => u.is_online).length;
-            
-            const batteryData = {
-              lowBatteryUnits: lowBatteryUnits,
-              totalUnits,
-              criticalBatteryUnits,
-              lowBatteryCount,
-              offlineUnits,
-              onlineUnits,
-              lastUpdated: new Date().toISOString()
-            };
-            
-            userBatteryData.set(userKey, batteryData);
+            userBatteryData.set(userKey, await this.getBatteryDataForClient(client));
           } catch (error) {
             this.logger.error(`Error calculating battery data for user ${client.userId}:`, error);
             continue;

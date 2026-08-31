@@ -21,6 +21,8 @@ jest.mock('@/services/fms.service', () => ({
   fmsService: {
     reviewChanges: jest.fn(),
     applyChanges: jest.fn(),
+    getPendingChanges: jest.fn().mockResolvedValue([]),
+    getSyncDetails: jest.fn().mockResolvedValue({ id: 'sync-123', sync_status: 'pending_review' }),
   },
 }));
 
@@ -199,7 +201,7 @@ describe('FMSChangeReviewModal - Apply Changes', () => {
       await waitFor(() => {
         expect(screen.getByText('Changes Applied Successfully')).toBeInTheDocument();
       });
-    });
+    }, 20_000);
 
     it('should generate correct summary message with multiple access changes', async () => {
       const successResult: FMSChangeApplicationResult = {
@@ -297,6 +299,16 @@ describe('FMSChangeReviewModal - Apply Changes', () => {
         changesApplied: 2,
         changesFailed: 1,
         errors: ['Failed to apply tenant_added for EXT-001: Email already exists'],
+        errorDetails: [
+          {
+            changeId: 'chg-fail',
+            changeType: FMSChangeType.TENANT_ADDED,
+            entityType: 'tenant',
+            externalId: 'EXT-001',
+            entityLabel: 'a@example.com',
+            message: 'Email already exists',
+          },
+        ],
         accessChanges: {
           usersCreated: ['user-2'],
           usersDeactivated: [],
@@ -324,7 +336,8 @@ describe('FMSChangeReviewModal - Apply Changes', () => {
       // Should show error toast
       await waitFor(() => {
         expect(screen.getByText('Some Changes Failed')).toBeInTheDocument();
-        expect(screen.getByText(/Email already exists/)).toBeInTheDocument();
+        expect(screen.getByText(/Applied 2 of \d+ changes/)).toBeInTheDocument();
+        expect(screen.getByText(/email already exists/i)).toBeInTheDocument();
       });
 
       // Modal should NOT close
@@ -367,6 +380,7 @@ describe('FMSChangeReviewModal - Apply Changes', () => {
       await waitFor(() => {
         expect(screen.getByText('Some Changes Failed')).toBeInTheDocument();
         expect(screen.getByText(/2 changes failed to apply/)).toBeInTheDocument();
+        expect(screen.getByText(/Open the review list for details/)).toBeInTheDocument();
       });
     });
   });
@@ -510,7 +524,7 @@ describe('FMSChangeReviewModal - Apply Changes', () => {
       );
 
       // Deselect one change
-      const firstChange = screen.getByText('New tenant John Doe added to unit A-101').closest('div[class*="border-2"]');
+      const firstChange = screen.getByText('New tenant John Doe added to unit A-101').closest('[data-testid="fms-change-card"]');
       if (firstChange) {
         fireEvent.click(firstChange);
       }

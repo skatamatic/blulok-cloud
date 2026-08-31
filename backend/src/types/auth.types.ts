@@ -66,8 +66,16 @@ export interface JWTPayload {
  * Security: Transmitted over HTTPS, validated server-side.
  */
 export interface LoginRequest {
-  /** User's email address */
-  email: string;
+  /**
+   * Flexible login identifier.
+   * Can be an email address or a phone number (raw; will be normalized server-side).
+   */
+  identifier?: string;
+  /**
+   * Legacy email field for backwards compatibility.
+   * If provided and identifier is missing, email will be used as the identifier.
+   */
+  email?: string;
   /** User's password (plaintext, hashed server-side) */
   password: string;
 }
@@ -95,6 +103,8 @@ export interface LoginResponse {
     lastName: string;
     /** User's assigned role */
     role: UserRole;
+    /** Presentation-only simplified Cloud UI preference */
+    simplifiedUi?: boolean;
   };
   /** JWT token for authenticated requests (present on success) */
   token?: string;
@@ -106,20 +116,56 @@ export interface LoginResponse {
  * Data required to create a new user account in the system.
  * Used by administrators and facility managers.
  *
- * Security: Password must meet complexity requirements.
+ * Security: When a password is supplied, the HTTP layer enforces complexity rules.
+ * Password may be omitted so the account uses the first-time / invite flow (`requires_password_reset`).
  * Audit: User creation is logged with performing user details.
  */
 export interface CreateUserRequest {
-  /** User's email address (must be unique) */
+  /** User's email address (contact; login uniqueness is on login_identifier) */
   email: string;
-  /** Initial password (will be hashed with bcrypt) */
-  password: string;
+  /**
+   * Initial password (bcrypt-hashed). If omitted or empty, a placeholder hash is stored and
+   * `requires_password_reset` is set so the user completes first-time / invite flow.
+   */
+  password?: string;
+  /** Normalized E.164 phone (optional contact; may be shared) */
+  phoneNumber?: string | null;
   /** User's first name */
   firstName: string;
   /** User's last name */
   lastName: string;
   /** Role to assign to the new user */
   role: UserRole;
+}
+
+/** Structured create/reactivate outcome from AuthService.createUser */
+export type CreateUserConflictCode = 'USER_INACTIVE' | 'IDENTITY_CONFLICT' | 'NO_UNIQUE_LOGIN_HANDLE';
+
+export interface InactiveUserSummary {
+  id: string;
+  email: string | null;
+  firstName: string;
+  lastName: string;
+  role: UserRole;
+  phoneNumber?: string | null;
+}
+
+export interface CreateUserResult {
+  success: boolean;
+  message: string;
+  userId?: string;
+  /** True when an inactive account was reactivated instead of inserting a new row */
+  reactivated?: boolean;
+  code?: CreateUserConflictCode;
+  inactiveUser?: InactiveUserSummary;
+}
+
+export interface CreateUserOptions {
+  /**
+   * When true and the email/phone matches an inactive user, reactivate and apply
+   * the submitted profile fields instead of creating a new row.
+   */
+  reactivateIfInactive?: boolean;
 }
 
 /**
@@ -129,16 +175,26 @@ export interface CreateUserRequest {
  * Used by administrators for user management.
  *
  * Security: Role changes are audited and require appropriate permissions.
+ * Phone numbers are normalized to E.164; empty string clears `phone_number`.
  */
 export interface UpdateUserRequest {
   /** Updated first name */
   firstName?: string;
   /** Updated last name */
   lastName?: string;
+  /** Updated email (used to upgrade FMS placeholder tenants) */
+  email?: string | null;
+  /** Updated phone (raw); empty string clears the stored E.164 number */
+  phoneNumber?: string | null;
   /** Updated role (requires admin privileges) */
   role?: UserRole;
   /** Account activation status */
   isActive?: boolean;
+  /**
+   * Presentation-only simplified Cloud UI (facility_admin).
+   * Only ADMIN / DEV_ADMIN may set this; not an API authorization boundary.
+   */
+  simplifiedUi?: boolean;
 }
 
 import { Request } from 'express';

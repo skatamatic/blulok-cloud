@@ -1,52 +1,76 @@
 import { UserRole } from '@/types/auth.types';
 import { UserFacilityAssociationModel } from '@/models/user-facility-association.model';
+import { DatabaseService } from '@/services/database.service';
 import { logger } from '@/utils/logger';
+import type { Knex } from 'knex';
 
 /**
  * Facility Access Service
  *
  * Centralized service for managing facility-scoped access control across the entire BluLok system.
- * Provides consistent role-based access control (RBAC) for multi-tenant facility operations.
- *
- * Key Features:
- * - Role-based facility access determination
- * - Facility association management
- * - Access validation and authorization
- * - Comprehensive audit logging
- * - Graceful error handling with secure defaults
+ * All facility ID resolution reads live DB state — JWT `facilityIds` claims are never authoritative.
  *
  * Access Control Model:
  * - DEV_ADMIN, ADMIN: Global access to all facilities
- * - FACILITY_ADMIN: Limited to explicitly assigned facilities
- * - TENANT, MAINTENANCE: Facility-scoped based on assignments
- *
- * Security Considerations:
- * - All access decisions logged for audit trails
- * - Secure defaults (deny access on database errors)
- * - Facility scoping prevents cross-tenant data leakage
- * - Role hierarchy enforcement
+ * - FACILITY_ADMIN: Explicit user_facility_associations rows
+ * - TENANT, MAINTENANCE: user_facility_associations ∪ active unit_assignments ∪ active key_sharing
+ *   (facility visibility / API scope — device and route-pass entitlement remain assignment/share-gated)
+ * - ZTP gateway principals (`ztp:{gatewayId}`): scoped to the live bound facility on that gateway row
  */
 export class FacilityAccessService {
+  /** Synthetic principal minted for ECDSA gateway AUTH (`ztp:{gatewayId}`). */
+  static isZtpGatewayPrincipal(userId: string): boolean {
+    return typeof userId === 'string' && userId.startsWith('ztp:');
+  }
+
   /**
-   * Get facility IDs that a user has access to based on their role
-   * @param userId - User ID
-   * @param userRole - User role
-   * @returns Array of facility IDs (empty array means all facilities for global admins)
+   * Resolve the live facility for a ZTP gateway principal from the gateways table.
+   * Returns null when unbound, revoked, or not a ZTP principal.
+   */
+  static async getZtpPrincipalFacilityId(userId: string): Promise<string | null> {
+    if (!this.isZtpGatewayPrincipal(userId)) return null;
+    const gatewayId = userId.slice('ztp:'.length);
+    if (!gatewayId) return null;
+    try {
+      const db = DatabaseService.getInstance().connection;
+      const row = await db('gateways')
+        .where({ id: gatewayId })
+        .whereNull('revoked_at')
+        .first('facility_id');
+      return row?.facility_id ? String(row.facility_id) : null;
+    } catch (error) {
+      logger.error(`Error resolving ZTP principal facility for ${userId}:`, error);
+      return null;
+    }
+  }
+
+  /**
+   * Get facility IDs that a user has access to based on their role.
+   * @returns Empty array for global admins (means all facilities). Otherwise scoped IDs.
    */
   static async getUserFacilityIds(userId: string, userRole: UserRole): Promise<string[]> {
     try {
-      // Global admins can access all facilities
       if (userRole === UserRole.ADMIN || userRole === UserRole.DEV_ADMIN) {
-        return []; // Empty array indicates access to all facilities
+        return [];
       }
 
-      // Facility-scoped users get their assigned facilities
+      if (userRole === UserRole.TENANT || userRole === UserRole.MAINTENANCE) {
+        return this.getTenantMaintenanceFacilityIds(userId);
+      }
+
+      const ztpFacilityId = await this.getZtpPrincipalFacilityId(userId);
+      if (ztpFacilityId) {
+        return [ztpFacilityId];
+      }
+      if (this.isZtpGatewayPrincipal(userId)) {
+        logger.warn(`ZTP principal ${userId} has no bound facility`);
+        return [];
+      }
+
       const facilityIds = await UserFacilityAssociationModel.getUserFacilityIds(userId);
-      
       if (facilityIds.length === 0) {
         logger.warn(`User ${userId} with role ${userRole} has no facility associations`);
       }
-
       return facilityIds;
     } catch (error) {
       logger.error(`Error getting facility IDs for user ${userId}:`, error);
@@ -54,21 +78,24 @@ export class FacilityAccessService {
     }
   }
 
-  /**
-   * Check if a user has access to a specific facility
-   * @param userId - User ID
-   * @param userRole - User role
-   * @param facilityId - Facility ID to check
-   * @returns True if user has access, false otherwise
-   */
   static async hasAccessToFacility(userId: string, userRole: UserRole, facilityId: string): Promise<boolean> {
     try {
-      // Global admins can access any facility
       if (userRole === UserRole.ADMIN || userRole === UserRole.DEV_ADMIN) {
         return true;
       }
 
-      // Check facility association for facility-scoped users
+      if (userRole === UserRole.TENANT || userRole === UserRole.MAINTENANCE) {
+        return this.tenantHasFacilityAccess(userId, facilityId);
+      }
+
+      const ztpFacilityId = await this.getZtpPrincipalFacilityId(userId);
+      if (ztpFacilityId) {
+        return ztpFacilityId === facilityId;
+      }
+      if (this.isZtpGatewayPrincipal(userId)) {
+        return false;
+      }
+
       return await UserFacilityAssociationModel.hasAccessToFacility(userId, facilityId);
     } catch (error) {
       logger.error(`Error checking facility access for user ${userId} to facility ${facilityId}:`, error);
@@ -76,27 +103,18 @@ export class FacilityAccessService {
     }
   }
 
-  /**
-   * Get user scope information for RBAC decisions
-   * @param userId - User ID
-   * @param userRole - User role
-   * @returns Scope information with type and facility IDs
-   */
-  static async getUserScope(userId: string, userRole: UserRole): Promise<{ 
-    type: 'all' | 'facility_limited'; 
-    facilityIds?: string[] 
+  static async getUserScope(userId: string, userRole: UserRole): Promise<{
+    type: 'all' | 'facility_limited';
+    facilityIds?: string[];
   }> {
     try {
-      // Global admins see all facilities
       if (userRole === UserRole.ADMIN || userRole === UserRole.DEV_ADMIN) {
         return { type: 'all' };
       }
 
-      // Get user's facility associations
       const facilityIds = await this.getUserFacilityIds(userId, userRole);
-
       if (facilityIds.length === 0) {
-        logger.warn(`User ${userId} with role ${userRole} has no facility associations`);
+        logger.warn(`User ${userId} with role ${userRole} has no accessible facilities`);
         return { type: 'facility_limited', facilityIds: [] };
       }
 
@@ -107,23 +125,15 @@ export class FacilityAccessService {
     }
   }
 
-  /**
-   * Validate that a user can access a specific facility for an operation
-   * @param userId - User ID
-   * @param userRole - User role
-   * @param facilityId - Facility ID
-   * @param operation - Operation being performed (for logging)
-   * @returns True if access is allowed, false otherwise
-   */
   static async validateFacilityAccess(
-    userId: string, 
-    userRole: UserRole, 
-    facilityId: string, 
+    userId: string,
+    userRole: UserRole,
+    facilityId: string,
     operation: string = 'access'
   ): Promise<boolean> {
     try {
       const hasAccess = await this.hasAccessToFacility(userId, userRole, facilityId);
-      
+
       if (!hasAccess) {
         logger.warn(`Access denied: User ${userId} (${userRole}) attempted to ${operation} facility ${facilityId}`);
       } else {
@@ -137,12 +147,6 @@ export class FacilityAccessService {
     }
   }
 
-  /**
-   * Get facility access information for logging and debugging
-   * @param userId - User ID
-   * @param userRole - User role
-   * @returns Access information for logging
-   */
   static async getAccessInfo(userId: string, userRole: UserRole): Promise<{
     role: UserRole;
     scope: 'all' | 'facility_limited';
@@ -157,7 +161,7 @@ export class FacilityAccessService {
         role: userRole,
         scope: scope.type,
         facilityIds,
-        facilityCount: facilityIds.length
+        facilityCount: facilityIds.length,
       };
     } catch (error) {
       logger.error(`Error getting access info for user ${userId}:`, error);
@@ -165,8 +169,83 @@ export class FacilityAccessService {
         role: userRole,
         scope: 'facility_limited',
         facilityIds: [],
-        facilityCount: 0
+        facilityCount: 0,
       };
     }
+  }
+
+  /**
+   * Live facility IDs for tenants/maintenance:
+   * admin-selected associations ∪ unit assignments ∪ active key shares.
+   */
+  static async getTenantMaintenanceFacilityIds(userId: string): Promise<string[]> {
+    const db = DatabaseService.getInstance().connection;
+    const [associationIds, unitFacilityRows, sharedFacilityRows] = await Promise.all([
+      UserFacilityAssociationModel.getUserFacilityIds(userId),
+      this.queryAssignmentFacilityIds(db, userId),
+      this.queryKeyShareFacilityIds(db, userId),
+    ]);
+    return Array.from(
+      new Set([...associationIds, ...unitFacilityRows, ...sharedFacilityRows].filter(Boolean))
+    );
+  }
+
+  private static async tenantHasFacilityAccess(userId: string, facilityId: string): Promise<boolean> {
+    if (await UserFacilityAssociationModel.hasAccessToFacility(userId, facilityId)) {
+      return true;
+    }
+
+    const db = DatabaseService.getInstance().connection;
+    const now = new Date();
+
+    const assignment = await db('unit_assignments as ua')
+      .join('units as u', 'u.id', 'ua.unit_id')
+      .where('ua.tenant_id', userId)
+      .where('u.facility_id', facilityId)
+      .where((qb) => {
+        qb.whereNull('ua.access_expires_at').orWhere('ua.access_expires_at', '>', now);
+      })
+      .first();
+
+    if (assignment) {
+      return true;
+    }
+
+    const share = await db('key_sharing as ks')
+      .join('units as u', 'u.id', 'ks.unit_id')
+      .where('ks.shared_with_user_id', userId)
+      .where('u.facility_id', facilityId)
+      .where('ks.is_active', true)
+      .where((qb) => {
+        qb.whereNull('ks.expires_at').orWhere('ks.expires_at', '>', now);
+      })
+      .first();
+
+    return !!share;
+  }
+
+  private static queryAssignmentFacilityIds(db: Knex, userId: string): Promise<string[]> {
+    const now = new Date();
+    return db('unit_assignments as ua')
+      .select('u.facility_id')
+      .join('units as u', 'u.id', 'ua.unit_id')
+      .where('ua.tenant_id', userId)
+      .where((qb) => {
+        qb.whereNull('ua.access_expires_at').orWhere('ua.access_expires_at', '>', now);
+      })
+      .then((rows) => rows.map((r) => r.facility_id as string));
+  }
+
+  private static queryKeyShareFacilityIds(db: Knex, userId: string): Promise<string[]> {
+    const now = new Date();
+    return db('key_sharing as ks')
+      .select('u.facility_id')
+      .join('units as u', 'u.id', 'ks.unit_id')
+      .where('ks.shared_with_user_id', userId)
+      .where('ks.is_active', true)
+      .where((qb) => {
+        qb.whereNull('ks.expires_at').orWhere('ks.expires_at', '>', now);
+      })
+      .then((rows) => rows.map((r) => r.facility_id as string));
   }
 }

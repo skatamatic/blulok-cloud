@@ -11,10 +11,19 @@ import { DenylistService } from '@/services/denylist.service';
 import { AccessRevocationListenerService } from '@/services/access-revocation-listener.service';
 import { DatabaseService } from '@/services/database.service';
 import { GatewayEventsService } from '@/services/gateway/gateway-events.service';
+import { AccessControlZoneAccessService } from '@/services/access-control-zone-access.service';
 
 jest.mock('@/services/database.service');
 jest.mock('@/services/gateway/gateway-events.service');
 jest.mock('@/models/denylist-entry.model');
+jest.mock('@/services/access-control-zone-access.service', () => ({
+  AccessControlZoneAccessService: {
+    getDenylistTargetsForUserRevocation: jest.fn(),
+    getDenylistRemovalTargetsForUserGrant: jest.fn(),
+    getDenylistDeviceIdsForUnits: jest.fn(),
+    getDeviceFacilityIds: jest.fn(),
+  },
+}));
 jest.mock('@/config/environment', () => ({
   config: {
     security: {
@@ -71,6 +80,7 @@ describe('Denylist Flow Integration', () => {
       }
       return mockQueryBuilder;
     });
+    mockKnex.raw = jest.fn((sql: string, bindings?: any[]) => ({ sql, bindings }));
 
     (DatabaseService.getInstance as jest.Mock).mockReturnValue({
       connection: mockKnex,
@@ -85,23 +95,29 @@ describe('Denylist Flow Integration', () => {
 
     mockDenylistModel = {
       create: jest.fn().mockResolvedValue({ id: 'entry-1' }),
-      findByUnitsAndUser: jest.fn().mockResolvedValue([]),
+      bulkCreate: jest.fn().mockResolvedValue(undefined),
+      findByUser: jest.fn().mockResolvedValue([]),
       findByDevice: jest.fn().mockResolvedValue([]),
       remove: jest.fn().mockResolvedValue(true),
+      bulkRemove: jest.fn().mockResolvedValue(1),
       pruneExpired: jest.fn().mockResolvedValue(0),
     } as any;
+    (AccessControlZoneAccessService.getDenylistTargetsForUserRevocation as jest.Mock).mockResolvedValue([
+      { device_id: 'device-1', device_type: 'blulok' },
+    ]);
+    (AccessControlZoneAccessService.getDenylistDeviceIdsForUnits as jest.Mock).mockResolvedValue(['device-1']);
+    (AccessControlZoneAccessService.getDeviceFacilityIds as jest.Mock).mockResolvedValue(new Map([['device-1', 'facility-1']]));
+
 
     (DenylistEntryModel as jest.MockedClass<typeof DenylistEntryModel>).mockImplementation(() => mockDenylistModel);
+    (AccessRevocationListenerService as any).instance = undefined;
 
-    jest.spyOn(DenylistService, 'buildDenylistAdd').mockResolvedValue([
-      { cmd_type: 'DENYLIST_ADD', denylist_add: [] },
-      'signature',
-    ]);
+    // Mock JWT strings for denylist commands
+    const mockDenylistAddJwt = 'eyJhbGciOiJFZERTQSIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJCbHVDbG91ZDpSb290IiwiY21kX3R5cGUiOiJERU5ZTElTVF9BREQiLCJkZW55bGlzdF9hZGQiOltdfQ.mock-sig';
+    const mockDenylistRemoveJwt = 'eyJhbGciOiJFZERTQSIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJCbHVDbG91ZDpSb290IiwiY21kX3R5cGUiOiJERU5ZTElTVF9SRU1PVkUiLCJkZW55bGlzdF9yZW1vdmUiOltdfQ.mock-sig';
 
-    jest.spyOn(DenylistService, 'buildDenylistRemove').mockResolvedValue([
-      { cmd_type: 'DENYLIST_REMOVE', denylist_remove: [] },
-      'signature',
-    ]);
+    jest.spyOn(DenylistService, 'buildDenylistAdd').mockResolvedValue(mockDenylistAddJwt);
+    jest.spyOn(DenylistService, 'buildDenylistRemove').mockResolvedValue(mockDenylistRemoveJwt);
   });
 
   afterEach(() => {
@@ -126,40 +142,24 @@ describe('Denylist Flow Integration', () => {
         metadata: { source: 'api', performedBy: 'admin-1' },
       });
 
-      expect(mockDenylistModel.create).toHaveBeenCalled();
+      // Now uses bulkCreate for efficiency
+      expect(mockDenylistModel.bulkCreate).toHaveBeenCalled();
       expect(DenylistService.buildDenylistAdd).toHaveBeenCalled();
       expect(mockGatewayEvents.unicastToFacility).toHaveBeenCalled();
 
-      // Set up for re-assignment - mock database queries properly
-      // The service makes two types of queries:
-      // 1. knex('blulok_devices').where({ unit_id }).select('id') - to get devices
-      // 2. knex('blulok_devices').join('units').where('blulok_devices.id', entry.device_id).select('units.facility_id').first() - to get facility
-
-      let blulokDevicesCallCount = 0;
-      const mockDevicesForUnit = {
-        where: jest.fn().mockReturnThis(),
-        select: jest.fn().mockResolvedValue([{ id: 'device-1' }]),
-      };
-
-      const mockDeviceFacilityQuery = {
-        join: jest.fn().mockReturnThis(),
-        where: jest.fn().mockReturnThis(),
-        select: jest.fn().mockReturnThis(),
-        first: jest.fn().mockResolvedValue({ facility_id: 'facility-1' }),
-      };
-
+      // Set up for re-assignment - mock database queries for batch facility lookup
       mockKnex.mockImplementation((table: string) => {
         if (table === 'blulok_devices') {
-          blulokDevicesCallCount++;
-          if (blulokDevicesCallCount === 1) {
-            // First call: get devices for unit in onTenantAssigned handler
-            return mockDevicesForUnit;
-          } else {
-            // Subsequent calls: get facility for each device in the loop
-            return mockDeviceFacilityQuery;
-          }
+          // Mock for both initial device query AND batch facility lookup
+          return {
+            where: jest.fn().mockReturnThis(),
+            select: jest.fn().mockResolvedValue([{ id: 'device-1' }]),
+            join: jest.fn().mockReturnValue({
+              whereIn: jest.fn().mockReturnThis(),
+              select: jest.fn().mockResolvedValue([{ device_id: 'device-1', facility_id: 'facility-1' }]),
+            }),
+          };
         }
-        // Return default query builder for other tables
         return {
           where: jest.fn().mockReturnThis(),
           whereIn: jest.fn().mockReturnThis(),
@@ -171,10 +171,11 @@ describe('Denylist Flow Integration', () => {
       });
 
       // Mock denylist entries to return
-      mockDenylistModel.findByUnitsAndUser.mockResolvedValue([
+      mockDenylistModel.findByUser.mockResolvedValue([
         {
           id: 'entry-1',
           device_id: 'device-1',
+          device_type: 'blulok',
           user_id: 'user-1',
           expires_at: new Date('2024-12-31'),
           created_at: new Date(),
@@ -185,9 +186,12 @@ describe('Denylist Flow Integration', () => {
       ]);
 
       // Clear call counts but keep implementations
-      mockDenylistModel.findByUnitsAndUser.mockClear();
-      mockDenylistModel.remove.mockClear();
+      mockDenylistModel.findByUser.mockClear();
+      mockDenylistModel.bulkRemove.mockClear();
       mockGatewayEvents.unicastToFacility.mockClear();
+      (AccessControlZoneAccessService.getDenylistRemovalTargetsForUserGrant as jest.Mock).mockResolvedValue([
+        { device_id: 'device-1', device_type: 'blulok' },
+      ]);
 
       // Simulate re-assignment
       await mockHandlers.assigned({
@@ -202,9 +206,10 @@ describe('Denylist Flow Integration', () => {
       await new Promise(resolve => setImmediate(resolve));
       
       // Verify that the re-assignment triggered denylist removal
-      expect(mockDenylistModel.findByUnitsAndUser).toHaveBeenCalledWith(['unit-1'], 'user-1');
+      expect(mockDenylistModel.findByUser).toHaveBeenCalledWith('user-1');
       expect(DenylistService.buildDenylistRemove).toHaveBeenCalled();
-      expect(mockDenylistModel.remove).toHaveBeenCalled();
+      // Now uses bulkRemove for efficiency
+      expect(mockDenylistModel.bulkRemove).toHaveBeenCalled();
       expect(mockGatewayEvents.unicastToFacility).toHaveBeenCalled();
     });
   });

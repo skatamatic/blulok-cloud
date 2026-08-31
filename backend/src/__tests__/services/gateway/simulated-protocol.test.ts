@@ -298,10 +298,10 @@ describe('SimulatedProtocol', () => {
         const original = messages[i];
         expect(decoded).toBeDefined();
         expect(original).toBeDefined();
-        expect(decoded!.id).toBe(original!.id);
-        expect(decoded!.type).toBe(original!.type);
-        expect(decoded!.payload.deviceId).toBe(original!.payload.deviceId);
-        expect(new Date(decoded!.timestamp as any).getTime()).toBe(original!.timestamp.getTime());
+        expect(decoded.id).toBe(original.id);
+        expect(decoded.type).toBe(original.type);
+        expect(decoded.payload.deviceId).toBe(original.payload.deviceId);
+        expect(new Date(decoded.timestamp as any).getTime()).toBe(original.timestamp.getTime());
       });
     });
 
@@ -431,7 +431,7 @@ describe('SimulatedProtocol', () => {
     });
 
     it('should handle very deep nesting', () => {
-      let deepObj: any = {};
+      const deepObj: any = {};
       let current = deepObj;
       for (let i = 0; i < 100; i++) {
         current.nested = {};

@@ -36,6 +36,7 @@ export enum FMSChangeType {
   UNIT_ADDED = 'unit_added',
   UNIT_REMOVED = 'unit_removed',
   UNIT_UPDATED = 'unit_updated',
+  UNIT_OVERLOCK_CHANGED = 'unit_overlock_changed',
 }
 
 export enum FMSChangeAction {
@@ -46,6 +47,26 @@ export enum FMSChangeAction {
   DEACTIVATE_USER = 'deactivate_user',
   ASSIGN_UNIT = 'assign_unit',
   UNASSIGN_UNIT = 'unassign_unit',
+}
+
+/** How inbound FMS webhooks authenticate to BluLok Cloud. */
+export enum FMSWebhookAuthMode {
+  HMAC = 'hmac',
+  NONE = 'none',
+  HEADER_SECRET = 'header_secret',
+}
+
+/**
+ * Controls whether newly created FMS tenants receive invite SMS/email.
+ * Unset / unknown values resolve to NONE (no automatic invites).
+ */
+export enum FMSInvitePolicy {
+  /** Never auto-send invites (default). Admins can still invite manually. */
+  NONE = 'none',
+  /** Auto-send only when the tenant is assigned to a unit with a BluLok device. */
+  DEVICE_EQUIPPED = 'device_equipped',
+  /** Auto-send to every non-placeholder tenant with contact info. */
+  ALL = 'all',
 }
 
 export interface FMSAuthConfig {
@@ -77,10 +98,25 @@ export interface FMSProviderConfig {
     supportsRealtime: boolean;
   };
   syncSettings: {
+    /** Auto-apply changes from full / manual sync (and future scheduled sync). */
     autoAcceptChanges: boolean;
+    /** Auto-apply changes from inbound webhooks. Falls back to autoAcceptChanges when unset. */
+    autoAcceptWebhookChanges?: boolean;
     syncInterval?: number; // Minutes between automatic syncs
     webhookUrl?: string; // Our webhook URL for this facility
-    webhookSecret?: string; // Secret for webhook validation
+    /** hmac (default) | header_secret | none */
+    webhookAuthMode?: FMSWebhookAuthMode;
+    /** HMAC signing key or static header secret value */
+    webhookSecret?: string;
+    /** Header name for header_secret mode (default Authorization) */
+    webhookAuthHeader?: string;
+    /** Header name for hmac mode (default X-Storable-Signature) */
+    webhookSignatureHeader?: string;
+    /**
+     * When to send invite SMS/email for newly created FMS tenants.
+     * Defaults to `none` when unset (suppresses spam during partial adoption).
+     */
+    invitePolicy?: FMSInvitePolicy;
   };
   customSettings?: Record<string, any>; // Provider-specific settings
 }
@@ -129,7 +165,7 @@ export interface FMSChange {
   external_id: string; // FMS entity ID
   internal_id?: string; // Our entity ID (if exists)
   before_data?: any;
-  after_data: any;
+  after_data?: any | null;
   required_actions: FMSChangeAction[];
   impact_summary: string;
   is_reviewed: boolean;
@@ -160,6 +196,8 @@ export interface FMSSyncLog {
     units_synced: number;
     errors: string[];
     warnings: string[];
+    /** True only when this sync run applied changes via facility auto-accept (not widget-only). */
+    changes_auto_applied?: boolean;
   };
   created_at: Date;
   updated_at: Date;
@@ -182,11 +220,26 @@ export interface FMSSyncResult {
   requiresReview: boolean;
 }
 
+/** Structured failure from applyChanges for user-facing summaries. */
+export interface FMSApplyErrorDetail {
+  changeId: string;
+  changeType: FMSChangeType;
+  entityType: 'tenant' | 'unit';
+  externalId: string;
+  /** Human label (unit number, email, name) — prefer over externalId in UI. */
+  entityLabel: string;
+  /** Underlying Error.message only (no change_type / id wrapper). */
+  message: string;
+}
+
 export interface FMSChangeApplicationResult {
   success: boolean;
   changesApplied: number;
   changesFailed: number;
   errors: string[];
+  errorDetails: FMSApplyErrorDetail[];
+  appliedChangeIds: string[];
+  failedChangeIds: string[];
   accessChanges: {
     usersCreated: string[];
     usersDeactivated: string[];
@@ -196,16 +249,117 @@ export interface FMSChangeApplicationResult {
 }
 
 /**
- * Webhook payload structure for FMS notifications
+ * Cached context passed through the apply-change pipeline to avoid
+ * redundant DB lookups for the same sync-log on every change.
  */
+export interface FMSApplyContext {
+  facilityId: string;
+  performedBy: string;
+  /** Cached for the duration of a single apply batch */
+  config?: FMSConfiguration | null;
+  /** Cached unit external_id → mapping for the facility */
+  unitMappingsByExternalId?: Map<string, { internal_id: string; external_id: string; metadata?: Record<string, unknown> }>;
+}
+
+/** Storable Edge CloudEvents envelope (https://webhooks.storable.io/event-catalog) */
+export interface StoredgeCloudEventEnvelope {
+  id: string;
+  time: string;
+  type: StoredgeWebhookEventType;
+  attempt_number?: number;
+  sent_at?: string;
+  body: Record<string, unknown>;
+}
+
+export type StoredgeWebhookEventType =
+  | 'com.storedge.tenant.created.v1'
+  | 'com.storedge.tenant.updated.v1'
+  | 'com.storedge.ledger.moved-in.v1'
+  | 'com.storedge.ledger.moved-out.v1'
+  | 'com.storedge.lead.moved-in.v1'
+  | 'com.storedge.unit.created.v1'
+  | 'com.storedge.unit.deleted.v1'
+  | 'com.storedge.unit.overlock-applied.v1'
+  | 'com.storedge.unit.overlock-removed.v1';
+
+export type FMSWebhookEventType =
+  | 'tenant.created'
+  | 'tenant.updated'
+  | 'ledger.moved-in'
+  | 'ledger.moved-out'
+  | 'lead.moved-in'
+  | 'unit.created'
+  | 'unit.deleted'
+  | 'unit.overlock-applied'
+  | 'unit.overlock-removed';
+
+export type FMSWebhookDisposition = 'apply' | 'ignored';
+
+export type FMSWebhookRecordStatus = 'received' | 'processed' | 'failed' | 'ignored';
+
+/** Normalized webhook payload after provider parsing */
 export interface FMSWebhookPayload {
-  event_type: 'tenant.created' | 'tenant.updated' | 'tenant.deleted' | 
-              'unit.created' | 'unit.updated' | 'unit.deleted' |
-              'lease.started' | 'lease.ended';
+  externalEventId: string;
+  event_type: string;
   timestamp: string;
-  facility_external_id?: string;
-  data: any;
-  signature?: string; // For webhook verification
+  facility_external_id: string;
+  data: Record<string, unknown>;
+  /** When set, webhook apply uses this type (e.g. lead.moved-in → ledger.moved-in). */
+  applyAs?: FMSWebhookEventType;
+  disposition?: FMSWebhookDisposition;
+  rawType?: string;
+}
+
+/** Recent webhook activity pushed over WS and shown in the FMS tab feed. */
+export interface FMSWebhookFeedItem {
+  id: string;
+  facilityId: string;
+  eventType: string;
+  externalEventId: string;
+  receivedAt: string;
+  summary: Record<string, unknown>;
+  summaryText: string;
+  changesDetected: number;
+  changesApplied: number;
+  autoApplied: boolean;
+  requiresReview: boolean;
+  syncLogId: string;
+  status?: FMSWebhookRecordStatus;
+  errorMessage?: string | null;
+  rawPayload?: Record<string, unknown> | null;
+}
+
+export interface StoredgeTenantEventBody {
+  company_id: string;
+  facility_id: string;
+  tenant_id: string;
+  first_name?: string;
+  last_name?: string;
+  email?: string;
+  phone?: string;
+  delinquent?: boolean;
+  source_id?: string | null;
+}
+
+export interface StoredgeLedgerEventBody {
+  company_id: string;
+  facility_id: string;
+  ledger_id: string;
+  tenant_id: string;
+  unit_id: string;
+  move_in_date?: string;
+  move_out_event_id?: string;
+  desired_move_out_date?: string;
+  source_id?: string | null;
+}
+
+export interface StoredgeUnitIdEventBody {
+  company_id: string;
+  facility_id: string;
+  unit_id: string;
+  tenant_id?: string;
+  ledger_id?: string;
+  source_id?: string | null;
 }
 
 /**

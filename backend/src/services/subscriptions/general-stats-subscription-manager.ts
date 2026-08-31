@@ -22,6 +22,7 @@ import { GeneralStatsService } from '@/services/general-stats.service';
  * - DEV_ADMIN: Full system statistics across all facilities
  * - ADMIN: Full system statistics across all facilities
  * - FACILITY_ADMIN: Statistics limited to assigned facilities
+ * - MAINTENANCE: Statistics limited to assigned facilities
  * - Other roles: Access denied
  */
 export class GeneralStatsSubscriptionManager extends BaseSubscriptionManager {
@@ -32,23 +33,20 @@ export class GeneralStatsSubscriptionManager extends BaseSubscriptionManager {
   }
 
   canSubscribe(userRole: UserRole): boolean {
-    // Admin and Dev Admin see all data
-    if (userRole === UserRole.ADMIN || userRole === UserRole.DEV_ADMIN) {
-      return true;
-    }
+    return this.generalStatsService.canSubscribeToGeneralStats(userRole);
+  }
 
-    // Facility Admin sees only their associated facilities
-    if (userRole === UserRole.FACILITY_ADMIN) {
-      return true;
-    }
-
-    // Other roles cannot access general stats
-    return false;
+  private async getStatsForClient(client: SubscriptionClient): Promise<any> {
+    return this.loadInitialData(
+      this.getInitialDataScopeKey(client),
+      () => this.generalStatsService.getScopedStats(client.userId, client.userRole),
+      {} as any,
+    );
   }
 
   protected async sendInitialData(ws: WebSocket, subscriptionId: string, client: SubscriptionClient): Promise<void> {
     try {
-      const stats = await this.generalStatsService.getScopedStats(client.userId, client.userRole);
+      const stats = await this.getStatsForClient(client);
       this.sendMessage(ws, {
         type: 'general_stats_update',
         subscriptionId,
@@ -84,8 +82,7 @@ export class GeneralStatsSubscriptionManager extends BaseSubscriptionManager {
         const userKey = `${client.userId}-${client.userRole}`;
         if (!userStats.has(userKey)) {
           try {
-            const stats = await this.generalStatsService.getScopedStats(client.userId, client.userRole);
-            userStats.set(userKey, stats);
+            userStats.set(userKey, await this.getStatsForClient(client));
           } catch (error) {
             this.logger.error(`Error calculating stats for user ${client.userId}:`, error);
             continue;

@@ -4,10 +4,20 @@
  * Tests for tenant assignment/unassignment functionality and event emission
  */
 
+jest.mock('@/services/websocket.service', () => ({
+  WebSocketService: {
+    getInstance: jest.fn(() => ({
+      broadcastUnitsUpdate: jest.fn().mockResolvedValue(undefined),
+      broadcastGeneralStatsUpdate: jest.fn().mockResolvedValue(undefined),
+    })),
+  },
+}));
+
 import { UnitsService } from '@/services/units.service';
 import { UnitModel } from '@/models/unit.model';
 import { UnitAssignmentModel } from '@/models/unit-assignment.model';
 import { UnitAssignmentEventsService } from '@/services/events/unit-assignment-events.service';
+import { WebSocketService } from '@/services/websocket.service';
 
 describe('UnitsService - Tenant Assignment', () => {
   let unitsService: UnitsService;
@@ -24,6 +34,12 @@ describe('UnitsService - Tenant Assignment', () => {
     mockUnitModel = (unitsService as any).unitModel;
     mockAssignmentModel = (unitsService as any).unitAssignmentModel;
     mockEventService = (unitsService as any).eventService;
+    mockUnitModel.syncUnitOccupancyStatusFromAssignments = jest.fn().mockResolvedValue(undefined);
+
+    (WebSocketService.getInstance as jest.Mock).mockReturnValue({
+      broadcastUnitsUpdate: jest.fn().mockResolvedValue(undefined),
+      broadcastGeneralStatsUpdate: jest.fn().mockResolvedValue(undefined),
+    });
   });
 
   describe('assignTenant', () => {
@@ -38,12 +54,11 @@ describe('UnitsService - Tenant Assignment', () => {
         unit_number: 'A-101',
       });
 
-      mockAssignmentModel.findByUnitAndTenant = jest.fn().mockResolvedValue(null);
-      mockAssignmentModel.create = jest.fn().mockResolvedValue({
-        id: 'assignment-1',
-        unit_id: unitId,
-        tenant_id: tenantId,
-      });
+      mockAssignmentModel.assignPrimaryAtomically = jest.fn().mockResolvedValue({
+        removedPrimaryAssignments: [],
+        assigned: 'created',
+        assignedAccessType: 'full',
+      } as any);
 
       await unitsService.assignTenant(unitId, tenantId, {
         accessType: 'full',
@@ -52,12 +67,19 @@ describe('UnitsService - Tenant Assignment', () => {
         source: 'api',
       });
 
-      expect(mockAssignmentModel.create).toHaveBeenCalledWith({
+      expect(mockAssignmentModel.assignPrimaryAtomically).toHaveBeenCalledWith({
         unit_id: unitId,
         tenant_id: tenantId,
         access_type: 'full',
-        is_primary: true,
+        expires_at: undefined,
+        notes: undefined,
       });
+      await Promise.resolve();
+      expect(WebSocketService.getInstance().broadcastUnitsUpdate).toHaveBeenCalledWith({
+        facilityId,
+        unitId,
+      });
+      expect(WebSocketService.getInstance().broadcastGeneralStatsUpdate).toHaveBeenCalled();
     });
 
     it('should emit tenant assigned event', async () => {
@@ -67,10 +89,11 @@ describe('UnitsService - Tenant Assignment', () => {
         unit_number: 'A-101',
       });
 
-      mockAssignmentModel.findByUnitAndTenant = jest.fn().mockResolvedValue(null);
-      mockAssignmentModel.create = jest.fn().mockResolvedValue({
-        id: 'assignment-1',
-      });
+      mockAssignmentModel.assignPrimaryAtomically = jest.fn().mockResolvedValue({
+        removedPrimaryAssignments: [],
+        assigned: 'created',
+        assignedAccessType: 'full',
+      } as any);
 
       mockEventService.emitTenantAssigned = jest.fn();
 
@@ -124,6 +147,108 @@ describe('UnitsService - Tenant Assignment', () => {
           performedBy: 'admin-1',
         })
       ).rejects.toThrow('Unit not found');
+    });
+
+    it('should replace existing primary tenant when assigning a new primary tenant', async () => {
+      mockUnitModel.findById = jest.fn().mockResolvedValue({
+        id: unitId,
+        facility_id: facilityId,
+        unit_number: 'A-101',
+      });
+
+      mockAssignmentModel.assignPrimaryAtomically = jest.fn().mockResolvedValue({
+        removedPrimaryAssignments: [
+          {
+            tenant_id: 'tenant-old-primary',
+            access_type: 'full',
+          },
+        ],
+        assigned: 'created',
+        assignedAccessType: 'full',
+      } as any);
+      mockEventService.emitTenantUnassigned = jest.fn();
+      mockEventService.emitTenantAssigned = jest.fn();
+
+      await unitsService.assignTenant(unitId, tenantId, {
+        accessType: 'full',
+        isPrimary: true,
+        performedBy: 'admin-1',
+        source: 'api',
+      });
+
+      expect(mockEventService.emitTenantUnassigned).toHaveBeenCalledWith(
+        expect.objectContaining({
+          unitId,
+          tenantId: 'tenant-old-primary',
+        })
+      );
+      expect(mockEventService.emitTenantAssigned).toHaveBeenCalledWith(
+        expect.objectContaining({
+          unitId,
+          tenantId,
+        })
+      );
+    });
+
+    it('should promote existing shared assignment to primary', async () => {
+      mockUnitModel.findById = jest.fn().mockResolvedValue({
+        id: unitId,
+        facility_id: facilityId,
+        unit_number: 'A-101',
+      });
+
+      mockAssignmentModel.assignPrimaryAtomically = jest.fn().mockResolvedValue({
+        removedPrimaryAssignments: [
+          {
+            tenant_id: 'tenant-old-primary',
+            access_type: 'full',
+          },
+        ],
+        assigned: 'promoted',
+        assignedAccessType: 'full',
+      } as any);
+      mockEventService.emitTenantUnassigned = jest.fn();
+      mockEventService.emitTenantAssigned = jest.fn();
+
+      await unitsService.assignTenant(unitId, tenantId, {
+        accessType: 'full',
+        isPrimary: true,
+        performedBy: 'admin-1',
+        source: 'api',
+      });
+
+      expect(mockEventService.emitTenantAssigned).toHaveBeenCalledWith(
+        expect.objectContaining({
+          unitId,
+          tenantId,
+        })
+      );
+    });
+
+    it('should be idempotent for unchanged primary assignment and skip assigned side effects', async () => {
+      mockUnitModel.findById = jest.fn().mockResolvedValue({
+        id: unitId,
+        facility_id: facilityId,
+        unit_number: 'A-101',
+      });
+
+      mockAssignmentModel.assignPrimaryAtomically = jest.fn().mockResolvedValue({
+        removedPrimaryAssignments: [],
+        assigned: 'unchanged',
+        assignedAccessType: 'full',
+      } as any);
+      mockEventService.emitTenantAssigned = jest.fn();
+      mockEventService.emitTenantUnassigned = jest.fn();
+
+      await unitsService.assignTenant(unitId, tenantId, {
+        accessType: 'full',
+        isPrimary: true,
+        performedBy: 'admin-1',
+        source: 'api',
+      });
+
+      expect(mockEventService.emitTenantAssigned).not.toHaveBeenCalled();
+      expect(mockEventService.emitTenantUnassigned).not.toHaveBeenCalled();
     });
   });
 

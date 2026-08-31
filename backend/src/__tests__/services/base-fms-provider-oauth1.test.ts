@@ -252,7 +252,7 @@ describe('BaseFMSProvider - OAuth1 Authentication', () => {
       const oauthTimestamp = authHeader.match(/oauth_timestamp="(\d+)"/)?.[1];
       expect(oauthTimestamp).toBeDefined();
       
-      const timestamp = parseInt(oauthTimestamp!, 10);
+      const timestamp = parseInt(oauthTimestamp, 10);
       expect(timestamp).toBeGreaterThanOrEqual(beforeTimestamp);
       expect(timestamp).toBeLessThanOrEqual(afterTimestamp);
     });

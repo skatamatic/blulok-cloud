@@ -1,17 +1,26 @@
 import { InviteService } from '@/services/invite.service';
 import { NotificationService } from '@/services/notifications/notification.service';
-import { SystemSettingsModel } from '@/models/system-settings.model';
 import { User, UserModel } from '@/models/user.model';
 import { OTPService } from '@/services/otp.service';
 import { logger } from '@/utils/logger';
 import { DatabaseService } from '@/services/database.service';
+import { describeDelivery } from '@/services/notifications/notification-delivery';
+import type { NotificationDeliveryChannel } from '@/services/notifications/notification-delivery-error.utils';
 import bcrypt from 'bcrypt';
+
+/** Outcome of an invite dispatch, so callers can report partial delivery. */
+export interface InviteDispatchResult {
+  delivered: NotificationDeliveryChannel[];
+  /** Present when one channel succeeded and another failed. */
+  warning?: string;
+  /** Set when no invite was attempted (placeholder or contactless account). */
+  skipped?: 'placeholder' | 'no_contact';
+}
 
 export class FirstTimeUserService {
   private static instance: FirstTimeUserService;
   private invites = InviteService.getInstance();
   private notifications = NotificationService.getInstance();
-  private settings = new SystemSettingsModel();
   private otps = OTPService.getInstance();
   private db = DatabaseService.getInstance().connection;
 
@@ -24,29 +33,121 @@ export class FirstTimeUserService {
 
   /**
    * Create and send an invitation to a newly created user.
+   * Generates both the invite token AND the OTP in one step, sending a single
+   * notification containing both the deeplink and verification code.
+   *
+   * Throws when nothing could be delivered; returns a `warning` when one channel
+   * failed but another succeeded, so callers never report a silent no-op.
    */
-  public async sendInvite(user: User): Promise<void> {
-    const { token } = await this.invites.createInvite(user.id);
-    const deeplinkBase = await this.settings.get('notifications.deeplink_base');
-    const base = deeplinkBase || 'blulok://invite';
-    const phone = user.phone_number || '';
-    const sep = base.includes('?') ? '&' : '?';
-    const deeplink = `${base}${sep}token=${encodeURIComponent(token)}${phone ? `&phone=${encodeURIComponent(phone)}` : ''}`;
+  public async sendInvite(user: User): Promise<InviteDispatchResult> {
+    const { isPlaceholderUser } = await import('@/services/fms/fms-placeholder-user.utils');
+    if (isPlaceholderUser(user)) {
+      logger.info(`Skipping invite for FMS placeholder user ${user.id} (no login identity)`);
+      return { delivered: [], skipped: 'placeholder' };
+    }
+    if (!user.email && !user.phone_number) {
+      logger.warn(`Skipping invite for user ${user.id}: no email or phone`);
+      return { delivered: [], skipped: 'no_contact' };
+    }
 
-    await this.notifications.sendInvite({
+    const { token, inviteId } = await this.invites.createInvite(user.id);
+    const { NotificationConfigService } = await import(
+      '@/services/notifications/notification-config.service'
+    );
+    const base = await NotificationConfigService.getInstance().resolveDeeplinkBase();
+    const phone = user.phone_number || '';
+    
+    // Build: blulok://invite?token=...&phone=... or https://app.blulok.com/invite?token=...&phone=...
+    const deeplink = `${base}invite?token=${encodeURIComponent(token)}${phone ? `&phone=${encodeURIComponent(phone)}` : ''}`;
+
+    // Determine delivery method
+    const delivery = user.phone_number ? 'sms' : 'email';
+
+    // Create OTP record for this invite (does not send a separate notification)
+    const { code } = await this.otps.createOtpRecord({
+      userId: user.id,
+      inviteId,
+      delivery: delivery as 'sms' | 'email',
+    });
+
+    // Send single invite notification with both deeplink and OTP code
+    const outcome = await this.notifications.sendInvite({
       toPhone: user.phone_number || undefined,
       toEmail: user.email || undefined,
       deeplink,
+      code,
     });
-    logger.info(`Invite sent to user ${user.id} via ${user.phone_number ? 'sms' : 'email'}`);
+
+    // Clear any FMS deferred-invite bookkeeping (manual/admin invite wins).
+    // Only reached once at least one channel delivered — sendInvite throws otherwise.
+    try {
+      const { DeferredInviteService } = await import(
+        '@/services/notifications/deferred-invite.service'
+      );
+      await DeferredInviteService.getInstance().resolvePendingForUser(user.id, 'manual_invite');
+    } catch (e) {
+      logger.warn(`Failed to resolve deferred invite for user ${user.id}`, e);
+    }
+
+    logger.info(`Invite with OTP sent to user ${user.id} via ${describeDelivery(outcome)}`);
+
+    const result: InviteDispatchResult = { delivered: outcome.delivered };
+    if (outcome.errors.length > 0) {
+      result.warning = `Invite sent via ${describeDelivery(outcome)}, but ${outcome.errors
+        .map((e) => e.channel)
+        .join(' and ')} delivery failed.`;
+    }
+    return result;
   }
 
-  /** Request an OTP after validating invite token and user contact ownership */
-  public async requestOtp(params: { token: string; phone?: string; email?: string; }): Promise<{ expiresAt: Date; userId: string; inviteId: string; }> {
+  /**
+   * Request an OTP after validating invite token and user contact ownership.
+   *
+   * For users that were created via a phone-only invite (no first/last name populated yet),
+   * we require the caller to supply firstName and lastName (and optionally email) so the
+   * account can be fully initialized before OTP delivery. This prevents half-configured
+   * accounts from being activated without a proper profile.
+   *
+   * For existing users that already have a profile (non-empty first_name/last_name), the
+   * additional fields remain optional and are ignored by this method.
+   */
+  public async requestOtp(params: { token: string; phone?: string; email?: string; firstName?: string; lastName?: string; }): Promise<{ expiresAt: Date; userId: string; inviteId: string; }> {
     const invite = await this.invites.findActiveInviteByToken(params.token);
     if (!invite) throw new Error('Invalid or expired invite token');
     const user = await UserModel.findById(invite.user_id) as User | undefined;
     if (!user) throw new Error('User not found for invite');
+
+    // Ensure profile is populated for newly created (phone-only) users
+    const hasFirstName = typeof user.first_name === 'string' && user.first_name.trim().length > 0;
+    const hasLastName = typeof user.last_name === 'string' && user.last_name.trim().length > 0;
+    if (!hasFirstName || !hasLastName) {
+      const firstName = (params.firstName || '').trim();
+      const lastName = (params.lastName || '').trim();
+      if (!firstName || !lastName) {
+        throw new Error('First name and last name are required to complete your account setup');
+      }
+
+      const updates: Partial<User> = {
+        first_name: firstName,
+        last_name: lastName,
+      };
+
+      // Optional email, only if user does not yet have one
+      if (!user.email && params.email) {
+        const emailLower = params.email.trim().toLowerCase();
+        if (emailLower) {
+          const existing = await UserModel.findByEmail(emailLower);
+          if (existing && existing.id !== user.id) {
+            throw new Error('Email is already in use');
+          }
+          (updates as any).email = emailLower;
+        }
+      }
+
+      if (Object.keys(updates).length > 0) {
+        await UserModel.updateById(user.id, updates as any);
+      }
+    }
 
     // Enforce resend throttle based on the last OTP sent for this invite
     const minSeconds = parseInt(process.env.OTP_RESEND_MIN_SECONDS || '30', 10);
@@ -62,22 +163,42 @@ export class FirstTimeUserService {
       }
     }
 
-    // Validate contact matches stored user contact; prefer phone if user has phone
-    const hasPhone = !!user.phone_number;
-    if (hasPhone) {
-      if (!params.phone) throw new Error('Phone is required');
-      if (!this.phoneMatches(user.phone_number!, params.phone)) throw new Error('Phone does not match');
-      const res = await this.otps.sendOtp({ userId: user.id, inviteId: invite.id, delivery: 'sms', toPhone: user.phone_number! });
+    const config = await this.notifications.getConfig();
+    const smsEnabled = config.enabledChannels?.sms !== false;
+    const emailEnabled = config.enabledChannels?.email === true;
+
+    if (params.phone) {
+      if (!smsEnabled) throw new Error('SMS notifications are disabled');
+      if (!user.phone_number || !this.phoneMatches(user.phone_number, params.phone)) {
+        throw new Error('Phone does not match');
+      }
+      const res = await this.otps.sendOtp({
+        userId: user.id,
+        inviteId: invite.id,
+        delivery: 'sms',
+        toPhone: user.phone_number,
+      });
       logger.info(`OTP sent via sms for invite ${invite.id} user ${user.id}`);
       return { expiresAt: res.expiresAt, userId: user.id, inviteId: invite.id };
-    } else {
+    }
+
+    if (params.email) {
+      if (!emailEnabled) throw new Error('Email notifications are disabled');
       if (!user.email) throw new Error('No delivery method available');
-      if (!params.email) throw new Error('Email is required');
       if (user.email.toLowerCase() !== params.email.toLowerCase()) throw new Error('Email does not match');
-      const res = await this.otps.sendOtp({ userId: user.id, inviteId: invite.id, delivery: 'email', toEmail: user.email });
+      const res = await this.otps.sendOtp({
+        userId: user.id,
+        inviteId: invite.id,
+        delivery: 'email',
+        toEmail: user.email,
+      });
       logger.info(`OTP sent via email for invite ${invite.id} user ${user.id}`);
       return { expiresAt: res.expiresAt, userId: user.id, inviteId: invite.id };
     }
+
+    if (smsEnabled && user.phone_number) throw new Error('Phone is required');
+    if (emailEnabled && user.email) throw new Error('Email is required');
+    throw new Error('No delivery method available');
   }
 
   /** Verify OTP for the invite */
@@ -93,15 +214,131 @@ export class FirstTimeUserService {
     return result.valid;
   }
 
-  /** Set the user's password and consume invite (after otp verified) */
-  public async setPassword(params: { token: string; otp: string; newPassword: string; }): Promise<void> {
+  /**
+   * Accept an invite by token. This validates the invite and returns profile info.
+   * Does NOT consume the invite - that happens in setPassword.
+   * - needs_profile: whether the user needs to provide first/last name
+   * - profile: known profile fields (first_name, last_name, email, phone_number)
+   * - missing_fields: list of fields that need to be provided
+   */
+  public async acceptInvite(params: { token: string }): Promise<{
+    needs_profile: boolean;
+    profile: {
+      first_name: string | null;
+      last_name: string | null;
+      email: string | null;
+      phone_number: string | null;
+    };
+    missing_fields: string[];
+  }> {
     const invite = await this.invites.findActiveInviteByToken(params.token);
     if (!invite) throw new Error('Invalid or expired invite token');
+    
+    const user = await UserModel.findById(invite.user_id) as User | undefined;
+    if (!user) throw new Error('User not found for invite');
+
+    const { isPlaceholderUser } = await import('@/services/fms/fms-placeholder-user.utils');
+    if (isPlaceholderUser(user)) {
+      throw new Error('Invalid or expired invite token');
+    }
+
+    // Determine which profile fields are missing
+    const hasFirstName = typeof user.first_name === 'string' && user.first_name.trim().length > 0;
+    const hasLastName = typeof user.last_name === 'string' && user.last_name.trim().length > 0;
+    
+    const missing_fields: string[] = [];
+    if (!hasFirstName) missing_fields.push('first_name');
+    if (!hasLastName) missing_fields.push('last_name');
+
+    logger.info(`Invite accepted for user ${user.id}, needs_profile=${missing_fields.length > 0}`);
+
+    return {
+      needs_profile: missing_fields.length > 0,
+      profile: {
+        first_name: user.first_name || null,
+        last_name: user.last_name || null,
+        email: user.email || null,
+        phone_number: user.phone_number || null,
+      },
+      missing_fields,
+    };
+  }
+
+  /**
+   * Set the user's password, verify OTP, and consume invite.
+   * If profile fields are missing and required, they must be provided or the call fails.
+   */
+  public async setPassword(params: {
+    token: string;
+    otp: string;
+    newPassword: string;
+    firstName?: string;
+    lastName?: string;
+    email?: string;
+  }): Promise<void> {
+    const invite = await this.invites.findActiveInviteByToken(params.token);
+    if (!invite) throw new Error('Invalid or expired invite token');
+
+    const user = await UserModel.findById(invite.user_id) as User | undefined;
+    if (!user) throw new Error('User not found for invite');
+
+    const { isPlaceholderUser } = await import('@/services/fms/fms-placeholder-user.utils');
+    if (isPlaceholderUser(user)) {
+      throw new Error('Invalid or expired invite token');
+    }
+
+    // Check if profile fields are missing and require them
+    const hasFirstName = typeof user.first_name === 'string' && user.first_name.trim().length > 0;
+    const hasLastName = typeof user.last_name === 'string' && user.last_name.trim().length > 0;
+
+    const updates: Partial<User> & { email?: string } = {
+      requires_password_reset: false,
+    };
+
+    // If first name is missing, require it
+    if (!hasFirstName) {
+      const firstName = (params.firstName || '').trim();
+      if (!firstName) {
+        throw new Error('First name is required to complete your account setup');
+      }
+      updates.first_name = firstName;
+    }
+
+    // If last name is missing, require it
+    if (!hasLastName) {
+      const lastName = (params.lastName || '').trim();
+      if (!lastName) {
+        throw new Error('Last name is required to complete your account setup');
+      }
+      updates.last_name = lastName;
+    }
+
+    // Verify OTP only after profile requirements are satisfied so
+    // validation failures do not consume one-time codes.
     const valid = await this.verifyOtp({ token: params.token, otp: params.otp });
     if (!valid) throw new Error('Invalid OTP');
 
-    const passwordHash = await bcrypt.hash(params.newPassword, 12);
-    await UserModel.updateById(invite.user_id, { password_hash: passwordHash, requires_password_reset: false });
+    // Optional: update email if user doesn't have one and caller provides it
+    if (!user.email && params.email) {
+      const emailLower = params.email.trim().toLowerCase();
+      if (emailLower) {
+        const existing = await UserModel.findByEmail(emailLower);
+        if (existing && existing.id !== user.id) {
+          throw new Error('Email is already in use');
+        }
+        updates.email = emailLower;
+      }
+    }
+
+    // Set password
+    updates.password_hash = await bcrypt.hash(params.newPassword, 12);
+
+    // Activate account if inactive
+    if (!user.is_active) {
+      updates.is_active = true;
+    }
+
+    await UserModel.updateById(user.id, updates as any);
     await this.invites.consumeInvite(invite.id);
     logger.info(`User ${invite.user_id} set password via invite ${invite.id}`);
   }

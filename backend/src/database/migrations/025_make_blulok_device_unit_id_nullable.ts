@@ -37,7 +37,7 @@ export async function up(knex: Knex): Promise<void> {
       AND REFERENCED_TABLE_NAME IS NOT NULL
     `);
 
-    const fkName = (fkInfo as any)[0]?.[0]?.CONSTRAINT_NAME;
+    const fkName = (fkInfo)[0]?.[0]?.CONSTRAINT_NAME;
 
     // Drop the foreign key constraint if it exists
     if (fkName) {
@@ -103,7 +103,7 @@ export async function down(knex: Knex): Promise<void> {
     AND REFERENCED_TABLE_NAME IS NOT NULL
   `);
 
-  const fkName = (fkInfo as any)[0]?.[0]?.CONSTRAINT_NAME;
+  const fkName = (fkInfo)[0]?.[0]?.CONSTRAINT_NAME;
 
   if (fkName) {
     await knex.raw(`ALTER TABLE blulok_devices DROP FOREIGN KEY ??`, [fkName]);

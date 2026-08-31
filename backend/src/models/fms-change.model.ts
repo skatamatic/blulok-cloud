@@ -43,6 +43,8 @@ import { randomUUID } from 'crypto';
 import { DatabaseService } from '@/services/database.service';
 import { FMSChange, FMSChangeType, FMSChangeAction } from '@/types/fms.types';
 import { logger } from '@/utils/logger';
+import { isFmsChangePending } from '@/services/fms/fms-apply-order.utils';
+import { refreshPendingTenantChangeForDisplay } from '@/services/fms/fms-tenant-validation.utils';
 
 export class FMSChangeModel {
   private db: Knex;
@@ -82,7 +84,7 @@ export class FMSChangeModel {
           external_id: data.external_id,
           internal_id: data.internal_id,
           before_data: data.before_data ? JSON.stringify(data.before_data) : null,
-          after_data: JSON.stringify(data.after_data),
+          after_data: data.after_data != null ? JSON.stringify(data.after_data) : null,
           required_actions: JSON.stringify(data.required_actions),
           impact_summary: data.impact_summary,
           is_reviewed: false,
@@ -119,6 +121,20 @@ export class FMSChangeModel {
       return change ? this.mapToModel(change) : null;
     } catch (error) {
       logger.error('Error fetching FMS change:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Batch-fetch changes by ID (single query).
+   */
+  async findByIds(ids: string[]): Promise<FMSChange[]> {
+    if (ids.length === 0) return [];
+    try {
+      const rows = await this.db('fms_changes').whereIn('id', ids);
+      return rows.map((row) => this.mapToModel(row));
+    } catch (error) {
+      logger.error('Error fetching FMS changes by IDs:', error);
       throw error;
     }
   }
@@ -161,10 +177,11 @@ export class FMSChangeModel {
   }
 
   /**
-   * Get pending (unreviewed) changes for a sync log
+   * Get changes that still need review or re-apply (not applied, not rejected).
    */
   async findPendingBySyncLogId(syncLogId: string): Promise<FMSChange[]> {
-    return this.findBySyncLogId(syncLogId, { reviewed: false });
+    const changes = await this.findBySyncLogId(syncLogId);
+    return changes.filter((c) => isFmsChangePending(c));
   }
 
   /**
@@ -202,6 +219,28 @@ export class FMSChangeModel {
   }
 
   /**
+   * Record why an apply attempt failed so the review queue can explain it after a reload.
+   * The row stays pending and dismissible; a later sync re-detects the drift if it persists.
+   */
+  async markApplyFailed(ids: string[], reasonsByChangeId: Map<string, string[]>): Promise<number> {
+    if (ids.length === 0) return 0;
+
+    try {
+      let updated = 0;
+      for (const id of ids) {
+        const reasons = reasonsByChangeId.get(id) ?? ['Apply failed for an unknown reason'];
+        updated += await this.db('fms_changes')
+          .where({ id })
+          .update({ is_valid: false, validation_errors: JSON.stringify(reasons) });
+      }
+      return updated;
+    } catch (error) {
+      logger.error('Error recording FMS change apply failure:', error);
+      throw error;
+    }
+  }
+
+  /**
    * Mark change as reviewed and accepted/rejected
    */
   async reviewChange(id: string, accepted: boolean): Promise<FMSChange | null> {
@@ -218,6 +257,78 @@ export class FMSChangeModel {
     return this.update(id, {
       applied_at: new Date(),
     });
+  }
+
+  /**
+   * Mark multiple changes as applied in a single query.
+   */
+  async bulkMarkApplied(ids: string[]): Promise<number> {
+    if (ids.length === 0) return 0;
+    try {
+      return await this.db('fms_changes')
+        .whereIn('id', ids)
+        .update({ applied_at: this.db.fn.now() });
+    } catch (error) {
+      logger.error('Error bulk marking FMS changes applied:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Insert many change records in a single batch query and return them.
+   * Falls back to sequential create if the batch is empty.
+   */
+  async bulkCreate(items: Array<{
+    sync_log_id: string;
+    change_type: FMSChangeType;
+    entity_type: 'tenant' | 'unit';
+    external_id: string;
+    internal_id?: string;
+    before_data?: any;
+    after_data: any;
+    required_actions: FMSChangeAction[];
+    impact_summary: string;
+    is_valid?: boolean;
+    validation_errors?: string[];
+  }>): Promise<FMSChange[]> {
+    if (items.length === 0) return [];
+    try {
+      const ids: string[] = [];
+      const rows = items.map(data => {
+        const id = randomUUID();
+        ids.push(id);
+        return {
+          id,
+          sync_log_id: data.sync_log_id,
+          change_type: data.change_type,
+          entity_type: data.entity_type,
+          external_id: data.external_id,
+          internal_id: data.internal_id,
+          before_data: data.before_data ? JSON.stringify(data.before_data) : null,
+          after_data: data.after_data != null ? JSON.stringify(data.after_data) : null,
+          required_actions: JSON.stringify(data.required_actions),
+          impact_summary: data.impact_summary,
+          is_reviewed: false,
+          is_valid: data.is_valid,
+          validation_errors: data.validation_errors ? JSON.stringify(data.validation_errors) : null,
+          created_at: this.db.fn.now(),
+        };
+      });
+
+      const BATCH_SIZE = 500;
+      for (let i = 0; i < rows.length; i += BATCH_SIZE) {
+        await this.db('fms_changes').insert(rows.slice(i, i + BATCH_SIZE));
+      }
+
+      const records = await this.db('fms_changes')
+        .whereIn('id', ids)
+        .orderByRaw(`FIELD(id, ${ids.map(() => '?').join(',')})`, ids);
+
+      return records.map((r: any) => this.mapToModel(r));
+    } catch (error) {
+      logger.error('Error bulk creating FMS changes:', error);
+      throw error;
+    }
   }
 
   /**
@@ -272,7 +383,7 @@ export class FMSChangeModel {
       const stats = {
         total: changes.length,
         reviewed: changes.filter(c => c.is_reviewed).length,
-        pending: changes.filter(c => !c.is_reviewed).length,
+        pending: changes.filter(c => isFmsChangePending(c)).length,
         accepted: changes.filter(c => c.is_accepted === true).length,
         rejected: changes.filter(c => c.is_accepted === false).length,
         byType: {} as Record<FMSChangeType, number>,
@@ -303,43 +414,13 @@ export class FMSChangeModel {
       ? JSON.parse(record.after_data)
       : record.after_data;
 
-    let validationErrors = typeof record.validation_errors === 'string'
+    const validationErrors = typeof record.validation_errors === 'string'
       ? JSON.parse(record.validation_errors)
       : record.validation_errors;
 
-    // Derive validation errors if missing but the change is marked invalid
-    let derivedInvalid = false;
-    if ((record.is_valid === false || record.is_valid === 0) && (!validationErrors || validationErrors.length === 0)) {
-      const derived: string[] = [];
-      if (record.entity_type === 'tenant' && parsedAfter) {
-        const email = parsedAfter.email as string | null | undefined;
-        const firstName = (parsedAfter.firstName ?? parsedAfter.first_name) as string | null | undefined;
-        const lastName = (parsedAfter.lastName ?? parsedAfter.last_name) as string | null | undefined;
-
-        if (!email || (typeof email === 'string' && email.trim() === '')) {
-          derived.push('Missing or empty email address');
-        }
-        if (!firstName || (typeof firstName === 'string' && firstName.trim() === '')) {
-          derived.push('Missing or empty first name');
-        }
-        if (!lastName || (typeof lastName === 'string' && lastName.trim() === '')) {
-          derived.push('Missing or empty last name');
-        }
-      }
-      // Future: add unit validation derivation here if needed
-      if (derived.length > 0) {
-        validationErrors = derived;
-        derivedInvalid = true;
-      }
-    }
-
-    // Convert MySQL integer (0/1) to boolean
-    let isValidBoolean: boolean | undefined;
-    if (derivedInvalid) {
-      isValidBoolean = false;
-    } else if (record.is_valid !== null && record.is_valid !== undefined) {
-      isValidBoolean = Boolean(record.is_valid);
-    }
+    // Convert MySQL integer (0/1) to boolean — null/undefined means valid (legacy rows)
+    const isValidBoolean =
+      record.is_valid === false || record.is_valid === 0 ? false : true;
 
     const result: FMSChange = {
       id: record.id,
@@ -354,23 +435,22 @@ export class FMSChangeModel {
         ? JSON.parse(record.required_actions)
         : record.required_actions,
       impact_summary: record.impact_summary,
-      is_reviewed: record.is_reviewed,
-      is_accepted: record.is_accepted,
+      is_reviewed: record.is_reviewed === true || record.is_reviewed === 1,
+      is_accepted:
+        record.is_accepted === null || record.is_accepted === undefined
+          ? undefined
+          : record.is_accepted === true || record.is_accepted === 1,
       applied_at: record.applied_at,
       created_at: record.created_at,
+      is_valid: isValidBoolean,
     };
-
-    // Only set is_valid if it has a value
-    if (isValidBoolean !== undefined) {
-      result.is_valid = isValidBoolean;
-    }
 
     // Only set validation_errors if it has a value
     if (validationErrors !== null && validationErrors !== undefined) {
       result.validation_errors = validationErrors;
     }
 
-    return result;
+    return refreshPendingTenantChangeForDisplay(result);
   }
 }
 

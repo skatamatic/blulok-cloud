@@ -190,10 +190,12 @@ BluLok Cloud's user interface follows a modern, minimalist design philosophy wit
 - **Accessibility**: Proper labels and ARIA attributes
 
 **Buttons:**
-- **Primary**: `.btn-primary` for main actions
-- **Secondary**: `.btn-secondary` for secondary actions
-- **Destructive**: Red variants for delete/dangerous actions
+- **Primary**: `.btn-primary` or `<Button variant="primary">` for main actions (brand `#147FD4`, white label in light and dark mode)
+- **Secondary**: `.btn-secondary` or `<Button variant="secondary">` for secondary actions
+- **Ghost**: `.btn-ghost` or `<Button variant="ghost">` for low-emphasis actions
+- **Destructive**: `.btn-danger` or `<Button variant="danger">` for delete/dangerous actions
 - **Loading States**: Spinner with disabled state
+- **Important**: Do not use raw `<button className="bg-[#147FD4] text-white">` without `.btn-primary` — global dark-mode base styles override unqualified button text color. Prefer the shared `Button` component in `frontend/src/components/Common/Button.tsx`.
 
 ### Validation & Feedback
 
@@ -296,9 +298,11 @@ BluLok Cloud's user interface follows a modern, minimalist design philosophy wit
 ```jsx
 // Good: Consistent, reusable styling
 <button className="btn-primary">Action</button>
+<Button variant="primary">Action</Button>
 
-// Bad: Inline styles
+// Bad: Inline styles or unqualified brand buttons (dark mode text breaks)
 <button style={{background: 'blue'}}>Action</button>
+<button className="bg-[#147FD4] text-white">Action</button>
 ```
 
 ### State Management

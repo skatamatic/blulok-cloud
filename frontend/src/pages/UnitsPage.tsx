@@ -1,31 +1,50 @@
-import { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useState, useEffect, useRef, useCallback } from 'react';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { generateHighlightId } from '@/utils/navigation.utils';
 import { useHighlightWithPagination } from '@/hooks/useHighlightWithPagination';
 import { ExpandableFilters } from '@/components/Common/ExpandableFilters';
-import { FacilityDropdown } from '@/components/Common/FacilityDropdown';
+import { ListPageHeader } from '@/components/Common/DetailsPageLayout';
+import { useLockDeviceRealtime } from '@/hooks/useLockDeviceRealtime';
+import {
+  mergeUnitRowsFromDeviceSnapshots,
+  type LockDeviceSnapshot,
+} from '@/utils/deviceStatusWs.utils';
+import { useGlobalFacility, ALL_FACILITIES_ID } from '@/contexts/GlobalFacilityContext';
 import { 
   HomeIcon,
-  FunnelIcon,
+  SignalIcon,
   UserIcon,
   LockClosedIcon,
   LockOpenIcon,
   CheckCircleIcon,
   ClockIcon,
   WrenchScrewdriverIcon,
+  ShieldExclamationIcon,
   BuildingOfficeIcon,
   PlusIcon,
   ArrowTopRightOnSquareIcon,
-  QuestionMarkCircleIcon
+  QuestionMarkCircleIcon,
+  ExclamationTriangleIcon,
+  CpuChipIcon
 } from '@heroicons/react/24/outline';
 import { apiService } from '@/services/api.service';
+import { PrimaryTenantContact } from '@/components/UserManagement/PrimaryTenantContact';
 import { Unit, UnitFilters } from '@/types/facility.types';
 import { useAuth } from '@/contexts/AuthContext';
 import { AddUnitModal } from '@/components/Units/AddUnitModal';
+import { withReturnPath } from '@/hooks/useBackNavigation';
+import { canRequestRemoteUnlock, isLockTransitionPending } from '@/utils/unitLock.utils';
+import { lockHardwareFeedbackToasts } from '@/utils/lockHardwareFeedback.constants';
+import { useRemoteUnlockAction } from '@/hooks/useRemoteUnlockAction';
+import { resolveLockTimeoutMsForUnit } from '@/utils/facilityLockTimeout.utils';
+import { requiresOccupiedUnitOverride } from '@/constants/tenantUnlockOverride.constants';
+import { ViewModeToggle, type ListViewMode } from '@/components/Common/ViewModeToggle';
+import { SortableTableTh } from '@/components/Common/SortableTableTh';
 
 const statusColors = {
   available: 'bg-green-100 text-green-800 dark:bg-green-900/20 dark:text-green-400',
   occupied: 'bg-blue-100 text-blue-800 dark:bg-blue-900/20 dark:text-blue-400',
+  overlocked: 'bg-orange-100 text-orange-800 dark:bg-orange-900/20 dark:text-orange-400',
   maintenance: 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/20 dark:text-yellow-400',
   reserved: 'bg-purple-100 text-purple-800 dark:bg-purple-900/20 dark:text-purple-400',
   locked: 'bg-blue-100 text-blue-800 dark:bg-blue-900/20 dark:text-blue-400',
@@ -37,13 +56,16 @@ const statusColors = {
 const statusIcons = {
   available: CheckCircleIcon,
   occupied: UserIcon,
+  overlocked: ShieldExclamationIcon,
   maintenance: WrenchScrewdriverIcon,
   reserved: ClockIcon
 };
 
 export default function UnitsPage() {
   const navigate = useNavigate();
+  const location = useLocation();
   const { authState } = useAuth();
+  const { selectedFacilityId, facilities: globalFacilities } = useGlobalFacility();
   const [units, setUnits] = useState<Unit[]>([]);
   const [allUnits, setAllUnits] = useState<Unit[]>([]); // Store full dataset for pagination calculations
   const [loading, setLoading] = useState(true);
@@ -51,76 +73,66 @@ export default function UnitsPage() {
   const [currentPage, setCurrentPage] = useState(1);
   const [totalPages, setTotalPages] = useState(0);
   const [showAddModal, setShowAddModal] = useState(false);
-  const [facilities, setFacilities] = useState<any[]>([]);
   const [users, setUsers] = useState<any[]>([]);
   const [filtersExpanded, setFiltersExpanded] = useState(false);
   const [filters, setFilters] = useState<UnitFilters>({
     search: '',
     status: '',
     unit_type: '',
-    facility_id: '',
     tenant_id: '',
     sortBy: 'unit_number',
     sortOrder: 'asc',
     limit: 20
   });
-  const [viewMode, setViewMode] = useState<'grid' | 'table'>('grid');
+  const [viewMode, setViewMode] = useState<ListViewMode>('table');
+
+  const unitsDataRef = useRef<Unit[]>([]);
+  unitsDataRef.current = units;
+  const allUnitsRef = useRef<Unit[]>([]);
+  allUnitsRef.current = allUnits;
+  const { requestUnlock, isSubmitting, syncLockStatus, tenantOverrideDialog } = useRemoteUnlockAction({
+    timeoutToast: lockHardwareFeedbackToasts.unitUnlockTimeout,
+    errorToast: () => ({
+      type: 'error' as const,
+      title: 'Could not update lock',
+    }),
+  });
 
   const canManage = ['admin', 'dev_admin', 'facility_admin'].includes(authState.user?.role || '');
   const isTenant = authState.user?.role === 'tenant';
 
-  useEffect(() => {
-    loadUnits();
-  }, [filters, currentPage]);
+  // Ref to track the latest loadUnits for WebSocket debounced refresh (stable callback below).
+  const loadUnitsRef = useRef<(opts?: { background?: boolean }) => void | Promise<void>>(async () => {});
 
   useEffect(() => {
-    loadFacilities();
     loadUsers();
   }, []);
 
-  // Load and persist facility selection
-  useEffect(() => {
-    if (!isTenant) {
-      // Load from localStorage on mount
-      const savedFacilityId = localStorage.getItem('selectedFacilityId');
-      if (savedFacilityId && !filters.facility_id) {
-        setFilters(prev => ({ ...prev, facility_id: savedFacilityId }));
-      }
-    }
-  }, [isTenant]);
+  const debouncedWsUnitsRefresh = useCallback(() => {
+    void loadUnitsRef.current({ background: true });
+  }, []);
 
-  // Auto-select facility if none selected and facilities are available
-  useEffect(() => {
-    if (!isTenant && facilities.length > 0 && !filters.facility_id) {
-      // Try to use saved facility if it exists in the list
-      const savedFacilityId = localStorage.getItem('selectedFacilityId');
-      const facilityToSelect = savedFacilityId && facilities.find(f => f.id === savedFacilityId)
-        ? savedFacilityId
-        : facilities[0].id;
-      
-      setFilters(prev => ({ ...prev, facility_id: facilityToSelect }));
-      localStorage.setItem('selectedFacilityId', facilityToSelect);
-    }
-  }, [facilities, isTenant]);
+  const applyUnitDeviceSnapshots = useCallback((rows: LockDeviceSnapshot[]): boolean => {
+    if (!rows.length) return false;
+    const nextUnits = mergeUnitRowsFromDeviceSnapshots(unitsDataRef.current, rows);
+    const nextAll = mergeUnitRowsFromDeviceSnapshots(allUnitsRef.current, rows);
+    const applied = nextUnits !== unitsDataRef.current || nextAll !== allUnitsRef.current;
+    if (nextUnits !== unitsDataRef.current) setUnits(nextUnits);
+    if (nextAll !== allUnitsRef.current) setAllUnits(nextAll);
+    return applied;
+  }, []);
 
-  // Persist facility selection to localStorage when it changes
-  useEffect(() => {
-    if (!isTenant && filters.facility_id) {
-      localStorage.setItem('selectedFacilityId', filters.facility_id);
-    }
-  }, [filters.facility_id, isTenant]);
-
-  const loadFacilities = async () => {
-    try {
-      // Fetch all facilities without pagination for dropdown
-      const response = await apiService.getFacilities({ limit: 1000 });
-      // Handle both response formats (with or without success property)
-      const facilitiesData = response.success ? response.facilities : (response.facilities || []);
-      setFacilities(facilitiesData);
-    } catch (error) {
-      console.error('Error fetching facilities:', error);
-    }
-  };
+  useLockDeviceRealtime({
+    facilityId:
+      selectedFacilityId && selectedFacilityId !== ALL_FACILITIES_ID
+        ? selectedFacilityId
+        : undefined,
+    onDeviceRows: applyUnitDeviceSnapshots,
+    subscribeUnitsForRefresh: false,
+    skipDebouncedRefreshWhenDeviceRowsApplied: true,
+    debouncedRefresh: debouncedWsUnitsRefresh,
+    debounceMs: 500,
+  });
 
   const loadUsers = async () => {
     try {
@@ -140,9 +152,9 @@ export default function UnitsPage() {
     }
   };
 
-  const loadUnits = async () => {
-    // For non-tenants, require facility selection
-    if (!isTenant && !filters.facility_id) {
+  const loadUnits = useCallback(async (options?: { background?: boolean }) => {
+    // For non-tenants, require facility selection (unless "All Facilities" is selected)
+    if (!isTenant && !selectedFacilityId) {
       setLoading(false);
       setUnits([]);
       setAllUnits([]);
@@ -151,13 +163,22 @@ export default function UnitsPage() {
     }
 
     try {
-      setLoading(true);
+      if (!options?.background) {
+        setLoading(true);
+      }
+      const cardSortOverlay =
+        !isTenant && viewMode === 'grid'
+          ? { sortBy: 'unit_number' as const, sortOrder: 'asc' as const }
+          : {};
       const queryFilters: any = {
         ...filters,
+        ...cardSortOverlay,
         // Map user_id to tenant_id for backend compatibility
         tenant_id: filters.tenant_id,
         user_id: undefined, // Remove user_id as backend expects tenant_id
-        offset: (currentPage - 1) * (filters.limit || 20)
+        offset: (currentPage - 1) * (filters.limit || 20),
+        // Add facility_id from global context if not "All Facilities"
+        ...(selectedFacilityId && selectedFacilityId !== ALL_FACILITIES_ID && { facility_id: selectedFacilityId }),
       };
       
       // Only include search if it has a value (remove empty strings)
@@ -165,13 +186,7 @@ export default function UnitsPage() {
         delete queryFilters.search;
       }
       
-      // Debug logging
-      console.log('Loading units with filters:', queryFilters);
-      
       const response = isTenant ? await apiService.getMyUnits() : await apiService.getUnits(queryFilters);
-      
-      // Debug logging
-      console.log('Units response:', response);
       
       setUnits(response.units || []);
       setTotal(response.total || response.units?.length || 0);
@@ -182,11 +197,14 @@ export default function UnitsPage() {
         try {
           const fullDatasetFilters: any = {
             ...filters,
+            ...cardSortOverlay,
             tenant_id: filters.tenant_id,
             user_id: undefined,
             // Remove pagination parameters to get all data
             offset: undefined,
-            limit: undefined
+            limit: undefined,
+            // Add facility_id from global context if not "All Facilities"
+            ...(selectedFacilityId && selectedFacilityId !== ALL_FACILITIES_ID && { facility_id: selectedFacilityId }),
           };
           
           // Only include search if it has a value
@@ -210,7 +228,15 @@ export default function UnitsPage() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [filters, currentPage, selectedFacilityId, isTenant, viewMode]);
+
+  useEffect(() => {
+    loadUnitsRef.current = loadUnits;
+  }, [loadUnits]);
+
+  useEffect(() => {
+    void loadUnits();
+  }, [loadUnits]);
 
   const handleSearch = (value: string) => {
     setFilters(prev => ({ ...prev, search: value }));
@@ -227,10 +253,6 @@ export default function UnitsPage() {
     setCurrentPage(1);
   };
 
-  const handleFacilityFilter = (facilityId: string) => {
-    setFilters(prev => ({ ...prev, facility_id: facilityId === prev.facility_id ? '' : facilityId }));
-    setCurrentPage(1);
-  };
 
   const handleUserFilter = (userId: string) => {
     setFilters(prev => ({ ...prev, tenant_id: userId === prev.tenant_id ? '' : userId }));
@@ -239,6 +261,16 @@ export default function UnitsPage() {
 
   const handlePageChange = (page: number) => {
     setCurrentPage(page);
+  };
+
+  const handleUnitColumnSort = (columnKey: string) => {
+    setFilters((prev) => ({
+      ...prev,
+      sortBy: columnKey as UnitFilters['sortBy'],
+      sortOrder:
+        prev.sortBy === columnKey ? (prev.sortOrder === 'asc' ? 'desc' : 'asc') : 'asc',
+    }));
+    setCurrentPage(1);
   };
 
   // Handle highlighting when page loads - use allUnits for proper pagination calculation
@@ -251,17 +283,72 @@ export default function UnitsPage() {
     handlePageChange
   );
 
-  const handleLockToggle = async (unit: Unit) => {
-    if (!unit.blulok_device || !canManage) return;
-    
-    try {
-      const newStatus = unit.blulok_device.lock_status === 'locked' ? 'unlocked' : 'locked';
-      await apiService.updateLockStatus(unit.blulok_device.id, newStatus);
-      await loadUnits(); // Refresh data
-    } catch (error) {
-      console.error('Failed to toggle lock:', error);
-    }
+  const patchUnitLockOptimistic = (unitId: string, lockStatus: string) => {
+    const patch = (list: Unit[]) =>
+      list.map((u) =>
+        u.id === unitId && u.blulok_device
+          ? { ...u, blulok_device: { ...u.blulok_device, lock_status: lockStatus } }
+          : u,
+      );
+    setUnits(patch);
+    setAllUnits(patch);
   };
+
+  const handleUnlockUnit = async (unit: Unit) => {
+    if (!unit.blulok_device || !canManage) return;
+    if (!canRequestRemoteUnlock(unit.blulok_device.lock_status)) return;
+
+    const previousStatus = unit.blulok_device.lock_status ?? 'locked';
+    let clearTransitionalAfterRefresh = false;
+
+    const refreshAfterUnlockAttempt = async () => {
+      await loadUnits();
+      if (!clearTransitionalAfterRefresh) return;
+      clearTransitionalAfterRefresh = false;
+      const revert = (list: Unit[]) =>
+        list.map((u) => {
+          if (u.id !== unit.id || !u.blulok_device) return u;
+          const status = u.blulok_device.lock_status;
+          if (status === 'unlocking' || status === 'locking') {
+            return {
+              ...u,
+              blulok_device: { ...u.blulok_device, lock_status: previousStatus },
+            };
+          }
+          return u;
+        });
+      setUnits(revert);
+      setAllUnits(revert);
+    };
+
+    await requestUnlock({
+      deviceId: unit.blulok_device.id,
+      watchKey: unit.id,
+      timeoutMs: resolveLockTimeoutMsForUnit(unit, globalFacilities),
+      getLockStatus: () => {
+        const cur = unitsDataRef.current.find((x) => x.id === unit.id);
+        return cur?.blulok_device?.lock_status;
+      },
+      applyOptimisticUnlocking: () => {
+        patchUnitLockOptimistic(unit.id, 'unlocking');
+      },
+      revertOptimisticLockStatus: (status) => {
+        clearTransitionalAfterRefresh = true;
+        patchUnitLockOptimistic(unit.id, status);
+      },
+      refresh: refreshAfterUnlockAttempt,
+      requiresTenantOverride: requiresOccupiedUnitOverride(unit, authState.user?.id),
+      unitLabel: unit.unit_number,
+    });
+  };
+
+  useEffect(() => {
+    for (const unit of units) {
+      if (unit.blulok_device?.lock_status) {
+        syncLockStatus(unit.id, unit.blulok_device.lock_status);
+      }
+    }
+  }, [units, syncLockStatus]);
 
   const UnitCard = ({ unit }: { unit: Unit }) => {
     const StatusIcon = statusIcons[unit.status];
@@ -272,7 +359,7 @@ export default function UnitsPage() {
       <div 
         id={generateHighlightId('unit', unit.id)}
         className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6 transition-all duration-200 cursor-pointer hover:shadow-md hover:bg-gray-50 dark:hover:bg-gray-700/30"
-        onClick={() => navigate(`/units/${unit.id}`)}
+        onClick={() => navigate(`/units/${unit.id}`, { state: withReturnPath(location) })}
       >
         <div className="flex items-start justify-between mb-4">
           <div className="flex items-center">
@@ -313,9 +400,9 @@ export default function UnitsPage() {
           </div>
         )}
 
-        {/* Unit Details */}
+        {/* Unit Details / Device Warning */}
         <div className="space-y-3">
-          {unit.blulok_device && (
+          {unit.blulok_device ? (
             <>
               <div className="flex items-center justify-between text-sm">
                 <span className="text-gray-500 dark:text-gray-400">Lock Status</span>
@@ -338,6 +425,11 @@ export default function UnitsPage() {
                 </div>
               )}
             </>
+          ) : (
+            <div className="p-3 bg-yellow-50 dark:bg-yellow-900/20 rounded-lg flex items-center text-sm text-yellow-800 dark:text-yellow-300">
+              <ExclamationTriangleIcon className="h-4 w-4 mr-2" />
+              No device attached
+            </div>
           )}
         </div>
 
@@ -359,35 +451,85 @@ export default function UnitsPage() {
           </div>
         )}
 
-        {/* Actions */}
+        {/* Footer: same control row pattern as device cards (view device, facility, unlock) */}
         <div className="mt-6 pt-4 border-t border-gray-100 dark:border-gray-700">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center space-x-2">
+          <div className="flex flex-wrap gap-2">
+            {unit.blulok_device && (
               <button
+                type="button"
                 onClick={(e) => {
                   e.stopPropagation();
-                  navigate(`/facilities/${unit.facility_id}`, { state: { tab: 'units' } });
+                  navigate(`/devices/${unit.blulok_device!.id}`, { state: withReturnPath(location) });
                 }}
-                className="inline-flex items-center text-sm text-primary-600 dark:text-primary-400 hover:text-primary-700 dark:hover:text-primary-300"
+                className="inline-flex items-center rounded-lg border border-transparent bg-primary-50 dark:bg-primary-900/20 px-3 py-1.5 text-sm font-medium text-primary-600 dark:text-primary-400 hover:bg-primary-100 dark:hover:bg-primary-900/40 transition-colors"
               >
-                <BuildingOfficeIcon className="h-4 w-4 mr-1" />
-                View Facility
-                <ArrowTopRightOnSquareIcon className="h-3 w-3 ml-1" />
+                <CpuChipIcon className="h-4 w-4 mr-1.5" />
+                View device
               </button>
-            </div>
-            {canManage && unit.blulok_device && (
+            )}
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                navigate(`/facilities/${unit.facility_id}`, {
+                  state: withReturnPath(location, { tab: 'units' }),
+                });
+              }}
+              className="inline-flex items-center rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-800 px-3 py-1.5 text-sm font-medium text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
+            >
+              <BuildingOfficeIcon className="h-4 w-4 mr-1.5" />
+              View Facility
+              <ArrowTopRightOnSquareIcon className="h-3 w-3 ml-1" />
+            </button>
+            {canManage && (
               <button
+                type="button"
+                title={
+                  !unit.blulok_device
+                    ? 'No device associated with this unit'
+                    : !canRequestRemoteUnlock(unit.blulok_device.lock_status)
+                      ? unit.blulok_device.lock_status === 'unlocked'
+                        ? 'Already unlocked — re-lock must be done on site'
+                        : `Unavailable (status: ${unit.blulok_device.lock_status})`
+                      : 'Unlock unit'
+                }
+                aria-label={
+                  !unit.blulok_device
+                    ? 'Unlock unavailable — no device on this unit'
+                    : canRequestRemoteUnlock(unit.blulok_device.lock_status)
+                      ? 'Unlock unit'
+                      : `Unlock unavailable, status ${unit.blulok_device.lock_status}`
+                }
+                disabled={
+                  !unit.blulok_device ||
+                  isSubmitting(unit.id) ||
+                  (!canRequestRemoteUnlock(unit.blulok_device.lock_status) &&
+                    !isLockTransitionPending(unit.blulok_device.lock_status))
+                }
                 onClick={(e) => {
                   e.stopPropagation();
-                  handleLockToggle(unit);
+                  if (unit.blulok_device) void handleUnlockUnit(unit);
                 }}
-                className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${
-                  unit.blulok_device.lock_status === 'locked'
-                    ? 'bg-green-100 text-green-700 hover:bg-green-200 dark:bg-green-900/20 dark:text-green-400'
-                    : 'bg-red-100 text-red-700 hover:bg-red-200 dark:bg-red-900/20 dark:text-red-400'
+                className={`inline-flex items-center justify-center rounded-lg px-3 py-1.5 text-sm font-medium transition-colors ${
+                  !unit.blulok_device ||
+                  (!canRequestRemoteUnlock(unit.blulok_device.lock_status) &&
+                    !isLockTransitionPending(unit.blulok_device.lock_status))
+                    ? 'cursor-not-allowed bg-gray-200 text-gray-500 dark:bg-gray-600 dark:text-gray-400'
+                    : isLockTransitionPending(unit.blulok_device!.lock_status) || isSubmitting(unit.id)
+                      ? 'bg-blue-600 text-white animate-pulse disabled:opacity-80'
+                      : 'bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-60'
                 }`}
               >
-                {unit.blulok_device.lock_status === 'locked' ? 'Unlock' : 'Lock'}
+                {isSubmitting(unit.id) || isLockTransitionPending(unit.blulok_device?.lock_status) ? (
+                  'Unlocking…'
+                ) : canRequestRemoteUnlock(unit.blulok_device?.lock_status) ? (
+                  <>
+                    <LockOpenIcon className="h-4 w-4 mr-1.5" />
+                    Unlock
+                  </>
+                ) : (
+                  'Unlocked'
+                )}
               </button>
             )}
           </div>
@@ -401,7 +543,7 @@ export default function UnitsPage() {
       <tr 
         id={generateHighlightId('unit', unit.id)}
         className="transition-colors duration-200 cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-700/50"
-        onClick={() => navigate(`/units/${unit.id}`)}
+        onClick={() => navigate(`/units/${unit.id}`, { state: withReturnPath(location) })}
       >
         <td className="px-6 py-4 whitespace-nowrap">
           <div className="flex items-center">
@@ -423,37 +565,45 @@ export default function UnitsPage() {
         </td>
         <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-white">
           {unit.primary_tenant ? (
-            <div>
-              <div className="font-medium">{unit.primary_tenant.first_name} {unit.primary_tenant.last_name}</div>
-              <div className="text-gray-500 dark:text-gray-400">{unit.primary_tenant.email}</div>
-            </div>
+            <PrimaryTenantContact
+              tenant={unit.primary_tenant}
+              contactClassName="text-gray-500 dark:text-gray-400"
+            />
           ) : (
             <span className="text-gray-400 dark:text-gray-500">—</span>
           )}
         </td>
         <td className="px-6 py-4 whitespace-nowrap">
           {unit.blulok_device ? (
-            <div className="flex items-center space-x-2">
-              <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${statusColors[unit.blulok_device.lock_status as keyof typeof statusColors] || statusColors.unknown}`}>
-                {unit.blulok_device.lock_status === 'locked' ? 
-                  <LockClosedIcon className="h-3 w-3 mr-1" /> : 
-                  unit.blulok_device.lock_status === 'unlocked' ?
-                  <LockOpenIcon className="h-3 w-3 mr-1" /> :
-                  <QuestionMarkCircleIcon className="h-3 w-3 mr-1" />
-                }
-                {unit.blulok_device.lock_status}
-              </span>
-              {unit.blulok_device.battery_level && (
-                <span className={`text-xs font-medium ${
-                  unit.blulok_device.battery_level < 20 ? 'text-red-500' : 
-                  unit.blulok_device.battery_level < 50 ? 'text-yellow-500' : 'text-green-500'
-                }`}>
-                  {unit.blulok_device.battery_level}%
-                </span>
+            <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${statusColors[unit.blulok_device.lock_status as keyof typeof statusColors] || statusColors.unknown}`}>
+              {unit.blulok_device.lock_status === 'locked' ? (
+                <LockClosedIcon className="h-3 w-3 mr-1" />
+              ) : unit.blulok_device.lock_status === 'unlocked' ? (
+                <LockOpenIcon className="h-3 w-3 mr-1" />
+              ) : (
+                <QuestionMarkCircleIcon className="h-3 w-3 mr-1" />
               )}
-            </div>
+              {unit.blulok_device.lock_status}
+            </span>
           ) : (
             <span className="text-gray-400 dark:text-gray-500">No device</span>
+          )}
+        </td>
+        <td className="px-6 py-4 whitespace-nowrap text-sm">
+          {unit.blulok_device?.battery_level != null ? (
+            <span
+              className={`font-medium ${
+                unit.blulok_device.battery_level < 20
+                  ? 'text-red-500'
+                  : unit.blulok_device.battery_level < 50
+                    ? 'text-yellow-500'
+                    : 'text-green-500'
+              }`}
+            >
+              {unit.blulok_device.battery_level}%
+            </span>
+          ) : (
+            <span className="text-gray-400 dark:text-gray-500">—</span>
           )}
         </td>
         <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
@@ -461,28 +611,58 @@ export default function UnitsPage() {
             <button
               onClick={(e) => {
                 e.stopPropagation();
-                navigate(`/units/${unit.id}`);
+                navigate(`/units/${unit.id}`, { state: withReturnPath(location) });
               }}
               className="text-primary-600 dark:text-primary-400 hover:text-primary-900 dark:hover:text-primary-300"
             >
               <ArrowTopRightOnSquareIcon className="h-4 w-4" />
             </button>
-            {canManage && unit.blulok_device && (
+            {canManage && (
               <button
+                type="button"
+                title={
+                  !unit.blulok_device
+                    ? 'No device associated'
+                    : !canRequestRemoteUnlock(unit.blulok_device.lock_status)
+                      ? unit.blulok_device.lock_status === 'unlocked'
+                        ? 'Already unlocked'
+                        : `Unavailable (${unit.blulok_device.lock_status})`
+                      : 'Unlock'
+                }
+                aria-label={
+                  !unit.blulok_device
+                    ? 'Unlock unavailable — no device'
+                    : canRequestRemoteUnlock(unit.blulok_device.lock_status)
+                      ? 'Unlock unit'
+                      : `Unlock unavailable, status ${unit.blulok_device.lock_status}`
+                }
+                disabled={
+                  !unit.blulok_device ||
+                  isSubmitting(unit.id) ||
+                  (!canRequestRemoteUnlock(unit.blulok_device.lock_status) &&
+                    !isLockTransitionPending(unit.blulok_device.lock_status))
+                }
                 onClick={(e) => {
                   e.stopPropagation();
-                  handleLockToggle(unit);
+                  if (unit.blulok_device) void handleUnlockUnit(unit);
                 }}
-                className={`p-1 rounded transition-colors ${
-                  unit.blulok_device.lock_status === 'locked'
-                    ? 'text-green-600 hover:text-green-700'
-                    : 'text-red-600 hover:text-red-700'
+                className={`p-1 rounded transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${
+                  !unit.blulok_device ||
+                  (!canRequestRemoteUnlock(unit.blulok_device.lock_status) &&
+                    !isLockTransitionPending(unit.blulok_device.lock_status))
+                    ? 'text-gray-400 dark:text-gray-500'
+                    : isLockTransitionPending(unit.blulok_device.lock_status) || isSubmitting(unit.id)
+                      ? 'text-blue-600'
+                      : 'text-green-600 hover:text-green-700'
                 }`}
               >
-                {unit.blulok_device.lock_status === 'locked' ? 
-                  <LockOpenIcon className="h-4 w-4" /> : 
-                  <LockClosedIcon className="h-4 w-4" />
-                }
+                {isSubmitting(unit.id) || isLockTransitionPending(unit.blulok_device?.lock_status) ? (
+                  <span className="inline-block h-4 w-4 animate-pulse rounded-full bg-current opacity-60" aria-hidden />
+                ) : canRequestRemoteUnlock(unit.blulok_device?.lock_status) ? (
+                  <LockOpenIcon className="h-4 w-4" />
+                ) : (
+                  <LockClosedIcon className="h-4 w-4 text-gray-400" />
+                )}
               </button>
             )}
           </div>
@@ -495,72 +675,27 @@ export default function UnitsPage() {
   const allUnitTypes = ['Small', 'Medium', 'Large', 'Extra Large', 'XL', 'XXL'];
 
   return (
-    <div className="space-y-6">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold text-gray-900 dark:text-white">
-            {isTenant ? 'My Units' : 'Units'}
-          </h1>
-          <p className="mt-1 text-sm text-gray-600 dark:text-gray-400">
-            {isTenant ? 'View and manage your assigned units' : 'Manage storage units and tenant assignments'}
-          </p>
-        </div>
-        <div className="flex items-center space-x-3">
-          {!isTenant && (
-            <div className="flex bg-gray-100 dark:bg-gray-800 rounded-lg p-1">
+    <div className="space-y-4">
+      <ListPageHeader
+        title={isTenant ? 'My Units' : 'Units'}
+        subtitle={
+          isTenant ? 'View and manage your assigned units' : 'Manage storage units and tenant assignments'
+        }
+        actions={
+          <>
+            {!isTenant && <ViewModeToggle value={viewMode} onChange={setViewMode} showText={false} />}
+            {canManage && (
               <button
-                onClick={() => setViewMode('grid')}
-                className={`px-3 py-1.5 text-sm font-medium rounded-md transition-colors ${
-                  viewMode === 'grid'
-                    ? 'bg-white dark:bg-gray-700 text-gray-900 dark:text-white shadow-sm'
-                    : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'
-                }`}
+                onClick={() => setShowAddModal(true)}
+                className="inline-flex items-center rounded-lg border border-transparent bg-primary-600 px-4 py-2 text-sm font-medium text-white shadow-sm transition-colors hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 dark:focus:ring-offset-gray-900"
               >
-                Grid
+                <PlusIcon className="mr-2 h-4 w-4" />
+                Add Unit
               </button>
-              <button
-                onClick={() => setViewMode('table')}
-                className={`px-3 py-1.5 text-sm font-medium rounded-md transition-colors ${
-                  viewMode === 'table'
-                    ? 'bg-white dark:bg-gray-700 text-gray-900 dark:text-white shadow-sm'
-                    : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'
-                }`}
-              >
-                Table
-              </button>
-            </div>
-          )}
-          {canManage && (
-            <button
-              onClick={() => setShowAddModal(true)}
-              className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-lg shadow-sm text-white bg-primary-600 hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500 dark:focus:ring-offset-gray-900 transition-colors"
-            >
-              <PlusIcon className="h-4 w-4 mr-2" />
-              Add Unit
-            </button>
-          )}
-        </div>
-      </div>
-
-      {/* Facility Selection - Prominent */}
-      {!isTenant && (
-        <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-4">
-          <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-            Facility
-          </label>
-          <FacilityDropdown
-            facilities={facilities}
-            selectedFacilityId={filters.facility_id || ''}
-            onSelect={(facilityId) => {
-              setFilters(prev => ({ ...prev, facility_id: facilityId }));
-              setCurrentPage(1);
-            }}
-            placeholder="Select a facility"
-            required={true}
-          />
-        </div>
-      )}
+            )}
+          </>
+        }
+      />
 
       {/* Filters */}
       <ExpandableFilters
@@ -570,67 +705,63 @@ export default function UnitsPage() {
         isExpanded={filtersExpanded}
         onToggleExpanded={() => setFiltersExpanded(!filtersExpanded)}
         onClearFilters={() => {
-          const firstFacilityId = facilities.length > 0 ? facilities[0].id : '';
           setFilters({
             search: '',
             status: '',
             unit_type: '',
-            facility_id: firstFacilityId,
             tenant_id: '',
             sortBy: 'unit_number',
             sortOrder: 'asc',
             limit: 20,
             offset: 0
           });
-          if (firstFacilityId) {
-            localStorage.setItem('selectedFacilityId', firstFacilityId);
-          }
         }}
         sections={[
           {
             title: 'Status',
-            icon: <FunnelIcon className="h-5 w-5" />,
+            icon: <SignalIcon className="h-4 w-4" />,
             options: [
-              { key: '', label: 'All Status' },
+              { key: '', label: 'All Status', color: 'primary' },
               { key: 'available', label: 'Available', color: 'green' },
               { key: 'occupied', label: 'Occupied', color: 'blue' },
               { key: 'maintenance', label: 'Maintenance', color: 'yellow' },
-              { key: 'reserved', label: 'Reserved', color: 'purple' }
+              { key: 'reserved', label: 'Reserved', color: 'purple' },
             ],
             selected: filters.status || '',
-            onSelect: handleStatusFilter
+            onSelect: handleStatusFilter,
           },
           {
             title: 'Unit Type',
-            icon: <HomeIcon className="h-5 w-5" />,
+            icon: <HomeIcon className="h-4 w-4" />,
             options: [
-              { key: '', label: 'All Types' },
-              ...allUnitTypes.map(type => ({
+              { key: '', label: 'All Types', color: 'primary' },
+              ...allUnitTypes.map((type) => ({
                 key: type,
                 label: type,
-                color: 'primary'
-              }))
+                color: 'primary',
+              })),
             ],
             selected: filters.unit_type || '',
-            onSelect: handleTypeFilter
+            onSelect: handleTypeFilter,
           },
-          // Only show user filter for non-tenants (facility is handled by prominent dropdown)
-          ...(!isTenant ? [
-            {
-              title: 'User',
-              icon: <UserIcon className="h-5 w-5" />,
-              type: 'select' as const,
-              options: [
-                { key: '', label: 'All Users' },
-                ...users.map(user => ({
-                  key: user.id,
-                  label: `${user.firstName} ${user.lastName}`
-                }))
-              ],
-              selected: filters.tenant_id || '',
-              onSelect: handleUserFilter
-            }
-          ] : [])
+          ...(!isTenant
+            ? [
+                {
+                  title: 'User',
+                  icon: <UserIcon className="h-4 w-4" />,
+                  type: 'select' as const,
+                  options: [
+                    { key: '', label: 'All Users' },
+                    ...users.map((user) => ({
+                      key: user.id,
+                      label: `${user.firstName} ${user.lastName}`,
+                    })),
+                  ],
+                  selected: filters.tenant_id || '',
+                  onSelect: handleUserFilter,
+                },
+              ]
+            : []),
         ]}
       />
 
@@ -697,19 +828,42 @@ export default function UnitsPage() {
           <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
             <thead className="bg-gray-50 dark:bg-gray-900">
               <tr>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
-                  Unit
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
-                  Status
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
-                  Tenant
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
-                  Device
-                </th>
-                <th className="relative px-6 py-3">
+                <SortableTableTh
+                  label="Unit"
+                  columnKey="unit_number"
+                  sortBy={filters.sortBy || 'unit_number'}
+                  sortOrder={filters.sortOrder === 'desc' ? 'desc' : 'asc'}
+                  onSort={handleUnitColumnSort}
+                />
+                <SortableTableTh
+                  label="Status"
+                  columnKey="status"
+                  sortBy={filters.sortBy || 'unit_number'}
+                  sortOrder={filters.sortOrder === 'desc' ? 'desc' : 'asc'}
+                  onSort={handleUnitColumnSort}
+                />
+                <SortableTableTh
+                  label="Tenant"
+                  columnKey="tenant_last_name"
+                  sortBy={filters.sortBy || 'unit_number'}
+                  sortOrder={filters.sortOrder === 'desc' ? 'desc' : 'asc'}
+                  onSort={handleUnitColumnSort}
+                />
+                <SortableTableTh
+                  label="Lock"
+                  columnKey="lock_status"
+                  sortBy={filters.sortBy || 'unit_number'}
+                  sortOrder={filters.sortOrder === 'desc' ? 'desc' : 'asc'}
+                  onSort={handleUnitColumnSort}
+                />
+                <SortableTableTh
+                  label="Battery"
+                  columnKey="battery_level"
+                  sortBy={filters.sortBy || 'unit_number'}
+                  sortOrder={filters.sortOrder === 'desc' ? 'desc' : 'asc'}
+                  onSort={handleUnitColumnSort}
+                />
+                <th className="relative px-6 py-3 text-right text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
                   <span className="sr-only">Actions</span>
                 </th>
               </tr>
@@ -822,6 +976,7 @@ export default function UnitsPage() {
           setShowAddModal(false);
         }}
       />
+      {tenantOverrideDialog}
     </div>
   );
 }

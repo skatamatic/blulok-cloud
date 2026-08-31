@@ -179,6 +179,48 @@ export class FMSSyncLogModel {
   }
 
   /**
+   * Newest open review batch (pending changes, not failed).
+   * A later failed full sync must not hide an earlier webhook review queue.
+   */
+  async findOpenReviewSyncLog(facilityId: string): Promise<FMSSyncLog | null> {
+    try {
+      const open = await this.db('fms_sync_logs')
+        .where({ facility_id: facilityId })
+        .where('changes_pending', '>', 0)
+        .whereNot({ sync_status: FMSSyncStatus.FAILED })
+        .orderBy('created_at', 'desc')
+        .first();
+
+      if (!open) return null;
+
+      return this.mapToModel(open);
+    } catch (error) {
+      logger.error('Error fetching open review sync log:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Open webhook review batch: pending changes not yet applied/rejected.
+   * Used to coalesce multiple inbound webhooks into one review/apply cycle.
+   */
+  async findOpenWebhookReviewSyncLog(facilityId: string): Promise<FMSSyncLog | null> {
+    try {
+      const log = await this.db('fms_sync_logs')
+        .where({ facility_id: facilityId, triggered_by: 'webhook' })
+        .where('changes_pending', '>', 0)
+        .whereNot({ sync_status: FMSSyncStatus.FAILED })
+        .orderBy('created_at', 'desc')
+        .first();
+
+      return log ? this.mapToModel(log) : null;
+    } catch (error) {
+      logger.error('Error fetching open webhook review sync log:', error);
+      throw error;
+    }
+  }
+
+  /**
    * Update sync log
    */
   async update(
@@ -241,6 +283,22 @@ export class FMSSyncLogModel {
   }
 
   /**
+   * Mark sync as awaiting operator review (changes still pending).
+   */
+  async markPendingReview(id: string, summary?: any): Promise<void> {
+    try {
+      await this.update(id, {
+        sync_status: FMSSyncStatus.PENDING_REVIEW,
+        completed_at: new Date(),
+        sync_summary: summary,
+      });
+    } catch (error) {
+      logger.error('Error marking sync as pending review:', error);
+      throw error;
+    }
+  }
+
+  /**
    * Mark sync as failed
    */
   async markFailed(id: string, errorMessage: string): Promise<void> {
@@ -269,10 +327,10 @@ export class FMSSyncLogModel {
       completed_at: record.completed_at,
       triggered_by: record.triggered_by,
       triggered_by_user_id: record.triggered_by_user_id,
-      changes_detected: record.changes_detected,
-      changes_applied: record.changes_applied,
-      changes_pending: record.changes_pending,
-      changes_rejected: record.changes_rejected,
+      changes_detected: Number(record.changes_detected ?? 0),
+      changes_applied: Number(record.changes_applied ?? 0),
+      changes_pending: Number(record.changes_pending ?? 0),
+      changes_rejected: Number(record.changes_rejected ?? 0),
       error_message: record.error_message,
       sync_summary: typeof record.sync_summary === 'string' 
         ? JSON.parse(record.sync_summary) 

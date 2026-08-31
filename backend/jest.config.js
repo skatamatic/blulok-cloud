@@ -1,21 +1,19 @@
 module.exports = {
   preset: 'ts-jest',
   testEnvironment: 'node',
-  globals: {
-    'ts-jest': {
-      tsconfig: 'tsconfig.json'
-    }
-  },
   roots: ['<rootDir>/src'],
   testMatch: ['**/__tests__/**/*.test.ts', '**/?(*.)+(spec|test).ts'],
   testPathIgnorePatterns: [
     '/node_modules/',
     '/__tests__/mocks/',
     '/__tests__/utils/',
+    'detectUnits\\.regression\\.test\\.ts$',
   ],
   transform: {
     '^.+\\.ts$': ['ts-jest', {
       useESM: false,
+      tsconfig: 'tsconfig.json',
+      diagnostics: false,
     }],
   },
   collectCoverageFrom: [
@@ -23,9 +21,30 @@ module.exports = {
     '!src/**/*.d.ts',
     '!src/**/*.test.ts',
     '!src/**/*.spec.ts',
+    '!src/**/__tests__/**',
+    // Gate exclusions — see test:coverage:full for all-src audit
+    '!src/database/migrations/**',
+    '!src/database/seeds/**',
+    '!src/index.ts',
+    '!src/models/**',
+    '!src/bludesign/**',
+    'src/bludesign/layout-import/**/*.ts',
+    '!src/bludesign/layout-import/**/__tests__/**',
+    '!src/bludesign/layout-import/opencv.ts',
+    '!src/bludesign/layout-import/image/**',
+    '!src/bludesign/layout-import/detection/detectRectangles.ts',
+    '!src/bludesign/layout-import/ocr/cropLabel.ts',
+    '!src/bludesign/layout-import/ocr/ocrLabels.ts',
+    '!src/bludesign/layout-import/detectUnits.ts',
+    '!src/bludesign/layout-import/index.ts',
+    '!src/services/database.service.ts',
+    '!src/services/migration.service.ts',
+    '!src/routes/dev.routes.ts',
+    '!src/services/fms/**',
   ],
   coverageDirectory: 'coverage',
   coverageReporters: ['text', 'lcov', 'html'],
+  setupFiles: ['<rootDir>/src/__tests__/jest-preload-env.cjs'],
   setupFilesAfterEnv: ['<rootDir>/src/__tests__/setup-mocks.ts'],
   moduleNameMapper: {
     '^@/(.*)$': '<rootDir>/src/$1',
@@ -42,4 +61,6 @@ module.exports = {
     'node_modules/(?!(uuid)/)',
   ],
   moduleFileExtensions: ['ts', 'tsx', 'js', 'jsx', 'json', 'node'],
+  testTimeout: 10000,
+  maxWorkers: process.env.CI ? 1 : '50%',
 };

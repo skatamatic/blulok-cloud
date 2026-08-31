@@ -1,14 +1,15 @@
 /**
  * Provider Configuration Form
- * 
+ *
  * Dynamic form that renders fields based on selected FMS provider
  */
 
 import { useState, useEffect } from 'react';
 import { fmsService } from '@/services/fms.service';
 import { getProviderMetadata } from '@/config/fms-providers';
-import { FMSConfiguration, FMSProviderType } from '@/types/fms.types';
+import { FMSConfiguration, FMSInvitePolicy, FMSProviderType, FMSWebhookAuthMode } from '@/types/fms.types';
 import { useToast } from '@/contexts/ToastContext';
+import { FmsWebhookSecurityFields } from './FmsWebhookSecurityFields';
 
 interface ProviderConfigFormProps {
   facilityId: string;
@@ -27,21 +28,24 @@ export function ProviderConfigForm({
   const [formData, setFormData] = useState<Record<string, any>>({});
   const [saving, setSaving] = useState(false);
   const [autoAccept, setAutoAccept] = useState(false);
+  const [autoAcceptWebhook, setAutoAcceptWebhook] = useState(false);
+  const [invitePolicy, setInvitePolicy] = useState<FMSInvitePolicy>(FMSInvitePolicy.NONE);
+  const [webhookAuthMode, setWebhookAuthMode] = useState<FMSWebhookAuthMode>(FMSWebhookAuthMode.HMAC);
+  const [webhookSecret, setWebhookSecret] = useState('');
+  const [hasStoredWebhookSecret, setHasStoredWebhookSecret] = useState(false);
+  const [webhookAuthHeader, setWebhookAuthHeader] = useState('Authorization');
+  const [webhookSignatureHeader, setWebhookSignatureHeader] = useState('X-Storable-Signature');
 
   const providerMeta = getProviderMetadata(providerType);
-  if (!providerMeta) return null;
 
-  // Populate form data from existing config when available
   useEffect(() => {
-    if (existingConfig?.config) {
+    if (existingConfig?.config && providerMeta) {
       const config = existingConfig.config;
       const newFormData: Record<string, any> = {};
 
-      // Map config fields back to form data
       if (config.baseUrl) newFormData.baseUrl = config.baseUrl;
       if (config.apiVersion) newFormData.apiVersion = config.apiVersion;
 
-      // Map auth credentials based on auth type
       if (config.auth?.credentials) {
         const creds = config.auth.credentials;
         if (creds.apiKey) newFormData.apiKey = creds.apiKey;
@@ -54,49 +58,58 @@ export function ProviderConfigForm({
         if (creds.consumerSecret) newFormData.consumerSecret = creds.consumerSecret;
       }
 
-      // Map custom settings (like facilityId for Storedge)
       if (config.customSettings) {
         Object.assign(newFormData, config.customSettings);
       }
 
-      // Map sync settings
       if (config.syncSettings?.autoAcceptChanges !== undefined) {
         setAutoAccept(config.syncSettings.autoAcceptChanges);
       }
+      if (config.syncSettings?.autoAcceptWebhookChanges !== undefined) {
+        setAutoAcceptWebhook(config.syncSettings.autoAcceptWebhookChanges);
+      } else {
+        setAutoAcceptWebhook(config.syncSettings?.autoAcceptChanges ?? false);
+      }
+      setInvitePolicy(config.syncSettings?.invitePolicy ?? FMSInvitePolicy.NONE);
+      setWebhookAuthMode(config.syncSettings?.webhookAuthMode ?? FMSWebhookAuthMode.HMAC);
+      setHasStoredWebhookSecret(Boolean(config.syncSettings?.webhookSecret));
+      setWebhookSecret('');
+      setWebhookAuthHeader(config.syncSettings?.webhookAuthHeader?.trim() || 'Authorization');
+      setWebhookSignatureHeader(
+        config.syncSettings?.webhookSignatureHeader?.trim() || 'X-Storable-Signature'
+      );
 
       setFormData(newFormData);
     }
-  }, [existingConfig, providerType]);
+  }, [existingConfig, providerMeta, providerType]);
+
+  if (!providerMeta) return null;
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    
+
     try {
       setSaving(true);
 
-      // Build credentials based on auth type
-      const credentials: any = {};
-      
+      const credentials: Record<string, string> = {};
+
       providerMeta.configFields.forEach((field) => {
         const value = formData[field.key];
         if (value) {
-          if (field.key === 'apiKey') {
-            credentials.apiKey = value;
-          } else if (field.key === 'username') {
-            credentials.username = value;
-          } else if (field.key === 'password') {
-            credentials.password = value;
-          } else if (field.key === 'clientId') {
-            credentials.clientId = value;
-          } else if (field.key === 'clientSecret') {
-            credentials.clientSecret = value;
-          } else if (field.key === 'consumerKey') {
-            credentials.consumerKey = value;
-          } else if (field.key === 'consumerSecret') {
-            credentials.consumerSecret = value;
-          }
+          if (field.key === 'apiKey') credentials.apiKey = value;
+          else if (field.key === 'username') credentials.username = value;
+          else if (field.key === 'password') credentials.password = value;
+          else if (field.key === 'clientId') credentials.clientId = value;
+          else if (field.key === 'clientSecret') credentials.clientSecret = value;
+          else if (field.key === 'consumerKey') credentials.consumerKey = value;
+          else if (field.key === 'consumerSecret') credentials.consumerSecret = value;
         }
       });
+
+      const resolvedWebhookSecret =
+        webhookSecret.trim() ||
+        existingConfig?.config?.syncSettings?.webhookSecret ||
+        undefined;
 
       const config = {
         providerType,
@@ -114,42 +127,50 @@ export function ProviderConfigForm({
         },
         syncSettings: {
           autoAcceptChanges: autoAccept,
+          autoAcceptWebhookChanges: autoAcceptWebhook,
+          invitePolicy,
+          webhookAuthMode,
+          ...(webhookAuthHeader.trim() ? { webhookAuthHeader: webhookAuthHeader.trim() } : {}),
+          ...(webhookSignatureHeader.trim()
+            ? { webhookSignatureHeader: webhookSignatureHeader.trim() }
+            : {}),
+          ...(resolvedWebhookSecret ? { webhookSecret: resolvedWebhookSecret } : {}),
         },
-        customSettings: providerType === FMSProviderType.SIMULATED ? {
-          dataFilePath: formData.dataFilePath || 'config/fms-simulated-data.json',
-        } : providerType === FMSProviderType.STOREDGE ? {
-          facilityId: formData.facilityId,
-        } : undefined,
+        customSettings:
+          providerType === FMSProviderType.SIMULATED
+            ? { dataFilePath: formData.dataFilePath || 'config/fms-simulated-data.json' }
+            : providerType === FMSProviderType.STOREDGE
+              ? { facilityId: formData.facilityId }
+              : undefined,
       };
 
-      let savedConfig: FMSConfiguration;
-      
-      if (existingConfig) {
-        savedConfig = await fmsService.updateConfig(existingConfig.id, {
-          provider_type: providerType,
-          config,
-          is_enabled: true,
-        });
-      } else {
-        savedConfig = await fmsService.createConfig({
-          facility_id: facilityId,
-          provider_type: providerType,
-          config,
-          is_enabled: true,
-        });
-      }
+      const savedConfig = existingConfig
+        ? await fmsService.updateConfig(existingConfig.id, {
+            provider_type: providerType,
+            config,
+            is_enabled: true,
+          })
+        : await fmsService.createConfig({
+            facility_id: facilityId,
+            provider_type: providerType,
+            config,
+            is_enabled: true,
+          });
 
       onSaved(savedConfig);
+      setHasStoredWebhookSecret(Boolean(savedConfig.config?.syncSettings?.webhookSecret));
+      setWebhookSecret('');
       addToast({
         type: 'success',
         title: 'Configuration Saved',
         message: `${providerMeta.name} configuration saved successfully`,
       });
-    } catch (error: any) {
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : 'Could not save FMS configuration';
       addToast({
         type: 'error',
         title: 'Failed to Save Configuration',
-        message: error.message || 'Could not save FMS configuration',
+        message,
       });
     } finally {
       setSaving(false);
@@ -157,53 +178,135 @@ export function ProviderConfigForm({
   };
 
   return (
-    <form onSubmit={handleSubmit} className="space-y-4">
-      {/* Dynamic Fields */}
-      {providerMeta.configFields.map((field) => (
-        <div key={field.key}>
-          <label htmlFor={field.key} className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-            {field.label}
-            {field.required && <span className="text-red-500 ml-1">*</span>}
-          </label>
-          <input
-            id={field.key}
-            type={field.type}
-            value={formData[field.key] || ''}
-            onChange={(e) => setFormData({ ...formData, [field.key]: e.target.value })}
-            placeholder={field.placeholder}
-            required={field.required}
-            className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white placeholder-gray-400"
-          />
-          {field.helpText && (
-            <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
-              {field.helpText}
-            </p>
-          )}
-        </div>
-      ))}
-
-      {/* Auto-Accept Toggle */}
-      <div className="flex items-center pt-4 border-t border-gray-200 dark:border-gray-700">
-        <input
-          type="checkbox"
-          id="autoAccept"
-          checked={autoAccept}
-          onChange={(e) => setAutoAccept(e.target.checked)}
-          className="h-4 w-4 text-primary-600 focus:ring-primary-500 border-gray-300 rounded"
-        />
-        <label htmlFor="autoAccept" className="ml-2 block text-sm text-gray-700 dark:text-gray-300">
-          Automatically accept and apply all changes (not recommended for production)
-        </label>
+    <form onSubmit={handleSubmit} className="space-y-5">
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        {providerMeta.configFields.map((field) => (
+          <div key={field.key} className={field.type === 'password' ? 'md:col-span-2' : undefined}>
+            <label htmlFor={field.key} className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+              {field.label}
+              {field.required && <span className="text-red-500 ml-1">*</span>}
+            </label>
+            <input
+              id={field.key}
+              type={field.type}
+              value={formData[field.key] || ''}
+              onChange={(e) => setFormData({ ...formData, [field.key]: e.target.value })}
+              placeholder={field.placeholder}
+              required={field.required}
+              className="w-full px-3 py-2.5 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
+            />
+            {field.helpText && (
+              <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">{field.helpText}</p>
+            )}
+          </div>
+        ))}
       </div>
 
-      {/* Submit Button */}
-      <div className="flex justify-end space-x-3 pt-4">
+      {providerMeta.supportsWebhooks && (
+        <FmsWebhookSecurityFields
+          facilityId={facilityId}
+          authMode={webhookAuthMode}
+          onAuthModeChange={setWebhookAuthMode}
+          webhookSecret={webhookSecret}
+          onWebhookSecretChange={setWebhookSecret}
+          hasStoredWebhookSecret={hasStoredWebhookSecret}
+          webhookAuthHeader={webhookAuthHeader}
+          onWebhookAuthHeaderChange={setWebhookAuthHeader}
+          webhookSignatureHeader={webhookSignatureHeader}
+          onWebhookSignatureHeaderChange={setWebhookSignatureHeader}
+          autoAccept={autoAcceptWebhook}
+          autoAcceptWebhook={autoAcceptWebhook}
+        />
+      )}
+
+      <div className="space-y-3 pt-4 border-t border-gray-200 dark:border-gray-700">
+        <p className="text-sm font-medium text-gray-900 dark:text-white">Tenant invites</p>
+        <p className="text-xs text-gray-500 dark:text-gray-400">
+          Controls whether newly synced tenants receive invite SMS/email. Default is off to avoid
+          spam during partial BluLok adoption.
+        </p>
+        <div className="space-y-2">
+          {(
+            [
+              {
+                value: FMSInvitePolicy.NONE,
+                label: 'Do not send invites',
+                help: 'Tenants are created without notification. Admins can invite manually.',
+              },
+              {
+                value: FMSInvitePolicy.DEVICE_EQUIPPED,
+                label: 'Only tenants with a BluLok-equipped unit',
+                help: 'Invite is sent when the tenant is assigned to a unit that has a BluLok device (or when a device is later installed).',
+              },
+              {
+                value: FMSInvitePolicy.ALL,
+                label: 'All new tenants with contact info',
+                help: 'Every non-placeholder tenant with email or phone receives an invite.',
+              },
+            ] as const
+          ).map((opt) => (
+            <label
+              key={opt.value}
+              className="flex items-start gap-3 cursor-pointer rounded-lg border border-gray-200 dark:border-gray-700 px-3 py-2.5 hover:bg-gray-50 dark:hover:bg-gray-800/50 transition-colors"
+            >
+              <input
+                type="radio"
+                name="invitePolicy"
+                value={opt.value}
+                checked={invitePolicy === opt.value}
+                onChange={() => setInvitePolicy(opt.value)}
+                className="mt-0.5 h-4 w-4 text-primary-600 focus:ring-primary-500 border-gray-300"
+              />
+              <span className="block text-sm text-gray-700 dark:text-gray-300">
+                {opt.label}
+                <span className="block text-xs text-gray-500 dark:text-gray-400 mt-0.5">{opt.help}</span>
+              </span>
+            </label>
+          ))}
+        </div>
+      </div>
+
+      <div className="space-y-3 pt-4 border-t border-gray-200 dark:border-gray-700">
+        <p className="text-sm font-medium text-gray-900 dark:text-white">Change review</p>
+        <div className="flex items-start gap-3">
+          <input
+            type="checkbox"
+            id="autoAcceptWebhook"
+            checked={autoAcceptWebhook}
+            onChange={(e) => setAutoAcceptWebhook(e.target.checked)}
+            className="mt-0.5 h-4 w-4 text-primary-600 focus:ring-primary-500 border-gray-300 rounded"
+          />
+          <label htmlFor="autoAcceptWebhook" className="block text-sm text-gray-700 dark:text-gray-300">
+            Auto-apply webhook events
+            <span className="block text-xs text-gray-500 dark:text-gray-400 mt-0.5">
+              Realtime FMS webhooks apply immediately without review.
+            </span>
+          </label>
+        </div>
+        <div className="flex items-start gap-3">
+          <input
+            type="checkbox"
+            id="autoAccept"
+            checked={autoAccept}
+            onChange={(e) => setAutoAccept(e.target.checked)}
+            className="mt-0.5 h-4 w-4 text-primary-600 focus:ring-primary-500 border-gray-300 rounded"
+          />
+          <label htmlFor="autoAccept" className="block text-sm text-gray-700 dark:text-gray-300">
+            Auto-apply full / manual sync
+            <span className="block text-xs text-gray-500 dark:text-gray-400 mt-0.5">
+              Manual syncs apply all detected changes without review. Not recommended for production.
+            </span>
+          </label>
+        </div>
+      </div>
+
+      <div className="flex justify-end pt-2">
         <button
           type="submit"
           disabled={saving}
-          className="px-6 py-2 bg-primary-600 text-white rounded-lg hover:bg-primary-700 transition-colors disabled:opacity-50"
+          className="px-5 py-2.5 text-sm font-medium bg-primary-600 text-white rounded-lg hover:bg-primary-700 transition-colors disabled:opacity-50"
         >
-          {saving ? 'Saving...' : existingConfig ? 'Update Configuration' : 'Save Configuration'}
+          {saving ? 'Saving…' : existingConfig ? 'Update Configuration' : 'Save Configuration'}
         </button>
       </div>
     </form>

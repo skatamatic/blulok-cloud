@@ -11,7 +11,7 @@
  * - Verification uses Ops public key; locks store this to verify packets locally.
  * - In test, if env keys are not provided, a throwaway test keypair is generated to keep tests deterministic.
  */
-import { importJWK, SignJWT, jwtVerify, JWK, CompactSign, KeyLike, generateKeyPair, exportJWK } from 'jose';
+import { importJWK, SignJWT, jwtVerify, JWK, CompactSign, KeyLike, generateKeyPair, exportJWK, exportSPKI } from 'jose';
 import { config } from '@/config/environment';
 
 export class Ed25519Service {
@@ -23,10 +23,36 @@ export class Ed25519Service {
     return String((config as any).security.opsPublicKeyB64 || '');
   }
 
+  /**
+   * Get the Ops public key as a raw base64url string (the `x` coordinate).
+   * Compact form suitable for constrained environments.
+   */
+  public static getOpsPublicKeyB64(): string {
+    if (this.testGenerated?.x) return this.testGenerated.x;
+    return String(config.security.opsPublicKeyB64 || '');
+  }
+
+  /**
+   * Get the Ops public key as a full JWK object.
+   * Self-describing format that includes key type and curve metadata.
+   */
+  public static getOpsPublicKeyJwk(): { kty: string; crv: string; x: string } {
+    return { kty: 'OKP', crv: 'Ed25519', x: this.getOpsPublicKeyB64() };
+  }
+
+  /**
+   * Get the Ops public key as a PEM (SPKI) string.
+   * Universally supported by OpenSSL, Node.js crypto, and most JWT libraries.
+   */
+  public static async getOpsPublicKeyPem(): Promise<string> {
+    const pubKey = await this.getOpsPublicKey();
+    return (await exportSPKI(pubKey)).trim();
+  }
+
 	private static async getOpsPrivateKey(): Promise<KeyLike> {
 		if (!this.opsPrivateKeyPromise) {
-			let d = config.security.opsPrivateKeyB64 as string;
-			let x = config.security.opsPublicKeyB64 as string;
+			let d = config.security.opsPrivateKeyB64;
+			let x = config.security.opsPublicKeyB64;
 			// In test, generate a valid keypair to avoid invalid env defaults
 			if (config.nodeEnv === 'test') {
 				if (!this.testGenerated) {
@@ -41,12 +67,12 @@ export class Ed25519Service {
 			const jwk: JWK = { kty: 'OKP', crv: 'Ed25519', d, x };
 			this.opsPrivateKeyPromise = importJWK(jwk, 'EdDSA') as unknown as Promise<KeyLike>;
 		}
-		return this.opsPrivateKeyPromise as Promise<KeyLike>;
+		return this.opsPrivateKeyPromise;
 	}
 
 	private static async getOpsPublicKey(): Promise<KeyLike> {
 		if (!this.opsPublicKeyPromise) {
-			let x = config.security.opsPublicKeyB64 as string;
+			let x = config.security.opsPublicKeyB64;
 			if (config.nodeEnv === 'test') {
 				if (!this.testGenerated) {
 					const { privateKey, publicKey } = await generateKeyPair('EdDSA');
@@ -59,7 +85,7 @@ export class Ed25519Service {
 			const jwk: JWK = { kty: 'OKP', crv: 'Ed25519', x } as any;
 			this.opsPublicKeyPromise = importJWK(jwk, 'EdDSA') as unknown as Promise<KeyLike>;
 		}
-		return this.opsPublicKeyPromise as Promise<KeyLike>;
+		return this.opsPublicKeyPromise;
 	}
 
   /**
@@ -76,6 +102,59 @@ export class Ed25519Service {
 			.setExpirationTime(now + ttlSeconds)
 			.sign(privateKey);
 	}
+
+  /**
+   * Sign a Secure Time Sync JWT.
+   * Uses consistent format with other command JWTs (iss, iat, cmd_type).
+   * 
+   * @param ts - Unix timestamp to synchronize
+   * @param lockId - Optional lock identifier for lock-specific time synchronization
+   * @returns Promise resolving to signed JWT string
+   */
+  public static async signTimeSyncJwt(ts: number, lockId?: string): Promise<string> {
+    const privateKey = await this.getOpsPrivateKey();
+    const now = Math.floor(Date.now() / 1000);
+    const payload: { iss: 'BluCloud:Root'; cmd_type: 'SECURE_TIME_SYNC'; ts: number; lock_id?: string } = {
+      iss: 'BluCloud:Root',
+      cmd_type: 'SECURE_TIME_SYNC',
+      ts,
+      ...(lockId ? { lock_id: lockId } : {}),
+    };
+    return await new SignJWT(payload as any)
+      .setProtectedHeader({ alg: 'EdDSA', typ: 'JWT', kid: this.getOpsKeyId() })
+      .setIssuedAt(now)
+      .sign(privateKey);
+  }
+
+  /**
+   * Sign a command JWT for gateway delivery.
+   * Creates a standard JWT (compact JWS) with embedded signature.
+   * 
+   * @param payload - Command payload containing cmd_type and command-specific fields
+   * @returns Promise resolving to signed JWT string
+   * 
+   * Payload must include:
+   * - cmd_type: CAPS_CASE command type (e.g., 'DENYLIST_ADD', 'LOCK', 'UNLOCK')
+   * - Command-specific fields (e.g., denylist_add, target, device_id, expires_at for LOCK/UNLOCK)
+   * 
+   * JWT will include:
+   * - iss: 'BluCloud:Root'
+   * - iat: current timestamp
+   * - All fields from payload
+   */
+  public static async signCommandJwt(payload: Record<string, any>, ttlSeconds = 1800): Promise<string> {
+    const privateKey = await this.getOpsPrivateKey();
+    const now = Math.floor(Date.now() / 1000);
+    const fullPayload = {
+      iss: 'BluCloud:Root',
+      ...payload,
+    };
+    return await new SignJWT(fullPayload as any)
+      .setProtectedHeader({ alg: 'EdDSA', typ: 'JWT', kid: this.getOpsKeyId() })
+      .setIssuedAt(now)
+      .setExpirationTime(now + ttlSeconds)
+      .sign(privateKey);
+  }
 
   /** Verify EdDSA JWT using the Ops public key. */
   public static async verifyJwt(token: string): Promise<Record<string, any>> {
@@ -104,6 +183,27 @@ export class Ed25519Service {
 		const signature = jws.split('.')[2];
 		return { payload, signature };
 	}
+
+  private static normalizeToBase64Url(value: string): string {
+    if (!value) return value;
+    return value.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
+  }
+
+  public static async signPayloadWithRootKey(rootPrivateKeyB64: string, payload: Record<string, any>): Promise<{ signature: string }> {
+    const d = this.normalizeToBase64Url(rootPrivateKeyB64);
+    const x = this.normalizeToBase64Url(config.security.rootPublicKeyB64);
+    const jwk: JWK = { kty: 'OKP', crv: 'Ed25519', d, x };
+    const rootKey = await importJWK(jwk, 'EdDSA');
+    const data = new TextEncoder().encode(this.canonicalJSONStringify(payload));
+    const signer = new CompactSign(data).setProtectedHeader({ alg: 'EdDSA' });
+    const jws = await signer.sign(rootKey);
+    const signature = jws.split('.')[2];
+    return { signature };
+  }
+
+  public static normalizeBase64(value: string): string {
+    return this.normalizeToBase64Url(value);
+  }
 }
 
 

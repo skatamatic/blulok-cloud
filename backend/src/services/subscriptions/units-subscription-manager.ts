@@ -53,35 +53,55 @@ export class UnitsSubscriptionManager extends BaseSubscriptionManager {
     return true;
   }
 
+  private getEmptyUnitsData() {
+    return {
+      unlockedUnits: [],
+      totalUnits: 0,
+      occupiedUnits: 0,
+      availableUnits: 0,
+      maintenanceUnits: 0,
+      reservedUnits: 0,
+      unlockedCount: 0,
+      lockedCount: 0,
+      lastUpdated: new Date().toISOString(),
+    };
+  }
+
+  private async buildUnitsData(client: SubscriptionClient) {
+    const allUnitsResult = await this.unitsService.getUnits(client.userId, client.userRole);
+    const allUnits = allUnitsResult.units;
+    const unlockedUnits = allUnits.filter((u) => u.is_locked === false);
+    const totalUnits = allUnits.length;
+    const occupiedUnits = allUnits.filter((u) => u.status === 'occupied').length;
+    const availableUnits = allUnits.filter((u) => u.status === 'available').length;
+    const maintenanceUnits = allUnits.filter((u) => u.status === 'maintenance').length;
+    const reservedUnits = allUnits.filter((u) => u.status === 'reserved').length;
+    const unlockedCount = unlockedUnits.length;
+    const lockedCount = totalUnits - unlockedCount;
+    return {
+      unlockedUnits,
+      totalUnits,
+      occupiedUnits,
+      availableUnits,
+      maintenanceUnits,
+      reservedUnits,
+      unlockedCount,
+      lockedCount,
+      lastUpdated: new Date().toISOString(),
+    };
+  }
+
+  private async getUnitsDataForClient(client: SubscriptionClient): Promise<any> {
+    return this.loadInitialData(
+      this.getInitialDataScopeKey(client),
+      () => this.buildUnitsData(client),
+      this.getEmptyUnitsData(),
+    );
+  }
+
   protected async sendInitialData(ws: WebSocket, subscriptionId: string, client: SubscriptionClient): Promise<void> {
     try {
-      // Get all units and unlocked units separately
-      const allUnitsResult = await this.unitsService.getUnits(client.userId, client.userRole);
-      const unlockedUnitsResult = await this.unitsService.getUnits(client.userId, client.userRole, { unlocked: 'true' });
-      
-      // Compute stats client-side for widget compatibility
-      const allUnits = allUnitsResult.units;
-      const unlockedUnits = unlockedUnitsResult.units;
-      const totalUnits = allUnits.length;
-      const occupiedUnits = allUnits.filter(u => u.status === 'occupied').length;
-      const availableUnits = allUnits.filter(u => u.status === 'available').length;
-      const maintenanceUnits = allUnits.filter(u => u.status === 'maintenance').length;
-      const reservedUnits = allUnits.filter(u => u.status === 'reserved').length;
-      const unlockedCount = unlockedUnits.length;
-      const lockedCount = totalUnits - unlockedCount;
-      
-      const unitsData = {
-        unlockedUnits: unlockedUnits,
-        totalUnits,
-        occupiedUnits,
-        availableUnits,
-        maintenanceUnits,
-        reservedUnits,
-        unlockedCount,
-        lockedCount,
-        lastUpdated: new Date().toISOString()
-      };
-      
+      const unitsData = await this.getUnitsDataForClient(client);
       this.sendMessage(ws, {
         type: 'units_update',
         subscriptionId,
@@ -117,34 +137,7 @@ export class UnitsSubscriptionManager extends BaseSubscriptionManager {
         const userKey = `${client.userId}-${client.userRole}`;
         if (!userUnitsData.has(userKey)) {
           try {
-            // Get all units and unlocked units separately
-            const allUnitsResult = await this.unitsService.getUnits(client.userId, client.userRole);
-            const unlockedUnitsResult = await this.unitsService.getUnits(client.userId, client.userRole, { unlocked: 'true' });
-            
-            // Compute stats client-side for widget compatibility
-            const allUnits = allUnitsResult.units;
-            const unlockedUnits = unlockedUnitsResult.units;
-            const totalUnits = allUnits.length;
-            const occupiedUnits = allUnits.filter(u => u.status === 'occupied').length;
-            const availableUnits = allUnits.filter(u => u.status === 'available').length;
-            const maintenanceUnits = allUnits.filter(u => u.status === 'maintenance').length;
-            const reservedUnits = allUnits.filter(u => u.status === 'reserved').length;
-            const unlockedCount = unlockedUnits.length;
-            const lockedCount = totalUnits - unlockedCount;
-            
-            const unitsData = {
-              unlockedUnits: unlockedUnits,
-              totalUnits,
-              occupiedUnits,
-              availableUnits,
-              maintenanceUnits,
-              reservedUnits,
-              unlockedCount,
-              lockedCount,
-              lastUpdated: new Date().toISOString()
-            };
-            
-            userUnitsData.set(userKey, unitsData);
+            userUnitsData.set(userKey, await this.getUnitsDataForClient(client));
           } catch (error) {
             this.logger.error(`Error calculating units data for user ${client.userId}:`, error);
             continue;

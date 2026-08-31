@@ -165,7 +165,14 @@ RUN npm ci --only=production && npm cache clean --force
 
 # Copy source and build
 COPY . .
+ENV NODE_ENV=test DB_NAME=openapi_build DB_USER=openapi DB_PASSWORD=build \
+    JWT_SECRET=openapi-build-jwt-secret-minimum-32-chars \
+    OPS_ED25519_PRIVATE_KEY_B64=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA \
+    OPS_ED25519_PUBLIC_KEY_B64=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA \
+    ROOT_ED25519_PUBLIC_KEY_B64=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
 RUN npm run build
+RUN npm run openapi:generate -- --strict && npm run openapi:audit && node scripts/copy-build-assets.js
+RUN test -f dist/openapi/generated.json
 
 # Production stage
 FROM node:18-alpine AS production
@@ -343,6 +350,8 @@ env:
 
 ## CI/CD Pipeline with Cloud Build
 
+**What actually deploys `develop` (project `blulok-cloud-dev`):** Cloud Build triggers **`blulok-cloud-backend-develop-auto`** / **`blulok-cloud-frontend--develop-auto`** (GitHub `skatamatic/blulok-cloud`, branch `^develop$`). They build `backend/Dockerfile.prod`, push to Artifact Registry `us-west1-docker.pkg.dev/blulok-cloud-dev/cloud-run-source-deploy`, and `gcloud run services update` **`blulok-cloud-backend-dev`** in **us-west1**. The backend trigger re-applies **`--timeout=3600 --no-cpu-throttling --session-affinity --no-use-http2`**. Repo root **`cloudbuild.yaml`** (`blulok-backend` / us-central1) is **not** this pipeline. There is **no** HTTP(S) Load Balancer; see [Gateway integration](./gateway-integration.md) §2 live notes.
+
 ### Cloud Build Configuration
 
 **cloudbuild.yaml:**
@@ -451,6 +460,8 @@ DB_NAME=blulok_dev
 DB_USER=developer
 DB_PASSWORD=mobile
 JWT_SECRET=dev-jwt-secret-minimum-32-characters
+# Optional: encrypt Twilio/SMTP secrets in system_settings (32+ chars or 64-hex)
+SETTINGS_ENCRYPTION_KEY=
 CORS_ORIGINS=http://localhost:3001
 LOG_LEVEL=debug
 ```
@@ -464,9 +475,14 @@ DB_NAME=blulok_prod
 DB_USER=blulok_user
 # DB_PASSWORD from Secret Manager
 # JWT_SECRET from Secret Manager
+# SETTINGS_ENCRYPTION_KEY from Secret Manager (recommended for Twilio/SMTP secrets)
 CORS_ORIGINS=https://blulok.com,https://app.blulok.com
 LOG_LEVEL=info
 ```
+
+Allow Cloud Run egress to your SMTP host (and Twilio) when outbound email/SMS is enabled. See [notifications-email-config.md](./notifications-email-config.md).
+
+**API documentation on Cloud Run:** `https://<backend-service-url>/api/openapi.json` (always). Swagger UI at `/api/docs` (on by default). The spec is regenerated during `backend/Dockerfile.prod` build — not read from git at runtime.
 
 ### Secret Management Strategy
 
@@ -607,9 +623,13 @@ gcloud run deploy blulok-backend \
   --allow-unauthenticated \
   --memory=1Gi \
   --cpu=1 \
-  --max-instances=100 \
-  --concurrency=80 \
-  --set-env-vars="NODE_ENV=production,DB_HOST=/cloudsql/PROJECT:REGION:INSTANCE" \
+      --max-instances=100 \
+      --concurrency=80 \
+      --timeout=3600 \
+      --no-cpu-throttling \
+      --session-affinity \
+      --no-use-http2 \
+      --set-env-vars="NODE_ENV=production,DB_HOST=/cloudsql/PROJECT:REGION:INSTANCE" \
   --set-secrets="DB_PASSWORD=blulok-db-password:latest,JWT_SECRET=blulok-jwt-secret:latest" \
   --add-cloudsql-instances=PROJECT:REGION:INSTANCE
 ```
@@ -629,11 +649,21 @@ gcloud run deploy blulok-frontend \
 
 ### Auto-scaling Configuration
 
-**Traffic-based Scaling:**
-- **Min Instances**: 1 (always warm)
+**Traffic-based Scaling (backend):**
+- **Min Instances**: 0 (default). An open WebSocket is an in-flight request, so that instance stays up without pinning. Optional `1` only if you want a warm instance after total idle.
 - **Max Instances**: 100 (prevent cost overrun)
 - **Concurrency**: 80 requests per instance
-- **CPU Target**: 60% utilization
+- **Request timeout**: 3600s (WebSocket lifetime cap; platform max)
+- **CPU**: always allocated (`--no-cpu-throttling`) so heartbeat timers cannot freeze between frames
+- **Session affinity**: on (best-effort reconnect stickiness for in-memory WS state)
+- **HTTP/2 end-to-end**: off (breaks Cloud Run WebSockets)
+
+Node.js 18+ also defaults `http.Server.requestTimeout` to 300s. The backend disables that at listen time (`configureLongLivedHttpServer`) so Cloud Run — not Node — owns the hour-long cap. See [Gateway integration](./gateway-integration.md) §2 / §2b.
+
+**Frontend:**
+- **Min Instances**: 0 or 1 (static nginx; no long-lived sockets)
+- **Max Instances**: 50
+- **Concurrency**: 100
 
 **Custom Metrics:**
 - Response time < 500ms
@@ -1101,9 +1131,9 @@ gcloud run services update blulok-backend \
 ### Resource Management
 
 **Cloud Run Optimization:**
-- **CPU Allocation**: Only during request processing
+- **CPU Allocation**: Always allocated on the **backend** (`--no-cpu-throttling`) because `/ws`, `/ws/app`, and `/ws/gateway` are long-lived. Leave **min-instances at 0** — open sockets already keep the instance. Frontend can stay request-only.
 - **Memory Sizing**: Right-size based on actual usage
-- **Request Timeout**: Optimize for typical request duration
+- **Request Timeout**: 3600s on the backend for WebSockets; shorter is fine only for request/response-only services
 - **Concurrency**: Balance between throughput and memory
 
 **Database Optimization:**

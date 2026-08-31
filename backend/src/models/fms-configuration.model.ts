@@ -130,6 +130,7 @@ export class FMSConfigurationModel {
   async findAll(filters?: {
     is_enabled?: boolean;
     provider_type?: FMSProviderType;
+    facility_ids?: string[];
   }): Promise<FMSConfiguration[]> {
     try {
       let query = this.db('fms_configurations').select('*');
@@ -142,10 +143,44 @@ export class FMSConfigurationModel {
         query = query.where({ provider_type: filters.provider_type });
       }
 
+      if (filters?.facility_ids?.length) {
+        query = query.whereIn('facility_id', filters.facility_ids);
+      }
+
       const configs = await query;
       return configs.map(config => this.mapToModel(config));
     } catch (error) {
       logger.error('Error fetching FMS configurations:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * List FMS configurations with facility names (for admin/simulator tooling).
+   */
+  async findAllWithFacilities(filters?: {
+    is_enabled?: boolean;
+    provider_type?: FMSProviderType;
+    facility_ids?: string[];
+  }): Promise<Array<FMSConfiguration & { facility_name: string | null }>> {
+    try {
+      const configs = await this.findAll(filters);
+      if (!configs.length) {
+        return [];
+      }
+
+      const facilityIds = [...new Set(configs.map((c) => c.facility_id))];
+      const facilities = await this.db('facilities')
+        .whereIn('id', facilityIds)
+        .select('id', 'name');
+      const nameById = new Map(facilities.map((f) => [String(f.id), f.name != null ? String(f.name) : null]));
+
+      return configs.map((config) => ({
+        ...config,
+        facility_name: nameById.get(config.facility_id) ?? null,
+      }));
+    } catch (error) {
+      logger.error('Error fetching FMS configurations with facilities:', error);
       throw error;
     }
   }
@@ -227,12 +262,23 @@ export class FMSConfigurationModel {
    * Map database record to model
    */
   private mapToModel(record: any): FMSConfiguration {
+    let config: FMSProviderConfig;
+    if (typeof record.config === 'string') {
+      try {
+        config = JSON.parse(record.config) as FMSProviderConfig;
+      } catch {
+        config = {} as FMSProviderConfig;
+      }
+    } else {
+      config = record.config as FMSProviderConfig;
+    }
+
     return {
       id: record.id,
       facility_id: record.facility_id,
       provider_type: record.provider_type,
       is_enabled: record.is_enabled,
-      config: typeof record.config === 'string' ? JSON.parse(record.config) : record.config,
+      config,
       last_sync_at: record.last_sync_at,
       last_sync_status: record.last_sync_status,
       created_at: record.created_at,

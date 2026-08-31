@@ -22,7 +22,7 @@ export async function up(knex: Knex): Promise<void> {
     table.string('id', 36).primary();
     table.string('user_id', 36).notNullable();
     table.string('device_id', 36).notNullable();
-    table.json('audiences').notNullable(); // Array of lock IDs in format lock:deviceId
+    table.json('audiences').notNullable(); // Array of audiences (e.g. lock:{device_serial})
     table.string('jti', 36).notNullable(); // JWT ID for correlation
     table.timestamp('issued_at').notNullable();
     table.timestamp('expires_at').notNullable(); // issued_at + routePassTtlHours

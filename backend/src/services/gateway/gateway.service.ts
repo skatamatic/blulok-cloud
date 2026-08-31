@@ -3,6 +3,8 @@ import { IGateway, IDeviceInfo, IDeviceStatus, ICommandResult, ProtocolVersion }
 import { GatewayModel, Gateway } from '../../models/gateway.model';
 import { GatewayFactory } from './gateways/gateway-factory';
 import { DatabaseService } from '@/services/database.service';
+import { logger } from '@/utils/logger';
+import { resolveLockCommandExpiresAtForFacility } from '@/utils/facility-lock-timeout.utils';
 
 /**
  * Gateway Service
@@ -51,21 +53,32 @@ export class GatewayService extends EventEmitter {
   }
 
   /**
-   * Initialize all configured gateways
+   * Initialize all configured gateways in parallel for faster startup.
+   * Uses Promise.allSettled to ensure all gateways are attempted even if some fail.
    */
   public async initializeAllGateways(): Promise<void> {
     try {
-      const gateways = await this.gatewayModel.findAll();
+      const gateways = (await this.gatewayModel.findAll()).filter((gateway) => !!gateway.facility_id);
 
-      for (const gatewayConfig of gateways) {
-        try {
-          await this.initializeGateway(gatewayConfig);
-        } catch (error) {
-          console.error(`Failed to initialize gateway ${gatewayConfig.id}:`, error);
-        }
+      // Parallelize gateway initialization (instead of sequential for/await)
+      // This dramatically reduces startup time when there are many gateways
+      const results = await Promise.allSettled(
+        gateways.map(gatewayConfig =>
+          this.initializeGateway(gatewayConfig).catch(error => {
+            console.error(`Failed to initialize gateway ${gatewayConfig.id}:`, error);
+            throw error; // Re-throw so allSettled captures it as rejected
+          })
+        )
+      );
+
+      const succeeded = results.filter(r => r.status === 'fulfilled').length;
+      const failed = results.filter(r => r.status === 'rejected').length;
+
+      if (failed > 0) {
+        console.warn(`Gateway initialization: ${succeeded}/${gateways.length} succeeded, ${failed} failed`);
+      } else {
+        console.log(`Initialized ${this.activeGateways.size} gateways`);
       }
-
-      console.log(`Initialized ${this.activeGateways.size} gateways`);
     } catch (error) {
       console.error('Failed to initialize gateways:', error);
       throw error;
@@ -77,6 +90,10 @@ export class GatewayService extends EventEmitter {
    */
   public async initializeGateway(gatewayConfig: Gateway): Promise<IGateway> {
     try {
+      if (!gatewayConfig.facility_id) {
+        throw new Error(`Gateway ${gatewayConfig.id} is unassigned and cannot be initialized`);
+      }
+
       // Create gateway instance
       const gateway = GatewayFactory.createFromConfig({
         id: gatewayConfig.id,
@@ -409,10 +426,143 @@ export class GatewayService extends EventEmitter {
   // simpleHash removed (no longer used)
 
   /**
-   * Send lock command (OPEN/CLOSE)
+   * Value for the `device_id` claim in LOCK/UNLOCK command JWTs (matches route-pass audience
+   * convention: hardware serial, not internal UUID). HTTP/simulated gateway paths still use
+   * internal `lockId` for API compatibility.
    */
-  public async sendLockCommand(gatewayId: string, lockId: string, command: 'OPEN' | 'CLOSE'): Promise<ICommandResult> {
-    return await this.executeDeviceCommand(gatewayId, lockId, command);
+  public async resolveDeviceIdForLockCommandJwt(internalDeviceId: string): Promise<string> {
+    const blu = await this.db('blulok_devices')
+      .where('id', internalDeviceId)
+      .select('device_serial', 'serial')
+      .first();
+    if (blu) {
+      const fromSerial =
+        (blu.device_serial && String(blu.device_serial).trim()) ||
+        (blu.serial && String(blu.serial).trim());
+      if (fromSerial) {
+        return fromSerial;
+      }
+      logger.warn('BluLok device missing device_serial for command JWT; falling back to internal id', {
+        internalDeviceId,
+      });
+      return internalDeviceId;
+    }
+
+    const ac = await this.db('access_control_devices')
+      .where('id', internalDeviceId)
+      .select('device_serial', 'metadata', 'device_settings')
+      .first();
+    if (ac) {
+      const columnSerial =
+        ac.device_serial && String(ac.device_serial).trim()
+          ? String(ac.device_serial).trim()
+          : null;
+      if (columnSerial) {
+        return columnSerial;
+      }
+      const meta = this.parseJsonObjectMaybe(ac.metadata);
+      const settings = this.parseJsonObjectMaybe(ac.device_settings);
+      const fromAc =
+        this.nonEmptyStringField(meta, 'device_serial') ||
+        this.nonEmptyStringField(meta, 'serial') ||
+        this.nonEmptyStringField(settings, 'device_serial') ||
+        this.nonEmptyStringField(settings, 'serial');
+      if (fromAc) {
+        return fromAc;
+      }
+      logger.warn(
+        'Access control device has no serial in metadata/device_settings for command JWT; falling back to internal id',
+        { internalDeviceId },
+      );
+      return internalDeviceId;
+    }
+
+    logger.warn('Lock command JWT: unknown internal device id; using value as-is', { internalDeviceId });
+    return internalDeviceId;
+  }
+
+  private parseJsonObjectMaybe(value: unknown): Record<string, unknown> | null {
+    if (value == null) {
+      return null;
+    }
+    if (typeof value === 'object' && !Array.isArray(value)) {
+      return value as Record<string, unknown>;
+    }
+    if (typeof value === 'string') {
+      try {
+        const parsed = JSON.parse(value) as unknown;
+        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+          return parsed as Record<string, unknown>;
+        }
+      } catch {
+        /* ignore */
+      }
+    }
+    return null;
+  }
+
+  private nonEmptyStringField(obj: Record<string, unknown> | null, key: string): string | undefined {
+    if (!obj) {
+      return undefined;
+    }
+    const v = obj[key];
+    if (v == null || v === '') {
+      return undefined;
+    }
+    const s = String(v).trim();
+    return s || undefined;
+  }
+
+  /**
+   * Send lock command (OPEN/CLOSE)
+   *
+   * When the facility has an active inbound `/ws/gateway` session, commands are delivered as
+   * signed JWTs (same path as dev-tools LOCK/UNLOCK). Otherwise uses the registered gateway
+   * implementation (HTTP mesh, simulated, etc.).
+   */
+  public async sendLockCommand(
+    gatewayId: string,
+    lockId: string,
+    command: 'OPEN' | 'CLOSE',
+    options?: { open_until?: number },
+  ): Promise<ICommandResult> {
+    const start = Date.now();
+    const row = await this.db('gateways').where('id', gatewayId).select('facility_id').first();
+    const facilityId = row?.facility_id ? String(row.facility_id) : null;
+    const expiresAt =
+      facilityId != null
+        ? await resolveLockCommandExpiresAtForFacility(this.db, facilityId)
+        : 0;
+
+    if (facilityId) {
+      const { GatewayEventsService } = await import('@/services/gateway/gateway-events.service');
+      const { connected } = GatewayEventsService.getInstance().getFacilityConnectionStatus(facilityId);
+      if (connected) {
+        const { Ed25519Service } = await import('@/services/crypto/ed25519.service');
+        const cmd_type = command === 'CLOSE' ? 'LOCK' : 'UNLOCK';
+        const jwtDeviceClaim = await this.resolveDeviceIdForLockCommandJwt(lockId);
+        const jwtPayload: Record<string, unknown> = {
+          cmd_type,
+          device_id: jwtDeviceClaim,
+          expires_at: expiresAt,
+        };
+        if (command === 'OPEN' && options?.open_until != null) {
+          jwtPayload.open_until = options.open_until;
+        }
+        const jwt = await Ed25519Service.signCommandJwt(jwtPayload);
+        GatewayEventsService.getInstance().unicastToFacility(facilityId, jwt);
+        return {
+          success: true,
+          executedAt: new Date(),
+          duration: Date.now() - start,
+        };
+      }
+    }
+
+    return await this.executeDeviceCommand(gatewayId, lockId, command, {
+      expires_at: expiresAt,
+      ...(options?.open_until != null ? { open_until: options.open_until } : {}),
+    });
   }
 
   /**

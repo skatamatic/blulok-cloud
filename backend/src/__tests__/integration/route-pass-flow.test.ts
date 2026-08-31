@@ -13,15 +13,27 @@ const createMockDbConnection = (userDeviceRow: any, lockRows: any[]) => {
   return jest.fn((table: string) => {
     const qb: any = {
       where: jest.fn().mockReturnThis(),
+      andWhere: jest.fn().mockReturnThis(),
+      orWhere: jest.fn().mockReturnThis(),
       whereIn: jest.fn().mockReturnThis(),
+      whereNull: jest.fn().mockReturnThis(),
+      whereRaw: jest.fn().mockReturnThis(),
+      andWhereRaw: jest.fn().mockReturnThis(),
       orderBy: jest.fn().mockReturnThis(),
       select: jest.fn().mockReturnThis(),
+      distinct: jest.fn().mockReturnThis(),
       join: jest.fn().mockReturnThis(),
+      leftJoin: jest.fn().mockReturnThis(),
       first: jest.fn(),
       then: jest.fn((onFulfilled?: (rows: any[]) => any) => {
         if (onFulfilled) onFulfilled([]);
         return Promise.resolve([]);
       }),
+      union: jest.fn().mockImplementation(function (otherQuery: any) {
+        // For TENANT role, simulate UNION of primary assignments + shared keys
+        return Promise.resolve(lockRows);
+      }),
+      fn: { now: () => new Date() },
     };
 
     if (table === 'user_devices') {
@@ -29,11 +41,33 @@ const createMockDbConnection = (userDeviceRow: any, lockRows: any[]) => {
       return qb;
     }
     if (table === 'blulok_devices' || table.startsWith('blulok_devices')) {
+      (qb)._joinTarget = '';
+      qb.join = jest.fn().mockImplementation((target: string) => {
+        (qb)._joinTarget = target;
+        return qb;
+      });
+      qb.then = (onFulfilled?: (rows: any[]) => any) => {
+        const rows = String((qb)._joinTarget || '').includes('key_sharing') ? [] : lockRows;
+        if (onFulfilled) onFulfilled(rows);
+        return Promise.resolve(rows);
+      };
+      qb.first.mockResolvedValue(lockRows[0] || null);
+      return qb;
+    }
+    if (table === 'unit_assignments') {
+      // Mock primary assignments for TENANT role
       qb.then = (onFulfilled?: (rows: any[]) => any) => {
         if (onFulfilled) onFulfilled(lockRows);
         return Promise.resolve(lockRows);
       };
-      qb.first.mockResolvedValue(lockRows[0] || null);
+      return qb;
+    }
+    if (table === 'key_sharing') {
+      // Mock shared keys for TENANT role (empty by default)
+      qb.then = (onFulfilled?: (rows: any[]) => any) => {
+        if (onFulfilled) onFulfilled([]);
+        return Promise.resolve([]);
+      };
       return qb;
     }
     return qb;
@@ -60,7 +94,7 @@ describe('Route Pass Integration', () => {
     (DatabaseService.getInstance as jest.Mock).mockReturnValue({
       connection: createMockDbConnection(
         { id: 'dev-1', user_id: testData.users.tenant.id, app_device_id: 'phone-1', status: 'active', public_key: devicePublicKeyB64 },
-        [{ id: 'lock-1' }, { id: 'lock-2' }]
+        [{ device_serial: 'serial-1' }, { device_serial: 'serial-2' }]
       ),
     });
 
@@ -77,8 +111,9 @@ describe('Route Pass Integration', () => {
     const payload = await Ed25519Service.verifyJwt(res.body.routePass);
     expect(payload.sub).toBe(testData.users.tenant.id);
     expect(payload.device_pubkey).toBe(devicePublicKeyB64);
+    expect(payload.user_role).toBe('tenant');
     expect(Array.isArray(payload.aud)).toBe(true);
-    expect(payload.aud).toEqual(['lock:lock-1', 'lock:lock-2']);
+    expect(payload.aud).toEqual(['lock:serial-1', 'lock:serial-2']);
 
     // Verify protected header uses EdDSA
     const header = decodeProtectedHeader(res.body.routePass);

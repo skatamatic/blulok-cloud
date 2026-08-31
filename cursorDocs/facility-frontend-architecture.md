@@ -42,24 +42,34 @@ Facility
 
 **Purpose**: Comprehensive facility management with tabbed interface
 **Features**:
-- Tabbed interface (Overview, Devices, Units)
+- Tabbed interface (Overview, Devices, Units, Schedules, Access Groups / Access Codes, FMS, Provisioning Data, Gateway)
+- **Devices** and **Units** tabs: **Cards** vs **Table** toggle (shared `ViewModeToggle`); table columns are sortable and use the same list APIs as global Devices/Units pages (including pagination).
+- **Schedules → User Schedules:** sortable table (same chrome as Units/Devices). Loads every facility tenant/maintenance user by paging `GET /users` (default page size is 20; the tab requests 200 and follows `total`) and merges co-tenants from the units list. Assignments come from one `GET /facilities/:id/user-schedules` call, not per-user schedule fetches. Search and role chips filter the in-memory roster (no refetch, no spinner). Assigning a schedule updates that row immediately and rolls back if the API fails. The hub keeps a visited sub-tab mounted so switching Facility ↔ User Schedules does not reload.
+- **Schedules → Facility Schedules:** **Add Schedule** lives in the page header (same as Add device / Add Unit / Add Group) and opens a wide modal for name + week editor. The header action hides on the User Schedules sub-tab.
+- **Searchable entity pickers:** `UnitFilter`, `UserFilter`, and `DeviceFilter` typeahead comboboxes (paged API, not native `<select>`). Always pass the selected `facilityId`. `DeviceFilter` `list="unassigned"` is the assignment picker; `list="facility"` lists operational devices at that facility (`ExpandableFilters` `type: 'device'`). Applied selections use `AppliedFilterBar` (dismissible chips + **Clear all**) — Session trace is the first consumer. Gateway **Session trace** uses Unit + User plus a progressive Time control (after and/or before date+time; sessions match by interval overlap and stay whole). With a unit selected, User is `allowedUsers` from that unit’s events. Removing the unit chip clears User, not Time. The trace workspace switches Sessions / Events / NDJSON over live **and** historical snapshot data. Copy dump is the snapshot, not the filtered view.
 - Gateway status monitoring
 - Device hierarchy visualization
 - Unit management interface
 - Real-time lock controls
 - Statistics dashboard
 
+**Simplified UI** (`users.simplified_ui` / `usesSimplifiedUi()` — facility_admin only, presentation-only):
+- **Hidden tabs:** Gateway, Access Groups, Access Codes (deep links redirect to Facility overview)
+- **Facility overview:** Gateway status card and “Manage gateway” device actions hidden
+- **FMS tab:** `FacilityFMSSimplifiedView` — no provider configuration / webhook feed / sync sidebar; Test Connection + Sync Now on the history card; Review actions on pending rows; `fms_sync_status` + `fms_sync_progress` refresh the history grid inline
+- See [auth.md](./auth.md) for the preference flag
+
 **Cross-linking**:
 - Device cards → Device details
 - Unit cards → Unit management
 - Gateway status → Device dashboard
-- "View Facility" from all related pages
+- Minimized quick links; navigation primarily via card click
 
 ### 3. Devices Overview (`/devices`)
 
 **Purpose**: Unified device monitoring across all facilities
 **Features**:
-- Grid and list view modes
+- **Cards** and **Table** view modes; cards force name-ascending fetch; table supports per-column sort with server-side ordering. Combined device types (`all`) use merge-then-sort-then-paginate on the backend (`merged-device-list.utils`).
 - Device type filtering (Access Control, BluLok)
 - Status monitoring and filtering
 - Real-time lock controls
@@ -76,7 +86,7 @@ Facility
 
 **Purpose**: Comprehensive unit and tenant management
 **Features**:
-- Grid and table view modes
+- Cards, table, and site-map entry points; cards force `unit_number` ascending with **natural** numeric ordering (e.g. Unit 2 before Unit 10). Table columns are sortable (`tenant_last_name`, `lock_status`, `battery_level`, etc.) via whitelisted `sortBy` on the units API.
 - Tenant assignment visualization
 - Lock status and control
 - Unit filtering and search
@@ -84,7 +94,7 @@ Facility
 - Feature and amenity display
 
 **Cross-linking**:
-- Unit cards → Facility view
+- Unit cards → Unit details (facility link removed on cards)
 - Tenant info → User management
 - Device status → Device controls
 - "My Units" for tenants
@@ -102,7 +112,7 @@ Facility
 
 - **Facility Cards**: Link to devices, units, and details
 - **Device Cards**: Link to parent facility and associated units
-- **Unit Cards**: Link to facility, tenant info, and device controls
+ - **Unit Cards**: Link to unit details, tenant info, and device controls
 - **Status Indicators**: Direct links to problem resolution
 - **Search Integration**: Global search with entity linking
 
@@ -210,6 +220,23 @@ Facility
 4. **Export/Import**: Data export and reporting
 5. **Third-party Integrations**: External system connections
 
+## Real-time data (WebSocket)
+
+Aggregate REST snapshots (facility stats, histogram buckets, dashboard stats scoped to one facility) are **signals to refetch**, not live payloads. Use `useLockDeviceRealtime` or an `activity` subscription with debounced REST reload.
+
+| Surface | Subscription | Refresh strategy |
+|---------|--------------|------------------|
+| Facility overview stats sidebar | `device_status`, `units` (facility-scoped) | Debounced `getFacility` background reload |
+| Device groups / access codes device lists | Same | Reload `deviceHierarchy` via background `getFacility` |
+| Devices / Units tabs | `device_status`, `units` | Debounced list API reload (existing) |
+| Gateway card | `gateway_status` + live status hook | See `cursorDocs/gateway-integration.md` |
+| Dashboard stats widgets | `general_stats` (all facilities) or `device_status`/`units` (single facility) | WS payload vs debounced REST |
+| Unlocked units / units manager widgets | `device_status`, `units` | Debounced REST via `useUnitsData` / widget hook |
+| Activity monitor, histogram, access history | `activity` (with `facility_id` when scoped) | Debounced REST |
+| Lock status, battery, gates, notifications | `device_status`, `battery_status`, etc. | Direct WS or `useLockDeviceRealtime` |
+| Access Groups / Access Codes tab (push badge + codes) | `access_code_push_state` (`facility_id` required; ADMIN / DEV_ADMIN / FACILITY_ADMIN + facility RBAC) | Live push-state payload; debounced REST `getEffectiveAccessCodes` when `refresh_effective_codes` |
+
+**App vs admin access codes:** dashboard widget `access_codes` is for entitled user keypad codes. Admin Access Groups use `access_code_push_state` for gateway push outbox status and effective-code refresh nudges.
 ## Testing Strategy
 
 ### Unit Tests

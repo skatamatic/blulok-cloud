@@ -15,6 +15,12 @@ yarn-error.log*
 .env.development.local
 .env.test.local
 .env.production.local
+backend/.env
+frontend/.env
+.cursor/skills/debug-blulok-deployment/deploy.toml
+.cursor/skills/debug-blulok-deployment/deploy.env
+backend/terrain-harness-out/
+env
 
 # Database
 *.db
@@ -44,8 +50,9 @@ coverage/
 .DS_Store
 Thumbs.db
 
-# Docker
+# Docker — allow committed frontend dockerignore (root pattern would ignore all)
 .dockerignore
+!frontend/.dockerignore
 
 # Testing
 /coverage/
@@ -54,3 +61,11 @@ Thumbs.db
 # Temporary files
 *.tmp
 *.temp
+backend/data
+.blulok-local-data
+backend/test-storage
+backend/_snap-visual-out/
+integration-tests/_last-run.txt
+
+# Local gateway workspace (not part of this repo)
+/gateway/

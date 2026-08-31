@@ -4,6 +4,8 @@
 
 BluLok Cloud implements a comprehensive role-based access control (RBAC) system designed for secure management of storage facility locking systems. The authentication system uses JWT tokens with bcrypt password hashing and provides granular access control based on user roles.
 
+**Route passes (device-bound access JWT):** payload shape, `aud` formats, and the compact **`schedules`** claim are documented in [route-pass-jwt.md](./route-pass-jwt.md).
+
 ## User Roles & Permissions
 
 ### Role Hierarchy
@@ -70,12 +72,15 @@ TENANT (Lowest Privilege)
 ```sql
 CREATE TABLE users (
   id VARCHAR(36) PRIMARY KEY DEFAULT (UUID()),
-  email VARCHAR(255) NOT NULL UNIQUE,
+  email VARCHAR(255) NULL,
+  login_identifier VARCHAR(255) NOT NULL UNIQUE,
+  phone_number VARCHAR(32) NULL,
   password_hash VARCHAR(255) NOT NULL,
   first_name VARCHAR(100) NOT NULL,
   last_name VARCHAR(100) NOT NULL,
   role ENUM('tenant', 'admin', 'facility_admin', 'maintenance', 'blulok_technician', 'dev_admin') NOT NULL DEFAULT 'tenant',
   is_active BOOLEAN NOT NULL DEFAULT true,
+  simplified_ui BOOLEAN NOT NULL DEFAULT false,
   last_login TIMESTAMP NULL,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -89,13 +94,52 @@ CREATE TABLE users (
 ### Field Descriptions
 
 - **id**: UUID primary key for user identification
-- **email**: Unique email address used for login
+- **email**: Contact email. May be shared across users. Not a unique login key.
+- **phone_number**: Contact phone (E.164). May be shared. Not a unique login key.
+- **login_identifier**: The unique login handle. Either the user’s exclusive email or exclusive phone. Authentication, password reset, and invite-by-phone resolve this column only.
 - **password_hash**: bcrypt hashed password (12 salt rounds)
 - **first_name/last_name**: User's display name
 - **role**: User's permission level (see roles above)
-- **is_active**: Soft delete flag - inactive users cannot login
+- **is_active**: Soft-deactivation flag — inactive users cannot login. “Delete user” in the admin UI deactivates (`is_active = false`); the row and `login_identifier` are retained. Email and phone may already be shared with other accounts.
+- **simplified_ui**: Presentation-only preference (API field `simplifiedUi`). Intended for `facility_admin` users who should see a simpler Cloud UI. **Not an authorization boundary** — REST/WS permissions remain those of `facility_admin`. Only `admin` / `dev_admin` may set it via `PUT /api/v1/users/:id`. Cleared automatically when the user’s role is no longer `facility_admin`. Returned on login and live on `GET /auth/profile` / verify-token / refresh-token. **Cloud UI gating (current):** Facility Setup hides Gateway and Access Groups / Access Codes tabs; FMS tab uses a sync-history–focused layout (test / sync / review, live WS updates in the history grid) without configuration/webhook technical surfaces. More surfaces may be gated over time.
 - **last_login**: Timestamp of most recent successful login
 - **created_at/updated_at**: Audit timestamps
+
+#### Re-adding a deactivated user (`POST /api/v1/users`)
+
+`POST /api/v1/users` and `PUT /api/v1/users/:id` go through `UserLoginIdentityService`. Each loginable user must keep **exactly one exclusive contact** as `login_identifier` (email if that address is exclusive, otherwise phone). Shared phones with distinct emails are allowed. Stable error codes: `NO_UNIQUE_LOGIN_HANDLE`, `IDENTITY_CONFLICT`, `USER_INACTIVE`. Password reset and key-share invite resolve `login_identifier` only; a contact that is not a login handle returns `AMBIGUOUS_CONTACT`.
+
+Creating a user whose **exclusive** email or phone matches an **inactive** account returns **409** with:
+
+```json
+{
+  "success": false,
+  "code": "USER_INACTIVE",
+  "message": "An inactive user with this email already exists. Confirm to reactivate and update their profile.",
+  "inactiveUser": {
+    "id": "…",
+    "email": "…",
+    "firstName": "…",
+    "lastName": "…",
+    "role": "tenant",
+    "phoneNumber": null
+  }
+}
+```
+
+The Add User UI prompts the admin to confirm. Retrying the same payload with `reactivateIfInactive: true` reactivates the existing row, applies the submitted profile fields (name, role, password/invite semantics, optional phone), syncs facility associations when provided, and runs activation side effects (denylist removal, share restore). Active-user identity collisions remain hard **400** errors. Callers outside the inactive user’s facility scope receive a generic “already exists” **400** (no `inactiveUser` payload).
+
+Dedicated reactivation also remains available via `POST /api/v1/users/:id/activate` (Activate on user details) and `PUT /api/v1/users/:id` with `isActive: true`. The user edit form does not toggle active status — use the Activate / Deactivate header buttons. API `isActive` values are always booleans (`0`/`1` from MySQL are coerced).
+
+**RBAC for activate / deactivate**
+
+| Requester | Scope |
+|-----------|--------|
+| **dev_admin / admin** | Any user (only `dev_admin` may activate/deactivate other `dev_admin` accounts) |
+| **facility_admin** | Users in their facilities with roles tenant / maintenance / BluLok technician |
+| **Others** | Not allowed |
+
+FMS sync reactivates tenants that are still present in FMS (including manually deactivated accounts) and updates profile fields on apply.
 
 ### User Facility Associations Table
 
@@ -128,7 +172,21 @@ CREATE TABLE user_facility_associations (
 - **Facility-Scoped Roles** (`facility_admin`, `tenant`, `maintenance`, `blulok_technician`): Access only ASSIGNED facilities
 - **No Associations**: Facility-scoped users with no associations have no facility access
 
-## Authentication Flow
+### User list API (`GET /api/v1/users`)
+
+Default page size is **20** (`limit` / `offset`). Clients that need a full facility roster (for example Facility Details → Schedules → User Schedules) must page until `total` is exhausted. Facility filter is `facility` or `facility_id` and matches `user_facility_associations` only — occupants who appear on units but lack that association are not in the list.
+
+List scoping is enforced in `filterUsersForListScope` (`users-rbac.util.ts`) and `UserListScopeService`:
+
+| Requester | Visible users |
+|-----------|----------------|
+| **admin / dev_admin** | All users |
+| **facility_admin** | Users associated with at least one of the requester's facilities — **excluding** admin/dev_admin (global roles have no facility associations and must not appear) |
+| **tenant / maintenance** | Self plus users they have actively shared unit access with (`key_sharing.primary_tenant_id` → `shared_with_user_id`). Route still returns **403** via `requireUserManagement`; scoping applies if list access is granted elsewhere. |
+| **Other roles** | Empty list |
+
+Single-user reads (`GET /users/:id`, `/details`) use `UserListScopeService.canRequesterViewUser` with the same rules (plus self-access).
+
 
 ### Login Process
 
@@ -141,12 +199,13 @@ CREATE TABLE user_facility_associations (
    ```
 
 2. **Server Validation**:
-   - Email format validation
-   - Password complexity check
+   - Identifier (email or phone) format validation
    - User existence verification
    - Account active status check
+   - **FMS placeholder rejection**: users with `is_placeholder=true` (or reserved `fms-ph:` login) always fail with generic “Invalid email or password” — they have no usable login identity until upgraded
    - Password hash comparison (bcrypt)
 
+   Login is resolved by `login_identifier` only (email fallback only when that column is missing). A shared phone that nobody uses as their handle is invalid credentials. Placeholder tenants are also blocked from invite accept / set-password and password-reset request/complete paths (defense-in-depth). Upgrade via FMS sync or admin **Enable login** (`PUT /users/:id` with email/phone) uses `UserLoginIdentityService` (shared contacts are allowed when the upgraded user still has an exclusive handle).
 3. **Success Response**:
    ```json
    {
@@ -163,14 +222,29 @@ CREATE TABLE user_facility_associations (
    }
    ```
 
-4. **JWT Token**: Contains user ID, email, role, and expires in 24 hours
+4. **JWT Token**: Contains user ID, email, role, optional `facilityIds` snapshot, and expires in 30 days
 
 ### Token Management
 
 - **Storage**: Client stores JWT in localStorage
 - **Header**: Sent as `Authorization: Bearer <token>`
-- **Expiration**: 24 hours (configurable)
-- **Refresh**: Manual re-login required (future: refresh tokens)
+- **Expiration**: 30 days (configurable via `JWT_EXPIRES_IN`)
+- **Refresh**: `POST /auth/refresh-token` re-issues JWT with live scope; clients should also call `GET /auth/profile` for UI scope
+
+### Live facility scope (JWT is not authoritative)
+
+JWT `facilityIds` are a **login snapshot only**. The backend **never** uses raw JWT claims for authorization:
+
+| Layer | Behavior |
+|-------|----------|
+| **REST** | `authenticateToken` replaces `req.user.facilityIds` on every request via `FacilityAccessService` |
+| **Facility resolution** | `facility_admin` → `user_facility_associations`; `tenant` / `maintenance` → `user_facility_associations` ∪ active `unit_assignments` ∪ `key_sharing` |
+| **Device / route-pass entitlement** | Still gated by unit assignment or active key share — facility association alone does not grant lock audiences |
+| **Dashboard WebSocket** | Loads scope at connect; refreshes on heartbeat and on association changes (`scope_update` message) |
+| **Gateway WebSocket** | `facility_admin` AUTH checks live DB access, not JWT |
+| **Frontend UI** | `GlobalFacilityContext` (`GET /facilities`) and `GET /auth/profile` — not JWT decode |
+
+Use `applyFacilityScope(req)` or `FacilityAccessService.hasAccessToFacility()` for new routes instead of reading JWT payloads directly.
 
 ## Authorization & Page Access
 
@@ -190,7 +264,8 @@ CREATE TABLE user_facility_associations (
 /users              # requireUserManagement: admin, dev_admin only
 /maintenance        # maintenance, blulok_technician, admin, dev_admin
 /analytics          # admin, dev_admin only
-/settings           # requireAdmin: admin, dev_admin only
+/settings           # requireSettingsAccess: tenant, maintenance, facility_admin, blulok_technician, admin, dev_admin (tab visibility varies by role)
+/settings/add-facility # requireAdmin: admin, dev_admin only
 ```
 
 ### Backend API Protection
@@ -225,6 +300,10 @@ requireUserManagement          # Requires admin or dev_admin
 useAuth().hasRole([UserRole.ADMIN])     # Check specific roles
 useAuth().isAdmin()                     # Check admin privileges
 useAuth().canManageUsers()              # Check user management access
+
+// Settings RBAC (`settings-rbac.utils.ts`)
+canAccessSystemSettings(role)           # Settings page + sidebar link
+canEditDashboardLayout(role)            # Personal dashboard tab + layout mutation (admin/dev_admin)
 ```
 
 ## Security Features
@@ -243,7 +322,7 @@ useAuth().canManageUsers()              # Check user management access
 
 - **Algorithm**: HS256 (HMAC with SHA-256)
 - **Secret**: 64-character random string (environment variable)
-- **Expiration**: 24 hours maximum
+- **Expiration**: 30 days (default)
 - **Validation**: Signature and expiration checked on every request
 
 ### Session Management
@@ -268,8 +347,11 @@ useAuth().canManageUsers()              # Check user management access
 |-------|----------|------|---------|
 | `admin@blulok.com` | `Admin123!@#` | admin | Facility administration |
 | `devadmin@blulok.com` | `DevAdmin123!@#` | dev_admin | System development |
+| `dev.facilityadmin@blulok.com` | `DevTest123!@#` | facility_admin | Linked to first facility (dev startup) |
+| `dev.maintenance@blulok.com` | `DevTest123!@#` | maintenance | Linked to first facility (dev startup) |
+| `dev.tenant@blulok.com` | `DevTest123!@#` | tenant | Linked to first facility (dev startup) |
 
-**Note**: These are created automatically by database seeds in development environment only.
+**Note**: Admin/dev_admin accounts are created by database seeds. Role test accounts (`dev.*`) are ensured on every backend startup when `NODE_ENV=development` and appear as quick-login buttons on the login page in Vite dev mode only.
 
 ## API Endpoints
 
@@ -351,9 +433,30 @@ npm run db:setup            # Full setup: init + migrate + seed
 ### Token Security
 
 1. **Secret Rotation**: JWT secret should be rotated periodically
-2. **Short Expiration**: 24-hour maximum token lifetime
+2. **Token Expiration**: 30-day default token lifetime
 3. **Secure Storage**: Tokens stored in httpOnly cookies (recommended) or localStorage
 4. **Blacklisting**: Consider implementing token blacklisting for logout
+
+## Admin user provisioning (dashboard / operator UI)
+
+- **Phone number**: Stored as normalized E.164 in `users.phone_number` (shareable contact). Admin APIs:
+  - `POST /api/v1/users` accepts optional `phoneNumber`, optional `password`, optional `sendInvite`, and optional **`facilityIds`** (UUID array).
+  - `PUT /api/v1/users/:id` accepts optional `phoneNumber`; empty string clears the number.
+- **Facility assignment on create**: For roles that are **not** globally scoped (`admin`, `dev_admin`), the API requires **at least one** `facilityId`. Associations are applied with `UserFacilityAssociationModel.addUserToFacility` per ID (same behavior as `PUT /user-facilities/:userId`). Global roles must send **no** `facilityIds` (empty array). If association insert fails (e.g. invalid FK), the user row is rolled back via `UserModel.deleteById`.
+- **RBAC (create)**:
+  - **`facility_admin`** may only create **`tenant`**, **`maintenance`**, **`blulok_technician`** (enforced in `users-rbac.util.ts` + route).
+  - Only **`dev_admin`** may create **`dev_admin`** users (unchanged).
+  - **`facility_admin`** may only include facility IDs that appear in **`req.user.facilityIds`** (same idea as `PUT /user-facilities/:userId`).
+- **RBAC (update role)**: **`facility_admin`** cannot assign **`admin`**, **`facility_admin`**, or **`dev_admin`**; only global administrators (`admin` / `dev_admin`) may assign **`admin`** or **`facility_admin`** (`assertRequesterMayAssignRoleOnUpdate`).
+- **RBAC (update user / PUT)**: **`facility_admin`** may only **update** accounts whose **existing** role is **`tenant`**, **`maintenance`**, or **`blulok_technician`** (matches create scope). They must not edit **`admin`**, **`facility_admin`**, **`dev_admin`**, or another peer **`facility_admin`**—even when **`checkFacilityAccess`** passes due to a shared facility—except for **self** (`id === req.user.userId`). Enforced in `users.routes.ts` using `FACILITY_ADMIN_CREATABLE_ROLES`.
+- **Resend invite**: `POST /users/:id/resend-invite` now uses **`checkFacilityAccess`** so facility admins cannot resend for users outside their facilities. Also clears any `deferred_user_invites` row for that user.
+- **Reset account & re-invite**: `POST /users/:id/reset-account` (user-management roles, facility-scoped). Scorched-earth **auth identity** wipe: password → unusable hash, `requires_password_reset=true`, `last_login=null`, revoke all `user_devices`, delete invites/OTPs/password-reset tokens, push denylist for the user’s units. **Preserves** unit assignments, facility associations, key shares, and FMS mappings. Then sends a fresh invite (bypasses FMS `invitePolicy`). Blocked for self, placeholders, and roles outside the caller’s scope (same guards as deactivate). UI: User Details → Invites tab, and Units Manager expanded **Tenant** column (Resend when invite not accepted — primary; Reset after acceptance — warning tone; both confirm before sending). **Session invalidation:** `authenticateToken`, dashboard WS, and gateway JWT AUTH reject tokens when `requires_password_reset` is true (or the account is inactive), so prior JWTs cannot linger for the default 30-day lifetime after a reset.
+- **Invite status on list**: `GET /users` includes `inviteStatus` (`never_invited` | `invite_pending` | `active` | `placeholder`) and `invitedAt`.
+- **Password optional**: If `password` is omitted or blank, `AuthService.createUser` stores a non-login placeholder hash (`!`) and sets `requires_password_reset` so the user must complete first-time setup.
+- **Invite SMS / email**: When `sendInvite: true` and no password was set, the server calls `FirstTimeUserService.sendInvite` after create. Delivery uses only **enabled** channels, then the admin **channel preference** (`both` / `prefer_sms` / `prefer_email`) when both can reach the user, and fails loudly when nothing was delivered (see the delivery policy in `notifications-email-config.md`). The response carries `inviteSent` and, on partial delivery, `inviteWarning`. Clients may omit `sendInvite` or use **Resend invite** on the user profile later. FMS-created tenants follow per-facility **`invitePolicy`** (default `none`) — see `fms-webhooks.md`.
+- **Invite accept**: `POST /auth/invite/accept` with `{ token }` validates the invite and returns `needs_profile`, `missing_fields`, and `profile` (`first_name`, `last_name`, `email`, `phone_number`). Contact fields may be `null` when unset. Use this when the deeplink omits `&phone=` (email-only send, or clients that strip query params).
+- **Invite set-password**: `POST /auth/invite/set-password` only requires `token`, `otp`, and `newPassword`. Optional `firstName` / `lastName` / `email` are for nameless invitees (`needs_profile` from `invite/accept`). Empty string or `null` for those fields is treated as omitted — clients that always send the keys must not get blocked when the account already has a name.
+- **UI** (`AddUserModal`): “Skip password” enables first-time flow; “Send invite SMS or email now” maps to `sendInvite` (can be unchecked to skip both phone requirement and invite). Role options are filtered for **facility admins** to match the backend. **Facilities** multi-select sends `facilityIds` when the role requires facility scope.
 
 ## Future Enhancements
 
@@ -373,3 +476,45 @@ npm run db:setup            # Full setup: init + migrate + seed
 2. **OAuth Integration**: Third-party authentication providers
 3. **Microservices**: Separate authentication service
 4. **Load Balancing**: Stateless design supports horizontal scaling
+
+## Access Event Security Model
+
+### Internal Ingestion Authentication
+
+- `POST /api/v1/internal/gateway/access-events` is authenticated with the same gateway proxy JWT flow used by other internal gateway endpoints.
+- `facility_admin`, `admin`, and `dev_admin` are allowed to call the endpoint; facility scope is still enforced through `resolveScopedFacilityId` + `AuthService.canAccessFacility`.
+- Facility-scoped gateway sessions cannot override `facility_id` outside their scope.
+
+### Access History RBAC
+
+- Canonical access history now reads from `activity_logs` entries with `activity_type=access_attempt`.
+- **tenant/shared** users see:
+  - their own actor events, and
+  - events for units they currently have access to (primary assignment or active shared access).
+- **facility_admin** users see only events from facilities they administer.
+- **admin/dev_admin** users can query all facilities.
+- **maintenance** users are restricted to their own actor events.
+
+### Denial Reason Taxonomy
+
+The canonical ingestion contract supports explicit deny reasons for security and forensic workflows:
+
+- `out_of_schedule`
+- `route_pass_expired`
+- `route_pass_invalid_signature`
+- `route_pass_wrong_lock`
+- `internal_error`
+- `denylist_blocked`
+- `insufficient_permissions`
+- `invalid_credential`
+- `unknown_error`
+- `other`
+
+## Login: `key_generation_required` (no `X-App-Device-Id`)
+
+Web and gateway tooling often log in **without** `X-App-Device-Id`. In that case, **`facility_admin`**, **`admin`**, and **`dev_admin`** must **not** receive `key_generation_required: true` (mobile key onboarding is not applicable). **`tenant`** and **`maintenance`** still receive the flag so app clients can complete device registration when appropriate.
+
+**Regression tests:**
+
+- `backend/src/__tests__/services/auth.service.login-key-generation.test.ts` — real `AuthService.login` without `X-App-Device-Id` (`jest.unmock('@/services/auth.service')`; global `setup-mocks` otherwise replaces `AuthService` with a stub).
+- `backend/src/__tests__/services/auth.service.login-app-device.test.ts` — with `appDeviceId`, `key_generation_required` when no active device row vs omitted when a row exists (mocks `UserDeviceModel`).

@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useMemo } from 'react';
 import { websocketService } from '@/services/websocket.service';
 import { useToast } from '@/contexts/ToastContext';
 import { useWebSocketDebug } from '@/contexts/WebSocketDebugContext';
+import { apiService } from '@/services/api.service';
 import {
   CodeBracketIcon,
   CircleStackIcon,
@@ -14,8 +15,12 @@ import {
   SignalIcon,
   ArrowDownTrayIcon,
   PaintBrushIcon,
-  CloudIcon
+  CloudIcon,
+  PresentationChartLineIcon,
+  CubeIcon,
+  CpuChipIcon
 } from '@heroicons/react/24/outline';
+import FirmwareManagementTab from '@/components/DevTools/FirmwareManagementTab';
 
 interface OperationStatus {
   type: 'success' | 'error' | 'loading' | 'idle';
@@ -60,7 +65,31 @@ interface DiagnosticsData {
   logWatchers: Record<string, number>;
 }
 
-const API_BASE_URL = (import.meta as any).env?.VITE_API_BASE_URL || 'http://localhost:3000';
+interface LogsWsPayload {
+  logType: string;
+  content: string;
+}
+
+const isLogsWsPayload = (value: unknown): value is LogsWsPayload => {
+  if (!value || typeof value !== 'object') return false;
+  const candidate = value as Record<string, unknown>;
+  return typeof candidate.logType === 'string' && typeof candidate.content === 'string';
+};
+
+const isDiagnosticsData = (value: unknown): value is DiagnosticsData => {
+  if (!value || typeof value !== 'object') return false;
+  const candidate = value as Record<string, unknown>;
+  return typeof candidate.totalClients === 'number'
+    && typeof candidate.totalSubscriptions === 'number'
+    && Array.isArray(candidate.clientSubscriptions)
+    && Array.isArray(candidate.allSubscriptions)
+    && typeof candidate.logWatchers === 'object'
+    && candidate.logWatchers !== null;
+};
+
+import { getApiBaseUrl } from '@/services/appConfig';
+import { formatTime } from '@/utils/datetime.utils';
+const API_BASE_URL = getApiBaseUrl();
 
 const FMSToolsTab: React.FC = () => {
   const { addToast } = useToast();
@@ -229,6 +258,250 @@ const FMSToolsTab: React.FC = () => {
   );
 };
 
+const BluFMSDemoTab: React.FC = () => {
+  const { addToast } = useToast();
+  const [isBluFMSEnabled, setIsBluFMSEnabled] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
+  const [isSaving, setIsSaving] = useState(false);
+
+  useEffect(() => {
+    const loadSetting = async () => {
+      try {
+        const response = await apiService.getSystemSettings();
+        if (response.success && response.settings['dev.blufms_demo_enabled'] !== undefined) {
+          setIsBluFMSEnabled(response.settings['dev.blufms_demo_enabled']);
+        }
+      } catch (error) {
+        console.error('Failed to load BluFMS demo setting:', error);
+      } finally {
+        setIsLoading(false);
+      }
+    };
+    loadSetting();
+  }, []);
+
+  const toggleBluFMSDemo = async () => {
+    setIsSaving(true);
+    try {
+      const newState = !isBluFMSEnabled;
+      const response = await apiService.updateSystemSettings({
+        'dev.blufms_demo_enabled': newState
+      });
+      if (response.success) {
+        setIsBluFMSEnabled(newState);
+        addToast({
+          type: 'success',
+          title: 'BluFMS Demo Mode Updated',
+          message: `BluFMS navigation ${newState ? 'enabled' : 'disabled'}. Refresh the page to see changes.`,
+        });
+      } else {
+        addToast({ type: 'error', title: 'Failed to update BluFMS demo mode' });
+      }
+    } catch (error) {
+      console.error('Failed to update BluFMS demo setting:', error);
+      addToast({ type: 'error', title: 'An error occurred while updating settings' });
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  return (
+    <div className="space-y-6">
+      {/* Header */}
+      <div className="bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700 p-6">
+        <h2 className="text-xl font-semibold text-gray-900 dark:text-white mb-4">
+          BluFMS Demo Mode
+        </h2>
+        <p className="text-gray-600 dark:text-gray-400">
+          Enable a demo view of BluFMS functionality in the navigation panel. This is for demonstration purposes only and contains placeholder content.
+        </p>
+      </div>
+
+      {/* BluFMS Demo Toggle */}
+      <div className="bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700 p-6">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center space-x-3">
+            <PresentationChartLineIcon className="h-8 w-8 text-primary-500" />
+            <div>
+              <h3 className="text-lg font-medium text-gray-900 dark:text-white">
+                Enable BluFMS Navigation
+              </h3>
+              <p className="text-sm text-gray-600 dark:text-gray-400">
+                Show BluFMS section in the navigation panel with demo content
+              </p>
+            </div>
+          </div>
+          <div className="flex items-center space-x-4">
+            <span className={`px-3 py-1 rounded-full text-xs font-medium ${
+              isBluFMSEnabled
+                ? 'bg-green-100 text-green-800 dark:bg-green-900/20 dark:text-green-400'
+                : 'bg-gray-100 text-gray-800 dark:bg-gray-900/20 dark:text-gray-400'
+            }`}>
+              {isBluFMSEnabled ? 'Enabled' : 'Disabled'}
+            </span>
+            <button
+              onClick={toggleBluFMSDemo}
+              disabled={isLoading || isSaving}
+              className={`relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 disabled:opacity-50 ${
+                isBluFMSEnabled ? 'bg-primary-600' : 'bg-gray-200 dark:bg-gray-700'
+              }`}
+            >
+              <span
+                className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
+                  isBluFMSEnabled ? 'translate-x-5' : 'translate-x-0'
+                }`}
+              />
+            </button>
+          </div>
+        </div>
+
+        <div className="mt-4 p-4 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg">
+          <div className="flex">
+            <div className="flex-shrink-0">
+              <CheckCircleIcon className="h-5 w-5 text-blue-400" />
+            </div>
+            <div className="ml-3">
+              <h3 className="text-sm font-medium text-blue-800 dark:text-blue-300">
+                What this does
+              </h3>
+              <div className="mt-2 text-sm text-blue-700 dark:text-blue-200">
+                <ul className="list-disc pl-5 space-y-1">
+                  <li>Transforms the navigation panel into collapsible "BluLok" and "BluFMS" sections</li>
+                  <li>Adds a BluFMS Dashboard page with placeholder content</li>
+                  <li>All existing BluLok functionality remains unchanged</li>
+                  <li>BluFMS content is demo-only and does not affect real functionality</li>
+                </ul>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+const BluDesignTab: React.FC = () => {
+  const { addToast } = useToast();
+  const [isBluDesignEnabled, setIsBluDesignEnabled] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
+  const [isSaving, setIsSaving] = useState(false);
+
+  useEffect(() => {
+    const loadSetting = async () => {
+      try {
+        const response = await apiService.getSystemSettings();
+        if (response.success && response.settings['dev.bludesign_enabled'] !== undefined) {
+          setIsBluDesignEnabled(response.settings['dev.bludesign_enabled']);
+        }
+      } catch (error) {
+        console.error('Failed to load BluDesign setting:', error);
+      } finally {
+        setIsLoading(false);
+      }
+    };
+    loadSetting();
+  }, []);
+
+  const toggleBluDesign = async () => {
+    setIsSaving(true);
+    try {
+      const newState = !isBluDesignEnabled;
+      const response = await apiService.updateSystemSettings({
+        'dev.bludesign_enabled': newState
+      });
+      if (response.success) {
+        setIsBluDesignEnabled(newState);
+        addToast({
+          type: 'success',
+          title: 'BluDesign Updated',
+          message: `BluDesign navigation ${newState ? 'enabled' : 'disabled'}. Refresh the page to see changes.`,
+        });
+      } else {
+        addToast({ type: 'error', title: 'Failed to update BluDesign' });
+      }
+    } catch (error) {
+      console.error('Failed to update BluDesign setting:', error);
+      addToast({ type: 'error', title: 'An error occurred while updating settings' });
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  return (
+    <div className="space-y-6">
+      {/* Header */}
+      <div className="bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700 p-6">
+        <h2 className="text-xl font-semibold text-gray-900 dark:text-white mb-4">
+          BluDesign
+        </h2>
+        <p className="text-gray-600 dark:text-gray-400">
+          Enable BluDesign functionality in the navigation panel. BluDesign provides a full-featured 3D editing system for creating interactive 3D renders of storage facilities.
+        </p>
+      </div>
+
+      {/* BluDesign Toggle */}
+      <div className="bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700 p-6">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center space-x-3">
+            <CubeIcon className="h-8 w-8 text-primary-500" />
+            <div>
+              <h3 className="text-lg font-medium text-gray-900 dark:text-white">
+                Enable BluDesign Navigation
+              </h3>
+              <p className="text-sm text-gray-600 dark:text-gray-400">
+                Show BluDesign section in the navigation panel
+              </p>
+            </div>
+          </div>
+          <div className="flex items-center space-x-4">
+            <span className={`px-3 py-1 rounded-full text-xs font-medium ${
+              isBluDesignEnabled
+                ? 'bg-green-100 text-green-800 dark:bg-green-900/20 dark:text-green-400'
+                : 'bg-gray-100 text-gray-800 dark:bg-gray-900/20 dark:text-gray-400'
+            }`}>
+              {isBluDesignEnabled ? 'Enabled' : 'Disabled'}
+            </span>
+            <button
+              onClick={toggleBluDesign}
+              disabled={isLoading || isSaving}
+              className={`relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 disabled:opacity-50 ${
+                isBluDesignEnabled ? 'bg-primary-600' : 'bg-gray-200 dark:bg-gray-700'
+              }`}
+            >
+              <span
+                className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
+                  isBluDesignEnabled ? 'translate-x-5' : 'translate-x-0'
+                }`}
+              />
+            </button>
+          </div>
+        </div>
+
+        <div className="mt-4 p-4 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg">
+          <div className="flex">
+            <div className="flex-shrink-0">
+              <CheckCircleIcon className="h-5 w-5 text-blue-400" />
+            </div>
+            <div className="ml-3">
+              <h3 className="text-sm font-medium text-blue-800 dark:text-blue-300">
+                What this does
+              </h3>
+              <div className="mt-2 text-sm text-blue-700 dark:text-blue-200">
+                <ul className="list-disc pl-5 space-y-1">
+                  <li>Transforms the navigation panel into collapsible sections (BluLok, BluFMS, and BluDesign)</li>
+                  <li>Adds BluDesign pages: View (catalog), Build (builder), and Assets (textures/skinning)</li>
+                  <li>All existing BluLok functionality remains unchanged</li>
+                  <li>If either BluFMS or BluDesign is enabled, navigation converts to expandable sections</li>
+                </ul>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 const UIDebugTab: React.FC = () => {
   const { addToast, clearAllToasts } = useToast();
 
@@ -355,10 +628,15 @@ const UIDebugTab: React.FC = () => {
   );
 };
 
+type DevTabs = 'database' | 'logs' | 'websocket' | 'ui-debug' | 'fms' | 'blufms-demo' | 'bludesign' | 'firmware' | 'deployment';
+
 export default function DeveloperToolsPage() {
-  const [activeTab, setActiveTab] = useState<'database' | 'logs' | 'websocket' | 'ui-debug' | 'fms'>('database');
+  const [activeTab, setActiveTab] = useState<DevTabs>('database');
   const [seedStatus, setSeedStatus] = useState<OperationStatus>({ type: 'idle', message: '' });
   const [resetStatus, setResetStatus] = useState<OperationStatus>({ type: 'idle', message: '' });
+  const [backfillStatus, setBackfillStatus] = useState<OperationStatus>({ type: 'idle', message: '' });
+  const [backfillDays, setBackfillDays] = useState(90);
+  const [backfillDryRun, setBackfillDryRun] = useState(true);
   const { isDebugEnabled, toggleDebug } = useWebSocketDebug();
   
   // Log viewer state
@@ -378,6 +656,18 @@ export default function DeveloperToolsPage() {
   const [wsStats, setWsStats] = useState<WebSocketStats | null>(null);
   const [diagnostics, setDiagnostics] = useState<DiagnosticsData | null>(null);
   const [wsLoading, setWsLoading] = useState(false);
+
+  // Deployment info
+  const [backendInfo, setBackendInfo] = useState<any | null>(null);
+  const appConfig = (globalThis as typeof globalThis & {
+    window?: { __APP_CONFIG__?: { frontendVersion?: string; frontendCommit?: string; frontendBuildUrl?: string } };
+  }).window?.__APP_CONFIG__;
+  const frontendInfo = {
+    version: appConfig?.frontendVersion,
+    commit: appConfig?.frontendCommit,
+    commitShort: appConfig?.frontendCommit?.slice(0, 7),
+    buildUrl: appConfig?.frontendBuildUrl,
+  };
   const [expandedLogs, setExpandedLogs] = useState<Set<string>>(new Set());
 
   // Load logs when switching to logs tab for the first time
@@ -404,7 +694,7 @@ export default function DeveloperToolsPage() {
 
     const unsubscribeLogs = websocketService.onMessage('logs', (data) => {
       console.log('📋 Logs: Received WebSocket log data:', data);
-      if (data.logType && data.content) {
+      if (isLogsWsPayload(data)) {
         console.log('📋 Logs: Parsing content:', data.content.substring(0, 200) + '...');
         const logEntries = parseMultilineLogs(data.content, data.logType);
         console.log('📋 Logs: Parsed entries:', logEntries.length);
@@ -412,7 +702,9 @@ export default function DeveloperToolsPage() {
       }
     });
 
-    const unsubscribeDiagnostics = websocketService.onMessage('diagnostics', setDiagnostics);
+    const unsubscribeDiagnostics = websocketService.onMessage('diagnostics', (data) => {
+      setDiagnostics(isDiagnosticsData(data) ? data : null);
+    });
 
     setWsConnected(websocketService.isWebSocketConnected());
 
@@ -436,6 +728,22 @@ export default function DeveloperToolsPage() {
     };
   }, [activeTab]);
 
+  // Load backend health when deployment tab shown
+  useEffect(() => {
+    const loadBackendInfo = async () => {
+      try {
+        const resp = await fetch(`${API_BASE_URL}/health`);
+        const json = await resp.json();
+        setBackendInfo(json);
+      } catch (_e) {
+        setBackendInfo(null);
+      }
+    };
+    if (activeTab === 'deployment') {
+      loadBackendInfo();
+    }
+  }, [activeTab]);
+
   // Auto-scroll when new logs arrive (if enabled)
   useEffect(() => {
     if (autoScroll && consoleRef.current) {
@@ -454,7 +762,7 @@ export default function DeveloperToolsPage() {
       const timestamp = parsed.timestamp || new Date().toISOString();
       const level = parsed.level || 'info';
       let message = parsed.message || '';
-      let stack = parsed.stack;
+      const stack = parsed.stack;
       
       // If no message but we have other properties, try to construct a meaningful message
       if (!message && parsed.error) {
@@ -797,6 +1105,106 @@ export default function DeveloperToolsPage() {
     }
   };
 
+  const handleAccessSessionBackfill = async () => {
+    const days = Math.min(365, Math.max(1, Number(backfillDays) || 90));
+    const label = backfillDryRun ? 'dry-run' : 'backfill';
+    if (
+      !backfillDryRun
+      && !window.confirm(
+        `Correlate the last ${days} days of unlinked activity_logs into access_sessions?\n\n`
+        + 'Safe to re-run: rows that already have access_session_id are skipped.\n'
+        + 'Large windows run in short chunks so Cloud Run does not kill the request.',
+      )
+    ) {
+      return;
+    }
+
+    setBackfillStatus({ type: 'loading', message: `Running access session ${label}…` });
+    try {
+      let cursor: { afterOccurredAt: string; afterId: string } | null = null;
+      let chunk = 0;
+      let totalUnlinked = 0;
+      let totalCreated = 0;
+      let totalUpdated = 0;
+      let totalLinks = 0;
+      let totalLocksAttached = 0;
+      let totalLocksSynthesized = 0;
+      let totalSkippedErrors = 0;
+
+      for (;;) {
+        chunk += 1;
+        setBackfillStatus({
+          type: 'loading',
+          message:
+            `Running access session ${label}… chunk ${chunk}`
+            + (totalCreated || totalLinks
+              ? ` (${totalCreated} sessions, ${totalLinks} links so far)`
+              : ''),
+        });
+
+        const data = await apiService.backfillAccessSessions({
+          days,
+          dryRun: backfillDryRun,
+          cursor,
+        });
+
+        if (!data.success || !data.results) {
+          setBackfillStatus({
+            type: 'error',
+            message: data.error || data.message || 'Failed to backfill access sessions.',
+          });
+          return;
+        }
+
+        const r = data.results;
+        if (r.skippedBusy) {
+          setBackfillStatus({
+            type: 'error',
+            message: 'Backfill already running on another request. Try again in a moment.',
+          });
+          return;
+        }
+
+        totalUnlinked += r.unlinkedActivityRows;
+        totalCreated += r.sessionsCreated;
+        totalUpdated += r.sessionsUpdated || 0;
+        totalLinks += r.activityLinks;
+        totalLocksAttached += r.locksAttached || 0;
+        totalLocksSynthesized += r.locksSynthesized || 0;
+        totalSkippedErrors += r.skippedErrors || 0;
+
+        if (r.done) {
+          setBackfillStatus({
+            type: 'success',
+            message:
+              `${backfillDryRun ? 'Dry-run' : 'Backfill'} complete (${chunk} chunk${chunk === 1 ? '' : 's'}): `
+              + `${totalUnlinked} rows scanned → ${totalCreated} sessions`
+              + (totalUpdated ? `, ${totalUpdated} updated` : '')
+              + `, ${totalLinks} links`
+              + (totalLocksAttached || totalLocksSynthesized
+                ? ` (locks attached ${totalLocksAttached}, synthesized ${totalLocksSynthesized})`
+                : '')
+              + (totalSkippedErrors ? `, ${totalSkippedErrors} errors skipped` : '')
+              + ` (${days} days).`,
+          });
+          return;
+        }
+
+        if (!r.cursor) {
+          setBackfillStatus({
+            type: 'error',
+            message: 'Backfill stopped early without a resume cursor. Check backend logs.',
+          });
+          return;
+        }
+        cursor = r.cursor;
+      }
+    } catch (error) {
+      console.error('Access session backfill error:', error);
+      setBackfillStatus({ type: 'error', message: 'An unexpected error occurred.' });
+    }
+  };
+
   // Helper functions for styling
   const getStatusIcon = (status: OperationStatus) => {
     switch (status.type) {
@@ -843,7 +1251,7 @@ export default function DeveloperToolsPage() {
   };
 
   const getFilterButtonClass = (isActive: boolean, type: 'level' | 'source', value: string) => {
-    const colorMaps = {
+    const colorMaps: Record<'level' | 'source', Record<string, string>> = {
       level: {
         error: 'bg-red-50 text-red-700 dark:bg-red-900/20 dark:text-red-300 border border-red-200 dark:border-red-700 shadow-sm',
         warn: 'bg-yellow-50 text-yellow-700 dark:bg-yellow-900/20 dark:text-yellow-300 border border-yellow-200 dark:border-yellow-700 shadow-sm',
@@ -858,7 +1266,6 @@ export default function DeveloperToolsPage() {
 
     const inactiveClass = 'bg-gray-100 text-gray-600 hover:bg-gray-200 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600';
     
-    // @ts-ignore
     return isActive ? (colorMaps[type][value] || inactiveClass) : inactiveClass;
   };
 
@@ -887,7 +1294,11 @@ export default function DeveloperToolsPage() {
                 ['logs', DocumentTextIcon, 'Backend Logs'],
                 ['websocket', WifiIcon, 'WebSocket'],
                 ['fms', CloudIcon, 'FMS'],
-                ['ui-debug', PaintBrushIcon, 'UI Debug']
+                ['ui-debug', PaintBrushIcon, 'UI Debug'],
+                ['blufms-demo', PresentationChartLineIcon, 'BluFMS Demo'],
+                ['bludesign', CubeIcon, 'BluDesign'],
+                ['firmware', CpuChipIcon, 'Firmware'],
+                ['deployment', DocumentTextIcon, 'Deployment']
               ] as const).map(([tab, Icon, label]) => (
                 <button
                   key={tab}
@@ -975,6 +1386,59 @@ export default function DeveloperToolsPage() {
               )}
             </div>
               </div>
+
+          <div className="bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700 p-6 md:col-span-2">
+            <div className="flex items-center space-x-3 mb-4">
+              <DocumentTextIcon className="h-6 w-6 text-primary-600" />
+              <h2 className="text-xl font-semibold text-gray-900 dark:text-white">
+                Backfill Access Sessions
+              </h2>
+            </div>
+            <p className="text-gray-600 dark:text-gray-400 mb-4">
+              Correlate historical <code className="text-sm">activity_logs</code> into{' '}
+              <code className="text-sm">access_sessions</code> so Access History shows one row per
+              logical access. Safe to re-run — already-linked rows are skipped. Prefer a dry-run first.
+            </p>
+            <div className="flex flex-col sm:flex-row sm:items-end gap-4 mb-4">
+              <label className="block">
+                <span className="text-sm font-medium text-gray-700 dark:text-gray-300">Days</span>
+                <input
+                  type="number"
+                  min={1}
+                  max={365}
+                  value={backfillDays}
+                  onChange={(e) => setBackfillDays(Number(e.target.value))}
+                  className="mt-1 block w-28 rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white px-3 py-2 text-sm"
+                />
+              </label>
+              <label className="inline-flex items-center gap-2 cursor-pointer pb-2">
+                <input
+                  type="checkbox"
+                  checked={backfillDryRun}
+                  onChange={(e) => setBackfillDryRun(e.target.checked)}
+                  className="rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+                />
+                <span className="text-sm text-gray-700 dark:text-gray-300">Dry-run only (no writes)</span>
+              </label>
+              <button
+                type="button"
+                onClick={handleAccessSessionBackfill}
+                disabled={backfillStatus.type === 'loading'}
+                className="sm:ml-auto bg-primary-600 hover:bg-primary-700 disabled:bg-primary-400 text-white font-medium py-2 px-4 rounded-md transition-colors duration-200 flex items-center justify-center space-x-2"
+              >
+                {backfillStatus.type === 'loading' && (
+                  <ArrowPathIcon className="h-4 w-4 animate-spin" />
+                )}
+                <span>{backfillDryRun ? 'Run Dry-Run' : 'Run Backfill'}</span>
+              </button>
+            </div>
+            {backfillStatus.message && (
+              <div className={`p-3 rounded-md border flex items-center space-x-2 ${getStatusColor(backfillStatus)}`}>
+                {getStatusIcon(backfillStatus)}
+                <span className="text-sm font-medium">{backfillStatus.message}</span>
+              </div>
+            )}
+          </div>
             </div>
           </div>
         )}
@@ -1124,7 +1588,7 @@ export default function DeveloperToolsPage() {
                         <div key={log.id} className={`py-1 px-2 rounded ${getLogLevelBg(log.level)}`}>
                           <div className="flex items-start space-x-3">
                             <span className={`text-xs font-bold ${getLogLevelColor(log.level)} flex-shrink-0 w-12`}>{log.level.toUpperCase()}</span>
-                            <span className="text-gray-400 text-xs flex-shrink-0 w-32">{new Date(log.timestamp).toLocaleTimeString()}</span>
+                            <span className="text-gray-400 text-xs flex-shrink-0 w-32">{formatTime(log.timestamp)}</span>
                             <span className={`text-xs font-medium ${getSourceColor(log.source)} flex-shrink-0 w-20`}>{log.source.replace('logs/', '')}</span>
                             <div className="text-gray-300 flex-1 min-w-0 break-words whitespace-pre-wrap">
                               {isExpanded || !shouldShowExpandButton ? (
@@ -1164,6 +1628,30 @@ export default function DeveloperToolsPage() {
           </div>
         )}
         
+        {activeTab === 'deployment' && (
+          <div className="space-y-6">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6">
+                <h2 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">Frontend</h2>
+                <div className="space-y-2 text-sm">
+                  <div className="flex justify-between"><span className="text-gray-600 dark:text-gray-400">Version:</span><span className="font-mono">{frontendInfo.version || 'unknown'}</span></div>
+                  <div className="flex justify-between"><span className="text-gray-600 dark:text-gray-400">Commit:</span><span className="font-mono">{frontendInfo.commitShort || frontendInfo.commit || 'unknown'}</span></div>
+                  <div className="flex justify-between"><span className="text-gray-600 dark:text-gray-400">Build:</span><span className="font-mono truncate max-w-[240px]">{frontendInfo.buildUrl ? <a className="text-primary-600 dark:text-primary-400 underline" href={frontendInfo.buildUrl} target="_blank" rel="noreferrer">Open</a> : 'n/a'}</span></div>
+                </div>
+              </div>
+              <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6">
+                <h2 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">Backend</h2>
+                <div className="space-y-2 text-sm">
+                  <div className="flex justify-between"><span className="text-gray-600 dark:text-gray-400">Version:</span><span className="font-mono">{backendInfo?.version || 'unknown'}</span></div>
+                  <div className="flex justify-between"><span className="text-gray-600 dark:text-gray-400">Commit:</span><span className="font-mono">{backendInfo?.commitShort || backendInfo?.commitSha || 'unknown'}</span></div>
+                  <div className="flex justify-between"><span className="text-gray-600 dark:text-gray-400">Build:</span><span className="font-mono truncate max-w-[240px]">{backendInfo?.buildUrl ? <a className="text-primary-600 dark:text-primary-400 underline" href={backendInfo.buildUrl} target="_blank" rel="noreferrer">Open</a> : 'n/a'}</span></div>
+                  <div className="flex justify-between"><span className="text-gray-600 dark:text-gray-400">Uptime:</span><span className="font-mono">{backendInfo?.uptime != null ? `${Math.round(backendInfo.uptime)}s` : 'n/a'}</span></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
         {activeTab === 'websocket' && (
           <div className="space-y-6">
             <div className="bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700 p-6">
@@ -1259,6 +1747,18 @@ export default function DeveloperToolsPage() {
 
         {activeTab === 'fms' && (
           <FMSToolsTab />
+        )}
+
+        {activeTab === 'blufms-demo' && (
+          <BluFMSDemoTab />
+        )}
+
+        {activeTab === 'bludesign' && (
+          <BluDesignTab />
+        )}
+
+        {activeTab === 'firmware' && (
+          <FirmwareManagementTab />
         )}
 
         {activeTab === 'ui-debug' && (

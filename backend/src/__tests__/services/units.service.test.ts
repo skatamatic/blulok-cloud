@@ -2,17 +2,30 @@ import { UnitsService } from '@/services/units.service';
 import { UserRole } from '@/types/auth.types';
 import { createMockTestData, MockTestData } from '@/__tests__/utils/mock-test-helpers';
 import { UnitModel } from '@/models/unit.model';
+import { DeviceGroupService } from '@/services/device-group.service';
 
 // Mock the UnitModel
 jest.mock('@/models/unit.model');
+
+jest.mock('@/services/device-group.service', () => ({
+  DeviceGroupService: {
+    getInstance: jest.fn(),
+  },
+}));
 
 describe('UnitsService', () => {
   let unitsService: UnitsService;
   let testData: MockTestData;
   let mockUnitModel: jest.Mocked<UnitModel>;
+  let mockAssignUnitToDefaultGroup: jest.Mock;
 
   beforeEach(async () => {
     testData = createMockTestData();
+
+    mockAssignUnitToDefaultGroup = jest.fn().mockResolvedValue({ added: true });
+    (DeviceGroupService.getInstance as jest.Mock).mockReturnValue({
+      assignUnitToDefaultGroup: mockAssignUnitToDefaultGroup,
+    });
     
     // Create a mock UnitModel
     mockUnitModel = {
@@ -21,6 +34,7 @@ describe('UnitsService', () => {
       findById: jest.fn(),
       lockUnit: jest.fn(),
       getUnitAssignmentsForUser: jest.fn(),
+      createUnit: jest.fn(),
     } as any;
 
     // Mock the UnitModel constructor
@@ -487,6 +501,49 @@ describe('UnitsService', () => {
       const instance1 = UnitsService.getInstance();
       const instance2 = UnitsService.getInstance();
       expect(instance1).toBe(instance2);
+    });
+  });
+
+  describe('createUnit', () => {
+    it('assigns new unit to default access group after create', async () => {
+      const createdUnit = {
+        id: 'unit-new',
+        facility_id: testData.facilities.facility1.id,
+        unit_number: 'A-101',
+      };
+      mockUnitModel.createUnit.mockResolvedValue(createdUnit);
+
+      const result = await unitsService.createUnit(
+        { facility_id: createdUnit.facility_id, unit_number: createdUnit.unit_number },
+        testData.users.admin.id,
+        UserRole.ADMIN,
+      );
+
+      expect(result).toEqual(createdUnit);
+      expect(mockUnitModel.createUnit).toHaveBeenCalled();
+      expect(mockAssignUnitToDefaultGroup).toHaveBeenCalledWith(
+        String(createdUnit.facility_id),
+        String(createdUnit.id),
+      );
+    });
+
+    it('returns created unit when default group assignment fails', async () => {
+      const createdUnit = {
+        id: 'unit-new',
+        facility_id: testData.facilities.facility1.id,
+        unit_number: 'A-102',
+      };
+      mockUnitModel.createUnit.mockResolvedValue(createdUnit);
+      mockAssignUnitToDefaultGroup.mockRejectedValue(new Error('group unavailable'));
+
+      const result = await unitsService.createUnit(
+        { facility_id: createdUnit.facility_id, unit_number: createdUnit.unit_number },
+        testData.users.admin.id,
+        UserRole.ADMIN,
+      );
+
+      expect(result).toEqual(createdUnit);
+      expect(mockAssignUnitToDefaultGroup).toHaveBeenCalled();
     });
   });
 });

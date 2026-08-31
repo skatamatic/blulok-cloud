@@ -1,6 +1,7 @@
 import rateLimit from 'express-rate-limit';
 import type { Request } from 'express';
 import { config } from '@/config/environment';
+import { RateLimitBypassService } from '@/services/rate-limit-bypass.service';
 
 function isTestEnv(): boolean {
   return config.nodeEnv === 'test';
@@ -17,7 +18,7 @@ function makeLimiter(windowMs: number, max: number) {
     // No-op middleware in test to avoid flakiness
     return (_req: Request, _res: any, next: any) => next();
   }
-  return rateLimit({
+  const limiter = rateLimit({
     windowMs,
     max,
     standardHeaders: true,
@@ -25,6 +26,13 @@ function makeLimiter(windowMs: number, max: number) {
     keyGenerator: userIpKeyGenerator,
     message: 'Too many requests, please try again later.',
   });
+  const bypassSvc = RateLimitBypassService.getInstance();
+  return (req: Request, res: any, next: any) => {
+    if (bypassSvc.shouldBypass(req)) {
+      return next();
+    }
+    return limiter(req, res, next);
+  };
 }
 
 // Industry-leaning defaults

@@ -10,7 +10,7 @@ import { ModelHooksService } from '../services/model-hooks.service';
  *
  * Security Considerations:
  * - Passwords are stored as bcrypt hashes only
- * - Email addresses must be unique across the system
+ * - Login uniqueness is enforced on login_identifier; email/phone may be shared
  * - Role-based access control governs all operations
  * - Account status (active/inactive) controls authentication
  * - Audit logging captures all user lifecycle events
@@ -34,6 +34,16 @@ export interface User {
   role: UserRole;
   /** Whether the user account is active and can authenticate */
   is_active: boolean;
+  /**
+   * Presentation-only: facility admins may use a simplified Cloud UI.
+   * Not an authorization boundary — APIs remain role-scoped.
+   */
+  simplified_ui?: boolean;
+  /**
+   * Non-loginable FMS tenant created without email/phone.
+   * FMS identity is on fms_entity_mappings; login_identifier uses a reserved prefix.
+   */
+  is_placeholder?: boolean;
   /** Whether the user must set a new password on next login */
   requires_password_reset?: boolean;
   /** Timestamp of user's last successful login */
@@ -74,7 +84,7 @@ export class UserModel extends BaseModel {
 
   /**
    * Find user by email address.
-   * Used during authentication to locate user accounts.
+   * Contact lookup only — authentication must use findByLoginIdentifier.
    *
    * @param email - User's email address
    * @returns User object if found, undefined otherwise
@@ -95,6 +105,96 @@ export class UserModel extends BaseModel {
    */
   public static async findByPhone(phoneE164: string): Promise<User | undefined> {
     return this.query().where('phone_number', phoneE164).first() as Promise<User | undefined>;
+  }
+
+  public static async findAllByEmail(email: string): Promise<User[]> {
+    return this.query().where('email', email.toLowerCase()) as Promise<User[]>;
+  }
+
+  public static async findAllByPhone(phoneE164: string): Promise<User[]> {
+    return this.query().where('phone_number', phoneE164) as Promise<User[]>;
+  }
+
+  public static async findAllByLoginIdentifiers(identifiers: string[]): Promise<User[]> {
+    const keys = [...new Set(identifiers.map((value) => value.trim().toLowerCase()).filter(Boolean))];
+    if (keys.length === 0) return [];
+    return this.query().whereIn('login_identifier', keys) as Promise<User[]>;
+  }
+
+  /**
+   * Find user by email OR phone number in a single query.
+   * More efficient than fetching all users and scanning in memory.
+   * 
+   * @param email - Optional email to search
+   * @param phoneE164 - Optional normalized phone number to search
+   * @returns User if found by either identifier, undefined otherwise
+   */
+  public static async findByEmailOrPhone(
+    email: string | null | undefined,
+    phoneE164: string | null | undefined
+  ): Promise<User | undefined> {
+    if (!email && !phoneE164) {
+      return undefined;
+    }
+
+    const query = this.query();
+    
+    if (email && phoneE164) {
+      // Search for either email OR phone
+      query.where(function(this: any) {
+        this.where('email', email.toLowerCase()).orWhere('phone_number', phoneE164);
+      });
+    } else if (email) {
+      query.where('email', email.toLowerCase());
+    } else if (phoneE164) {
+      query.where('phone_number', phoneE164);
+    }
+
+    return query.first() as Promise<User | undefined>;
+  }
+
+  /**
+   * Find users by role with minimal columns for efficient FMS comparison.
+   * Prevents memory bloat by only selecting identity-related columns.
+   * 
+   * @param role - User role to filter by
+   * @returns Array of users with only essential identity fields
+   */
+  public static async findByRoleMinimal(role: UserRole): Promise<Pick<User, 'id' | 'email' | 'phone_number' | 'first_name' | 'last_name' | 'login_identifier'>[]> {
+    return this.query()
+      .where('role', role)
+      .select('id', 'email', 'phone_number', 'first_name', 'last_name', 'login_identifier') as any;
+  }
+
+  /**
+   * Facility-scoped version of findByRoleMinimal.
+   * Only returns users associated with the given facility, avoiding a full-table scan.
+   */
+  public static async findByRoleMinimalForFacility(
+    role: UserRole,
+    facilityId: string,
+  ): Promise<
+    Pick<User, 'id' | 'email' | 'phone_number' | 'first_name' | 'last_name' | 'login_identifier' | 'is_active' | 'is_placeholder'>[]
+  > {
+    return this.db('users')
+      .join('user_facility_associations', 'users.id', 'user_facility_associations.user_id')
+      .where('users.role', role)
+      .where('user_facility_associations.facility_id', facilityId)
+      .select(
+        'users.id',
+        'users.email',
+        'users.phone_number',
+        'users.first_name',
+        'users.last_name',
+        'users.login_identifier',
+        'users.is_active',
+        'users.is_placeholder',
+      );
+  }
+
+  public static async findByIds(ids: string[]): Promise<User[]> {
+    if (ids.length === 0) return [];
+    return this.query().whereIn('id', ids) as Promise<User[]>;
   }
 
   /**
@@ -129,6 +229,18 @@ export class UserModel extends BaseModel {
       .where('id', id)
       .update({
         last_login: this.db.fn.now(),
+        updated_at: this.db.fn.now(),
+      });
+  }
+
+  /**
+   * Set or clear phone number (nullable). Uses direct update so `null` clears the column.
+   */
+  public static async setPhoneNumber(id: string, phoneE164: string | null): Promise<void> {
+    await this.query()
+      .where('id', id)
+      .update({
+        phone_number: phoneE164,
         updated_at: this.db.fn.now(),
       });
   }

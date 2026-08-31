@@ -1,4 +1,6 @@
 import { TimeSyncService } from '@/services/time-sync.service';
+import { Ed25519Service } from '@/services/crypto/ed25519.service';
+import { TimeSyncJwtPayload } from '@/types/gateway.types';
 
 // Mock DB persistence so unit test doesn't hit real/mocked DB; we still exercise logic
 jest.mock('@/services/database.service', () => ({
@@ -23,9 +25,42 @@ describe('TimeSyncService', () => {
   it('builds a signed time sync packet with non-decreasing ts', async () => {
     const first = await TimeSyncService.buildSecureTimeSync(1000);
     const second = await TimeSyncService.buildSecureTimeSync(900);
-    expect(first.timeSyncPacket[0].ts).toBeGreaterThanOrEqual(1000);
-    expect(second.timeSyncPacket[0].ts).toBeGreaterThanOrEqual(first.timeSyncPacket[0].ts);
-    expect(typeof first.timeSyncPacket[1]).toBe('string');
+
+    expect(typeof first.timeSyncJwt).toBe('string');
+    expect(typeof second.timeSyncJwt).toBe('string');
+
+    const firstClaims = await Ed25519Service.verifyJwt(first.timeSyncJwt);
+    const secondClaims = await Ed25519Service.verifyJwt(second.timeSyncJwt);
+
+    expect(firstClaims.cmd_type).toBe('SECURE_TIME_SYNC');
+    expect(secondClaims.cmd_type).toBe('SECURE_TIME_SYNC');
+    expect(firstClaims.ts).toBeGreaterThanOrEqual(1000);
+    expect(secondClaims.ts).toBeGreaterThanOrEqual(firstClaims.ts);
+  });
+
+  it('buildSecureTimeSync() with lock_id includes it in JWT payload', async () => {
+    const lockId = 'lock-123';
+    const result = await TimeSyncService.buildSecureTimeSync(undefined, lockId);
+
+    expect(typeof result.timeSyncJwt).toBe('string');
+
+    const claims = await Ed25519Service.verifyJwt(result.timeSyncJwt) as TimeSyncJwtPayload;
+    expect(claims.cmd_type).toBe('SECURE_TIME_SYNC');
+    expect(claims.iss).toBe('BluCloud:Root');
+    expect(claims.lock_id).toBe(lockId);
+    expect(typeof claims.ts).toBe('number');
+  });
+
+  it('buildSecureTimeSync() without lock_id still works (backward compatibility)', async () => {
+    const result = await TimeSyncService.buildSecureTimeSync();
+
+    expect(typeof result.timeSyncJwt).toBe('string');
+
+    const claims = await Ed25519Service.verifyJwt(result.timeSyncJwt) as TimeSyncJwtPayload;
+    expect(claims.cmd_type).toBe('SECURE_TIME_SYNC');
+    expect(claims.iss).toBe('BluCloud:Root');
+    expect(claims.lock_id).toBeUndefined();
+    expect(typeof claims.ts).toBe('number');
   });
 });
 

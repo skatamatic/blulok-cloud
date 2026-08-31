@@ -2,6 +2,7 @@ import crypto from 'crypto';
 import bcrypt from 'bcrypt';
 import { DatabaseService } from '@/services/database.service';
 import { NotificationService } from '@/services/notifications/notification.service';
+import { OtpKind } from '@/types/notification.types';
 import { logger } from '@/utils/logger';
 
 const OTP_TTL_MINUTES = parseInt(process.env.OTP_TTL_MINUTES || '10', 10);
@@ -29,27 +30,28 @@ export class OTPService {
     delivery: OtpDeliveryMethod;
     toPhone?: string;
     toEmail?: string;
+    kind?: OtpKind;
     templateId?: string;
   }): Promise<{ expiresAt: Date }> {
     const code = OTPService.generateCode();
     const codeHash = await bcrypt.hash(code, SALT_ROUNDS);
-    const now = new Date();
-    const expiresAt = new Date(now.getTime() + OTP_TTL_MINUTES * 60 * 1000);
+    const expiresAt = new Date(Date.now() + OTP_TTL_MINUTES * 60 * 1000);
 
     await this.db('user_otps').insert({
       user_id: params.userId,
       invite_id: params.inviteId || null,
       code_hash: codeHash,
-      expires_at: expiresAt,
+      // Use DB clock to avoid app/DB timezone skew making OTPs immediately expired.
+      expires_at: this.db.raw('DATE_ADD(UTC_TIMESTAMP(), INTERVAL ? MINUTE)', [OTP_TTL_MINUTES]),
       attempts: 0,
       delivery_method: params.delivery,
-      last_sent_at: now,
+      last_sent_at: this.db.raw('UTC_TIMESTAMP()'),
     });
 
     if (params.delivery === 'sms' && params.toPhone) {
-      await this.notifications.sendOtp({ toPhone: params.toPhone, code, templateId: params.templateId });
+      await this.notifications.sendOtp({ toPhone: params.toPhone, code, kind: params.kind, templateId: params.templateId });
     } else if (params.delivery === 'email' && params.toEmail) {
-      await this.notifications.sendOtp({ toEmail: params.toEmail, code, templateId: params.templateId });
+      await this.notifications.sendOtp({ toEmail: params.toEmail, code, kind: params.kind, templateId: params.templateId });
     } else {
       throw new Error('Invalid OTP delivery parameters');
     }
@@ -94,6 +96,35 @@ export class OTPService {
     await new Promise((r) => setTimeout(r, 150));
     logger.warn(`OTP verification failed for user ${params.userId}${params.inviteId ? ` invite ${params.inviteId}` : ''}`);
     return { valid: false };
+  }
+
+  /**
+   * Generate and persist an OTP record without sending a notification.
+   * Returns the plaintext code so the caller can include it in their own notification.
+   * Used for the single invite+OTP notification flow.
+   */
+  public async createOtpRecord(params: {
+    userId: string;
+    inviteId?: string | null;
+    delivery: OtpDeliveryMethod;
+  }): Promise<{ code: string; expiresAt: Date }> {
+    const code = OTPService.generateCode();
+    const codeHash = await bcrypt.hash(code, SALT_ROUNDS);
+    const expiresAt = new Date(Date.now() + OTP_TTL_MINUTES * 60 * 1000);
+
+    await this.db('user_otps').insert({
+      user_id: params.userId,
+      invite_id: params.inviteId || null,
+      code_hash: codeHash,
+      // Use DB clock to avoid app/DB timezone skew making OTPs immediately expired.
+      expires_at: this.db.raw('DATE_ADD(UTC_TIMESTAMP(), INTERVAL ? MINUTE)', [OTP_TTL_MINUTES]),
+      attempts: 0,
+      delivery_method: params.delivery,
+      last_sent_at: this.db.raw('UTC_TIMESTAMP()'),
+    });
+
+    logger.info(`OTP record created for user ${params.userId}${params.inviteId ? ` invite ${params.inviteId}` : ''}`);
+    return { code, expiresAt };
   }
 
   private static generateCode(): string {

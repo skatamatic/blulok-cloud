@@ -1,0 +1,175 @@
+/**
+ * Integration Test: User Deactivation Cascades
+ *
+ * Verifies Flow G (updated policy):
+ *  - Held access: deactivated user is denylisted on devices from primary and shared units
+ *  - Granted access: shares granted by the user are inactivated (no invitee denylist adds)
+ */
+
+jest.mock('@/services/database.service');
+jest.mock('@/models/denylist-entry.model');
+jest.mock('@/services/gateway/gateway-events.service');
+jest.mock('@/services/denylist.service', () => ({
+  DenylistService: {
+    // Mock JWT strings for denylist commands (inline to avoid hoisting issues)
+    buildDenylistAdd: jest.fn().mockResolvedValue('eyJhbGciOiJFZERTQSIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJCbHVDbG91ZDpSb290IiwiY21kX3R5cGUiOiJERU5ZTElTVF9BREQiLCJkZW55bGlzdF9hZGQiOltdfQ.mock-sig'),
+    buildDenylistRemove: jest.fn().mockResolvedValue('eyJhbGciOiJFZERTQSIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJCbHVDbG91ZDpSb290IiwiY21kX3R5cGUiOiJERU5ZTElTVF9SRU1PVkUiLCJkZW55bGlzdF9yZW1vdmUiOltdfQ.mock-sig'),
+  },
+}));
+jest.mock('@/services/denylist-optimization.service', () => ({
+  DenylistOptimizationService: {
+    shouldSkipDenylistAdd: jest.fn().mockResolvedValue(false),
+    shouldSkipDenylistRemove: jest.fn().mockReturnValue(false),
+  },
+}));
+jest.mock('@/services/access-control-zone-access.service', () => ({
+  AccessControlZoneAccessService: {
+    getDenylistTargetsForUserRevocation: jest.fn(),
+    getDeviceFacilityIds: jest.fn(),
+  },
+}));
+jest.mock('@/config/environment', () => ({
+  config: {
+    security: {
+      routePassTtlHours: 24,
+    },
+  },
+}));
+
+import request from 'supertest';
+import { Application } from 'express';
+import { createIntegrationTestApp } from '@/__tests__/utils/integration-test-server';
+import { DatabaseService } from '@/services/database.service';
+import { DenylistEntryModel } from '@/models/denylist-entry.model';
+import { GatewayEventsService } from '@/services/gateway/gateway-events.service';
+import { DenylistService } from '@/services/denylist.service';
+import { AccessControlZoneAccessService } from '@/services/access-control-zone-access.service';
+
+describe('User Deactivation Cascades', () => {
+  let app: Application;
+  let mockKnex: any;
+  let mockGateway: any;
+  let mockDenylistModel: jest.Mocked<DenylistEntryModel>;
+
+  beforeEach(() => {
+    // Build a targeted mock for knex tables we query in the route
+    const makeUnitAssignments = () => ({
+      where: jest.fn().mockReturnThis(),
+      pluck: jest.fn().mockResolvedValue(['unit-primary-1']),
+    });
+
+    const makeKeySharingForHeld = () => ({
+      where: jest.fn().mockReturnThis(),
+      whereIn: jest.fn().mockReturnThis(),
+      whereNull: jest.fn().mockReturnThis(),
+      orWhere: jest.fn().mockReturnThis(),
+      select: jest.fn().mockReturnThis(),
+      pluck: jest.fn().mockResolvedValue(['unit-shared-1']),
+      first: jest.fn(),
+    });
+
+    const makeKeySharingForGranted = () => ({
+      where: jest.fn().mockReturnThis(),
+      whereNull: jest.fn().mockReturnThis(),
+      orWhere: jest.fn().mockReturnThis(),
+      select: jest.fn().mockResolvedValue([
+        { id: 'share-1', unit_id: 'unit-primary-1', shared_with_user_id: 'invitee-1' },
+        { id: 'share-2', unit_id: 'unit-shared-1', shared_with_user_id: 'invitee-2' },
+      ]),
+      update: jest.fn().mockResolvedValue(1),
+      pluck: jest.fn().mockResolvedValue(['unit-shared-1']),
+    });
+
+    const makeDevicesJoinUnits = () => ({
+      whereIn: jest.fn().mockReturnThis(),
+      select: jest.fn().mockResolvedValue([
+        { device_id: 'device-A', facility_id: 'facility-1' },
+        { device_id: 'device-B', facility_id: 'facility-2' },
+      ]),
+      join: jest.fn().mockReturnThis(),
+    });
+
+    const makeDevicesForUnit = () => ({
+      where: jest.fn().mockReturnThis(),
+      select: jest.fn().mockResolvedValue([{ id: 'device-C' }]),
+    });
+
+    const makeUnits = () => ({
+      where: jest.fn().mockReturnThis(),
+      first: jest.fn().mockResolvedValue({ facility_id: 'facility-1' }),
+      select: jest.fn().mockReturnThis(),
+      join: jest.fn().mockReturnThis(),
+    });
+
+    mockKnex = jest.fn((table: string) => {
+      if (table === 'unit_assignments') return makeUnitAssignments();
+      if (table === 'key_sharing') return makeKeySharingForGranted();
+      if (table === 'blulok_devices as bd') return makeDevicesJoinUnits();
+      if (table === 'blulok_devices') return makeDevicesForUnit();
+      if (table === 'units') return makeUnits();
+      return {
+        where: jest.fn().mockReturnThis(),
+        whereIn: jest.fn().mockReturnThis(),
+        whereNull: jest.fn().mockReturnThis(),
+        orWhere: jest.fn().mockReturnThis(),
+        select: jest.fn().mockReturnThis(),
+        first: jest.fn().mockReturnValue({}),
+        join: jest.fn().mockReturnThis(),
+        update: jest.fn().mockResolvedValue(1),
+        fn: { now: () => new Date() },
+        pluck: jest.fn().mockResolvedValue([]),
+      };
+    });
+
+    (DatabaseService.getInstance as jest.Mock).mockReturnValue({ connection: mockKnex });
+
+    mockGateway = { unicastToFacility: jest.fn(), broadcast: jest.fn() };
+    (GatewayEventsService.getInstance as jest.Mock).mockReturnValue(mockGateway);
+
+    mockDenylistModel = {
+      create: jest.fn().mockResolvedValue({ id: 'entry-1' } as any),
+      bulkCreate: jest.fn().mockResolvedValue(undefined),
+      findByUnitsAndUser: jest.fn().mockResolvedValue([]),
+      remove: jest.fn().mockResolvedValue(true),
+    } as any;
+    (DenylistEntryModel as jest.MockedClass<typeof DenylistEntryModel>).mockImplementation(() => mockDenylistModel);
+
+    (AccessControlZoneAccessService.getDenylistTargetsForUserRevocation as jest.Mock).mockResolvedValue([
+      { device_id: 'device-A', device_type: 'blulok' },
+      { device_id: 'device-B', device_type: 'blulok' },
+    ]);
+    (AccessControlZoneAccessService.getDeviceFacilityIds as jest.Mock).mockResolvedValue(
+      new Map([
+        ['device-A', 'facility-1'],
+        ['device-B', 'facility-2'],
+      ]),
+    );
+
+    app = createIntegrationTestApp();
+  });
+
+  afterEach(() => {
+    jest.clearAllMocks();
+  });
+
+  it('deny-lists deactivated user for primary and shared units, and DOES NOT denylist invitees', async () => {
+    const res = await request(app)
+      .delete('/api/v1/users/user-to-deactivate')
+      .set('Authorization', 'Bearer mock-jwt-token')
+      .expect(200);
+
+    expect(res.body.success).toBe(true);
+
+    // Fire-and-forget denylist cascade runs after the HTTP response.
+    await new Promise((resolve) => setImmediate(resolve));
+
+    // Held access: entries created for devices from both facility-1 & facility-2
+    expect(mockDenylistModel.bulkCreate).toHaveBeenCalled();
+    // Gateway called for both facilities for deactivated user (2 calls total)
+    expect((mockGateway.unicastToFacility as jest.Mock).mock.calls.length).toBe(2);
+    // Only owner denylist adds should be built (equal to facility groups)
+    expect((DenylistService.buildDenylistAdd as jest.Mock).mock.calls.length).toBe(2);
+  });
+});
+
+

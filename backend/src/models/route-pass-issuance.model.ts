@@ -1,4 +1,5 @@
 import { DatabaseService } from '@/services/database.service';
+import { logger } from '@/utils/logger';
 import { randomUUID } from 'crypto';
 
 /**
@@ -11,7 +12,7 @@ export interface RoutePassIssuanceLog {
   id: string;
   user_id: string;
   device_id: string;
-  audiences: string[]; // JSON array of lock IDs in format lock:deviceId
+  audiences: string[]; // JSON array of audiences (e.g. lock:{device_serial}, shared_key:{owner}:{device_serial})
   jti: string; // JWT ID for correlation
   issued_at: Date;
   expires_at: Date;
@@ -35,13 +36,56 @@ export class RoutePassIssuanceModel {
     this.db = DatabaseService.getInstance().connection;
   }
 
+  private parseAudiences(raw: unknown, entryId?: string): string[] {
+    if (Array.isArray(raw)) {
+      return raw.filter((audience): audience is string => typeof audience === 'string');
+    }
+
+    if (typeof raw === 'string') {
+      const trimmed = raw.trim();
+      if (!trimmed) {
+        return [];
+      }
+      try {
+        const parsed = JSON.parse(trimmed);
+        return Array.isArray(parsed) ? parsed : [];
+      } catch (error) {
+        logger.warn('Failed to parse audiences JSON string', {
+          entryId,
+          raw,
+          error: (error as Error).message,
+        });
+        return [];
+      }
+    }
+
+    if (raw == null) {
+      return [];
+    }
+
+    try {
+      const serialized = JSON.stringify(raw);
+      if (!serialized) {
+        return [];
+      }
+      const parsed = JSON.parse(serialized);
+      return Array.isArray(parsed) ? parsed : [];
+    } catch (error) {
+      logger.warn('Failed to serialize and parse audiences payload', {
+        entryId,
+        error: (error as Error).message,
+      });
+      return [];
+    }
+  }
+
   /**
    * Create a new route pass issuance log entry.
    *
    * @param params - Route pass issuance parameters
    * @param params.userId - User ID the pass was issued for
    * @param params.deviceId - Device ID (user_devices.id) the pass was bound to
-   * @param params.audiences - Array of lock IDs in format lock:deviceId
+   * @param params.audiences - Array of pass audiences (e.g. lock:{device_serial})
    * @param params.jti - JWT ID from the issued JWT
    * @param params.issuedAt - Timestamp when the pass was issued
    * @param params.expiresAt - Timestamp when the pass expires
@@ -56,8 +100,6 @@ export class RoutePassIssuanceModel {
     expiresAt: Date;
   }): Promise<RoutePassIssuanceLog> {
     const id = randomUUID();
-    const now = new Date();
-
     const [entry] = await this.db('route_pass_issuance_log')
       .insert({
         id,
@@ -67,14 +109,14 @@ export class RoutePassIssuanceModel {
         jti: params.jti,
         issued_at: params.issuedAt,
         expires_at: params.expiresAt,
-        created_at: now,
-        updated_at: now,
+        created_at: this.db.raw('UTC_TIMESTAMP()'),
+        updated_at: this.db.raw('UTC_TIMESTAMP()'),
       })
       .returning('*');
 
     return {
       ...entry,
-      audiences: JSON.parse(entry.audiences),
+      audiences: this.parseAudiences(entry.audiences, entry.id),
     };
   }
 
@@ -96,7 +138,7 @@ export class RoutePassIssuanceModel {
 
     return {
       ...entry,
-      audiences: JSON.parse(entry.audiences),
+      audiences: this.parseAudiences(entry.audiences, entry.id),
     };
   }
 
@@ -114,8 +156,7 @@ export class RoutePassIssuanceModel {
       return true;
     }
 
-    const now = new Date();
-    return lastPass.expires_at < now;
+    return lastPass.expires_at.getTime() <= Date.now();
   }
 
   /**
@@ -157,7 +198,7 @@ export class RoutePassIssuanceModel {
 
     return entries.map((entry: any) => ({
       ...entry,
-      audiences: JSON.parse(entry.audiences),
+      audiences: this.parseAudiences(entry.audiences, entry.id),
     }));
   }
 

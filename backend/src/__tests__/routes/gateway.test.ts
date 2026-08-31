@@ -1,6 +1,14 @@
 import request from 'supertest';
 import { createApp } from '@/app';
-import { createMockTestData, expectUnauthorized, expectForbidden, expectNotFound } from '@/__tests__/utils/mock-test-helpers';
+import { GatewayService } from '@/services/gateway/gateway.service';
+import { createMockTestData, expectUnauthorized, expectForbidden, expectNotFound, expectConflict } from '@/__tests__/utils/mock-test-helpers';
+
+const isBlockingActiveForFacilityMock = jest.fn().mockResolvedValue(false);
+jest.mock('@/services/gateway/gateway-recovery.service', () => ({
+  GatewayRecoveryService: {
+    isBlockingActiveForFacility: (...args: unknown[]) => isBlockingActiveForFacilityMock(...args),
+  },
+}));
 
 // Mock DeviceModel to prevent errors during gateway sync operations
 jest.mock('@/models/device.model', () => ({
@@ -10,6 +18,8 @@ jest.mock('@/models/device.model', () => ({
     findById: jest.fn().mockResolvedValue(null),
     createBluLokDevice: jest.fn().mockResolvedValue({ id: 'device-1' }),
     findByGatewayId: jest.fn().mockResolvedValue([]),
+    findBluLokDevices: jest.fn().mockResolvedValue([]),
+    findAccessControlDevices: jest.fn().mockResolvedValue([]),
   }))
 }));
 
@@ -23,6 +33,11 @@ describe('Gateway Routes', () => {
 
   beforeEach(() => {
     testData = createMockTestData();
+    isBlockingActiveForFacilityMock.mockResolvedValue(false);
+  });
+
+  afterAll(async () => {
+    await GatewayService.getInstance().shutdown().catch(() => undefined);
   });
 
   describe('Authentication Requirements', () => {
@@ -43,6 +58,8 @@ describe('Gateway Routes', () => {
           response = await request(app).post(route.path);
         } else if (route.method === 'put') {
           response = await request(app).put(route.path);
+        } else if (route.method === 'patch') {
+          response = await request(app).patch(route.path);
         } else if (route.method === 'delete') {
           response = await request(app).delete(route.path);
         }
@@ -437,6 +454,7 @@ describe('Gateway Routes', () => {
       // Should only see gateways from facility-1 (their assigned facility)
       expect(response.body.gateways.every((g: any) => g.facility_id === 'facility-1')).toBe(true);
     });
+
   });
 
   describe('POST /api/v1/gateways/:id/test-connection - Test Gateway Connection', () => {
@@ -592,6 +610,18 @@ describe('Gateway Routes', () => {
         .set('Authorization', `Bearer ${testData.users.admin.token}`);
 
       expectNotFound(response);
+    });
+
+    it('should return 409 when gateway recovery is blocking manual sync', async () => {
+      isBlockingActiveForFacilityMock.mockResolvedValueOnce(true);
+
+      const response = await request(app)
+        .post('/api/v1/gateways/gateway-1/sync')
+        .set('Authorization', `Bearer ${testData.users.admin.token}`)
+        .expect(409);
+
+      expect(response.body.success).toBe(false);
+      expect(response.body.code).toBe('recovery_in_progress');
     });
   });
 });

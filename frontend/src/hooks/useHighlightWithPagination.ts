@@ -11,7 +11,7 @@ import { getHighlightIdFromUrl, calculatePageForItemInFullDataset } from '@/util
  * @param itemsPerPage - Number of items per page
  * @param onPageChange - Function to call when page needs to change
  */
-export const useHighlightWithPagination = <T>(
+export const useHighlightWithPagination = <T extends { id: string }>(
   data: T[],
   getItemId: (item: T) => string,
   generateElementId: (id: string) => string,

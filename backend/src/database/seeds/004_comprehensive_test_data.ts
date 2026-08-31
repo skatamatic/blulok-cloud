@@ -148,11 +148,13 @@ export async function seed(knex: Knex): Promise<void> {
       const lockStatus = Math.random() > 0.95 ? 'unlocked' : 'locked'; // 5% unlocked
       const batteryLevel = Math.floor(Math.random() * 100) + 1;
 
+      const generatedSerial = `BL-${Math.random().toString(36).substr(2, 8).toUpperCase()}`;
       blulokDevices.push({
         id: blulokId,
         gateway_id: gateway.id,
         unit_id: unitId,
-        device_serial: `BL-${Math.random().toString(36).substr(2, 8).toUpperCase()}`,
+        device_serial: generatedSerial,
+        serial: generatedSerial,
         firmware_version: '1.2.3',
         lock_status: lockStatus,
         device_status: batteryLevel < 20 ? 'low_battery' : 'online',
@@ -193,6 +195,7 @@ export async function seed(knex: Knex): Promise<void> {
         device_type: deviceType,
         location_description: location,
         relay_channel: i + 1,
+        device_serial: `AC-SEED-${String(gateway.id).slice(0, 8)}-r${i + 1}`,
         status: Math.random() > 0.1 ? 'online' : 'offline',
         last_activity: new Date(Date.now() - Math.random() * 10 * 60 * 1000) // Within 10 minutes
       });

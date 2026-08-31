@@ -6,6 +6,9 @@ describe('Key Sharing Routes', () => {
   let app: any;
   let testData: MockTestData;
 
+  // Increase timeout for tests that make multiple sequential requests
+  jest.setTimeout(20000);
+
   beforeAll(async () => {
     app = createApp();
   });
@@ -118,7 +121,23 @@ describe('Key Sharing Routes', () => {
       expect(response.body).toHaveProperty('sharings');
     });
 
-    it('should filter by is_active', async () => {
+    it('should default to active-only sharings when is_active is not specified', async () => {
+      const response = await request(app)
+        .get('/api/v1/key-sharing')
+        .set('Authorization', `Bearer ${testData.users.admin.token}`)
+        .expect(200);
+
+      expectSuccess(response);
+      expect(response.body).toHaveProperty('sharings');
+      // All returned sharings should be active
+      if (response.body.sharings && response.body.sharings.length > 0) {
+        response.body.sharings.forEach((sharing: any) => {
+          expect(sharing.is_active).toBe(true);
+        });
+      }
+    });
+
+    it('should filter by is_active=true explicitly', async () => {
       const response = await request(app)
         .get('/api/v1/key-sharing?is_active=true')
         .set('Authorization', `Bearer ${testData.users.admin.token}`)
@@ -126,6 +145,67 @@ describe('Key Sharing Routes', () => {
 
       expectSuccess(response);
       expect(response.body).toHaveProperty('sharings');
+      // All returned sharings should be active
+      if (response.body.sharings && response.body.sharings.length > 0) {
+        response.body.sharings.forEach((sharing: any) => {
+          expect(sharing.is_active).toBe(true);
+        });
+      }
+    });
+
+    it('should return inactive sharings when is_active=false is explicitly requested', async () => {
+      const response = await request(app)
+        .get('/api/v1/key-sharing?is_active=false')
+        .set('Authorization', `Bearer ${testData.users.admin.token}`)
+        .expect(200);
+
+      expectSuccess(response);
+      expect(response.body).toHaveProperty('sharings');
+      // All returned sharings should be inactive
+      if (response.body.sharings && response.body.sharings.length > 0) {
+        response.body.sharings.forEach((sharing: any) => {
+          expect(sharing.is_active).toBe(false);
+        });
+      }
+    });
+
+    it('should exclude revoked sharings by default', async () => {
+      // First, create a sharing (use unit-3 to avoid conflicts with existing mocks)
+      const createResponse = await request(app)
+        .post('/api/v1/key-sharing')
+        .set('Authorization', `Bearer ${testData.users.admin.token}`)
+        .send({
+          unit_id: 'unit-3',
+          shared_with_user_id: 'tenant-2',
+          access_level: 'full',
+        })
+        .expect(201);
+
+      const sharingId = createResponse.body.id;
+
+      // Revoke the sharing
+      await request(app)
+        .delete(`/api/v1/key-sharing/${sharingId}`)
+        .set('Authorization', `Bearer ${testData.users.admin.token}`)
+        .expect(200);
+
+      // Verify it's not returned by default (active-only)
+      const defaultResponse = await request(app)
+        .get('/api/v1/key-sharing')
+        .set('Authorization', `Bearer ${testData.users.admin.token}`)
+        .expect(200);
+
+      const foundInDefault = defaultResponse.body.sharings.some((s: any) => s.id === sharingId);
+      expect(foundInDefault).toBe(false);
+
+      // Verify it IS returned when explicitly requesting inactive
+      const inactiveResponse = await request(app)
+        .get(`/api/v1/key-sharing?unit_id=unit-3&is_active=false`)
+        .set('Authorization', `Bearer ${testData.users.admin.token}`)
+        .expect(200);
+
+      const foundInInactive = inactiveResponse.body.sharings.some((s: any) => s.id === sharingId);
+      expect(foundInInactive).toBe(true);
     });
 
     it('should handle pagination', async () => {
@@ -147,6 +227,21 @@ describe('Key Sharing Routes', () => {
 
       expectSuccess(response);
       expect(response.body).toHaveProperty('sharings');
+    });
+
+    it('should support grouped-by-unit view when requested', async () => {
+      const response = await request(app)
+        .get('/api/v1/key-sharing?group_by_unit=true')
+        .set('Authorization', `Bearer ${testData.users.admin.token}`)
+        .expect(200);
+
+      expectSuccess(response);
+      expect(response.body).toHaveProperty('units');
+      expect(Array.isArray(response.body.units)).toBe(true);
+      expect(response.body).toHaveProperty('total_units');
+      expect(response.body).toHaveProperty('total_sharings');
+      // total_sharings should match flat total for consistency
+      expect(response.body.total_sharings).toBe(response.body.total);
     });
   });
 
@@ -229,6 +324,91 @@ describe('Key Sharing Routes', () => {
         .expect(404);
 
       expectNotFound(response);
+    });
+
+    it('should return full sharing roster for primary tenant', async () => {
+      const response = await request(app)
+        .get('/api/v1/key-sharing/unit/unit-1')
+        .set('Authorization', `Bearer ${testData.users.tenant.token}`) // tenant-1 is primary for unit-1 in mocks
+        .expect(200);
+
+      expectSuccess(response);
+      expect(response.body).toHaveProperty('sharings');
+      expect(Array.isArray(response.body.sharings)).toBe(true);
+      // With mocked data, primary tenant should see all sharings for unit-1 (2 entries)
+      expect(response.body.sharings.length).toBeGreaterThanOrEqual(2);
+      const sharedWithIds = response.body.sharings.map((s: any) => s.shared_with_user_id);
+      expect(sharedWithIds).toEqual(
+        expect.arrayContaining(['other-tenant-1', 'facility2-tenant-1'])
+      );
+    });
+
+    it('should restrict shared tenant to only their own share', async () => {
+      const response = await request(app)
+        .get('/api/v1/key-sharing/unit/unit-1')
+        .set('Authorization', `Bearer ${testData.users.otherTenant.token}`) // other-tenant-1 has shared access to unit-1
+        .expect(200);
+
+      expectSuccess(response);
+      expect(response.body).toHaveProperty('sharings');
+      expect(Array.isArray(response.body.sharings)).toBe(true);
+      // Shared user should only see their own share(s)
+      expect(response.body.sharings.length).toBeGreaterThanOrEqual(1);
+      for (const sharing of response.body.sharings) {
+        expect(sharing.shared_with_user_id).toBe('other-tenant-1');
+      }
+    });
+
+    it('should default to active-only for unit endpoint when is_active is not specified', async () => {
+      const response = await request(app)
+        .get('/api/v1/key-sharing/unit/unit-1')
+        .set('Authorization', `Bearer ${testData.users.admin.token}`)
+        .expect(200);
+
+      expectSuccess(response);
+      expect(response.body).toHaveProperty('sharings');
+      // All returned sharings should be active
+      if (response.body.sharings && response.body.sharings.length > 0) {
+        response.body.sharings.forEach((sharing: any) => {
+          expect(sharing.is_active).toBe(true);
+        });
+      }
+    });
+
+    it('should allow admins to see inactive sharings for unit when explicitly requested', async () => {
+      // First create and revoke a sharing to have an inactive one to test with
+      const createResponse = await request(app)
+        .post('/api/v1/key-sharing')
+        .set('Authorization', `Bearer ${testData.users.admin.token}`)
+        .send({
+          unit_id: 'unit-1',
+          shared_with_user_id: 'tenant-2',
+          access_level: 'full',
+        });
+      
+      // If creation succeeded, revoke it; if it failed (409), it might already exist as inactive
+      if (createResponse.status === 201) {
+        const sharingId = createResponse.body.id;
+        await request(app)
+          .delete(`/api/v1/key-sharing/${sharingId}`)
+          .set('Authorization', `Bearer ${testData.users.admin.token}`)
+          .expect(200);
+      }
+      
+      const response = await request(app)
+        .get('/api/v1/key-sharing/unit/unit-1?is_active=false')
+        .set('Authorization', `Bearer ${testData.users.admin.token}`)
+        .expect(200);
+
+      expectSuccess(response);
+      expect(response.body).toHaveProperty('sharings');
+      // All returned sharings should be inactive (handle both boolean false and numeric 0)
+      if (response.body.sharings && response.body.sharings.length > 0) {
+        response.body.sharings.forEach((sharing: any) => {
+          const isInactive = sharing.is_active === false || sharing.is_active === 0;
+          expect(isInactive).toBe(true);
+        });
+      }
     });
   });
 

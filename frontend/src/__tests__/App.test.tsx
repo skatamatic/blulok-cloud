@@ -19,15 +19,18 @@ jest.mock('../services/websocket.service', () => ({
     connect: jest.fn(),
     disconnect: jest.fn(),
     subscribe: jest.fn(),
+    reassertSubscription: jest.fn(),
     unsubscribe: jest.fn(),
     onMessage: jest.fn().mockReturnValue(() => {}),
     onConnectionChange: jest.fn().mockReturnValue(() => {}),
+    onReconnectingChange: jest.fn().mockReturnValue(() => {}),
     requestDiagnostics: jest.fn(),
     getSubscriptionStatus: jest.fn().mockReturnValue({}),
     unsubscribeAll: jest.fn(),
     retryConnectionIfNeeded: jest.fn(),
     isConnected: false,
     isWebSocketConnected: jest.fn().mockReturnValue(false),
+    isWebSocketReconnecting: jest.fn().mockReturnValue(false),
   }
 }));
 

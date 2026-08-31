@@ -47,7 +47,7 @@ describe('HttpConnection', () => {
     };
 
     // Mock axios.create to return our mock instance
-    mockedAxios.create.mockReturnValue(mockAxiosInstance as any);
+    mockedAxios.create.mockReturnValue(mockAxiosInstance);
 
     connection = new HttpConnection(
       'test-gateway',

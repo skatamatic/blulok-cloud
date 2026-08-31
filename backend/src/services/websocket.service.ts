@@ -5,7 +5,20 @@ import { config } from '@/config/environment';
 import { UserRole } from '@/types/auth.types';
 import { logger } from '@/utils/logger';
 import { SubscriptionRegistry } from './subscriptions/subscription-registry';
-import { UserFacilityAssociationModel } from '@/models/user-facility-association.model';
+import { GatewayTelemetryLogService } from './gateway-telemetry-log.service';
+import { GatewayDeviceSyncLogService } from './gateway-device-sync-log.service';
+import { AccessSessionTraceService } from '@/services/access/access-session-trace.service';
+import { FacilityAccessService } from '@/services/facility-access.service';
+
+function readPositiveMs(envName: string, fallback: number): number {
+  const raw = Number(process.env[envName]);
+  return Number.isFinite(raw) && raw > 0 ? raw : fallback;
+}
+
+/** Normal browser close/refresh, idle sever, or going-away — not operational incidents. */
+function isExpectedDashboardClose(code: number): boolean {
+  return code === 1000 || code === 1001;
+}
 
 /**
  * WebSocket Subscription Interface
@@ -31,6 +44,17 @@ export interface Subscription {
   filters?: Record<string, any>;
 }
 
+interface WebSocketClientContext {
+  userId: string;
+  userRole: UserRole;
+  subscriptions: Map<string, Subscription>;
+  pendingSubscriptionKeys: Set<string>;
+  facilityIds?: string[];
+  heartbeatCount: number;
+  /** Last JSON heartbeat (or connect) from the browser client — used for idle sever. */
+  lastClientHeartbeat: Date;
+}
+
 /**
  * WebSocket Message Interface
  *
@@ -39,7 +63,7 @@ export interface Subscription {
  */
 export interface WebSocketMessage {
   /** Message type determining how the message should be processed */
-  type: 'subscription' | 'unsubscription' | 'heartbeat' | 'data' | 'error' | 'diagnostics' | 'general_stats_update' | 'dashboard_layout_update' | 'gateway_status_update';
+  type: 'subscription' | 'unsubscription' | 'heartbeat' | 'data' | 'error' | 'diagnostics' | 'general_stats_update' | 'dashboard_layout_update' | 'gateway_status_update' | 'scope_update';
   /** Subscription ID for targeted messages */
   subscriptionId?: string;
   /** Type of subscription being referenced */
@@ -96,14 +120,29 @@ export interface WebSocketMessage {
 export class WebSocketService {
   private static instance: WebSocketService;
   private wss: WebSocketServer | null = null;
-  private clients: Map<WebSocket, { userId: string; userRole: UserRole; subscriptions: Map<string, Subscription> }> = new Map();
+  private clients: Map<WebSocket, WebSocketClientContext> = new Map();
+  private pendingMessages: Map<WebSocket, Buffer[]> = new Map();
   private subscriptions: Map<string, Subscription> = new Map();
   private heartbeatInterval: NodeJS.Timeout | null = null;
+  private idleSweepInterval: NodeJS.Timeout | null = null;
   private subscriptionRegistry: SubscriptionRegistry;
+  private readonly path = '/ws';
+  /**
+   * Liveness defaults (override via env):
+   * - Heartbeat every 5s — frequent enough for interactive dashboard freshness
+   * - Idle sever at 15s (3× heartbeat) — detects dead sockets quickly while
+   *   tolerating one–two delayed client ticks (GC, brief tab pressure)
+   */
+  private readonly serverHeartbeatMs = readPositiveMs('DASHBOARD_WS_HEARTBEAT_MS', 5_000);
+  private readonly idleTimeoutMs = readPositiveMs('DASHBOARD_WS_IDLE_MS', 15_000);
 
   private constructor() {
     this.subscriptionRegistry = new SubscriptionRegistry();
+    GatewayTelemetryLogService.getInstance().setSubscriptionRegistry(this.subscriptionRegistry);
+    GatewayDeviceSyncLogService.getInstance().setSubscriptionRegistry(this.subscriptionRegistry);
+    AccessSessionTraceService.getInstance().setSubscriptionRegistry(this.subscriptionRegistry);
     this.startHeartbeat();
+    this.startIdleSweep();
   }
 
   /**
@@ -118,16 +157,55 @@ export class WebSocketService {
   }
 
   public initialize(server: any): void {
-    this.wss = new WebSocketServer({ server });
-    
+    if (this.wss) return;
+    this.wss = new WebSocketServer({ noServer: true, path: this.path });
+
+    server.on('upgrade', (request: IncomingMessage, socket: import('net').Socket, head: Buffer) => {
+      try {
+        const url = new URL(request.url || '', `http://${request.headers.host}`);
+        if (url.pathname !== this.path) return;
+        this.wss!.handleUpgrade(request, socket as any, head, (ws) => {
+          this.wss!.emit('connection', ws, request);
+        });
+      } catch (e) {
+        try { socket.destroy(); } catch {}
+      }
+    });
+
     this.wss.on('connection', (ws: WebSocket, req: IncomingMessage) => {
       this.handleConnection(ws, req);
     });
 
-    logger.info('🔌 WebSocket server initialized');
+    logger.info(`🔌 WebSocket server initialized on path ${this.path}`);
   }
 
   private async handleConnection(ws: WebSocket, req: IncomingMessage): Promise<void> {
+    ws.on('message', (data: Buffer) => {
+      const hasClientContext = this.clients.has(ws);
+      if (!hasClientContext) {
+        const queued = this.pendingMessages.get(ws) || [];
+        if (queued.length < 20) {
+          queued.push(data);
+          this.pendingMessages.set(ws, queued);
+        }
+        return;
+      }
+      this.handleMessage(ws, data);
+    });
+
+    ws.on('close', (code: number, reasonBuf: Buffer) => {
+      const reason = reasonBuf?.toString?.() || '';
+      this.handleDisconnection(ws, code, reason);
+    });
+
+    ws.on('error', (error: Error) => {
+      logger.warn('Dashboard WS socket error', {
+        message: error.message,
+        userId: this.clients.get(ws)?.userId,
+      });
+      this.handleDisconnection(ws, 1011, error.message || 'socket error');
+    });
+
     try {
       const token = this.extractToken(req);
       if (!token) {
@@ -136,36 +214,47 @@ export class WebSocketService {
       }
 
       const decoded = verify(token, config.jwt.secret) as any;
-      
-      // SECURITY: Load facility IDs for all non-global roles
-      let facilityIds: string[] | undefined;
-      if (decoded.role !== UserRole.ADMIN && decoded.role !== UserRole.DEV_ADMIN) {
-        facilityIds = await UserFacilityAssociationModel.getUserFacilityIds(decoded.userId);
-        logger.info(`🔌 Loaded ${facilityIds.length} facility IDs for user ${decoded.userId} (${decoded.role})`);
+
+      const { UserModel } = await import('@/models/user.model');
+      const { AuthService } = await import('@/services/auth.service');
+      const dbUser = (await UserModel.findById(decoded.userId)) as
+        | import('@/models/user.model').User
+        | undefined;
+      if (!dbUser) {
+        ws.close(1008, 'Authentication failed');
+        return;
       }
-      
-      const client = {
+      const denial = AuthService.getSessionDenialReason(dbUser);
+      if (denial) {
+        ws.close(1008, denial);
+        return;
+      }
+
+      const role = decoded.role as UserRole;
+      let facilityIds: string[] | undefined;
+      if (role !== UserRole.ADMIN && role !== UserRole.DEV_ADMIN) {
+        const liveIds = await FacilityAccessService.getUserFacilityIds(decoded.userId, role);
+        facilityIds = liveIds.length > 0 ? liveIds : undefined;
+        logger.info(`🔌 Loaded ${liveIds.length} facility IDs for user ${decoded.userId} (${role})`);
+      }
+
+      const client: WebSocketClientContext = {
         userId: decoded.userId,
-        userRole: decoded.role as UserRole,
+        userRole: role,
         subscriptions: new Map<string, Subscription>(),
-        facilityIds, // Include facility IDs for RBAC enforcement in subscriptions
+        pendingSubscriptionKeys: new Set<string>(),
+        facilityIds,
+        heartbeatCount: 0,
+        lastClientHeartbeat: new Date(),
       };
 
       this.clients.set(ws, client);
       logger.info(`🔌 WebSocket client connected: ${client.userId} (${client.userRole})`);
-
-      ws.on('message', (data: Buffer) => {
-        this.handleMessage(ws, data);
-      });
-
-      ws.on('close', () => {
-        this.handleDisconnection(ws);
-      });
-
-      ws.on('error', (error: Error) => {
-        logger.error('WebSocket error:', error);
-        this.handleDisconnection(ws);
-      });
+      const queuedMessages = this.pendingMessages.get(ws) || [];
+      this.pendingMessages.delete(ws);
+      for (const pendingMessage of queuedMessages) {
+        await this.handleMessage(ws, pendingMessage);
+      }
 
     } catch (error) {
       logger.error('WebSocket connection error:', error);
@@ -210,14 +299,70 @@ export class WebSocketService {
     }
   }
 
-  private async handleSubscription(ws: WebSocket, message: WebSocketMessage, client: any): Promise<void> {
+  private async refreshClientFacilityScope(client: WebSocketClientContext): Promise<boolean> {
+    if (client.userRole === UserRole.ADMIN || client.userRole === UserRole.DEV_ADMIN) {
+      return false;
+    }
+
+    const liveIds = await FacilityAccessService.getUserFacilityIds(client.userId, client.userRole);
+    const next = liveIds.length > 0 ? liveIds : undefined;
+    const prevKey = JSON.stringify(client.facilityIds ?? []);
+    const nextKey = JSON.stringify(next ?? []);
+    client.facilityIds = next;
+    return prevKey !== nextKey;
+  }
+
+  /** Re-load facility scope for every dashboard WS client belonging to a user. */
+  public async refreshFacilityScopeForUser(userId: string, userRole: UserRole): Promise<void> {
+    for (const [ws, client] of this.clients.entries()) {
+      if (client.userId !== userId) continue;
+      const changed = await this.refreshClientFacilityScope(client);
+      if (changed && ws.readyState === WebSocket.OPEN) {
+        this.sendMessage(ws, {
+          type: 'scope_update',
+          data: { facilityIds: client.facilityIds ?? [] },
+          timestamp: new Date().toISOString(),
+        });
+      }
+    }
+  }
+
+  private async handleSubscription(ws: WebSocket, message: WebSocketMessage, client: WebSocketClientContext): Promise<void> {
     if (!message.subscriptionType) {
       this.sendError(ws, 'Subscription type required');
       return;
     }
 
-    const subscriptionId = message.subscriptionId || `${message.subscriptionType}-${Date.now()}`;
-    
+    await this.refreshClientFacilityScope(client);
+
+    const subscriptionKey = this.makeSubscriptionKey(message.subscriptionType, message.data);
+    const existing = Array.from(client.subscriptions.values()).find((sub: Subscription) =>
+      this.makeSubscriptionKey(sub.type, sub.filters) === subscriptionKey,
+    );
+    if (existing) {
+      this.sendMessage(ws, {
+        type: 'subscription',
+        subscriptionId: existing.id,
+        subscriptionType: message.subscriptionType,
+        data: { message: 'Subscription already exists', filters: message.data },
+        timestamp: new Date().toISOString(),
+      });
+      return;
+    }
+
+    if (client.pendingSubscriptionKeys.has(subscriptionKey)) {
+      this.sendMessage(ws, {
+        type: 'subscription',
+        subscriptionType: message.subscriptionType,
+        data: { message: 'Subscription request already in progress', filters: message.data },
+        timestamp: new Date().toISOString(),
+      });
+      return;
+    }
+
+    const subscriptionId = message.subscriptionId || `${message.subscriptionType}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    client.pendingSubscriptionKeys.add(subscriptionKey);
+
     // Create subscription record
     const subscription: Subscription = {
       id: subscriptionId,
@@ -230,61 +375,93 @@ export class WebSocketService {
     };
 
     // Use subscription registry for all subscription types
-    const subscriptionSuccess = await this.subscriptionRegistry.handleSubscription(ws, message, client);
+    try {
+      const managerMessage = { ...message, subscriptionId };
+      const subscriptionSuccess = await this.subscriptionRegistry.handleSubscription(ws, managerMessage, client);
 
-    if (subscriptionSuccess) {
-      // Store subscription only if it was successful
-      client.subscriptions.set(subscriptionId, subscription);
-      this.subscriptions.set(subscriptionId, subscription);
+      if (subscriptionSuccess) {
+        // Store subscription only if it was successful
+        client.subscriptions.set(subscriptionId, subscription);
+        this.subscriptions.set(subscriptionId, subscription);
 
-      this.sendMessage(ws, {
-        type: 'subscription',
-        subscriptionId,
-        subscriptionType: message.subscriptionType,
-        data: { message: 'Subscription created successfully' },
-        timestamp: new Date().toISOString()
-      });
+        this.sendMessage(ws, {
+          type: 'subscription',
+          subscriptionId,
+          subscriptionType: message.subscriptionType,
+          data: { message: 'Subscription created successfully', filters: message.data },
+          timestamp: new Date().toISOString()
+        });
 
-      logger.info(`📡 Subscription created: ${subscriptionId} (${message.subscriptionType})`);
+        logger.info(`📡 Subscription created: ${subscriptionId} (${message.subscriptionType})`);
+      }
+    } finally {
+      client.pendingSubscriptionKeys.delete(subscriptionKey);
     }
   }
 
-  private handleUnsubscription(ws: WebSocket, message: WebSocketMessage, client: any): void {
-    if (!message.subscriptionId) {
-      this.sendError(ws, 'Subscription ID required');
-      return;
+  private handleUnsubscription(ws: WebSocket, message: WebSocketMessage, client: WebSocketClientContext): void {
+    let subscriptionId = message.subscriptionId;
+    let subscription = subscriptionId ? client.subscriptions.get(subscriptionId) : undefined;
+
+    // Fallback: resolve by subscription type + filters when ID is missing or stale (e.g. after reconnect).
+    if (!subscription && message.subscriptionType) {
+      const subscriptionKey = this.makeSubscriptionKey(message.subscriptionType, message.data);
+      subscription = Array.from(client.subscriptions.values()).find(
+        (sub) => this.makeSubscriptionKey(sub.type, sub.filters) === subscriptionKey,
+      );
+      if (subscription) {
+        subscriptionId = subscription.id;
+      }
     }
 
-    const subscription = client.subscriptions.get(message.subscriptionId);
-    if (!subscription) {
+    if (!subscriptionId || !subscription) {
       this.sendError(ws, 'Subscription not found');
       return;
     }
 
     // Remove from client's subscriptions
-    client.subscriptions.delete(message.subscriptionId);
-    this.subscriptions.delete(message.subscriptionId);
+    client.subscriptions.delete(subscriptionId);
+    this.subscriptions.delete(subscriptionId);
 
     // Use subscription registry for all subscription types
-    this.subscriptionRegistry.handleUnsubscription(ws, message, client);
+    this.subscriptionRegistry.handleUnsubscription(
+      ws,
+      { ...message, subscriptionId, subscriptionType: subscription.type },
+      client,
+    );
 
     this.sendMessage(ws, {
       type: 'unsubscription',
-      subscriptionId: message.subscriptionId,
+      subscriptionId,
       subscriptionType: subscription.type,
-      data: { message: 'Unsubscription successful' },
+      data: { message: 'Unsubscription successful', filters: subscription.filters },
       timestamp: new Date().toISOString()
     });
 
-    logger.info(`📡 Unsubscription: ${message.subscriptionId} for user ${client.userId}`);
+    logger.info(`📡 Unsubscription: ${subscriptionId} for user ${client.userId}`);
   }
 
-  private handleHeartbeat(ws: WebSocket, message: WebSocketMessage, client: any): void {
+  private handleHeartbeat(ws: WebSocket, message: WebSocketMessage, client: WebSocketClientContext): void {
+    client.lastClientHeartbeat = new Date();
+
     if (message.subscriptionId) {
       const subscription = client.subscriptions.get(message.subscriptionId);
       if (subscription) {
-        subscription.lastHeartbeat = new Date();
+        subscription.lastHeartbeat = client.lastClientHeartbeat;
       }
+    }
+
+    client.heartbeatCount += 1;
+    if (client.heartbeatCount % 4 === 0) {
+      void this.refreshClientFacilityScope(client).then((changed) => {
+        if (changed && ws.readyState === WebSocket.OPEN) {
+          this.sendMessage(ws, {
+            type: 'scope_update',
+            data: { facilityIds: client.facilityIds ?? [] },
+            timestamp: new Date().toISOString(),
+          });
+        }
+      });
     }
 
     this.sendMessage(ws, {
@@ -294,7 +471,7 @@ export class WebSocketService {
     });
   }
 
-  private handleDiagnostics(ws: WebSocket, _message: WebSocketMessage, client: any): void {
+  private handleDiagnostics(ws: WebSocket, _message: WebSocketMessage, client: WebSocketClientContext): void {
     const logsManager = this.subscriptionRegistry.getLogsManager();
     const logsStats = logsManager ? logsManager.getStats() : { activeSubscriptions: 0, totalWatchers: 0 };
     
@@ -321,21 +498,31 @@ export class WebSocketService {
     });
   }
 
-  private handleDisconnection(ws: WebSocket): void {
+  private handleDisconnection(ws: WebSocket, code = 1006, reason = ''): void {
     const client = this.clients.get(ws);
-    if (client) {
-      logger.info(`WebSocket client disconnected: ${client.userId}`);
+    this.pendingMessages.delete(ws);
+    if (!client) return;
 
-      // Clean up all subscriptions for this client from the global subscriptions map
-      client.subscriptions.forEach((subscription) => {
-        this.subscriptions.delete(subscription.id);
-      });
+    // Clean up all subscriptions for this client from the global subscriptions map
+    client.subscriptions.forEach((subscription) => {
+      this.subscriptions.delete(subscription.id);
+    });
 
-      // Clean up all subscriptions for this client
-      this.subscriptionRegistry.cleanup(ws, client);
+    // Clean up all subscriptions for this client
+    this.subscriptionRegistry.cleanup(ws, client);
 
-      this.clients.delete(ws);
+    this.clients.delete(ws);
+
+    if (isExpectedDashboardClose(code)) {
+      logger.debug(
+        `Dashboard WS closed normally user=${client.userId} code=${code} reason=${reason || '-'}`,
+      );
+      return;
     }
+
+    logger.warn(
+      `Dashboard WS unexpected disconnect user=${client.userId} code=${code} reason=${reason || '-'}`,
+    );
   }
 
   private startHeartbeat(): void {
@@ -349,13 +536,41 @@ export class WebSocketService {
           });
         }
       });
-    }, 30000); // 30 seconds
+    }, this.serverHeartbeatMs);
+    this.heartbeatInterval.unref();
   }
 
   private stopHeartbeat(): void {
     if (this.heartbeatInterval) {
       clearInterval(this.heartbeatInterval);
       this.heartbeatInterval = null;
+    }
+  }
+
+  private startIdleSweep(): void {
+    this.idleSweepInterval = setInterval(() => {
+      const now = Date.now();
+      for (const [ws, client] of this.clients.entries()) {
+        const idleMs = now - client.lastClientHeartbeat.getTime();
+        if (idleMs >= this.idleTimeoutMs && ws.readyState === WebSocket.OPEN) {
+          logger.info(
+            `Dashboard WS idle timeout user=${client.userId} idle=${idleMs}ms limit=${this.idleTimeoutMs}ms`,
+          );
+          try {
+            ws.close(1001, 'Idle timeout');
+          } catch {
+            /* ignore */
+          }
+        }
+      }
+    }, Math.min(2_000, Math.max(500, Math.floor(this.idleTimeoutMs / 6))));
+    this.idleSweepInterval.unref();
+  }
+
+  private stopIdleSweep(): void {
+    if (this.idleSweepInterval) {
+      clearInterval(this.idleSweepInterval);
+      this.idleSweepInterval = null;
     }
   }
 
@@ -373,6 +588,12 @@ export class WebSocketService {
     });
   }
 
+  private makeSubscriptionKey(type?: string, filters?: Record<string, any>): string {
+    const normalizedType = type || 'unknown';
+    const normalizedFilters = filters ? JSON.stringify(filters) : '';
+    return `${normalizedType}:${normalizedFilters}`;
+  }
+
   // Public methods for broadcasting updates
   public broadcastLogUpdate(logType: string, content: string): void {
     const manager = this.subscriptionRegistry.getLogsManager();
@@ -381,11 +602,15 @@ export class WebSocketService {
     }
   }
 
-  public broadcastDashboardLayoutUpdate(userId: string, layouts: any, widgetInstances: any[]): void {
-    
+  public broadcastDashboardLayoutUpdate(
+    userId: string,
+    layouts: unknown,
+    widgetInstances: unknown[],
+    apiResponse?: Record<string, unknown>
+  ): void {
     const manager = this.subscriptionRegistry.getDashboardLayoutManager();
     if (manager) {
-      manager.broadcastLayoutUpdate(userId, layouts, widgetInstances);
+      manager.broadcastLayoutUpdate(userId, layouts as never, widgetInstances as never, undefined, apiResponse);
     }
   }
 
@@ -396,10 +621,20 @@ export class WebSocketService {
     }
   }
 
-  public async broadcastUnitsUpdate(): Promise<void> {
+  public async broadcastUnitsUpdate(scope?: {
+    facilityId?: string;
+    unitId?: string | null;
+    deviceId?: string;
+  }): Promise<void> {
     const manager = this.subscriptionRegistry.getUnitsManager();
     if (manager) {
       await manager.broadcastUpdate();
+    }
+    try {
+      const { AppRealtimeHub } = await import('@/services/app-realtime.hub');
+      await AppRealtimeHub.getInstance().emitUnitsUpdate(scope);
+    } catch {
+      /* app hub optional during early boot/tests */
     }
   }
 
@@ -410,17 +645,85 @@ export class WebSocketService {
     }
   }
 
+  public async broadcastDeviceStatusUpdate(deviceId: string, facilityId?: string): Promise<void> {
+    const manager = this.subscriptionRegistry.getDeviceStatusManager();
+    if (manager) {
+      await manager.broadcastDeviceUpdate(deviceId, facilityId);
+    }
+    try {
+      const { AppRealtimeHub } = await import('@/services/app-realtime.hub');
+      await AppRealtimeHub.getInstance().emitDeviceStatusUpdate(deviceId, facilityId);
+    } catch {
+      /* app hub optional during early boot/tests */
+    }
+  }
+
   public async broadcastGatewayStatusUpdate(facilityId?: string, gatewayId?: string): Promise<void> {
     const manager: any = this.subscriptionRegistry.getManager('gateway_status');
     if (manager && typeof manager.broadcastUpdate === 'function') {
       await manager.broadcastUpdate(facilityId, gatewayId);
     }
+    try {
+      const { AppRealtimeHub } = await import('@/services/app-realtime.hub');
+      await AppRealtimeHub.getInstance().emitGatewayStatusUpdate(facilityId, gatewayId);
+    } catch {
+      /* app hub optional during early boot/tests */
+    }
+  }
+
+  public async broadcastFacilityDeviceReachabilityRefresh(facilityId: string): Promise<void> {
+    const manager = this.subscriptionRegistry.getDeviceStatusManager();
+    if (manager && typeof manager.broadcastFacilityReachabilityRefresh === 'function') {
+      await manager.broadcastFacilityReachabilityRefresh(facilityId);
+    }
+    await this.broadcastUnitsUpdate({ facilityId });
+    await this.broadcastBatteryStatusUpdate();
+    await this.broadcastGeneralStatsUpdate();
   }
 
   public async broadcastCommandQueueUpdate(): Promise<void> {
     const manager: any = this.subscriptionRegistry.getManager('command_queue');
     if (manager && typeof manager.broadcastUpdate === 'function') {
       await manager.broadcastUpdate();
+    }
+  }
+
+  public async broadcastAccessCodesUpdate(facilityId?: string): Promise<void> {
+    const manager = this.subscriptionRegistry.getAccessCodesManager();
+    if (manager) {
+      await manager.broadcastUpdate(facilityId);
+    }
+    try {
+      const { AppRealtimeHub } = await import('@/services/app-realtime.hub');
+      await AppRealtimeHub.getInstance().emitAccessCodesUpdate(facilityId);
+    } catch {
+      /* app hub optional during early boot/tests */
+    }
+  }
+
+  public broadcastAccessCodePushStateUpdate(
+    facilityId: string,
+    options?: {
+      refreshEffectiveCodes?: boolean;
+      state?: import('@/services/access-code.service').AccessCodePushState;
+    },
+  ): void {
+    const manager = this.subscriptionRegistry.getAccessCodePushStateManager();
+    if (manager) {
+      manager.broadcastPushState(facilityId, options);
+    }
+  }
+
+  public async broadcastKeySharingUpdate(facilityId?: string): Promise<void> {
+    const manager = this.subscriptionRegistry.getKeySharingManager();
+    if (manager) {
+      await manager.broadcastUpdate(facilityId);
+    }
+    try {
+      const { AppRealtimeHub } = await import('@/services/app-realtime.hub');
+      await AppRealtimeHub.getInstance().emitKeySharingUpdate(facilityId);
+    } catch {
+      /* app hub optional during early boot/tests */
     }
   }
 
@@ -455,12 +758,22 @@ export class WebSocketService {
 
   public destroy(): void {
     this.stopHeartbeat();
+    this.stopIdleSweep();
+    for (const ws of this.clients.keys()) {
+      try {
+        ws.close(1001, 'Server shutdown');
+      } catch {
+        // best-effort teardown for tests/runtime shutdown
+      }
+    }
     if (this.wss) {
       this.wss.close();
       this.wss = null;
     }
     this.clients.clear();
+    this.pendingMessages.clear();
     this.subscriptions.clear();
+    WebSocketService.instance = undefined as any;
     logger.info('🔌 WebSocket service destroyed');
   }
 }

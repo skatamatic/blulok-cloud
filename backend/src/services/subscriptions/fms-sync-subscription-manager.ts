@@ -1,5 +1,6 @@
 import { WebSocket } from 'ws';
 import { UserRole } from '@/types/auth.types';
+import { FMSWebhookFeedItem } from '@/types/fms.types';
 import { BaseSubscriptionManager, SubscriptionClient } from './base-subscription-manager';
 import { FMSSyncLogModel } from '@/models/fms-sync-log.model';
 import { FMSConfigurationModel } from '@/models/fms-configuration.model';
@@ -19,11 +20,17 @@ interface FMSSyncStatus {
   /** ISO timestamp of last sync attempt */
   lastSyncTime: string | null;
   /** Current sync status */
-  status: 'completed' | 'failed' | 'partial' | 'never_synced' | 'not_configured';
+  status: 'completed' | 'failed' | 'partial' | 'pending_review' | 'never_synced' | 'not_configured';
   /** Number of changes detected in last sync */
   changesDetected?: number;
   /** Number of changes successfully applied */
   changesApplied?: number;
+  /** Unreviewed changes awaiting operator approval */
+  changesPending?: number;
+  /** Sync log id for the open pending review batch */
+  pendingSyncLogId?: string;
+  /** What triggered the open pending batch */
+  pendingTriggeredBy?: 'manual' | 'automatic' | 'webhook';
   /** Error message if sync failed */
   errorMessage?: string;
 }
@@ -120,7 +127,7 @@ export class FMSSyncSubscriptionManager extends BaseSubscriptionManager {
       // Get user's facility IDs based on role
       let facilityIds: string[] = [];
 
-      let facilityNameMap: Map<string, string> = new Map();
+      const facilityNameMap: Map<string, string> = new Map();
 
       if (client.userRole === UserRole.ADMIN || client.userRole === UserRole.DEV_ADMIN) {
         // Admin can see ALL facilities - get them from the facility model
@@ -177,17 +184,27 @@ export class FMSSyncSubscriptionManager extends BaseSubscriptionManager {
             if (name) status.facilityName = name;
             statuses.push(status);
           } else {
-            // Has sync history
+            const openReview = await this.syncLogModel.findOpenReviewSyncLog(facilityId);
+            const resolvedStatus =
+              openReview && openReview.changes_pending > 0
+                ? 'pending_review'
+                : (latestSync.sync_status as FMSSyncStatus['status']);
+
             const syncStatus: FMSSyncStatus = {
               facilityId,
               lastSyncTime: (latestSync.completed_at || latestSync.started_at)?.toISOString() || null,
-              status: latestSync.sync_status as 'completed' | 'failed' | 'partial',
+              status: resolvedStatus,
               changesDetected: latestSync.changes_detected,
               changesApplied: latestSync.changes_applied,
             };
             if (name) syncStatus.facilityName = name;
             if (latestSync.error_message) {
               syncStatus.errorMessage = latestSync.error_message;
+            }
+            if (openReview && openReview.changes_pending > 0) {
+              syncStatus.changesPending = openReview.changes_pending;
+              syncStatus.pendingSyncLogId = openReview.id;
+              syncStatus.pendingTriggeredBy = openReview.triggered_by as FMSSyncStatus['pendingTriggeredBy'];
             }
             statuses.push(syncStatus);
           }
@@ -213,11 +230,21 @@ export class FMSSyncSubscriptionManager extends BaseSubscriptionManager {
     return statuses;
   }
 
+  private canReceiveFacilityWebhook(client: SubscriptionClient, eventFacilityId: string): boolean {
+    if (client.userRole === UserRole.ADMIN || client.userRole === UserRole.DEV_ADMIN) {
+      return true;
+    }
+    if (client.userRole === UserRole.FACILITY_ADMIN) {
+      return (client.facilityIds || []).includes(eventFacilityId);
+    }
+    return false;
+  }
+
   /**
-   * Broadcast FMS sync status update to all subscribed clients
-   * This should be called whenever an FMS sync completes
+   * Broadcast FMS sync status update to all subscribed clients.
+   * Optionally includes a webhook feed item when a webhook was just processed.
    */
-  public async broadcastUpdate(facilityId?: string): Promise<void> {
+  public async broadcastUpdate(facilityId?: string, webhookEvent?: FMSWebhookFeedItem): Promise<void> {
     try {
       // Get all active FMS sync status subscriptions
       const activeSubscriptions = Array.from(this.watchers.keys());
@@ -250,6 +277,12 @@ export class FMSSyncSubscriptionManager extends BaseSubscriptionManager {
 
         const syncStatuses = userSyncData.get(userKey);
         const watchers = this.watchers.get(subscriptionId);
+
+        // Only attach webhook payload when the subscriber may access that facility.
+        const scopedWebhookEvent =
+          webhookEvent && this.canReceiveFacilityWebhook(client, webhookEvent.facilityId)
+            ? webhookEvent
+            : undefined;
         
         if (watchers) {
           watchers.forEach(ws => {
@@ -261,7 +294,8 @@ export class FMSSyncSubscriptionManager extends BaseSubscriptionManager {
                   data: {
                     facilities: syncStatuses,
                     lastUpdated: new Date().toISOString(),
-                    updatedFacilityId: facilityId, // Indicate which facility was updated (if specific)
+                    updatedFacilityId: facilityId,
+                    ...(scopedWebhookEvent ? { webhookEvent: scopedWebhookEvent } : {}),
                   },
                   timestamp: new Date().toISOString()
                 }));

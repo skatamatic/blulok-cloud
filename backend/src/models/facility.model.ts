@@ -49,6 +49,8 @@ export interface Facility {
   contact_phone?: string;
   /** Operational status of the facility */
   status: 'active' | 'inactive' | 'maintenance';
+  /** Seconds to wait for gateway lock/unlock confirmation before reverting (default 10). */
+  lock_command_timeout_sec?: number;
   /** Extensible metadata for facility-specific configuration */
   metadata?: Record<string, any>;
   /** Record creation timestamp */
@@ -84,6 +86,7 @@ export interface CreateFacilityData {
   contact_phone?: string;
   /** Initial operational status (defaults to 'active') */
   status?: 'active' | 'inactive' | 'maintenance';
+  lock_command_timeout_sec?: number;
   /** Initial metadata configuration */
   metadata?: Record<string, any>;
 }
@@ -230,6 +233,23 @@ export class FacilityModel {
   }
 
   /**
+   * Find a facility by display name (case-insensitive, trimmed).
+   * Used to prevent duplicate facility names across the system.
+   */
+  async findByName(name: string, excludeId?: string): Promise<Facility | null> {
+    const normalized = name.trim();
+    if (!normalized) return null;
+
+    const knex = this.db.connection;
+    let query = knex('facilities').whereRaw('LOWER(TRIM(name)) = LOWER(?)', [normalized]);
+    if (excludeId) {
+      query = query.whereNot('id', excludeId);
+    }
+    const facility = await query.first();
+    return facility || null;
+  }
+
+  /**
    * Find multiple facilities by their IDs.
    * Bulk operation for efficient batch retrieval.
    *
@@ -268,6 +288,24 @@ export class FacilityModel {
 
     // Fetch and return the created facility
     const facility = await this.findById(facilityId) as Facility;
+
+    // Initialize default schedules for the new facility
+    try {
+      const { SchedulesService } = await import('@/services/schedules.service');
+      await SchedulesService.initializeDefaultSchedules(facilityId);
+    } catch (error) {
+      // Log but don't fail facility creation if schedule initialization fails
+      const { logger } = await import('@/utils/logger');
+      logger.error(`Failed to initialize default schedules for facility ${facilityId}:`, error);
+    }
+
+    try {
+      const { DeviceGroupService } = await import('@/services/device-group.service');
+      await DeviceGroupService.getInstance().ensureDefaultGroup(facilityId);
+    } catch (error) {
+      const { logger } = await import('@/utils/logger');
+      logger.error(`Failed to initialize default access group for facility ${facilityId}:`, error);
+    }
 
     // Trigger model change hook for event-driven operations
     await this.hooks.onFacilityChange('create', facility.id, facility);
@@ -348,25 +386,29 @@ export class FacilityModel {
   }> {
     const knex = this.db.connection;
 
-    // Get unit occupancy statistics
-    const unitStats = await knex('units')
-      .where('facility_id', facilityId)
+    const assignmentAgg = knex('unit_assignments').select('unit_id').count('* as cnt').groupBy('unit_id').as('ua_cnt');
+
+    const unitStats = await knex('units as u')
+      .where('u.facility_id', facilityId)
+      .leftJoin(assignmentAgg, 'u.id', 'ua_cnt.unit_id')
       .select(
         knex.raw('COUNT(*) as total_units'),
-        knex.raw('SUM(CASE WHEN status = "occupied" THEN 1 ELSE 0 END) as occupied_units'),
-        knex.raw('SUM(CASE WHEN status = "available" THEN 1 ELSE 0 END) as available_units')
+        knex.raw('SUM(CASE WHEN COALESCE(ua_cnt.cnt, 0) > 0 THEN 1 ELSE 0 END) as occupied_units'),
+        knex.raw(
+          "SUM(CASE WHEN COALESCE(ua_cnt.cnt, 0) = 0 AND u.status IN ('available', 'occupied') THEN 1 ELSE 0 END) as available_units"
+        )
       )
       .first();
 
-    // Get device connectivity statistics across all device types
-    // Combines gateways, access control devices, and BluLok devices
+    // Get device connectivity statistics across all physical lock endpoints
+    // (access control devices + BluLok devices). Gateways themselves are not
+    // counted as "devices" for this metric so that counts align with the
+    // number of controllable locks the user sees.
     const deviceStats = await knex.raw(`
       SELECT
         COUNT(*) as devices_total,
         SUM(CASE WHEN status = 'online' THEN 1 ELSE 0 END) as devices_online
       FROM (
-        SELECT status FROM gateways WHERE facility_id = ?
-        UNION ALL
         SELECT acd.status FROM access_control_devices acd
         JOIN gateways g ON acd.gateway_id = g.id
         WHERE g.facility_id = ?
@@ -375,7 +417,7 @@ export class FacilityModel {
         JOIN gateways g ON bd.gateway_id = g.id
         WHERE g.facility_id = ?
       ) all_devices
-    `, [facilityId, facilityId, facilityId]);
+    `, [facilityId, facilityId]);
 
     return {
       totalUnits: parseInt(unitStats?.total_units || '0'),

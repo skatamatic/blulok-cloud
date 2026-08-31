@@ -791,3 +791,28 @@ export interface IStatusMonitor {
     }>;
   }>;
 }
+
+/**
+ * Time Sync JWT Payload Interface
+ *
+ * Defines the JWT payload structure for Secure Time Sync command packets.
+ * These JWTs are used to synchronize timestamps between the cloud and BluLok smart locks.
+ *
+ * Security Properties:
+ * - Signed with Operations Private Key (Ed25519) for authenticity
+ * - Contains monotonic timestamp to prevent time rollback attacks
+ * - Optional lock_id for lock-specific time synchronization
+ * - Standard JWT claims (iss, iat) for token lifecycle
+ */
+export interface TimeSyncJwtPayload {
+  /** Issuer claim - identifies BluCloud Root as the token issuer */
+  iss: 'BluCloud:Root';
+  /** Command type - identifies this as a Secure Time Sync command */
+  cmd_type: 'SECURE_TIME_SYNC';
+  /** Unix timestamp to synchronize (monotonic, non-decreasing) */
+  ts: number;
+  /** Issued at timestamp (JWT standard claim) */
+  iat?: number;
+  /** Optional lock identifier for lock-specific time synchronization */
+  lock_id?: string;
+}

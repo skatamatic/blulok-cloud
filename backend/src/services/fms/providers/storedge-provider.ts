@@ -5,8 +5,13 @@ import {
   FMSProviderCapabilities,
   FMSWebhookPayload,
   FMSProviderConfig,
+  StoredgeCloudEventEnvelope,
 } from '@/types/fms.types';
 import { logger } from '@/utils/logger';
+import { validateFmsWebhookAuth } from '../fms-webhook-auth';
+import { resolveStoredgeWebhookType } from '../storedge-webhook-events';
+import { unwrapStoredgeEntity } from '../storedge-api.utils';
+import { unitIdsForStoredgeTenant } from '../storedge-ledger.utils';
 
 /**
  * StoreDge FMS Provider
@@ -33,9 +38,7 @@ import { logger } from '@/utils/logger';
  * - Lease information → Unit assignments
  * - Contact details → User profiles
  *
- * Limitations:
- * - No webhook support (polling-based only)
- * - No real-time synchronization
+ * - Webhook support for real-time CloudEvents from Storable Edge
  * - No payment integration
  * - No bulk operations support
  *
@@ -58,6 +61,18 @@ export class StoredgeProvider extends BaseFMSProvider {
   constructor(blulokFacilityId: string, config: FMSProviderConfig) {
     super(blulokFacilityId, config);
 
+    // Avoid double slashes in URLs (e.g. baseUrl ending with /) which can break signing or routing.
+    this.config.baseUrl = (this.config.baseUrl || '').trim().replace(/\/+$/, '');
+
+    // Common typo: api.storegdgefms.com (extra "g") → ENOTFOUND. Auto-correct; fix saved config in UI when possible.
+    const typoHost = /storegdgefms\.com/i;
+    if (typoHost.test(this.config.baseUrl)) {
+      logger.warn(
+        'FMS Storable Edge: API URL had hostname typo storegdgefms.com; using storedgefms.com. Update the facility FMS base URL in settings.'
+      );
+      this.config.baseUrl = this.config.baseUrl.replace(typoHost, 'storedgefms.com');
+    }
+
     // For Storable Edge, the facility ID comes from customSettings
     this.storedgeFacilityId = config.customSettings?.facilityId || blulokFacilityId;
 
@@ -74,19 +89,53 @@ export class StoredgeProvider extends BaseFMSProvider {
     return {
       supportsTenantSync: true,
       supportsUnitSync: true,
-      supportsWebhooks: false, // The provided documentation does not mention webhooks
-      supportsRealtime: false,
+      supportsWebhooks: true,
+      supportsRealtime: true,
       supportsLeaseManagement: true,
       supportsPaymentIntegration: false,
       supportsBulkOperations: false,
     };
   }
 
+  /**
+   * Storable Edge paginates collections (default 100 per page). Follow meta.pagination.next_page
+   * until exhausted so sync sees all units, tenants, and ledgers.
+   */
+  private async fetchAllPages(resourcePath: string, collectionKey: string): Promise<any[]> {
+    const aggregated: any[] = [];
+    let page = 1;
+    const perPage = 100;
+    const maxPages = 500;
+
+    for (let i = 0; i < maxPages; i++) {
+      const url = new URL(
+        `${this.config.baseUrl}/v1/${this.storedgeFacilityId}/${resourcePath}`
+      );
+      url.searchParams.set('page', String(page));
+      url.searchParams.set('per_page', String(perPage));
+
+      const data = await this.makeAuthenticatedRequest(url.toString());
+      const chunk = data[collectionKey];
+      if (Array.isArray(chunk) && chunk.length > 0) {
+        aggregated.push(...chunk);
+      }
+
+      const nextPage = data.meta?.pagination?.next_page;
+      if (nextPage == null) {
+        break;
+      }
+      page = nextPage;
+    }
+
+    return aggregated;
+  }
+
   async testConnection(): Promise<boolean> {
     try {
-      await this.makeAuthenticatedRequest(
-        `${this.config.baseUrl}/v1/${this.storedgeFacilityId}/units`
-      );
+      const url = new URL(`${this.config.baseUrl}/v1/${this.storedgeFacilityId}/units`);
+      url.searchParams.set('page', '1');
+      url.searchParams.set('per_page', '1');
+      await this.makeAuthenticatedRequest(url.toString());
       return true;
     } catch (error) {
       logger.error('Storedge connection test failed:', error);
@@ -95,21 +144,13 @@ export class StoredgeProvider extends BaseFMSProvider {
   }
 
   async fetchTenants(): Promise<FMSTenant[]> {
-    const ledgersUrl = `${this.config.baseUrl}/v1/${this.storedgeFacilityId}/ledgers/current`;
-    const ledgersData = await this.makeAuthenticatedRequest(ledgersUrl);
-    const ledgers = ledgersData.ledgers || [];
-
-    const tenantsUrl = `${this.config.baseUrl}/v1/${this.storedgeFacilityId}/tenants/current`;
-    const tenantsData = await this.makeAuthenticatedRequest(tenantsUrl);
-    const tenants = tenantsData.tenants || [];
+    const ledgers = await this.fetchAllPages('ledgers/current', 'ledgers');
+    const tenants = await this.fetchAllPages('tenants/current', 'tenants');
 
     return tenants.map((tenant: any) => {
-      const tenantLedgers = ledgers.filter(
-        (ledger: any) => ledger.tenant.id === tenant.id
-      );
-      const unitIds = tenantLedgers.map((ledger: any) => ledger.unit.id);
+      const unitIds = unitIdsForStoredgeTenant(ledgers, tenant.id);
 
-      const primaryPhoneNumber = tenant.phone_numbers.find(
+      const primaryPhoneNumber = (tenant.phone_numbers || []).find(
         (pn: any) => pn.primary
       );
 
@@ -126,14 +167,12 @@ export class StoredgeProvider extends BaseFMSProvider {
   }
 
   async fetchUnits(): Promise<FMSUnit[]> {
-    const url = `${this.config.baseUrl}/v1/${this.storedgeFacilityId}/units`;
-    const data = await this.makeAuthenticatedRequest(url);
-    const units = data.units || [];
+    const units = await this.fetchAllPages('units', 'units');
 
     return units.map((unit: any) => ({
       externalId: unit.id,
       unitNumber: unit.name,
-      unitType: unit.unit_type.name,
+      unitType: unit.unit_type?.name ?? '',
       size: unit.size,
       status: unit.status === 'vacant' ? 'available' : unit.status,
       tenantId: unit.current_tenant_id,
@@ -144,18 +183,18 @@ export class StoredgeProvider extends BaseFMSProvider {
   async fetchTenant(externalId: string): Promise<FMSTenant | null> {
     try {
         const url = `${this.config.baseUrl}/v1/${this.storedgeFacilityId}/tenants/${externalId}`;
-        const tenant = await this.makeAuthenticatedRequest(url);
+        const raw = await this.makeAuthenticatedRequest(url);
+        const tenant = unwrapStoredgeEntity(raw, ['tenant', 'data']) as any;
+        if (!tenant) {
+          logger.warn(`Storedge tenant ${externalId} response missing id`);
+          return null;
+        }
 
-        const ledgersUrl = `${this.config.baseUrl}/v1/${this.storedgeFacilityId}/ledgers/current`;
-        const ledgersData = await this.makeAuthenticatedRequest(ledgersUrl);
-        const ledgers = ledgersData.ledgers || [];
+        const ledgers = await this.fetchAllPages('ledgers/current', 'ledgers');
 
-        const tenantLedgers = ledgers.filter(
-            (ledger: any) => ledger.tenant.id === tenant.id
-        );
-        const unitIds = tenantLedgers.map((ledger: any) => ledger.unit.id);
+        const unitIds = unitIdsForStoredgeTenant(ledgers, tenant.id);
 
-        const primaryPhoneNumber = tenant.phone_numbers.find(
+        const primaryPhoneNumber = (tenant.phone_numbers || []).find(
             (pn: any) => pn.primary
         );
 
@@ -177,11 +216,16 @@ export class StoredgeProvider extends BaseFMSProvider {
   async fetchUnit(externalId: string): Promise<FMSUnit | null> {
     try {
         const url = `${this.config.baseUrl}/v1/${this.storedgeFacilityId}/units/${externalId}`;
-        const unit = await this.makeAuthenticatedRequest(url);
+        const raw = await this.makeAuthenticatedRequest(url);
+        const unit = unwrapStoredgeEntity(raw, ['unit', 'data']) as any;
+        if (!unit) {
+          logger.warn(`Storedge unit ${externalId} response missing id`);
+          return null;
+        }
         return {
-            externalId: unit.id,
+            externalId: String(unit.id),
             unitNumber: unit.name,
-            unitType: unit.unit_type.name,
+            unitType: unit.unit_type?.name ?? '',
             size: unit.size,
             status: unit.status === 'vacant' ? 'available' : unit.status,
             tenantId: unit.current_tenant_id,
@@ -193,22 +237,75 @@ export class StoredgeProvider extends BaseFMSProvider {
     }
   }
 
-  async validateWebhook(
-    _payload: FMSWebhookPayload,
-    _signature: string
-  ): Promise<boolean> {
-    // Storedge API docs provided don't mention webhooks, so this is a placeholder
-    logger.warn('Storedge webhook validation not implemented');
-    return false;
+  private getWebhookSignatureHeaderName(): string {
+    const custom = this.config.customSettings?.webhookSignatureHeader;
+    return typeof custom === 'string' && custom.trim() ? custom.trim() : 'X-Storable-Signature';
   }
 
-  async parseWebhookPayload(rawPayload: any): Promise<FMSWebhookPayload> {
-    // Storedge API docs provided don't mention webhooks, so this is a placeholder
-    logger.warn('Storedge webhook parsing not implemented');
+  validateWebhookRawBody(rawBody: Buffer, signatureHeader: string | undefined): boolean {
+    const headers: Record<string, string | undefined> = {};
+    if (signatureHeader) {
+      headers[this.getWebhookSignatureHeaderName()] = signatureHeader;
+    }
+    return validateFmsWebhookAuth(
+      this.config.syncSettings,
+      this.config.customSettings,
+      rawBody,
+      headers
+    ).valid;
+  }
+
+  async validateWebhook(_payload: FMSWebhookPayload, signature: string): Promise<boolean> {
+    return Boolean(signature?.trim() && this.config.syncSettings.webhookSecret);
+  }
+
+  async parseWebhookPayload(rawPayload: unknown): Promise<FMSWebhookPayload> {
+    let envelope: StoredgeCloudEventEnvelope;
+    if (Buffer.isBuffer(rawPayload)) {
+      envelope = JSON.parse(rawPayload.toString('utf8')) as StoredgeCloudEventEnvelope;
+    } else if (typeof rawPayload === 'string') {
+      envelope = JSON.parse(rawPayload) as StoredgeCloudEventEnvelope;
+    } else {
+      envelope = rawPayload as StoredgeCloudEventEnvelope;
+    }
+
+    if (!envelope?.type || !envelope?.id || !envelope?.body) {
+      throw new Error('Invalid Storable CloudEvents envelope');
+    }
+
+    const resolved = resolveStoredgeWebhookType(envelope.type);
+
+    const bodyFacilityId = String(envelope.body.facility_id ?? '');
+    if (!bodyFacilityId) {
+      throw new Error('Webhook body missing facility_id');
+    }
+    if (bodyFacilityId !== this.storedgeFacilityId) {
+      throw new Error(
+        `Facility ID mismatch: event facility ${bodyFacilityId} does not match configured Storable facility ${this.storedgeFacilityId}`
+      );
+    }
+
     return {
-      event_type: 'lease.started',
-      timestamp: new Date().toISOString(),
-      data: rawPayload,
+      externalEventId: envelope.id,
+      event_type: resolved.eventType,
+      timestamp: envelope.time ?? envelope.sent_at ?? new Date().toISOString(),
+      facility_external_id: bodyFacilityId,
+      data: envelope.body as Record<string, unknown>,
+      applyAs: resolved.applyAs,
+      disposition: resolved.disposition,
+      rawType: envelope.type,
+    };
+  }
+
+  mapTenantBodyToFMSTenant(body: Record<string, unknown>): FMSTenant {
+    return {
+      externalId: String(body.tenant_id),
+      email: body.email != null ? String(body.email) : null,
+      firstName: body.first_name != null ? String(body.first_name) : null,
+      lastName: body.last_name != null ? String(body.last_name) : null,
+      phone: body.phone != null ? String(body.phone) : undefined,
+      unitIds: [],
+      status: body.delinquent === true ? 'inactive' : 'active',
     };
   }
 

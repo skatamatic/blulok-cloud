@@ -1,11 +1,20 @@
-import { render, screen, waitFor, fireEvent, act } from '@testing-library/react';
+import { render, screen, waitFor, fireEvent } from '@testing-library/react';
 import { BrowserRouter } from 'react-router-dom';
 import DevicesPage from '@/pages/DevicesPage';
 import { apiService } from '@/services/api.service';
 import { WebSocketProvider } from '@/contexts/WebSocketContext';
 import { AuthProvider } from '@/contexts/AuthContext';
+import { GlobalFacilityProvider } from '@/contexts/GlobalFacilityContext';
 
 jest.mock('@/services/api.service');
+jest.mock('@/contexts/ToastContext', () => ({
+  useToast: () => ({
+    addToast: jest.fn(),
+    removeToast: jest.fn(),
+    clearAllToasts: jest.fn(),
+    toasts: [],
+  }),
+}));
 jest.mock('@/contexts/AuthContext', () => ({
   AuthProvider: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
   useAuth: () => ({
@@ -16,6 +25,31 @@ jest.mock('@/contexts/AuthContext', () => ({
     },
     login: jest.fn(),
     logout: jest.fn(),
+  }),
+}));
+jest.mock('@/contexts/WebSocketContext', () => ({
+  WebSocketProvider: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
+  useWebSocket: () => ({
+    subscribe: jest.fn(() => () => {}),
+    unsubscribe: jest.fn(),
+    isConnected: true,
+  }),
+}));
+const mockUseLockDeviceRealtime = jest.fn();
+jest.mock('@/hooks/useLockDeviceRealtime', () => ({
+  useLockDeviceRealtime: (params: unknown) => mockUseLockDeviceRealtime(params),
+}));
+jest.mock('@/contexts/GlobalFacilityContext', () => ({
+  GlobalFacilityProvider: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
+  useGlobalFacility: () => ({
+    facilities: [],
+    selectedFacilityId: null,
+    selectedFacility: null,
+    setSelectedFacilityId: jest.fn(),
+    isLoading: false,
+    hasMultipleFacilities: false,
+    isAllFacilitiesSelected: false,
+    refresh: jest.fn(),
   }),
 }));
 
@@ -32,43 +66,26 @@ describe('DevicesPage - Commands Tab', () => {
       items: [],
       total: 0,
     });
-    // Mock WebSocket subscription
-    (WebSocketProvider as any).__esModule = true;
-    (WebSocketProvider as any).default = ({ children }: any) => children;
   });
 
   it('should render commands tab for admin users', async () => {
+    const initialQueue = { items: [], total: 0 };
     render(
       <BrowserRouter>
         <AuthProvider>
-          <WebSocketProvider>
-            <DevicesPage />
-          </WebSocketProvider>
+          <GlobalFacilityProvider>
+            <WebSocketProvider>
+              <DevicesPage initialCommandQueue={initialQueue} />
+            </WebSocketProvider>
+          </GlobalFacilityProvider>
         </AuthProvider>
       </BrowserRouter>
     );
 
     await waitFor(() => {
-      // The Commands tab should be present in the tab group
-      const tabButtons = screen.getAllByRole('button').filter(btn =>
-        btn.className.includes('rounded-md') &&
-        btn.querySelector('svg') &&
-        !btn.textContent?.includes('Filters') &&
-        !btn.textContent?.includes('Add Device')
-      );
-      expect(tabButtons).toHaveLength(3); // Grid, List, Commands tabs
+      expect(screen.getByText('Pending Commands: 0')).toBeInTheDocument();
     });
 
-    const tabButtons = screen.getAllByRole('button').filter(btn =>
-      btn.className.includes('rounded-md') &&
-      btn.querySelector('svg') &&
-      !btn.textContent?.includes('Filters') &&
-      !btn.textContent?.includes('Add Device')
-    );
-    const commandsButton = tabButtons[2]; // 3rd tab is Commands
-    await act(async () => {
-      fireEvent.click(commandsButton);
-    });
     expect(mockApiService.getCommandQueue).toHaveBeenCalled();
   });
 
@@ -90,23 +107,14 @@ describe('DevicesPage - Commands Tab', () => {
     render(
       <BrowserRouter>
         <AuthProvider>
-          <WebSocketProvider>
-            <DevicesPage initialCommandQueue={mockCommands} />
-          </WebSocketProvider>
+          <GlobalFacilityProvider>
+            <WebSocketProvider>
+              <DevicesPage initialCommandQueue={mockCommands} />
+            </WebSocketProvider>
+          </GlobalFacilityProvider>
         </AuthProvider>
       </BrowserRouter>
     );
-
-    const tabButtons = screen.getAllByRole('button').filter(btn =>
-      btn.className.includes('rounded-md') &&
-      btn.querySelector('svg') &&
-      !btn.textContent?.includes('Filters') &&
-      !btn.textContent?.includes('Add Device')
-    );
-    const commandsButton = tabButtons[2]; // 3rd tab is Commands
-    await act(async () => {
-      fireEvent.click(commandsButton);
-    });
 
     await waitFor(() => {
       expect(screen.getByText('fac-1')).toBeInTheDocument();
@@ -135,23 +143,14 @@ describe('DevicesPage - Commands Tab', () => {
     render(
       <BrowserRouter>
         <AuthProvider>
-          <WebSocketProvider>
-            <DevicesPage initialCommandQueue={mockCommands} />
-          </WebSocketProvider>
+          <GlobalFacilityProvider>
+            <WebSocketProvider>
+              <DevicesPage initialCommandQueue={mockCommands} />
+            </WebSocketProvider>
+          </GlobalFacilityProvider>
         </AuthProvider>
       </BrowserRouter>
     );
-
-    const tabButtons = screen.getAllByRole('button').filter(btn =>
-      btn.className.includes('rounded-md') &&
-      btn.querySelector('svg') &&
-      !btn.textContent?.includes('Filters') &&
-      !btn.textContent?.includes('Add Device')
-    );
-    const commandsButton = tabButtons[2]; // 3rd tab is Commands
-    await act(async () => {
-      fireEvent.click(commandsButton);
-    });
 
     await waitFor(() => {
       const retryButton = screen.getByText('Retry');
@@ -179,30 +178,16 @@ describe('DevicesPage - Commands Tab', () => {
     render(
       <BrowserRouter>
         <AuthProvider>
-          <WebSocketProvider>
-            <DevicesPage initialCommandQueue={mockCommands} />
-          </WebSocketProvider>
+          <GlobalFacilityProvider>
+            <WebSocketProvider>
+              <DevicesPage initialCommandQueue={mockCommands} />
+            </WebSocketProvider>
+          </GlobalFacilityProvider>
         </AuthProvider>
       </BrowserRouter>
     );
 
     // Commands tab should be active (check by the presence of command action buttons)
-    await waitFor(() => {
-      expect(screen.getByText('Retry')).toBeInTheDocument();
-      expect(screen.getByText('Cancel')).toBeInTheDocument();
-    });
-
-    const tabButtons = screen.getAllByRole('button').filter(btn =>
-      btn.className.includes('rounded-md') &&
-      btn.querySelector('svg') &&
-      !btn.textContent?.includes('Filters') &&
-      !btn.textContent?.includes('Add Device')
-    );
-    const commandsButton = tabButtons[2]; // 3rd tab is Commands
-    await act(async () => {
-      fireEvent.click(commandsButton);
-    });
-
     await waitFor(() => {
       expect(screen.getByText('Retry')).toBeInTheDocument();
       expect(screen.getByText('Cancel')).toBeInTheDocument();
@@ -217,5 +202,45 @@ describe('DevicesPage - Commands Tab', () => {
     const cancelButton = screen.getByText('Cancel');
     fireEvent.click(cancelButton);
     expect(mockApiService.cancelCommand).toHaveBeenCalledWith('cmd-1');
+  });
+});
+
+describe('DevicesPage - live device_status wiring', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    mockUseLockDeviceRealtime.mockClear();
+    mockApiService.getDevices.mockResolvedValue({
+      devices: [],
+      total: 0,
+    });
+    mockApiService.getCommandQueue.mockResolvedValue({
+      items: [],
+      total: 0,
+    });
+  });
+
+  it('registers useLockDeviceRealtime with onDeviceRows and debounced refresh on table tab', async () => {
+    render(
+      <BrowserRouter>
+        <AuthProvider>
+          <GlobalFacilityProvider>
+            <WebSocketProvider>
+              <DevicesPage />
+            </WebSocketProvider>
+          </GlobalFacilityProvider>
+        </AuthProvider>
+      </BrowserRouter>
+    );
+
+    await waitFor(() => {
+      expect(mockUseLockDeviceRealtime).toHaveBeenCalled();
+    });
+
+    const params = mockUseLockDeviceRealtime.mock.calls[0][0];
+    expect(params.enabled).toBe(true);
+    expect(params.onDeviceRows).toEqual(expect.any(Function));
+    expect(params.debouncedRefresh).toEqual(expect.any(Function));
+    expect(params.debounceRefreshFilter).toEqual(expect.any(Function));
+    expect(params.debounceRefreshFilter?.({ updatedDeviceId: 'new-device-id' })).toBe(true);
   });
 });

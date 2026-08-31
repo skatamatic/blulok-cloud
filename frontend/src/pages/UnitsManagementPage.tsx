@@ -1,31 +1,39 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { generateHighlightId } from '@/utils/navigation.utils';
 import { useHighlightWithPagination } from '@/hooks/useHighlightWithPagination';
 import { 
   HomeIcon,
   MapIcon,
-  FunnelIcon,
+  SignalIcon,
   UserIcon,
   LockClosedIcon,
   LockOpenIcon,
   PlusIcon,
-  ArrowTopRightOnSquareIcon,
-  Squares2X2Icon,
-  ListBulletIcon,
-  BuildingOfficeIcon
+  ExclamationTriangleIcon
 } from '@heroicons/react/24/outline';
 import { apiService } from '@/services/api.service';
+import { PrimaryTenantContact } from '@/components/UserManagement/PrimaryTenantContact';
 import { Unit, UnitFilters } from '@/types/facility.types';
 import { useAuth } from '@/contexts/AuthContext';
 import { AddUnitModal } from '@/components/Units/AddUnitModal';
 import { ExpandableFilters } from '@/components/Common/ExpandableFilters';
+import { ListPageHeader } from '@/components/Common/DetailsPageLayout';
 import { UserFilter } from '@/components/Common/UserFilter';
-import { FacilityDropdown } from '@/components/Common/FacilityDropdown';
+import { useGlobalFacility, ALL_FACILITIES_ID } from '@/contexts/GlobalFacilityContext';
+import { useLockDeviceRealtime } from '@/hooks/useLockDeviceRealtime';
+import { ViewModeToggle, type ListViewMode } from '@/components/Common/ViewModeToggle';
+import { SortableTableTh } from '@/components/Common/SortableTableTh';
+import { canRequestRemoteUnlock, isLockTransitionPending } from '@/utils/unitLock.utils';
+import { lockHardwareFeedbackToasts } from '@/utils/lockHardwareFeedback.constants';
+import { useRemoteUnlockAction } from '@/hooks/useRemoteUnlockAction';
+import { requiresOccupiedUnitOverride } from '@/constants/tenantUnlockOverride.constants';
+import { resolveLockTimeoutMsForUnit } from '@/utils/facilityLockTimeout.utils';
 
 const statusColors = {
   available: 'bg-green-100 text-green-800 dark:bg-green-900/20 dark:text-green-400',
   occupied: 'bg-blue-100 text-blue-800 dark:bg-blue-900/20 dark:text-blue-400',
+  overlocked: 'bg-orange-100 text-orange-800 dark:bg-orange-900/20 dark:text-orange-400',
   maintenance: 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/20 dark:text-yellow-400',
   reserved: 'bg-purple-100 text-purple-800 dark:bg-purple-900/20 dark:text-purple-400',
   locked: 'bg-blue-100 text-blue-800 dark:bg-blue-900/20 dark:text-blue-400',
@@ -37,9 +45,9 @@ const statusColors = {
 export default function UnitsManagementPage() {
   const navigate = useNavigate();
   const { authState } = useAuth();
+  const { selectedFacilityId, facilities: globalFacilities } = useGlobalFacility();
   const [units, setUnits] = useState<Unit[]>([]);
   const [allUnits, setAllUnits] = useState<Unit[]>([]); // Store full dataset for pagination calculations
-  const [facilities, setFacilities] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [total, setTotal] = useState(0);
   const [currentPage, setCurrentPage] = useState(1);
@@ -49,7 +57,6 @@ export default function UnitsManagementPage() {
     search: '',
     status: '',
     unit_type: '',
-    facility_id: '',
     lock_status: 'all',
     sortBy: 'unit_number',
     sortOrder: 'asc',
@@ -64,70 +71,34 @@ export default function UnitsManagementPage() {
       filters.search?.trim() ||
       filters.status ||
       filters.unit_type ||
-      filters.facility_id ||
       filters.tenant_id ||
       (filters.lock_status && filters.lock_status !== 'all')
     );
   };
-  const [viewMode, setViewMode] = useState<'grid' | 'table' | 'sitemap'>('grid');
+  const [viewMode, setViewMode] = useState<ListViewMode | 'sitemap'>('table');
   const [filtersExpanded, setFiltersExpanded] = useState(false);
+  const [tenantFilterLabel, setTenantFilterLabel] = useState<string>();
 
   const canManage = ['admin', 'dev_admin', 'facility_admin'].includes(authState.user?.role || '');
   const isTenant = authState.user?.role === 'tenant';
+  const loadUnitsRef = useRef<(opts?: { background?: boolean }) => Promise<void>>(async () => {});
+  const unitsDataRef = useRef<Unit[]>([]);
+  unitsDataRef.current = units;
+  const { requestUnlock, isSubmitting, syncLockStatus, tenantOverrideDialog } = useRemoteUnlockAction({
+    timeoutToast: lockHardwareFeedbackToasts.unitUnlockTimeout,
+    errorToast: () => ({
+      type: 'error' as const,
+      title: 'Could not update lock',
+    }),
+  });
 
-  useEffect(() => {
-    loadUnits();
-  }, [filters, currentPage]);
-
-  useEffect(() => {
-    loadFacilities();
+  const debouncedWsUnitsManagementRefresh = useCallback(() => {
+    void loadUnitsRef.current({ background: true });
   }, []);
 
-  // Load and persist facility selection
-  useEffect(() => {
-    // Load from localStorage on mount
-    const savedFacilityId = localStorage.getItem('selectedFacilityId');
-    if (savedFacilityId && !filters.facility_id) {
-      setFilters(prev => ({ ...prev, facility_id: savedFacilityId }));
-    }
-  }, []);
-
-  // Auto-select facility if none selected and facilities are available
-  useEffect(() => {
-    if (facilities.length > 0 && !filters.facility_id) {
-      // Try to use saved facility if it exists in the list
-      const savedFacilityId = localStorage.getItem('selectedFacilityId');
-      const facilityToSelect = savedFacilityId && facilities.find(f => f.id === savedFacilityId)
-        ? savedFacilityId
-        : facilities[0].id;
-      
-      setFilters(prev => ({ ...prev, facility_id: facilityToSelect }));
-      localStorage.setItem('selectedFacilityId', facilityToSelect);
-    }
-  }, [facilities]);
-
-  // Persist facility selection to localStorage when it changes
-  useEffect(() => {
-    if (filters.facility_id) {
-      localStorage.setItem('selectedFacilityId', filters.facility_id);
-    }
-  }, [filters.facility_id]);
-
-  const loadFacilities = async () => {
-    try {
-      // Fetch all facilities without pagination for dropdown
-      const response = await apiService.getFacilities({ limit: 1000 });
-      // Handle both response formats (with or without success property)
-      const facilitiesData = response.success ? response.facilities : (response.facilities || []);
-      setFacilities(facilitiesData);
-    } catch (error) {
-      console.error('Failed to load facilities:', error);
-    }
-  };
-
-  const loadUnits = async () => {
-    // For non-tenants, require facility selection
-    if (!isTenant && !filters.facility_id) {
+  const loadUnits = useCallback(async (options?: { background?: boolean }) => {
+    // For non-tenants, require facility selection (unless "All Facilities" is selected)
+    if (!isTenant && !selectedFacilityId) {
       setLoading(false);
       setUnits([]);
       setAllUnits([]);
@@ -136,10 +107,17 @@ export default function UnitsManagementPage() {
     }
 
     try {
-      setLoading(true);
+      if (!options?.background) {
+        setLoading(true);
+      }
+      const cardSortOverlay =
+        viewMode === 'grid' ? { sortBy: 'unit_number' as const, sortOrder: 'asc' as const } : {};
       const queryFilters: any = {
         ...filters,
-        offset: (currentPage - 1) * (filters.limit || 20)
+        ...cardSortOverlay,
+        offset: (currentPage - 1) * (filters.limit || 20),
+        // Add facility_id from global context if not "All Facilities"
+        ...(selectedFacilityId && selectedFacilityId !== ALL_FACILITIES_ID && { facility_id: selectedFacilityId }),
       };
       
       // Only include search if it has a value (remove empty strings)
@@ -157,6 +135,7 @@ export default function UnitsManagementPage() {
         try {
           const fullDatasetFilters: any = {
             ...filters,
+            ...cardSortOverlay,
             // Remove pagination parameters to get all data
             offset: undefined,
             limit: undefined
@@ -183,7 +162,25 @@ export default function UnitsManagementPage() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [filters, currentPage, selectedFacilityId, viewMode, isTenant]);
+
+  useEffect(() => {
+    loadUnitsRef.current = loadUnits;
+  }, [loadUnits]);
+
+  useEffect(() => {
+    void loadUnits();
+  }, [loadUnits]);
+
+  useLockDeviceRealtime({
+    enabled: isTenant || !!selectedFacilityId,
+    facilityId:
+      !isTenant && selectedFacilityId && selectedFacilityId !== ALL_FACILITIES_ID
+        ? selectedFacilityId
+        : undefined,
+    debouncedRefresh: debouncedWsUnitsManagementRefresh,
+    debounceMs: 500,
+  });
 
   const handleSearch = (value: string) => {
     setFilters(prev => ({ ...prev, search: value }));
@@ -209,6 +206,16 @@ export default function UnitsManagementPage() {
     setCurrentPage(page);
   };
 
+  const handleUnitColumnSort = (columnKey: string) => {
+    setFilters((prev) => ({
+      ...prev,
+      sortBy: columnKey as UnitFilters['sortBy'],
+      sortOrder:
+        prev.sortBy === columnKey ? (prev.sortOrder === 'asc' ? 'desc' : 'asc') : 'asc',
+    }));
+    setCurrentPage(1);
+  };
+
   // Handle highlighting when page loads - use allUnits for proper pagination calculation
   useHighlightWithPagination(
     allUnits, 
@@ -224,23 +231,72 @@ export default function UnitsManagementPage() {
     setCurrentPage(1);
   };
 
-
-  const handleFacilityFilter = (facilityId: string) => {
-    setFilters(prev => ({ ...prev, facility_id: facilityId }));
-    setCurrentPage(1);
+  const patchUnitLockOptimistic = (unitId: string, lockStatus: string) => {
+    const patch = (list: Unit[]) =>
+      list.map((u) =>
+        u.id === unitId && u.blulok_device
+          ? { ...u, blulok_device: { ...u.blulok_device, lock_status: lockStatus } }
+          : u,
+      );
+    setUnits(patch);
+    setAllUnits(patch);
   };
 
-  const handleLockToggle = async (unit: Unit) => {
+  const handleRemoteUnlock = async (unit: Unit) => {
     if (!unit.blulok_device || !canManage) return;
-    
-    try {
-      const newStatus = unit.blulok_device.lock_status === 'locked' ? 'unlocked' : 'locked';
-      await apiService.updateLockStatus(unit.blulok_device.id, newStatus);
-      await loadUnits(); // Refresh data
-    } catch (error) {
-      console.error('Failed to toggle lock:', error);
-    }
+    if (!canRequestRemoteUnlock(unit.blulok_device.lock_status)) return;
+
+    const previousStatus = unit.blulok_device.lock_status ?? 'locked';
+    let clearTransitionalAfterRefresh = false;
+
+    const refreshAfterUnlockAttempt = async () => {
+      await loadUnits();
+      if (!clearTransitionalAfterRefresh) return;
+      clearTransitionalAfterRefresh = false;
+      const revert = (list: Unit[]) =>
+        list.map((u) => {
+          if (u.id !== unit.id || !u.blulok_device) return u;
+          const status = u.blulok_device.lock_status;
+          if (status === 'unlocking' || status === 'locking') {
+            return {
+              ...u,
+              blulok_device: { ...u.blulok_device, lock_status: previousStatus },
+            };
+          }
+          return u;
+        });
+      setUnits(revert);
+      setAllUnits(revert);
+    };
+
+    await requestUnlock({
+      deviceId: unit.blulok_device.id,
+      watchKey: unit.id,
+      timeoutMs: resolveLockTimeoutMsForUnit(unit, globalFacilities),
+      getLockStatus: () => {
+        const cur = unitsDataRef.current.find((x) => x.id === unit.id);
+        return cur?.blulok_device?.lock_status;
+      },
+      applyOptimisticUnlocking: () => {
+        patchUnitLockOptimistic(unit.id, 'unlocking');
+      },
+      revertOptimisticLockStatus: (status) => {
+        clearTransitionalAfterRefresh = true;
+        patchUnitLockOptimistic(unit.id, status);
+      },
+      refresh: refreshAfterUnlockAttempt,
+      requiresTenantOverride: requiresOccupiedUnitOverride(unit, authState.user?.id),
+      unitLabel: unit.unit_number,
+    });
   };
+
+  useEffect(() => {
+    for (const unit of units) {
+      if (unit.blulok_device?.lock_status) {
+        syncLockStatus(unit.id, unit.blulok_device.lock_status);
+      }
+    }
+  }, [units, syncLockStatus]);
 
   const handleTenantManagement = (unit: Unit) => {
     navigate(`/units/${unit.id}?tab=tenant`);
@@ -295,8 +351,8 @@ export default function UnitsManagementPage() {
         )}
 
 
-        {/* Lock Status */}
-        {unit.blulok_device && (
+        {/* Lock Status or Missing Device Warning */}
+        {unit.blulok_device ? (
           <div className="flex items-center justify-between mb-4 p-3 bg-blue-50 dark:bg-blue-900/20 rounded-lg">
             <div className="flex items-center space-x-2">
               {unit.blulok_device.lock_status === 'locked' ? 
@@ -312,6 +368,11 @@ export default function UnitsManagementPage() {
                 {unit.blulok_device.battery_level}%
               </span>
             )}
+          </div>
+        ) : (
+          <div className="mb-4 p-3 bg-yellow-50 dark:bg-yellow-900/20 rounded-lg flex items-center text-sm text-yellow-800 dark:text-yellow-300">
+            <ExclamationTriangleIcon className="h-4 w-4 mr-2" />
+            No device attached
           </div>
         )}
 
@@ -333,56 +394,9 @@ export default function UnitsManagementPage() {
           </div>
         )}
 
-        {/* Actions */}
-        <div className="flex space-x-2">
-          {canManage && (
-            <button
-              onClick={(e) => {
-                e.stopPropagation();
-                handleTenantManagement(unit);
-              }}
-              className="flex-1 flex items-center justify-center space-x-1 py-2 px-3 text-sm font-medium text-primary-700 bg-primary-100 hover:bg-primary-200 dark:bg-primary-900/20 dark:text-primary-400 rounded-lg transition-colors"
-            >
-              <UserIcon className="h-4 w-4" />
-              <span>Manage</span>
-            </button>
-          )}
-          
-          {canManage && unit.blulok_device && (
-            <button
-              onClick={(e) => {
-                e.stopPropagation();
-                handleLockToggle(unit);
-              }}
-              className={`flex-1 flex items-center justify-center space-x-1 py-2 px-3 text-sm font-medium rounded-lg transition-colors ${
-                unit.blulok_device.lock_status === 'locked'
-                  ? 'bg-green-100 text-green-700 hover:bg-green-200 dark:bg-green-900/20 dark:text-green-400'
-                  : 'bg-red-100 text-red-700 hover:bg-red-200 dark:bg-red-900/20 dark:text-red-400'
-              }`}
-            >
-              {unit.blulok_device.lock_status === 'locked' ? 
-                <LockOpenIcon className="h-4 w-4" /> : 
-                <LockClosedIcon className="h-4 w-4" />
-              }
-              <span>{unit.blulok_device.lock_status === 'locked' ? 'Unlock' : 'Lock'}</span>
-            </button>
-          )}
-        </div>
+        {/* Actions removed per design (Manage/Lock) */}
 
-        {/* Quick links */}
-        <div className="mt-4 pt-4 border-t border-gray-100 dark:border-gray-700">
-          <button
-            onClick={(e) => {
-              e.stopPropagation();
-              navigate(`/facilities/${unit.facility_id}`, { state: { tab: 'units' } });
-            }}
-            className="flex items-center text-sm text-primary-600 dark:text-primary-400 hover:text-primary-700 dark:hover:text-primary-300"
-          >
-            <BuildingOfficeIcon className="h-4 w-4 mr-1" />
-            View Facility
-            <ArrowTopRightOnSquareIcon className="h-3 w-3 ml-1" />
-          </button>
-        </div>
+        {/* Quick links removed per design: no footer or facility link */}
       </div>
     );
   };
@@ -391,83 +405,48 @@ export default function UnitsManagementPage() {
   const uniqueTypes = Array.from(new Set(units.map(unit => unit.unit_type).filter(Boolean)));
 
   return (
-    <div className="space-y-6">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold text-gray-900 dark:text-white">
-            Storage Units
-          </h1>
-          <p className="mt-1 text-sm text-gray-600 dark:text-gray-400">
-            Manage storage units, tenants, and facility operations
-          </p>
-        </div>
-        <div className="flex items-center space-x-3">
-          {/* View Mode Selector */}
-          <div className="flex bg-gray-100 dark:bg-gray-800 rounded-lg p-1">
-            <button
-              onClick={() => setViewMode('grid')}
-              className={`px-3 py-1.5 text-sm font-medium rounded-md transition-colors ${
-                viewMode === 'grid'
-                  ? 'bg-white dark:bg-gray-700 text-gray-900 dark:text-white shadow-sm'
-                  : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'
-              }`}
-            >
-              <Squares2X2Icon className="h-4 w-4" />
-            </button>
-            <button
-              onClick={() => setViewMode('table')}
-              className={`px-3 py-1.5 text-sm font-medium rounded-md transition-colors ${
-                viewMode === 'table'
-                  ? 'bg-white dark:bg-gray-700 text-gray-900 dark:text-white shadow-sm'
-                  : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'
-              }`}
-            >
-              <ListBulletIcon className="h-4 w-4" />
-            </button>
-            <button
-              onClick={() => setViewMode('sitemap')}
-              className={`px-3 py-1.5 text-sm font-medium rounded-md transition-colors ${
-                viewMode === 'sitemap'
-                  ? 'bg-white dark:bg-gray-700 text-gray-900 dark:text-white shadow-sm'
-                  : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'
-              }`}
-            >
-              <MapIcon className="h-4 w-4" />
-            </button>
-          </div>
+    <div className="space-y-4">
+      <ListPageHeader
+        title="Storage Units"
+        subtitle="Manage storage units, tenants, and facility operations"
+        actions={
+          <>
+            <div className="flex items-center gap-1 rounded-lg bg-gray-100 p-1 dark:bg-gray-800">
+              <ViewModeToggle
+                value={viewMode === 'table' ? 'table' : 'grid'}
+                onChange={(m) => setViewMode(m)}
+                showText={false}
+                noneSelected={viewMode === 'sitemap'}
+              />
+              <button
+                type="button"
+                onClick={() => setViewMode('sitemap')}
+                className={`rounded-md px-3 py-1.5 text-sm font-medium transition-colors ${
+                  viewMode === 'sitemap'
+                    ? 'bg-white text-gray-900 shadow-sm dark:bg-gray-700 dark:text-white'
+                    : 'text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200'
+                }`}
+                title="Site map"
+                aria-label="Site map"
+              >
+                <MapIcon className="h-4 w-4" />
+              </button>
+            </div>
 
-          {canManage && (
-            <button
-              onClick={() => setShowAddModal(true)}
-              className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-lg shadow-sm text-white bg-primary-600 hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500 transition-colors"
-            >
-              <PlusIcon className="h-4 w-4 mr-2" />
-              Add Unit
-            </button>
-          )}
-        </div>
-      </div>
+            {canManage && (
+              <button
+                onClick={() => setShowAddModal(true)}
+                className="inline-flex items-center rounded-lg border border-transparent bg-primary-600 px-4 py-2 text-sm font-medium text-white shadow-sm transition-colors hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2"
+              >
+                <PlusIcon className="mr-2 h-4 w-4" />
+                Add Unit
+              </button>
+            )}
+          </>
+        }
+      />
 
       {/* Facility Selection - Prominent */}
-      {!isTenant && viewMode !== 'sitemap' && (
-        <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-4">
-          <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-            Facility
-          </label>
-          <FacilityDropdown
-            facilities={facilities}
-            selectedFacilityId={filters.facility_id || ''}
-            onSelect={(facilityId) => {
-              setFilters(prev => ({ ...prev, facility_id: facilityId }));
-              setCurrentPage(1);
-            }}
-            placeholder="Select a facility"
-            required={true}
-          />
-        </div>
-      )}
-
       {/* Filters */}
       {!isTenant && viewMode !== 'sitemap' && (
         <ExpandableFilters
@@ -478,12 +457,10 @@ export default function UnitsManagementPage() {
           onToggleExpanded={() => setFiltersExpanded(!filtersExpanded)}
           hasActiveFilters={hasActiveFilters()}
           onClearFilters={() => {
-            const firstFacilityId = facilities.length > 0 ? facilities[0].id : '';
             setFilters({
               search: '',
               status: '',
               unit_type: '',
-              facility_id: firstFacilityId,
               lock_status: 'all',
               sortBy: 'unit_number',
               sortOrder: 'asc',
@@ -491,70 +468,69 @@ export default function UnitsManagementPage() {
               offset: 0,
               tenant_id: ''
             });
-            if (firstFacilityId) {
-              localStorage.setItem('selectedFacilityId', firstFacilityId);
-            }
+            setTenantFilterLabel(undefined);
             setCurrentPage(1);
           }}
           sections={[
-            // All filters in expanded view for better layout
-            ...(filtersExpanded ? [
-              {
-                title: 'Status',
-                icon: <FunnelIcon className="h-5 w-5" />,
-                options: [
-                  { key: '', label: 'All Status' },
-                  { key: 'available', label: 'Available', color: 'green' },
-                  { key: 'occupied', label: 'Occupied', color: 'blue' },
-                  { key: 'maintenance', label: 'Maintenance', color: 'yellow' },
-                  { key: 'reserved', label: 'Reserved', color: 'purple' }
-                ],
-                selected: filters.status || '',
-                onSelect: handleStatusFilter
-              },
-              {
-                title: 'Lock Status',
-                icon: <LockClosedIcon className="h-5 w-5" />,
-                options: [
-                  { key: 'all', label: 'All Lock States' },
-                  { key: 'locked', label: 'Locked', color: 'blue' },
-                  { key: 'unlocked', label: 'Unlocked', color: 'green' },
-                  { key: 'unknown', label: 'Unknown', color: 'gray' }
-                ],
-                selected: filters.lock_status || 'all',
-                onSelect: handleLockStatusFilter
-              },
-              {
-                title: 'Unit Type',
-                icon: <HomeIcon className="h-5 w-5" />,
-                options: [
-                  { key: '', label: 'All Types' },
-                  ...uniqueTypes.slice(0, 4).map(type => ({
-                    key: type || '',
-                    label: type || 'Unknown',
-                    color: 'primary'
-                  }))
-                ],
-                selected: filters.unit_type || '',
-                onSelect: handleTypeFilter
-              },
-              {
-                title: 'Tenant',
-                icon: <UserIcon className="h-5 w-5" />,
-                type: 'custom' as const,
-                options: [],
-                selected: filters.tenant_id || '',
-                onSelect: () => {},
-                customContent: (
-                  <UserFilter
-                    value={filters.tenant_id || ''}
-                    onChange={(userId) => handleFilterChange('tenant_id', userId || undefined)}
-                    placeholder="Search tenants..."
-                    className="w-full"
-                  />
-                )
-              }
-            ] : [])
+            {
+              title: 'Status',
+              icon: <SignalIcon className="h-4 w-4" />,
+              options: [
+                { key: '', label: 'All Status', color: 'primary' },
+                { key: 'available', label: 'Available', color: 'green' },
+                { key: 'occupied', label: 'Occupied', color: 'blue' },
+                { key: 'maintenance', label: 'Maintenance', color: 'yellow' },
+                { key: 'reserved', label: 'Reserved', color: 'purple' },
+              ],
+              selected: filters.status || '',
+              onSelect: handleStatusFilter,
+            },
+            {
+              title: 'Lock Status',
+              icon: <LockClosedIcon className="h-4 w-4" />,
+              options: [
+                { key: 'all', label: 'All Lock States' },
+                { key: 'locked', label: 'Locked', color: 'blue' },
+                { key: 'unlocked', label: 'Unlocked', color: 'green' },
+                { key: 'unknown', label: 'Unknown', color: 'gray' },
+              ],
+              selected: filters.lock_status || 'all',
+              onSelect: handleLockStatusFilter,
+            },
+            {
+              title: 'Unit Type',
+              icon: <HomeIcon className="h-4 w-4" />,
+              options: [
+                { key: '', label: 'All Types', color: 'primary' },
+                ...uniqueTypes.slice(0, 6).map((type) => ({
+                  key: type || '',
+                  label: type || 'Unknown',
+                  color: 'primary',
+                })),
+              ],
+              selected: filters.unit_type || '',
+              onSelect: handleTypeFilter,
+            },
+            {
+              title: 'Tenant',
+              icon: <UserIcon className="h-4 w-4" />,
+              type: 'custom' as const,
+              span: 'full' as const,
+              options: [],
+              selected: filters.tenant_id || '',
+              selectedLabel: tenantFilterLabel,
+              onSelect: () => {},
+              customContent: (
+                <UserFilter
+                  value={filters.tenant_id || ''}
+                  onChange={(userId) => handleFilterChange('tenant_id', userId || undefined)}
+                  onDisplayLabelChange={setTenantFilterLabel}
+                  placeholder="Search tenants..."
+                  className="w-full max-w-md"
+                  roleFilter="tenant"
+                />
+              ),
+            },
           ]}
         />
       )}
@@ -646,19 +622,42 @@ export default function UnitsManagementPage() {
           <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
             <thead className="bg-gray-50 dark:bg-gray-900">
               <tr>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
-                  Unit
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
-                  Status
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
-                  Tenant
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
-                  Lock Status
-                </th>
-                <th className="relative px-6 py-3">
+                <SortableTableTh
+                  label="Unit"
+                  columnKey="unit_number"
+                  sortBy={filters.sortBy || 'unit_number'}
+                  sortOrder={filters.sortOrder === 'desc' ? 'desc' : 'asc'}
+                  onSort={handleUnitColumnSort}
+                />
+                <SortableTableTh
+                  label="Status"
+                  columnKey="status"
+                  sortBy={filters.sortBy || 'unit_number'}
+                  sortOrder={filters.sortOrder === 'desc' ? 'desc' : 'asc'}
+                  onSort={handleUnitColumnSort}
+                />
+                <SortableTableTh
+                  label="Tenant"
+                  columnKey="tenant_last_name"
+                  sortBy={filters.sortBy || 'unit_number'}
+                  sortOrder={filters.sortOrder === 'desc' ? 'desc' : 'asc'}
+                  onSort={handleUnitColumnSort}
+                />
+                <SortableTableTh
+                  label="Lock"
+                  columnKey="lock_status"
+                  sortBy={filters.sortBy || 'unit_number'}
+                  sortOrder={filters.sortOrder === 'desc' ? 'desc' : 'asc'}
+                  onSort={handleUnitColumnSort}
+                />
+                <SortableTableTh
+                  label="Battery"
+                  columnKey="battery_level"
+                  sortBy={filters.sortBy || 'unit_number'}
+                  sortOrder={filters.sortOrder === 'desc' ? 'desc' : 'asc'}
+                  onSort={handleUnitColumnSort}
+                />
+                <th className="relative px-6 py-3 text-right text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
                   <span className="sr-only">Actions</span>
                 </th>
               </tr>
@@ -695,35 +694,43 @@ export default function UnitsManagementPage() {
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-white group-hover:bg-blue-50 dark:group-hover:bg-blue-900/20 transition-colors duration-200">
                     {unit.primary_tenant ? (
-                      <div>
-                        <div className="font-medium">{unit.primary_tenant.first_name} {unit.primary_tenant.last_name}</div>
-                        <div className="text-gray-500 dark:text-gray-400">{unit.primary_tenant.email}</div>
-                      </div>
+                      <PrimaryTenantContact
+                        tenant={unit.primary_tenant}
+                        contactClassName="text-gray-500 dark:text-gray-400"
+                      />
                     ) : (
                       <span className="text-gray-400 dark:text-gray-500">Unassigned</span>
                     )}
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap group-hover:bg-blue-50 dark:group-hover:bg-blue-900/20 transition-colors duration-200">
                     {unit.blulok_device ? (
-                      <div className="flex items-center space-x-2">
-                        <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${statusColors[unit.blulok_device.lock_status as keyof typeof statusColors]}`}>
-                          {unit.blulok_device.lock_status === 'locked' ? 
-                            <LockClosedIcon className="h-3 w-3 mr-1" /> : 
-                            <LockOpenIcon className="h-3 w-3 mr-1" />
-                          }
-                          {unit.blulok_device.lock_status}
-                        </span>
-                        {unit.blulok_device.battery_level && (
-                          <span className={`text-xs font-medium ${
-                            unit.blulok_device.battery_level < 20 ? 'text-red-500' : 
-                            unit.blulok_device.battery_level < 50 ? 'text-yellow-500' : 'text-green-500'
-                          }`}>
-                            {unit.blulok_device.battery_level}%
-                          </span>
+                      <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${statusColors[unit.blulok_device.lock_status as keyof typeof statusColors]}`}>
+                        {unit.blulok_device.lock_status === 'locked' ? (
+                          <LockClosedIcon className="h-3 w-3 mr-1" />
+                        ) : (
+                          <LockOpenIcon className="h-3 w-3 mr-1" />
                         )}
-                      </div>
+                        {unit.blulok_device.lock_status}
+                      </span>
                     ) : (
                       <span className="text-gray-400 dark:text-gray-500">No device</span>
+                    )}
+                  </td>
+                  <td className="px-6 py-4 whitespace-nowrap text-sm group-hover:bg-blue-50 dark:group-hover:bg-blue-900/20 transition-colors duration-200">
+                    {unit.blulok_device?.battery_level != null ? (
+                      <span
+                        className={`font-medium ${
+                          unit.blulok_device.battery_level < 20
+                            ? 'text-red-500'
+                            : unit.blulok_device.battery_level < 50
+                              ? 'text-yellow-500'
+                              : 'text-green-500'
+                        }`}
+                      >
+                        {unit.blulok_device.battery_level}%
+                      </span>
+                    ) : (
+                      <span className="text-gray-400 dark:text-gray-500">—</span>
                     )}
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium group-hover:bg-blue-50 dark:group-hover:bg-blue-900/20 transition-colors duration-200">
@@ -741,20 +748,30 @@ export default function UnitsManagementPage() {
                       )}
                       {canManage && unit.blulok_device && (
                         <button
+                          type="button"
+                          title={
+                            unit.blulok_device.lock_status === 'locked'
+                              ? 'Unlock remotely'
+                              : 'Unlocked — re-lock manually on site'
+                          }
                           onClick={(e) => {
                             e.stopPropagation();
-                            handleLockToggle(unit);
+                            void handleRemoteUnlock(unit);
                           }}
-                          className={`p-1 rounded transition-colors ${
-                            unit.blulok_device.lock_status === 'locked'
+                          disabled={
+                            isLockTransitionPending(unit.blulok_device.lock_status) ||
+                            isSubmitting(unit.id) ||
+                            !canRequestRemoteUnlock(unit.blulok_device.lock_status)
+                          }
+                          className={`p-1 rounded transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
+                            canRequestRemoteUnlock(unit.blulok_device.lock_status) &&
+                            !isLockTransitionPending(unit.blulok_device.lock_status) &&
+                            !isSubmitting(unit.id)
                               ? 'text-green-600 hover:text-green-700'
-                              : 'text-red-600 hover:text-red-700'
+                              : 'text-gray-400 dark:text-gray-500'
                           }`}
                         >
-                          {unit.blulok_device.lock_status === 'locked' ? 
-                            <LockOpenIcon className="h-4 w-4" /> : 
-                            <LockClosedIcon className="h-4 w-4" />
-                          }
+                          <LockOpenIcon className="h-4 w-4" />
                         </button>
                       )}
                     </div>
@@ -850,6 +867,7 @@ export default function UnitsManagementPage() {
           setShowAddModal(false);
         }}
       />
+      {tenantOverrideDialog}
     </div>
   );
 }

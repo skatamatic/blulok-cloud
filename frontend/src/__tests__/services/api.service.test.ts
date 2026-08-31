@@ -1,6 +1,7 @@
 import { UserRole } from '@/types/auth.types';
 
 // Create mock axios instance before importing anything
+let responseErrorHandler: ((error: unknown) => unknown) | undefined;
 const mockAxios = {
   get: jest.fn(),
   post: jest.fn(),
@@ -9,7 +10,13 @@ const mockAxios = {
   delete: jest.fn(),
   interceptors: {
     request: { use: jest.fn((fn) => fn), eject: jest.fn() },
-    response: { use: jest.fn((fn) => fn), eject: jest.fn() },
+    response: {
+      use: jest.fn((success: unknown, error?: (err: unknown) => unknown) => {
+        responseErrorHandler = error;
+        return success;
+      }),
+      eject: jest.fn(),
+    },
   },
 };
 
@@ -21,8 +28,15 @@ jest.mock('axios', () => ({
   },
 }));
 
+jest.mock('@/services/websocket.service', () => ({
+  websocketService: {
+    disconnect: jest.fn(),
+  },
+}));
+
 // Import after mocking
 import { apiService } from '@/services/api.service';
+import { websocketService } from '@/services/websocket.service';
 
 describe('APIService', () => {
   beforeEach(() => {
@@ -48,12 +62,12 @@ describe('APIService', () => {
       mockAxios.post.mockResolvedValueOnce(mockResponse);
 
       const result = await apiService.login({
-        email: 'test@example.com',
+        identifier: 'test@example.com',
         password: 'password123'
       });
 
       expect(mockAxios.post).toHaveBeenCalledWith('/auth/login', {
-        email: 'test@example.com',
+        identifier: 'test@example.com',
         password: 'password123'
       });
 
@@ -71,7 +85,7 @@ describe('APIService', () => {
       mockAxios.post.mockRejectedValueOnce(error);
 
       await expect(apiService.login({
-        email: 'test@example.com',
+        identifier: 'test@example.com',
         password: 'wrongpassword'
       })).rejects.toEqual(error);
     });
@@ -81,7 +95,7 @@ describe('APIService', () => {
       mockAxios.post.mockRejectedValueOnce(error);
 
       await expect(apiService.login({
-        email: 'test@example.com',
+        identifier: 'test@example.com',
         password: 'password123'
       })).rejects.toThrow('Network Error');
     });
@@ -172,6 +186,72 @@ describe('APIService', () => {
     });
   });
 
+  describe('getDashboardGeneralStats', () => {
+    const emptyByRole = (): Record<UserRole, number> => ({
+      [UserRole.TENANT]: 0,
+      [UserRole.ADMIN]: 0,
+      [UserRole.DEV_ADMIN]: 0,
+      [UserRole.FACILITY_ADMIN]: 0,
+      [UserRole.MAINTENANCE]: 0,
+      [UserRole.BLULOK_TECHNICIAN]: 0,
+    });
+
+    it('GETs aggregate stats without query params when facility_id omitted', async () => {
+      const payload = {
+        success: true,
+        data: {
+          facilities: { total: 1, active: 1, inactive: 0, maintenance: 0 },
+          devices: { total: 2, online: 2, offline: 0, error: 0, maintenance: 0 },
+          users: {
+            total: 3,
+            active: 3,
+            inactive: 0,
+            byRole: emptyByRole(),
+          },
+          alerts: { open: 0 },
+          lastUpdated: '2026-01-01T00:00:00.000Z',
+          scope: { type: 'all' as const },
+        },
+      };
+      mockAxios.get.mockResolvedValueOnce({ data: payload });
+
+      const result = await apiService.getDashboardGeneralStats();
+
+      expect(mockAxios.get).toHaveBeenCalledWith('/dashboard/general-stats', {
+        params: undefined,
+      });
+      expect(result).toEqual(payload);
+    });
+
+    it('passes facility_id as query param when scoped', async () => {
+      const fid = '550e8400-e29b-41d4-a716-446655440001';
+      const payload = {
+        success: true,
+        data: {
+          facilities: { total: 1, active: 1, inactive: 0, maintenance: 0 },
+          devices: { total: 2, online: 2, offline: 0, error: 0, maintenance: 0 },
+          users: {
+            total: 3,
+            active: 3,
+            inactive: 0,
+            byRole: emptyByRole(),
+          },
+          alerts: { open: 0 },
+          lastUpdated: '2026-01-01T00:00:00.000Z',
+          scope: { type: 'facility_limited' as const, facilityIds: [fid] },
+        },
+      };
+      mockAxios.get.mockResolvedValueOnce({ data: payload });
+
+      const result = await apiService.getDashboardGeneralStats({ facility_id: fid });
+
+      expect(mockAxios.get).toHaveBeenCalledWith('/dashboard/general-stats', {
+        params: { facility_id: fid },
+      });
+      expect(result).toEqual(payload);
+    });
+  });
+
   describe('getFacilities', () => {
     it('should fetch facilities with pagination', async () => {
       const mockFacilities = {
@@ -195,6 +275,27 @@ describe('APIService', () => {
       });
 
       expect(result).toEqual(mockFacilities.data);
+    });
+  });
+
+  describe('facility delete (admin)', () => {
+    it('should GET delete-impact summary for a facility', async () => {
+      const payload = { data: { units: 2, devices: 5, gateways: 1 } };
+      mockAxios.get.mockResolvedValueOnce(payload);
+
+      const result = await apiService.getFacilityDeleteImpact('fac-uuid-1');
+
+      expect(mockAxios.get).toHaveBeenCalledWith('/facilities/fac-uuid-1/delete-impact');
+      expect(result).toEqual(payload.data);
+    });
+
+    it('should DELETE facility by id', async () => {
+      mockAxios.delete.mockResolvedValueOnce({ data: { success: true } });
+
+      const result = await apiService.deleteFacility('fac-uuid-1');
+
+      expect(mockAxios.delete).toHaveBeenCalledWith('/facilities/fac-uuid-1');
+      expect(result).toEqual({ success: true });
     });
   });
 
@@ -225,13 +326,21 @@ describe('APIService', () => {
   });
 
   describe('admin ops-key rotation relay', () => {
-    it('should POST broadcast rotation packet', async () => {
-      const payload = { cmd_type: 'ROTATE_OPERATIONS_KEY', new_ops_pubkey: 'b64', ts: 1000 } as any;
-      const signature = 'sig';
-      const mockData = { data: { success: true } };
+    it('should rotate ops key with managed flow', async () => {
+      const mockData = {
+        data: {
+          success: true,
+          payload: { cmd_type: 'ROTATE_OPERATIONS_KEY', new_ops_pubkey: 'pub', ts: 1 },
+          signature: 'sig',
+          generated_ops_key_pair: { private_key_b64: 'priv', public_key_b64: 'pub' },
+        },
+      };
       mockAxios.post.mockResolvedValueOnce(mockData);
-      const res = await apiService.broadcastOpsKeyRotation(payload, signature);
-      expect(mockAxios.post).toHaveBeenCalledWith('/admin/ops-key-rotation/broadcast', { payload, signature });
+      const res = await apiService.rotateOpsKey({ rootPrivateKeyB64: 'rootkey' });
+      expect(mockAxios.post).toHaveBeenCalledWith('/admin/ops-key-rotation/broadcast', {
+        root_private_key_b64: 'rootkey',
+        custom_ops_public_key_b64: undefined,
+      });
       expect(res).toEqual(mockData.data);
     });
   });
@@ -281,6 +390,31 @@ describe('APIService', () => {
       });
 
       expect(result).toEqual(mockUnits.data);
+    });
+  });
+
+  describe('unit assignment endpoints', () => {
+    it('should assign tenant to unit with primary/shared flag', async () => {
+      const mockResponse = { data: { success: true } };
+      mockAxios.post.mockResolvedValueOnce(mockResponse);
+
+      const result = await apiService.assignTenantToUnit('unit-1', 'tenant-2', false);
+
+      expect(mockAxios.post).toHaveBeenCalledWith('/units/unit-1/assign', {
+        tenant_id: 'tenant-2',
+        is_primary: false,
+      });
+      expect(result).toEqual(mockResponse.data);
+    });
+
+    it('should remove tenant from unit assignment', async () => {
+      const mockResponse = { data: { success: true } };
+      mockAxios.delete.mockResolvedValueOnce(mockResponse);
+
+      const result = await apiService.removeTenantFromUnit('unit-1', 'tenant-2');
+
+      expect(mockAxios.delete).toHaveBeenCalledWith('/units/unit-1/assign/tenant-2');
+      expect(result).toEqual(mockResponse.data);
     });
   });
 
@@ -523,6 +657,848 @@ describe('APIService', () => {
         mockAxios.post.mockRejectedValueOnce(error);
 
         await expect(apiService.syncGateway(gatewayId)).rejects.toThrow('Sync failed');
+      });
+    });
+  });
+
+  describe('createUser', () => {
+    it('posts user payload to /users', async () => {
+      const payload = { email: 'n@example.com', firstName: 'N', lastName: 'U', role: 'tenant' };
+      mockAxios.post.mockResolvedValueOnce({ data: { success: true, id: 'new-1' } });
+
+      const result = await apiService.createUser(payload);
+
+      expect(mockAxios.post).toHaveBeenCalledWith('/users', payload);
+      expect(result).toEqual({ success: true, id: 'new-1' });
+    });
+  });
+
+  describe('widget layout endpoints', () => {
+    it('getWidgetLayouts GETs /widget-layouts', async () => {
+      mockAxios.get.mockResolvedValueOnce({ data: { layouts: [] } });
+      const result = await apiService.getWidgetLayouts();
+      expect(mockAxios.get).toHaveBeenCalledWith('/widget-layouts', { params: undefined });
+      expect(result).toEqual({ layouts: [] });
+    });
+
+    it('saveWidgetLayouts POSTs body', async () => {
+      const layouts = [
+        {
+          widgetId: 'w1',
+          widgetType: 'stats-facilities',
+          layoutConfig: { position: { x: 0, y: 0, w: 3, h: 2 } },
+          displayOrder: 0,
+          isVisible: true,
+        },
+      ];
+      mockAxios.post.mockResolvedValueOnce({ data: { success: true } });
+      await apiService.saveWidgetLayouts(layouts);
+      expect(mockAxios.post).toHaveBeenCalledWith('/widget-layouts', { layouts });
+    });
+  });
+
+  describe('access history endpoints', () => {
+    it('getAccessSessions passes query params', async () => {
+      mockAxios.get.mockResolvedValueOnce({ data: { sessions: [], total: 0, currently_open: 0 } });
+      await apiService.getAccessSessions({ limit: 20, facility_id: 'fac-1' });
+      expect(mockAxios.get).toHaveBeenCalledWith('/access-sessions', {
+        params: { limit: 20, facility_id: 'fac-1' },
+      });
+    });
+
+    it('getAccessSessionById GETs session detail', async () => {
+      mockAxios.get.mockResolvedValueOnce({ data: { session: { id: 's1' }, events: [] } });
+      const result = await apiService.getAccessSessionById('s1');
+      expect(mockAxios.get).toHaveBeenCalledWith('/access-sessions/s1');
+      expect(result).toEqual({ session: { id: 's1' }, events: [] });
+    });
+
+    it('exportAccessSessions requests a blob', async () => {
+      mockAxios.get.mockResolvedValueOnce({ data: new Blob() });
+      await apiService.exportAccessSessions({ date_from: '2024-01-01' });
+      expect(mockAxios.get).toHaveBeenCalledWith('/access-sessions/export', {
+        params: { date_from: '2024-01-01' },
+        responseType: 'blob',
+      });
+    });
+
+    it('getAccessHistory passes query params', async () => {
+      mockAxios.get.mockResolvedValueOnce({ data: { logs: [], total: 0 } });
+      await apiService.getAccessHistory({ limit: 20, user_id: 'u-1' });
+      expect(mockAxios.get).toHaveBeenCalledWith('/access-history', {
+        params: { limit: 20, user_id: 'u-1' },
+      });
+    });
+
+    it('getFacilityAccessHistory uses facility-scoped path', async () => {
+      mockAxios.get.mockResolvedValueOnce({ data: { logs: [], total: 0 } });
+      await apiService.getFacilityAccessHistory('fac-1', { limit: 50 });
+      expect(mockAxios.get).toHaveBeenCalledWith('/access-history/facility/fac-1', {
+        params: { limit: 50 },
+      });
+    });
+
+    it('exportAccessHistory requests a blob', async () => {
+      mockAxios.get.mockResolvedValueOnce({ data: new Blob() });
+      await apiService.exportAccessHistory({ date_from: '2024-01-01' });
+      expect(mockAxios.get).toHaveBeenCalledWith('/access-history/export', {
+        params: { date_from: '2024-01-01' },
+        responseType: 'blob',
+      });
+    });
+
+    it('getUserAccessHistory uses user-scoped path', async () => {
+      mockAxios.get.mockResolvedValueOnce({ data: { logs: [], total: 0 } });
+      await apiService.getUserAccessHistory('user-9', { limit: 10, action: 'unlock' });
+      expect(mockAxios.get).toHaveBeenCalledWith('/access-history/user/user-9', {
+        params: { limit: 10, action: 'unlock' },
+      });
+    });
+
+    it('getUnitAccessHistory uses unit-scoped path', async () => {
+      mockAxios.get.mockResolvedValueOnce({ data: { logs: [], total: 0 } });
+      await apiService.getUnitAccessHistory('unit-2', { offset: 20 });
+      expect(mockAxios.get).toHaveBeenCalledWith('/access-history/unit/unit-2', {
+        params: { offset: 20 },
+      });
+    });
+
+    it('getAccessLogById GETs single log', async () => {
+      mockAxios.get.mockResolvedValueOnce({ data: { id: 'log-1' } });
+      const result = await apiService.getAccessLogById('log-1');
+      expect(mockAxios.get).toHaveBeenCalledWith('/access-history/log-1');
+      expect(result).toEqual({ id: 'log-1' });
+    });
+
+    it('getActivityStats passes period and facility_ids', async () => {
+      mockAxios.get.mockResolvedValueOnce({ data: { series: [] } });
+      await apiService.getActivityStats({ period: 'week', facility_ids: ['a', 'b'] });
+      expect(mockAxios.get).toHaveBeenCalledWith('/access-history/stats/activity', {
+        params: { period: 'week', facility_ids: ['a', 'b'] },
+      });
+    });
+  });
+
+  describe('notifications endpoints', () => {
+    it('getNotifications passes query params', async () => {
+      mockAxios.get.mockResolvedValueOnce({
+        data: {
+          success: true,
+          notifications: [],
+          total: 0,
+          unreadCount: 0,
+          limit: 20,
+          offset: 0,
+        },
+      });
+      await apiService.getNotifications({ facilityId: 'f1', isRead: false, limit: 5 });
+      expect(mockAxios.get).toHaveBeenCalledWith('/notifications', {
+        params: { facilityId: 'f1', isRead: false, limit: 5 },
+      });
+    });
+
+    it('getNotificationsUnreadCount GETs unread-count', async () => {
+      mockAxios.get.mockResolvedValueOnce({ data: { success: true, unreadCount: 3 } });
+      const result = await apiService.getNotificationsUnreadCount({ facilityId: 'f1' });
+      expect(mockAxios.get).toHaveBeenCalledWith('/notifications/unread-count', {
+        params: { facilityId: 'f1' },
+      });
+      expect(result.unreadCount).toBe(3);
+    });
+
+    it('markNotificationRead POSTs read endpoint', async () => {
+      mockAxios.post.mockResolvedValueOnce({
+        data: { success: true, notification: { id: 'n1' } },
+      });
+      await apiService.markNotificationRead('n1');
+      expect(mockAxios.post).toHaveBeenCalledWith('/notifications/n1/read');
+    });
+
+    it('markNotificationsRead POSTs batch', async () => {
+      mockAxios.post.mockResolvedValueOnce({ data: { success: true, markedCount: 2 } });
+      await apiService.markNotificationsRead(['a', 'b']);
+      expect(mockAxios.post).toHaveBeenCalledWith('/notifications/read', {
+        notificationIds: ['a', 'b'],
+      });
+    });
+
+    it('markAllNotificationsRead sends facility when provided', async () => {
+      mockAxios.post.mockResolvedValueOnce({ data: { success: true, markedCount: 5 } });
+      await apiService.markAllNotificationsRead('fac-x');
+      expect(mockAxios.post).toHaveBeenCalledWith('/notifications/read-all', { facilityId: 'fac-x' });
+    });
+
+    it('deleteNotification DELETEs resource', async () => {
+      mockAxios.delete.mockResolvedValueOnce({ data: { success: true } });
+      await apiService.deleteNotification('n9');
+      expect(mockAxios.delete).toHaveBeenCalledWith('/notifications/n9');
+    });
+  });
+
+  describe('key sharing endpoints', () => {
+    it('getKeySharing passes params', async () => {
+      mockAxios.get.mockResolvedValueOnce({ data: { sharings: [] } });
+      await apiService.getKeySharing({ limit: 20, is_active: true });
+      expect(mockAxios.get).toHaveBeenCalledWith('/key-sharing', {
+        params: { limit: 20, is_active: true },
+      });
+    });
+
+    it('getUserKeySharing uses user path', async () => {
+      mockAxios.get.mockResolvedValueOnce({ data: { sharings: [] } });
+      await apiService.getUserKeySharing('u1', { is_active: true, limit: 5 });
+      expect(mockAxios.get).toHaveBeenCalledWith('/key-sharing/user/u1', {
+        params: { is_active: true, limit: 5 },
+      });
+    });
+
+    it('getUnitKeySharing uses unit path', async () => {
+      mockAxios.get.mockResolvedValueOnce({ data: { sharings: [] } });
+      await apiService.getUnitKeySharing('unit-z', { access_level: 'full' });
+      expect(mockAxios.get).toHaveBeenCalledWith('/key-sharing/unit/unit-z', {
+        params: { access_level: 'full' },
+      });
+    });
+
+    it('createKeySharing POSTs body', async () => {
+      const body = {
+        unit_id: 'u1',
+        shared_with_user_id: 'u2',
+        access_level: 'full' as const,
+      };
+      mockAxios.post.mockResolvedValueOnce({ data: { id: 'ks1' } });
+      await apiService.createKeySharing(body);
+      expect(mockAxios.post).toHaveBeenCalledWith('/key-sharing', body);
+    });
+
+    it('updateKeySharing PUTs partial payload', async () => {
+      mockAxios.put.mockResolvedValueOnce({ data: { success: true } });
+      await apiService.updateKeySharing('ks1', { is_active: false });
+      expect(mockAxios.put).toHaveBeenCalledWith('/key-sharing/ks1', { is_active: false });
+    });
+
+    it('revokeKeySharing DELETEs resource', async () => {
+      mockAxios.delete.mockResolvedValueOnce({ data: { success: true } });
+      await apiService.revokeKeySharing('ks1');
+      expect(mockAxios.delete).toHaveBeenCalledWith('/key-sharing/ks1');
+    });
+
+    it('getExpiredKeySharing GETs admin expired list', async () => {
+      mockAxios.get.mockResolvedValueOnce({ data: { sharings: [] } });
+      await apiService.getExpiredKeySharing();
+      expect(mockAxios.get).toHaveBeenCalledWith('/key-sharing/admin/expired');
+    });
+
+    it('inviteSharedKey POSTs invite payload', async () => {
+      mockAxios.post.mockResolvedValueOnce({ data: { invited: true } });
+      await apiService.inviteSharedKey({
+        unit_id: 'u1',
+        phone: '+15550001',
+        access_level: 'limited',
+      });
+      expect(mockAxios.post).toHaveBeenCalledWith('/key-sharing/invite', {
+        unit_id: 'u1',
+        phone: '+15550001',
+        access_level: 'limited',
+      });
+    });
+  });
+
+  describe('firmware OTA endpoints', () => {
+    it('listFirmware GETs with optional target_type', async () => {
+      mockAxios.get.mockResolvedValueOnce({ data: { items: [] } });
+      await apiService.listFirmware('gateway');
+      expect(mockAxios.get).toHaveBeenCalledWith('/firmware', { params: { target_type: 'gateway' } });
+    });
+
+    it('listFirmware omits params when targetType undefined', async () => {
+      mockAxios.get.mockResolvedValueOnce({ data: { items: [] } });
+      await apiService.listFirmware();
+      expect(mockAxios.get).toHaveBeenCalledWith('/firmware', { params: {} });
+    });
+
+    it('getFirmwareById GETs single record', async () => {
+      mockAxios.get.mockResolvedValueOnce({ data: { id: 'fw1', version: '1.0.0' } });
+      const result = await apiService.getFirmwareById('fw1');
+      expect(mockAxios.get).toHaveBeenCalledWith('/firmware/fw1');
+      expect(result).toEqual({ id: 'fw1', version: '1.0.0' });
+    });
+
+    it('deleteFirmware DELETEs record', async () => {
+      mockAxios.delete.mockResolvedValueOnce({ data: { success: true } });
+      await apiService.deleteFirmware('fw1');
+      expect(mockAxios.delete).toHaveBeenCalledWith('/firmware/fw1');
+    });
+
+    it('pushFirmware POSTs push command', async () => {
+      mockAxios.post.mockResolvedValueOnce({ data: { queued: true } });
+      await apiService.pushFirmware('fw1', 'gw1');
+      expect(mockAxios.post).toHaveBeenCalledWith('/firmware/fw1/push/gw1', {});
+    });
+
+    it('pushFirmware includes delivery_mode when provided', async () => {
+      mockAxios.post.mockResolvedValueOnce({ data: { queued: true } });
+      await apiService.pushFirmware('fw1', 'gw1', { deliveryMode: 'v2' });
+      expect(mockAxios.post).toHaveBeenCalledWith('/firmware/fw1/push/gw1', { delivery_mode: 'v2' });
+    });
+
+    it('getFirmwarePushStatus passes include_events when false', async () => {
+      mockAxios.get.mockResolvedValueOnce({ data: { status: 'idle' } });
+      await apiService.getFirmwarePushStatus('gw1', 'lock', false);
+      expect(mockAxios.get).toHaveBeenCalledWith('/firmware/push-status/gw1', {
+        params: { target_type: 'lock', include_events: 'false' },
+      });
+    });
+
+    it('uploadFirmware uses init then multipart when storage is local', async () => {
+      const file = new File(['x'], 'fw.bin', { type: 'application/octet-stream' });
+      mockAxios.post
+        .mockResolvedValueOnce({ data: { data: { upload_mode: 'direct_multipart' } } })
+        .mockResolvedValueOnce({ data: { id: 'new-fw' } });
+      await apiService.uploadFirmware(file, { version: '2.0.0', target_type: 'gateway' });
+      expect(mockAxios.post).toHaveBeenNthCalledWith(1, '/firmware/upload', expect.objectContaining({
+        phase: 'prepare',
+        version: '2.0.0',
+        filename: 'fw.bin',
+        size_bytes: file.size,
+      }));
+      expect(mockAxios.post).toHaveBeenNthCalledWith(
+        2,
+        '/firmware/upload',
+        expect.any(FormData),
+        expect.objectContaining({
+          headers: { 'Content-Type': 'multipart/form-data' },
+          maxBodyLength: Infinity,
+          maxContentLength: Infinity,
+          timeout: 0,
+        }),
+      );
+    });
+  });
+
+  describe('auth and user management HTTP mapping', () => {
+    it('logout POSTs /auth/logout', async () => {
+      mockAxios.post.mockResolvedValueOnce({ data: {} });
+      await apiService.logout();
+      expect(mockAxios.post).toHaveBeenCalledWith('/auth/logout');
+    });
+
+    it('getProfile GETs /auth/profile', async () => {
+      mockAxios.get.mockResolvedValueOnce({ data: { user: { id: 'u1' } } });
+      await apiService.getProfile();
+      expect(mockAxios.get).toHaveBeenCalledWith('/auth/profile');
+    });
+
+    it('getDashboardGeneralStats passes facility_id when set', async () => {
+      mockAxios.get.mockResolvedValueOnce({ data: { success: true, data: {} } });
+      await apiService.getDashboardGeneralStats({ facility_id: 'f1' });
+      expect(mockAxios.get).toHaveBeenCalledWith('/dashboard/general-stats', {
+        params: { facility_id: 'f1' },
+      });
+    });
+
+    it('verifyToken GETs /auth/verify-token', async () => {
+      mockAxios.get.mockResolvedValueOnce({ data: { valid: true } });
+      await apiService.verifyToken();
+      expect(mockAxios.get).toHaveBeenCalledWith('/auth/verify-token');
+    });
+
+    it('changePassword POSTs body', async () => {
+      mockAxios.post.mockResolvedValueOnce({ data: { success: true } });
+      await apiService.changePassword('old', 'new');
+      expect(mockAxios.post).toHaveBeenCalledWith('/auth/change-password', {
+        currentPassword: 'old',
+        newPassword: 'new',
+      });
+    });
+
+    it('getUsers passes query params', async () => {
+      mockAxios.get.mockResolvedValueOnce({ data: { users: [] } });
+      await apiService.getUsers({ search: 'a', role: 'tenant', facility: 'f1', limit: 10 });
+      expect(mockAxios.get).toHaveBeenCalledWith('/users', {
+        params: { search: 'a', role: 'tenant', facility: 'f1', limit: 10 },
+      });
+    });
+
+    it('getUser GETs by id', async () => {
+      mockAxios.get.mockResolvedValueOnce({ data: {} });
+      await apiService.getUser('u1');
+      expect(mockAxios.get).toHaveBeenCalledWith('/users/u1');
+    });
+
+    it('updateUser PUTs', async () => {
+      mockAxios.put.mockResolvedValueOnce({ data: {} });
+      await apiService.updateUser('u1', { firstName: 'A' });
+      expect(mockAxios.put).toHaveBeenCalledWith('/users/u1', { firstName: 'A' });
+    });
+
+    it('deactivateUser DELETEs', async () => {
+      mockAxios.delete.mockResolvedValueOnce({ data: {} });
+      await apiService.deactivateUser('u1');
+      expect(mockAxios.delete).toHaveBeenCalledWith('/users/u1');
+    });
+
+    it('activateUser POSTs activate', async () => {
+      mockAxios.post.mockResolvedValueOnce({ data: {} });
+      await apiService.activateUser('u1');
+      expect(mockAxios.post).toHaveBeenCalledWith('/users/u1/activate');
+    });
+
+    it('getUserDetails GETs details path', async () => {
+      mockAxios.get.mockResolvedValueOnce({ data: {} });
+      await apiService.getUserDetails('u1');
+      expect(mockAxios.get).toHaveBeenCalledWith('/users/u1/details');
+    });
+
+    it('deleteUserDevice DELETEs admin path', async () => {
+      mockAxios.delete.mockResolvedValueOnce({ data: {} });
+      await apiService.deleteUserDevice('dev1');
+      expect(mockAxios.delete).toHaveBeenCalledWith('/user-devices/admin/dev1');
+    });
+
+    it('user facility endpoints', async () => {
+      mockAxios.get.mockResolvedValueOnce({ data: [] });
+      await apiService.getUserFacilities('u1');
+      expect(mockAxios.get).toHaveBeenCalledWith('/user-facilities/u1');
+
+      mockAxios.put.mockResolvedValueOnce({ data: {} });
+      await apiService.setUserFacilities('u1', ['f1']);
+      expect(mockAxios.put).toHaveBeenCalledWith('/user-facilities/u1', { facilityIds: ['f1'] });
+
+      mockAxios.post.mockResolvedValueOnce({ data: {} });
+      await apiService.addUserToFacility('u1', 'f1');
+      expect(mockAxios.post).toHaveBeenCalledWith('/user-facilities/u1/facilities/f1');
+
+      mockAxios.delete.mockResolvedValueOnce({ data: {} });
+      await apiService.removeUserFromFacility('u1', 'f1');
+      expect(mockAxios.delete).toHaveBeenCalledWith('/user-facilities/u1/facilities/f1');
+    });
+  });
+
+  describe('widget layout and system settings HTTP mapping', () => {
+    it('updateWidget PUTs widget-layouts id', async () => {
+      mockAxios.put.mockResolvedValueOnce({ data: {} });
+      await apiService.updateWidget('w1', { isVisible: false });
+      expect(mockAxios.put).toHaveBeenCalledWith(
+        '/widget-layouts/w1',
+        { isVisible: false },
+        { params: undefined }
+      );
+    });
+
+    it('hideWidget DELETEs widget', async () => {
+      mockAxios.delete.mockResolvedValueOnce({ data: {} });
+      await apiService.hideWidget('w1');
+      expect(mockAxios.delete).toHaveBeenCalledWith('/widget-layouts/w1', { params: undefined });
+    });
+
+    it('hideWidget passes pageId as a query param when provided', async () => {
+      mockAxios.delete.mockResolvedValueOnce({ data: {} });
+      await apiService.hideWidget('w1', 'page-1');
+      expect(mockAxios.delete).toHaveBeenCalledWith('/widget-layouts/w1', {
+        params: { pageId: 'page-1' },
+      });
+    });
+
+    it('showWidget POSTs show', async () => {
+      mockAxios.post.mockResolvedValueOnce({ data: {} });
+      await apiService.showWidget('w1');
+      expect(mockAxios.post).toHaveBeenCalledWith('/widget-layouts/w1/show');
+    });
+
+    it('resetWidgetLayout POSTs reset', async () => {
+      mockAxios.post.mockResolvedValueOnce({ data: {} });
+      await apiService.resetWidgetLayout();
+      expect(mockAxios.post).toHaveBeenCalledWith('/widget-layouts/reset', {
+        activeFacilityId: undefined,
+      });
+    });
+
+    it('getWidgetTemplates GETs templates', async () => {
+      mockAxios.get.mockResolvedValueOnce({ data: [] });
+      await apiService.getWidgetTemplates();
+      expect(mockAxios.get).toHaveBeenCalledWith('/widget-layouts/templates');
+    });
+
+    it('getSystemSettings and updateSystemSettings', async () => {
+      mockAxios.get.mockResolvedValueOnce({ data: {} });
+      await apiService.getSystemSettings();
+      expect(mockAxios.get).toHaveBeenCalledWith('/system-settings');
+
+      mockAxios.put.mockResolvedValueOnce({ data: {} });
+      await apiService.updateSystemSettings({ x: 1 });
+      expect(mockAxios.put).toHaveBeenCalledWith('/system-settings', { x: 1 });
+    });
+
+    it('notification settings paths', async () => {
+      mockAxios.get.mockResolvedValueOnce({ data: {} });
+      await apiService.getNotificationSettings();
+      expect(mockAxios.get).toHaveBeenCalledWith('/system-settings/notifications');
+
+      mockAxios.put.mockResolvedValueOnce({ data: {} });
+      await apiService.updateNotificationSettings({ enabled: true });
+      expect(mockAxios.put).toHaveBeenCalledWith('/system-settings/notifications', { enabled: true });
+    });
+  });
+
+  describe('facilities and gateways HTTP mapping', () => {
+    it('getFacilities GETs with params', async () => {
+      mockAxios.get.mockResolvedValueOnce({ data: { facilities: [] } });
+      await apiService.getFacilities({ search: 'x' });
+      expect(mockAxios.get).toHaveBeenCalledWith('/facilities', { params: { search: 'x' } });
+    });
+
+    it('getFacility GETs one', async () => {
+      mockAxios.get.mockResolvedValueOnce({ data: {} });
+      await apiService.getFacility('f1');
+      expect(mockAxios.get).toHaveBeenCalledWith('/facilities/f1');
+    });
+
+    it('createFacility POSTs', async () => {
+      mockAxios.post.mockResolvedValueOnce({ data: { id: 'f1' } });
+      await apiService.createFacility({ name: 'N' });
+      expect(mockAxios.post).toHaveBeenCalledWith('/facilities', { name: 'N' });
+    });
+
+    it('updateFacility PUTs', async () => {
+      mockAxios.put.mockResolvedValueOnce({ data: {} });
+      await apiService.updateFacility('f1', { name: 'X' });
+      expect(mockAxios.put).toHaveBeenCalledWith('/facilities/f1', { name: 'X' });
+    });
+
+    it('deleteFacility DELETEs', async () => {
+      mockAxios.delete.mockResolvedValueOnce({ data: {} });
+      await apiService.deleteFacility('f1');
+      expect(mockAxios.delete).toHaveBeenCalledWith('/facilities/f1');
+    });
+
+    it('getGateways GETs', async () => {
+      mockAxios.get.mockResolvedValueOnce({ data: [] });
+      await apiService.getGateways({ facility_id: 'f1' });
+      expect(mockAxios.get).toHaveBeenCalledWith('/gateways', { params: { facility_id: 'f1' } });
+    });
+
+    it('getGateway GETs one', async () => {
+      mockAxios.get.mockResolvedValueOnce({ data: {} });
+      await apiService.getGateway('g1');
+      expect(mockAxios.get).toHaveBeenCalledWith('/gateways/g1');
+    });
+
+    it('updateGateway PUTs', async () => {
+      mockAxios.put.mockResolvedValueOnce({ data: {} });
+      await apiService.updateGateway('g1', { name: 'G' });
+      expect(mockAxios.put).toHaveBeenCalledWith('/gateways/g1', { name: 'G' });
+    });
+
+    it('deleteGateway DELETEs', async () => {
+      mockAxios.delete.mockResolvedValueOnce({ data: {} });
+      await apiService.deleteGateway('g1');
+      expect(mockAxios.delete).toHaveBeenCalledWith('/gateways/g1');
+    });
+
+    it('testGatewayConnection and syncGateway', async () => {
+      mockAxios.post.mockResolvedValueOnce({ data: { ok: true } });
+      await apiService.testGatewayConnection('g1');
+      expect(mockAxios.post).toHaveBeenCalledWith('/gateways/g1/test-connection');
+
+      mockAxios.post.mockResolvedValueOnce({ data: {} });
+      await apiService.syncGateway('g1');
+      expect(mockAxios.post).toHaveBeenCalledWith('/gateways/g1/sync');
+    });
+
+    it('command queue helpers', async () => {
+      mockAxios.get.mockResolvedValueOnce({ data: [] });
+      await apiService.getCommandQueue({ status: 'pending', limit: 5 });
+      expect(mockAxios.get).toHaveBeenCalledWith('/commands/pending', {
+        params: { status: 'pending', limit: 5 },
+      });
+
+      mockAxios.post.mockResolvedValueOnce({ data: {} });
+      await apiService.retryCommand('c1');
+      expect(mockAxios.post).toHaveBeenCalledWith('/commands/c1/retry');
+
+      mockAxios.post.mockResolvedValueOnce({ data: {} });
+      await apiService.cancelCommand('c1');
+      expect(mockAxios.post).toHaveBeenCalledWith('/commands/c1/cancel');
+    });
+  });
+
+  describe('device lock commands and schedules', () => {
+    it('updateLockStatus PUTs BluLok lock body with optional tenant override', async () => {
+      mockAxios.put.mockResolvedValueOnce({ data: { success: true } });
+      await apiService.updateLockStatus('dev-1', 'unlocked', {
+        reason: 'emergency',
+        notes: 'Flood',
+      });
+      expect(mockAxios.put).toHaveBeenCalledWith('/devices/blulok/dev-1/lock', {
+        lock_status: 'unlocked',
+        tenant_override_reason: 'emergency',
+        tenant_override_notes: 'Flood',
+      });
+    });
+
+    it('updateLockStatus omits override fields when not provided', async () => {
+      mockAxios.put.mockResolvedValueOnce({ data: { success: true } });
+      await apiService.updateLockStatus('dev-1', 'locked');
+      expect(mockAxios.put).toHaveBeenCalledWith('/devices/blulok/dev-1/lock', {
+        lock_status: 'locked',
+      });
+    });
+
+    it('updateAccessControlLockStatus forwards open_until when set', async () => {
+      mockAxios.put.mockResolvedValueOnce({ data: { success: true } });
+      await apiService.updateAccessControlLockStatus('ac-1', 'unlocked', {
+        open_until: 1710000000,
+      });
+      expect(mockAxios.put).toHaveBeenCalledWith('/devices/access-control/ac-1/lock', {
+        lock_status: 'unlocked',
+        open_until: 1710000000,
+      });
+    });
+
+    it('setUserScheduleForFacility PUTs scheduleId', async () => {
+      mockAxios.put.mockResolvedValueOnce({ data: { success: true } });
+      await apiService.setUserScheduleForFacility('user-1', 'fac-1', 'sched-9');
+      expect(mockAxios.put).toHaveBeenCalledWith(
+        '/users/user-1/facilities/fac-1/schedule',
+        { scheduleId: 'sched-9' },
+      );
+    });
+
+    it('getEffectiveAccessCodes passes schedule_id including explicit null', async () => {
+      mockAxios.get.mockResolvedValueOnce({ data: { success: true, data: [] } });
+      await apiService.getEffectiveAccessCodes('fac-1', 'sched-1');
+      expect(mockAxios.get).toHaveBeenCalledWith('/access-codes/effective', {
+        params: { facility_id: 'fac-1', schedule_id: 'sched-1' },
+      });
+
+      mockAxios.get.mockResolvedValueOnce({ data: { success: true, data: [] } });
+      await apiService.getEffectiveAccessCodes('fac-1', null);
+      expect(mockAxios.get).toHaveBeenCalledWith('/access-codes/effective', {
+        params: { facility_id: 'fac-1', schedule_id: null },
+      });
+    });
+  });
+
+  describe('auth response interceptor', () => {
+    it('clears stored auth and disconnects websocket on 401 responses', async () => {
+      expect(typeof responseErrorHandler).toBe('function');
+
+      localStorage.setItem('authToken', 'expired-token');
+      localStorage.setItem('authUser', JSON.stringify({ id: 'u1' }));
+
+      const locationMock = { href: '' };
+      Object.defineProperty(window, 'location', {
+        value: locationMock,
+        writable: true,
+        configurable: true,
+      });
+
+      await expect(
+        responseErrorHandler!({ response: { status: 401 } }),
+      ).rejects.toEqual({ response: { status: 401 } });
+
+      expect(localStorage.getItem('authToken')).toBeNull();
+      expect(localStorage.getItem('authUser')).toBeNull();
+      expect(websocketService.disconnect).toHaveBeenCalled();
+      expect(locationMock.href).toBe('/login');
+    });
+
+    it('does not clear auth for non-401 errors', async () => {
+      localStorage.setItem('authToken', 'still-valid');
+
+      await expect(
+        responseErrorHandler!({ response: { status: 500 } }),
+      ).rejects.toEqual({ response: { status: 500 } });
+
+      expect(localStorage.getItem('authToken')).toBe('still-valid');
+      expect(websocketService.disconnect).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('coverage lift: devices, dashboards, recovery, access codes', () => {
+    const ok = { data: { success: true } };
+
+    it('covers device inventory and assignment helpers', async () => {
+      mockAxios.get.mockResolvedValue(ok);
+      mockAxios.post.mockResolvedValue(ok);
+      mockAxios.put.mockResolvedValue(ok);
+      mockAxios.delete.mockResolvedValue(ok);
+
+      await apiService.getDevices({ facility_id: 'f1' });
+      await apiService.getBluLokDevice('d1');
+      await apiService.getAccessControlDevice('ac1');
+      await apiService.getFacilityDeviceHierarchy('f1');
+      await apiService.getDeviceDenylist('d1');
+      await apiService.pruneDenylist();
+      await apiService.getUserRoutePassHistory('u1', { limit: 5 });
+      await apiService.createAccessControlDevice({ name: 'x' } as any);
+      await apiService.updateAccessControlDevice('ac1', { name: 'y' } as any);
+      await apiService.updateAccessControlDeviceMetadata('ac1', { label: 'z' } as any);
+      await apiService.updateBluLokDeviceMetadata('d1', { label: 'z' } as any);
+      await apiService.createBluLokDevice({ serial: 's' });
+      await apiService.updateDeviceStatus('blulok', 'd1', 'online');
+      await apiService.getUnassignedDevices('f1');
+      await apiService.assignDeviceToUnit('d1', 'u1');
+      await apiService.unassignDeviceFromUnit('d1');
+      await apiService.removeBluLokDeviceFromCloudInventory('d1');
+      await apiService.removeAccessControlDeviceFromCloudInventory('ac1');
+      await apiService.removeNetworkInfraDeviceFromCloudInventory('n1');
+
+      expect(mockAxios.get).toHaveBeenCalledWith('/devices', { params: { facility_id: 'f1' } });
+      expect(mockAxios.delete).toHaveBeenCalledWith('/devices/blulok/d1');
+    });
+
+    it('covers unit and schedule helpers', async () => {
+      mockAxios.get.mockResolvedValue(ok);
+      mockAxios.post.mockResolvedValue(ok);
+      mockAxios.put.mockResolvedValue(ok);
+      mockAxios.delete.mockResolvedValue(ok);
+
+      await apiService.getUnitDetails('u1');
+      await apiService.getUnit('u1');
+      await apiService.createUnit({ unit_number: '1' });
+      await apiService.updateUnit('u1', { unit_number: '2' });
+      await apiService.setUnitOverlock('u1', true);
+      await apiService.deleteUnit('u1');
+      await apiService.getMyUnits();
+      await apiService.getFacilitySchedules('f1');
+      await apiService.getSchedule('f1', 's1');
+      await apiService.createSchedule('f1', { name: 'Always' });
+      await apiService.updateSchedule('f1', 's1', { name: 'X' });
+      await apiService.getScheduleUsage('f1', 's1');
+      await apiService.deleteSchedule('f1', 's1');
+      await apiService.getUserScheduleForFacility('user-1', 'f1');
+      await apiService.getFacilityUserScheduleAssignments('f1');
+
+      expect(mockAxios.get).toHaveBeenCalledWith('/units/u1');
+      expect(mockAxios.delete).toHaveBeenCalledWith('/units/u1');
+    });
+
+    it('covers device groups and access codes', async () => {
+      mockAxios.get.mockResolvedValue(ok);
+      mockAxios.post.mockResolvedValue(ok);
+      mockAxios.put.mockResolvedValue(ok);
+      mockAxios.delete.mockResolvedValue(ok);
+
+      await apiService.getDeviceGroups('f1', 'zone');
+      await apiService.createDeviceGroup({ facility_id: 'f1', name: 'G' });
+      await apiService.updateDeviceGroup('g1', { name: 'G2' });
+      await apiService.getDeviceGroup('g1');
+      await apiService.getDeviceGroupUsers('g1');
+      await apiService.deleteDeviceGroup('g1');
+      await apiService.addDeviceGroupMember('g1', { deviceId: 'd1', deviceType: 'blulok' });
+      await apiService.removeDeviceGroupMember('g1', 'd1', 'blulok');
+      await apiService.getAccessCodeConfig('f1');
+      await apiService.updateAccessCodeConfig('f1', { enabled: true } as any);
+      await apiService.getAccessCodePushState('f1');
+      await apiService.getAccessCodeGroupConfig('g1');
+      await apiService.updateAccessCodeGroupConfig('g1', {} as any);
+      await apiService.getAccessCodes('f1', 'sched');
+      await apiService.rotateAccessCodes({ facility_id: 'f1' });
+      await apiService.setManualAccessCode({
+        facility_id: 'f1',
+        scope_type: 'device',
+        code: '1234',
+      });
+      await apiService.pushAccessCodesToGateway('f1');
+      await apiService.getMyAccessCodes('f1');
+      await apiService.getAppAccessCodes();
+
+      expect(mockAxios.post).toHaveBeenCalledWith('/access-codes/push/f1', {});
+    });
+
+    it('covers saved dashboards, assignments, and invites', async () => {
+      mockAxios.get.mockResolvedValue(ok);
+      mockAxios.post.mockResolvedValue(ok);
+      mockAxios.put.mockResolvedValue(ok);
+      mockAxios.patch.mockResolvedValue(ok);
+      mockAxios.delete.mockResolvedValue(ok);
+
+      await apiService.saveDashboard([{ id: 'p1', widgets: [] }] as any);
+      await apiService.resetWidgetLayoutDefaults();
+      await apiService.listSavedDashboards();
+      await apiService.createSavedDashboard({ name: 'Ops' });
+      await apiService.updateSavedDashboardSnapshot('sd1');
+      await apiService.renameSavedDashboard('sd1', { name: 'Ops 2' });
+      await apiService.deleteSavedDashboard('sd1');
+      await apiService.loadSavedDashboard('sd1', 'f1');
+      await apiService.listDashboardAssignments();
+      await apiService.createDashboardAssignment({
+        savedDashboardId: 'sd1',
+        scope: 'global',
+        targetRole: 'admin',
+      } as any);
+      await apiService.updateDashboardAssignment('a1', { priority: 2 } as any);
+      await apiService.deleteDashboardAssignment('a1');
+      await apiService.resendUserInvite('u1');
+      await apiService.resetUserAccount('u1');
+      await apiService.sendTestNotifications({ toEmail: 'a@b.com' });
+      await apiService.testNotificationConnection();
+      await apiService.hideAllNotifications('f1');
+      await apiService.getAccessHistoryById('id1');
+      await apiService.getAccessHistoryById('id1', { view: 'raw' });
+
+      expect(mockAxios.post).toHaveBeenCalledWith('/users/u1/reset-account');
+      expect(mockAxios.patch).toHaveBeenCalledWith('/saved-dashboards/sd1', { name: 'Ops 2' });
+    });
+
+    it('covers gateway ops, session trace, recovery, and firmware extras', async () => {
+      mockAxios.get.mockResolvedValue(ok);
+      mockAxios.post.mockResolvedValue(ok);
+      mockAxios.put.mockResolvedValue(ok);
+      mockAxios.delete.mockResolvedValue(ok);
+
+      await apiService.releaseGateway('g1');
+      await apiService.getGatewayDeviceSyncLogs('g1', { limit: 10 });
+      await apiService.getGatewayTelemetryLogs('g1', { limit: 10 });
+      await apiService.getGatewaySessionTrace('g1', { unit_id: 'u1' });
+      await apiService.getGatewayWsStatus('f1');
+      await apiService.pingGatewayDev('f1');
+      await apiService.backfillAccessSessions({ days: 7, dryRun: true });
+      await apiService.requeueDeadCommand('c1');
+      await apiService.getCommandAttempts('c1');
+      await apiService.sendGatewayCommand({
+        facilityId: 'f1',
+        command: 'LOCK',
+        targetDeviceIds: ['d1'],
+      });
+      await apiService.getFirmwareDeliveryCapabilities();
+      await apiService.getFirmwarePushHistory('g1', 'lock', 10, 5);
+      await apiService.cancelFirmwarePush('p1');
+      await apiService.getFirmwarePushEvents('p1', 10, 0, 'progress');
+      await apiService.listFacilityProvisioningFiles('f1', 10, 5);
+      await apiService.prepareFacilityProvisioningUpload('f1', {
+        filename: 'a.bin',
+        size_bytes: 10,
+      });
+      await apiService.completeFacilityProvisioningUpload('f1', {
+        upload_id: 'up1',
+        filename: 'a.bin',
+        size_bytes: 10,
+      });
+      await apiService.deleteFacilityProvisioningFile('f1', 'file1');
+      expect(apiService.getFacilityProvisioningDownloadPath('f1', 'file1')).toContain(
+        'download',
+      );
+
+      await apiService.getGatewayRecoveryStatus('g1');
+      await apiService.getGatewayRecoveryCandidates('f1');
+      await apiService.getGatewayRecoveryInventoryPreview('g1');
+      await apiService.initiateGatewayRecovery('g1', { includeFirmware: true });
+      await apiService.bypassGatewayRecovery('g1', true);
+      await apiService.cancelGatewayRecovery('g1', 'r1');
+      await apiService.getGatewayRecoveryOptions('g1');
+      await apiService.retryGatewayRecovery('g1');
+      await apiService.getGatewayRecoveryEvents('g1', 'r1', 50);
+
+      await apiService.get('/x');
+      await apiService.post('/x', {});
+      await apiService.put('/x', {});
+      await apiService.delete('/x');
+
+      expect(mockAxios.get).toHaveBeenCalledWith('/gateways/g1/session-trace', {
+        params: { unit_id: 'u1' },
       });
     });
   });

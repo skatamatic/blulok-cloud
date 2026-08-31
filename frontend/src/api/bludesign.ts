@@ -1,0 +1,1075 @@
+/**
+ * BluDesign API Client
+ * 
+ * API client for BluDesign facility and asset operations.
+ * Uses the centralized apiService for authentication.
+ */
+
+import { apiService } from '@/services/api.service';
+import { getApiBaseUrl } from '@/services/appConfig';
+import { FacilityData, FacilitySummary } from '@/components/bludesign/core/types';
+import type {
+  DetectionOptions,
+  DetectionStreamEvent,
+  LayoutImportDetectionResult,
+} from '@/components/bludesign/layout-import/types';
+
+const API_BASE = '/bludesign';
+
+export interface SaveFacilityRequest {
+  name: string;
+  data: FacilityData;
+  thumbnail?: string;
+  /** Copy layout-source.png from an existing facility when saving a duplicate. */
+  copyLayoutSourceFrom?: string;
+  /** Copy terrain sidecars from an existing facility when saving a duplicate. */
+  copyTerrainFrom?: string;
+}
+
+export interface UpdateFacilityRequest {
+  data: FacilityData;
+  thumbnail?: string;
+}
+
+export interface FacilityResponse {
+  id: string;
+  user_id: string;
+  name: string;
+  data: FacilityData;
+  thumbnail: string | null;
+  last_opened: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+/**
+ * Get all facilities for the current user
+ */
+export async function getFacilities(): Promise<FacilitySummary[]> {
+  const data = await apiService.get(`${API_BASE}/facilities`);
+  return data.map((f: any) => ({
+    ...f,
+    lastOpened: f.lastOpened ? new Date(f.lastOpened) : null,
+    createdAt: new Date(f.createdAt),
+    updatedAt: new Date(f.updatedAt),
+  }));
+}
+
+// Alias for backward compatibility
+export const listFacilities = getFacilities;
+
+/**
+ * Get a specific facility by ID
+ */
+export async function getFacility(id: string): Promise<FacilityResponse> {
+  return await apiService.get(`${API_BASE}/facilities/${id}`, {
+    headers: { 'Cache-Control': 'no-cache' },
+  });
+}
+
+/**
+ * Save a new facility
+ */
+export async function saveFacility(
+  name: string,
+  data: FacilityData,
+  thumbnail?: string,
+  copyLayoutSourceFrom?: string,
+  copyTerrainFrom?: string,
+): Promise<FacilityResponse> {
+  return await apiService.post(`${API_BASE}/facilities`, {
+    name,
+    data,
+    thumbnail,
+    ...(copyLayoutSourceFrom ? { copyLayoutSourceFrom } : {}),
+    ...(copyTerrainFrom ? { copyTerrainFrom } : {}),
+  });
+}
+
+/**
+ * Update an existing facility
+ */
+export async function updateFacility(
+  id: string,
+  data: FacilityData,
+  thumbnail?: string
+): Promise<void> {
+  await apiService.put(`${API_BASE}/facilities/${id}`, { data, thumbnail });
+}
+
+/**
+ * Delete a facility
+ */
+export async function deleteFacility(id: string): Promise<void> {
+  await apiService.delete(`${API_BASE}/facilities/${id}`);
+}
+
+/**
+ * Upload the import plan raster for a saved facility.
+ */
+export async function uploadLayoutSource(facilityId: string, file: File): Promise<void> {
+  const formData = new FormData();
+  formData.append('file', file);
+  await apiService.put(`${API_BASE}/facilities/${facilityId}/layout-source`, formData, {
+    maxBodyLength: Infinity,
+    maxContentLength: Infinity,
+  });
+}
+
+/**
+ * Fetch the persisted import plan image as a Blob.
+ */
+export async function getLayoutSourceImage(facilityId: string): Promise<Blob> {
+  return apiService.get(`${API_BASE}/facilities/${facilityId}/layout-source`, {
+    responseType: 'blob',
+  });
+}
+
+/**
+ * Load the import plan as an object URL (caller should revoke when done).
+ */
+export async function fetchLayoutSourceObjectUrl(facilityId: string): Promise<string> {
+  const blob = await getLayoutSourceImage(facilityId);
+  return URL.createObjectURL(blob);
+}
+
+// ==========================================================================
+// Site terrain (local ground preset)
+// ==========================================================================
+
+export interface FetchSiteTerrainParams {
+  lat: number;
+  lng: number;
+  radiusMeters: number;
+  detailLevel?: 'low' | 'med' | 'max';
+  imageryZoom?: number;
+  elevationZoom?: number;
+}
+
+export interface FetchSiteTerrainResponse {
+  imageryBase64: string;
+  heightmapBase64: string;
+  meta: {
+    width: number;
+    height: number;
+    minM: number;
+    maxM: number;
+    imageryZoom: number;
+    elevationZoom: number;
+    detailLevel?: 'low' | 'med' | 'max';
+    imageryMetersPerPixel: number;
+    bounds: { north: number; south: number; east: number; west: number };
+    providers: { elevation: string; imagery: string };
+    attribution: { elevation: string; imagery: string };
+    worldSizeMeters: number;
+  };
+}
+
+export async function fetchSiteTerrain(
+  params: FetchSiteTerrainParams
+): Promise<FetchSiteTerrainResponse> {
+  return apiService.post(`${API_BASE}/site-terrain/fetch`, params);
+}
+
+export async function uploadTerrainImagery(terrainDataId: string, file: Blob): Promise<void> {
+  const formData = new FormData();
+  formData.append('file', file, 'terrain-imagery.jpg');
+  await apiService.put(`${API_BASE}/facilities/terrain-data/${terrainDataId}/imagery`, formData, {
+    maxBodyLength: Infinity,
+    maxContentLength: Infinity,
+  });
+}
+
+export async function uploadTerrainHeightmap(terrainDataId: string, file: Blob): Promise<void> {
+  const formData = new FormData();
+  formData.append('file', file, 'terrain-heightmap.png');
+  await apiService.put(`${API_BASE}/facilities/terrain-data/${terrainDataId}/heightmap`, formData, {
+    maxBodyLength: Infinity,
+    maxContentLength: Infinity,
+  });
+}
+
+function terrainSidecarUrl(terrainDataId: string, kind: 'imagery' | 'heightmap'): string {
+  const root = getApiBaseUrl();
+  const prefix = root ? `${root}/api/v1` : '/api/v1';
+  return `${prefix}${API_BASE}/facilities/terrain-data/${terrainDataId}/${kind}`;
+}
+
+function isRetryableTerrainFetchError(err: unknown): boolean {
+  const e = err as { code?: string; name?: string; message?: string };
+  return (
+    e?.code === 'ERR_NETWORK' ||
+    e?.code === 'ECONNABORTED' ||
+    e?.name === 'TypeError' ||
+    (typeof e?.message === 'string' && e.message.toLowerCase().includes('network'))
+  );
+}
+
+async function fetchTerrainBlobWithRetry(
+  terrainDataId: string,
+  kind: 'imagery' | 'heightmap',
+  attempts = 5
+): Promise<Blob> {
+  const token = typeof localStorage !== 'undefined' ? localStorage.getItem('authToken') : null;
+  const url = terrainSidecarUrl(terrainDataId, kind);
+  let lastError: unknown;
+
+  for (let attempt = 0; attempt < attempts; attempt++) {
+    try {
+      const headers: Record<string, string> = {};
+      if (token) headers.Authorization = `Bearer ${token}`;
+      const response = await fetch(url, { headers, credentials: 'same-origin' });
+      if (!response.ok) {
+        const httpError = new Error(`Terrain ${kind} HTTP ${response.status}`) as Error & {
+          response?: { status: number };
+        };
+        httpError.response = { status: response.status };
+        throw httpError;
+      }
+      return await response.blob();
+    } catch (err) {
+      lastError = err;
+      if (attempt < attempts - 1 && isRetryableTerrainFetchError(err)) {
+        await new Promise((r) => setTimeout(r, 250 * (attempt + 1)));
+        continue;
+      }
+      throw err;
+    }
+  }
+
+  throw lastError ?? new Error(`Terrain ${kind} fetch failed`);
+}
+
+export async function getTerrainImagery(terrainDataId: string): Promise<Blob> {
+  return fetchTerrainBlobWithRetry(terrainDataId, 'imagery');
+}
+
+export async function getTerrainHeightmap(terrainDataId: string): Promise<Blob> {
+  return fetchTerrainBlobWithRetry(terrainDataId, 'heightmap');
+}
+
+export async function deleteTerrainData(terrainDataId: string): Promise<void> {
+  await apiService.delete(`${API_BASE}/facilities/terrain-data/${terrainDataId}`);
+}
+
+export async function fetchTerrainImageryObjectUrl(terrainDataId: string): Promise<string> {
+  const blob = await getTerrainImagery(terrainDataId);
+  return URL.createObjectURL(blob);
+}
+
+export async function fetchTerrainHeightmapObjectUrl(terrainDataId: string): Promise<string> {
+  const blob = await getTerrainHeightmap(terrainDataId);
+  return URL.createObjectURL(blob);
+}
+
+/**
+ * Get the last opened facility for the current user
+ */
+export async function getLastOpened(): Promise<FacilityResponse | null> {
+  try {
+    return await apiService.get(`${API_BASE}/facilities/last`);
+  } catch (error: any) {
+    if (error.response?.status === 404) {
+      return null;
+    }
+    throw error;
+  }
+}
+
+// ==========================================================================
+// Layout Import (image/PDF → unit detection) API
+// ==========================================================================
+
+/**
+ * Run the detection engine on an uploaded raster image. The backend returns
+ * detected unit candidates in source-image pixel space.
+ *
+ * @param file    A raster image (PNG/JPG/WEBP). PDFs must be rasterized first.
+ * @param options Optional detection tuning forwarded to the engine.
+ */
+export async function detectLayout(
+  file: File,
+  options?: DetectionOptions
+): Promise<LayoutImportDetectionResult> {
+  const formData = new FormData();
+  formData.append('file', file);
+  if (options) {
+    formData.append('options', JSON.stringify(options));
+  }
+  const response = await apiService.post(`${API_BASE}/layout-import/detect`, formData, {
+    timeout: 0,
+    maxBodyLength: Infinity,
+    maxContentLength: Infinity,
+  });
+  // Endpoint responds with { success, data }.
+  return (response?.data ?? response) as LayoutImportDetectionResult;
+}
+
+/**
+ * Streaming variant of {@link detectLayout}. Posts the image and consumes a
+ * newline-delimited JSON stream of {@link DetectionStreamEvent}s, invoking
+ * `onEvent` for each so the UI can show granular progress and draw candidate
+ * boxes as they are discovered. Resolves with the final result.
+ *
+ * Uses `fetch` (not the axios client) so we can read `response.body` as a
+ * stream; the auth token and base URL are applied the same way the axios
+ * interceptor does.
+ *
+ * @param file    A raster image (PNG/JPG/WEBP). PDFs must be rasterized first.
+ * @param options Optional detection tuning forwarded to the engine.
+ * @param onEvent Called for every streamed event (stage/rectangles/unit/...).
+ * @param signal  Optional AbortSignal to cancel an in-flight detection.
+ */
+export async function detectLayoutStream(
+  file: File,
+  options: DetectionOptions | undefined,
+  onEvent: (event: DetectionStreamEvent) => void,
+  signal?: AbortSignal
+): Promise<LayoutImportDetectionResult> {
+  const formData = new FormData();
+  formData.append('file', file);
+  if (options) {
+    formData.append('options', JSON.stringify(options));
+  }
+
+  const token = localStorage.getItem('authToken');
+  const url = `${getApiBaseUrl()}/api/v1${API_BASE}/layout-import/detect/stream`;
+
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+    body: formData,
+    signal,
+  });
+
+  if (!response.ok || !response.body) {
+    let message = `Detection failed (HTTP ${response.status})`;
+    try {
+      const body = await response.json();
+      if (body?.message) message = body.message;
+    } catch {
+      /* non-JSON error body; keep the generic message */
+    }
+    throw new Error(message);
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  let result: LayoutImportDetectionResult | null = null;
+
+  const handleLine = (line: string): void => {
+    const trimmed = line.trim();
+    if (!trimmed) return;
+    let event: DetectionStreamEvent;
+    try {
+      event = JSON.parse(trimmed) as DetectionStreamEvent;
+    } catch {
+      return; // ignore partial/garbled lines defensively
+    }
+    if (event.type === 'error') {
+      throw new Error(event.message);
+    }
+    if (event.type === 'done') {
+      result = event.result;
+    }
+    onEvent(event);
+  };
+
+  // Read NDJSON: accumulate, split on newlines, parse complete lines.
+  for (;;) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    let nl: number;
+    while ((nl = buffer.indexOf('\n')) >= 0) {
+      const line = buffer.slice(0, nl);
+      buffer = buffer.slice(nl + 1);
+      handleLine(line);
+    }
+  }
+  // Flush any trailing line without a newline terminator.
+  if (buffer.trim()) handleLine(buffer);
+
+  if (!result) {
+    throw new Error('Detection stream ended without a result');
+  }
+  return result;
+}
+
+// ==========================================================================
+// Asset Definition API
+// ==========================================================================
+
+export interface AssetDefinition {
+  id: string;
+  name: string;
+  category: string;
+  description?: string;
+  dimensions: { width: number; height: number; depth: number };
+  gridUnits: { x: number; z: number };
+  isSmart: boolean;
+  canRotate: boolean;
+  canStack: boolean;
+  modelUrl?: string;
+  thumbnailUrl?: string;
+  materials: MaterialConfig[];
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface MaterialConfig {
+  id: string;
+  name: string;
+  color: string;
+  metalness: number;
+  roughness: number;
+  textureUrl?: string;
+}
+
+export interface MaterialPreset {
+  id: string;
+  name: string;
+  category: string;
+  config: MaterialConfig;
+}
+
+/**
+ * List all asset definitions
+ */
+export async function listAssetDefinitions(): Promise<AssetDefinition[]> {
+  return await apiService.get(`${API_BASE}/assets`);
+}
+
+/**
+ * Get a specific asset definition
+ */
+export async function getAssetDefinition(id: string): Promise<AssetDefinition> {
+  return await apiService.get(`${API_BASE}/assets/${id}`);
+}
+
+/**
+ * Create a new asset definition
+ */
+export async function createAssetDefinition(data: Partial<AssetDefinition>): Promise<AssetDefinition> {
+  return await apiService.post(`${API_BASE}/assets`, data);
+}
+
+/**
+ * Update an asset definition
+ */
+export async function updateAssetDefinition(id: string, data: Partial<AssetDefinition>): Promise<AssetDefinition> {
+  return await apiService.put(`${API_BASE}/assets/${id}`, data);
+}
+
+/**
+ * Delete an asset definition
+ */
+export async function deleteAssetDefinition(id: string): Promise<void> {
+  await apiService.delete(`${API_BASE}/assets/${id}`);
+}
+
+/**
+ * Upload a 3D model file for an asset
+ */
+export async function uploadAssetModel(assetId: string, file: File): Promise<{ url: string }> {
+  const formData = new FormData();
+  formData.append('model', file);
+  return await apiService.post(`${API_BASE}/assets/${assetId}/model`, formData, {
+    headers: { 'Content-Type': 'multipart/form-data' }
+  });
+}
+
+/**
+ * Upload a texture file for an asset material
+ */
+export async function uploadAssetTexture(assetId: string, materialId: string, file: File): Promise<{ url: string }> {
+  const formData = new FormData();
+  formData.append('texture', file);
+  return await apiService.post(`${API_BASE}/assets/${assetId}/materials/${materialId}/texture`, formData, {
+    headers: { 'Content-Type': 'multipart/form-data' }
+  });
+}
+
+// ==========================================================================
+// Material Presets API
+// ==========================================================================
+
+/**
+ * List all material presets
+ */
+export async function listMaterialPresets(): Promise<MaterialPreset[]> {
+  return await apiService.get(`${API_BASE}/material-presets`);
+}
+
+/**
+ * Create a material preset
+ */
+export async function createMaterialPreset(data: Partial<MaterialPreset>): Promise<MaterialPreset> {
+  return await apiService.post(`${API_BASE}/material-presets`, data);
+}
+
+/**
+ * Update a material preset
+ */
+export async function updateMaterialPreset(id: string, data: Partial<MaterialPreset>): Promise<MaterialPreset> {
+  return await apiService.put(`${API_BASE}/material-presets/${id}`, data);
+}
+
+/**
+ * Delete a material preset
+ */
+export async function deleteMaterialPreset(id: string): Promise<void> {
+  await apiService.delete(`${API_BASE}/material-presets/${id}`);
+}
+
+// ==========================================================================
+// BluLok Data Source API (for binding to live data)
+// ==========================================================================
+
+/**
+ * BluLok Facility (from main system)
+ */
+export interface BluLokFacility {
+  id: string;
+  name: string;
+  address?: string;
+  city?: string;
+  state?: string;
+}
+
+/**
+ * BluLok Unit (storage unit)
+ */
+export interface BluLokUnit {
+  id: string;
+  facility_id: string;
+  unit_number: string;
+  unit_type: string | null;
+  status: 'available' | 'occupied' | 'maintenance' | 'reserved';
+  description?: string;
+  last_activity?: string;
+  facility_lock_command_timeout_sec?: number | null;
+  // Device info if available
+  device?: {
+    id: string;
+    device_serial: string;
+    lock_status: 'locked' | 'unlocked' | 'locking' | 'unlocking' | 'error' | 'maintenance' | 'unknown';
+    device_status: 'online' | 'offline' | 'low_battery' | 'error';
+    battery_level?: number;
+    signal_strength?: number;
+    firmware_version?: string | null;
+    supports_remote_lock?: boolean;
+  };
+  // Tenant info if available
+  tenant?: {
+    id: string;
+    name: string;
+    email: string;
+    phone?: string | null;
+  };
+}
+
+/**
+ * BluLok Access Control Device (gates, elevators, doors)
+ */
+export interface BluLokAccessControlDevice {
+  id: string;
+  gateway_id: string;
+  gateway_name?: string | null;
+  name: string;
+  device_type: 'gate' | 'elevator' | 'door';
+  location_description?: string;
+  device_serial: string;
+  relay_channel: number;
+  status: 'online' | 'offline' | 'error' | 'maintenance';
+  is_locked: boolean;
+  access_methods?: Array<'app' | 'keypad' | 'fob'>;
+  metadata?: Record<string, unknown>;
+}
+
+/**
+ * Get all BluLok facilities the user has access to
+ */
+export async function getBluLokFacilities(): Promise<BluLokFacility[]> {
+  try {
+    const data = await apiService.get('/facilities');
+    // Handle both array response and { facilities: [...] } response
+    const facilities = Array.isArray(data) ? data : (data?.facilities || data?.data || []);
+    if (!Array.isArray(facilities)) {
+      console.warn('Unexpected facilities response format:', data);
+      return [];
+    }
+    return facilities.map((f: any) => ({
+      id: f.id,
+      name: f.name,
+      address: f.address,
+      city: f.city,
+      state: f.state,
+    }));
+  } catch (error) {
+    console.warn('Failed to fetch BluLok facilities:', error);
+    return [];
+  }
+}
+
+/**
+ * Get units for a specific facility
+ */
+export async function getBluLokUnits(facilityId: string): Promise<BluLokUnit[]> {
+  try {
+    const data = await apiService.get(`/units?facility_id=${facilityId}`);
+    return (data.units || []).map((u: any) => ({
+      id: u.id,
+      facility_id: u.facility_id,
+      unit_number: u.unit_number,
+      unit_type: u.unit_type,
+      status: u.status,
+      description: u.description,
+      last_activity: u.last_activity,
+      facility_lock_command_timeout_sec: u.facility_lock_command_timeout_sec,
+      device: u.blulok_device ? {
+        id: u.blulok_device.id,
+        device_serial: u.blulok_device.device_serial,
+        lock_status: u.blulok_device.lock_status,
+        device_status: u.blulok_device.device_status,
+        battery_level: u.blulok_device.battery_level,
+        signal_strength: u.blulok_device.signal_strength,
+        firmware_version: u.blulok_device.firmware_version,
+        supports_remote_lock: u.blulok_device.supports_remote_lock,
+      } : undefined,
+      tenant: u.primary_tenant ? {
+        id: u.primary_tenant.id,
+        name: `${u.primary_tenant.first_name || ''} ${u.primary_tenant.last_name || ''}`.trim(),
+        email: u.primary_tenant.email,
+        phone: u.primary_tenant.phone_number,
+      } : undefined,
+    }));
+  } catch (error) {
+    console.warn('Failed to fetch BluLok units:', error);
+    return [];
+  }
+}
+
+/**
+ * Get access control devices for a facility
+ */
+export async function getBluLokDevices(facilityId: string): Promise<BluLokAccessControlDevice[]> {
+  try {
+    const data = await apiService.get(`/devices?facility_id=${facilityId}&device_type=access_control`);
+    return (data.devices || data || []).map((d: any) => ({
+      id: d.id,
+      gateway_id: d.gateway_id,
+      name: d.name,
+      device_type: d.device_type,
+      location_description: d.location_description,
+      status: d.status,
+      is_locked: d.is_locked,
+    }));
+  } catch (error) {
+    console.warn('Failed to fetch BluLok devices:', error);
+    return [];
+  }
+}
+
+// ==========================================================================
+// Facility Linking API (BluDesign <-> BluLok)
+// ==========================================================================
+
+export interface FacilityLink {
+  /** BluLok facility ID */
+  blulokFacilityId: string;
+  /** BluLok facility name */
+  blulokFacilityName: string;
+  /** Linked BluDesign facility ID (null if not linked) */
+  bluDesignFacilityId: string | null;
+  /** Linked BluDesign facility name (null if not linked) */
+  bluDesignFacilityName: string | null;
+}
+
+/**
+ * Get all BluLok facilities with their BluDesign links
+ */
+export async function getFacilityLinks(): Promise<FacilityLink[]> {
+  try {
+    // Get all BluLok facilities
+    const bluLokFacilities = await getBluLokFacilities();
+    
+    // Get all BluDesign facilities to check for links
+    const bluDesignFacilities = await getFacilities();
+    
+    // Map BluLok facilities and check for links
+    return bluLokFacilities.map(blulok => {
+      // Look for a BluDesign facility linked to this BluLok facility
+      // The link is stored in the BluDesign facility's dataSource.facilityId
+      const linkedBluDesign = bluDesignFacilities.find(() => {
+        // We need to fetch the full facility data to check the dataSource
+        // For now, we'll return null and let the UI handle loading the full data
+        return false;
+      });
+      
+      return {
+        blulokFacilityId: blulok.id,
+        blulokFacilityName: blulok.name,
+        bluDesignFacilityId: linkedBluDesign?.id || null,
+        bluDesignFacilityName: linkedBluDesign?.name || null,
+      };
+    });
+  } catch (error) {
+    console.error('Failed to get facility links:', error);
+    return [];
+  }
+}
+
+/**
+ * Link a BluDesign facility to a BluLok facility
+ * Updates the BluDesign facility's dataSource configuration
+ */
+export async function linkBluDesignToBluLok(
+  bluDesignFacilityId: string,
+  blulokFacilityId: string,
+  blulokFacilityName: string
+): Promise<void> {
+  try {
+    // Get the current facility data
+    const facility = await getFacility(bluDesignFacilityId);
+    
+    // Update the dataSource config while preserving import-plan metadata.
+    const updatedData: FacilityData = {
+      ...facility.data,
+      dataSource: {
+        type: 'blulok',
+        facilityId: blulokFacilityId,
+        facilityName: blulokFacilityName,
+        autoConnect: true,
+        lastSync: new Date(),
+      },
+    };
+    
+    // Save the updated facility
+    await updateFacility(bluDesignFacilityId, updatedData);
+    console.log(`[API] Linked BluDesign ${bluDesignFacilityId} to BluLok ${blulokFacilityId}`);
+  } catch (error) {
+    console.error('Failed to link facilities:', error);
+    throw error;
+  }
+}
+
+/**
+ * Unlink a BluDesign facility from any BluLok facility
+ */
+export async function unlinkBluDesign(bluDesignFacilityId: string): Promise<void> {
+  try {
+    // Get the current facility data
+    const facility = await getFacility(bluDesignFacilityId);
+    
+    // Clear the dataSource config
+    const updatedData: FacilityData = {
+      ...facility.data,
+      dataSource: { type: 'none' }
+    };
+    
+    // Save the updated facility
+    await updateFacility(bluDesignFacilityId, updatedData);
+    console.log(`[API] Unlinked BluDesign ${bluDesignFacilityId}`);
+  } catch (error) {
+    console.error('Failed to unlink facility:', error);
+    throw error;
+  }
+}
+
+/**
+ * Get all BluDesign facilities with their linked BluLok facility info
+ */
+export async function getBluDesignFacilitiesWithLinks(): Promise<Array<{
+  id: string;
+  name: string;
+  linkedBlulokId: string | null;
+  linkedBlulokName: string | null;
+}>> {
+  try {
+    const facilities = await getFacilities();
+    
+    // We need full facility data to get the dataSource
+    const results = await Promise.all(
+      facilities.map(async (f) => {
+        try {
+          const full = await getFacility(f.id);
+          const dataSource = full.data?.dataSource;
+          return {
+            id: f.id,
+            name: f.name,
+            linkedBlulokId: dataSource?.type === 'blulok' ? dataSource.facilityId || null : null,
+            linkedBlulokName: dataSource?.type === 'blulok' ? dataSource.facilityName || null : null,
+          };
+        } catch {
+          return {
+            id: f.id,
+            name: f.name,
+            linkedBlulokId: null,
+            linkedBlulokName: null,
+          };
+        }
+      })
+    );
+    
+    return results;
+  } catch (error) {
+    console.error('Failed to get BluDesign facilities with links:', error);
+    return [];
+  }
+}
+
+// ==========================================================================
+// Themes API
+// ==========================================================================
+
+export interface ThemeApiData {
+  id: string;
+  name: string;
+  description?: string;
+  categorySkins: Record<string, string | null>;
+  buildingSkin: string;
+  buildingSkinId?: string;
+  environment?: {
+    grass: Record<string, unknown>;
+    pavement: Record<string, unknown>;
+    gravel: Record<string, unknown>;
+  };
+  isBuiltin: boolean;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+/**
+ * Get all custom themes for the current user
+ */
+export async function getThemes(): Promise<ThemeApiData[]> {
+  const response = await apiService.get(`${API_BASE}/themes`);
+  return response.themes.map((t: any) => ({
+    ...t,
+    createdAt: new Date(t.createdAt),
+    updatedAt: new Date(t.updatedAt),
+  }));
+}
+
+/**
+ * Get a specific theme by ID
+ */
+export async function getTheme(id: string): Promise<ThemeApiData> {
+  const response = await apiService.get(`${API_BASE}/themes/${id}`);
+  return {
+    ...response.theme,
+    createdAt: new Date(response.theme.createdAt),
+    updatedAt: new Date(response.theme.updatedAt),
+  };
+}
+
+/**
+ * Create a new custom theme
+ */
+export async function createTheme(theme: Omit<ThemeApiData, 'id' | 'isBuiltin' | 'createdAt' | 'updatedAt'>): Promise<ThemeApiData> {
+  const response = await apiService.post(`${API_BASE}/themes`, theme);
+  return {
+    ...response.theme,
+    createdAt: new Date(response.theme.createdAt),
+    updatedAt: new Date(response.theme.updatedAt),
+  };
+}
+
+/**
+ * Update an existing custom theme
+ */
+export async function updateThemeApi(id: string, updates: Partial<ThemeApiData>): Promise<ThemeApiData> {
+  const response = await apiService.put(`${API_BASE}/themes/${id}`, updates);
+  return {
+    ...response.theme,
+    createdAt: new Date(response.theme.createdAt),
+    updatedAt: new Date(response.theme.updatedAt),
+  };
+}
+
+/**
+ * Delete a custom theme
+ */
+export async function deleteThemeApi(id: string): Promise<void> {
+  await apiService.delete(`${API_BASE}/themes/${id}`);
+}
+
+// ==========================================================================
+// Skins API
+// ==========================================================================
+
+export interface SkinApiData {
+  id: string;
+  name: string;
+  description?: string;
+  category: string;
+  partMaterials: Record<string, Record<string, unknown>>;
+  thumbnail?: string;
+  isBuiltin: boolean;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+/**
+ * Get all custom skins for the current user
+ */
+export async function getSkins(category?: string): Promise<SkinApiData[]> {
+  const params = category ? `?category=${encodeURIComponent(category)}` : '';
+  const response = await apiService.get(`${API_BASE}/skins${params}`);
+  return response.skins.map((s: any) => ({
+    ...s,
+    createdAt: new Date(s.createdAt),
+    updatedAt: new Date(s.updatedAt),
+  }));
+}
+
+/**
+ * Get a specific skin by ID
+ */
+export async function getSkin(id: string): Promise<SkinApiData> {
+  const response = await apiService.get(`${API_BASE}/skins/${id}`);
+  return {
+    ...response.skin,
+    createdAt: new Date(response.skin.createdAt),
+    updatedAt: new Date(response.skin.updatedAt),
+  };
+}
+
+/**
+ * Create a new custom skin
+ */
+export async function createSkinApi(skin: Omit<SkinApiData, 'id' | 'isBuiltin' | 'createdAt' | 'updatedAt'>): Promise<SkinApiData> {
+  const response = await apiService.post(`${API_BASE}/skins`, skin);
+  return {
+    ...response.skin,
+    createdAt: new Date(response.skin.createdAt),
+    updatedAt: new Date(response.skin.updatedAt),
+  };
+}
+
+/**
+ * Update an existing custom skin
+ */
+export async function updateSkinApi(id: string, updates: Partial<SkinApiData>): Promise<SkinApiData> {
+  const response = await apiService.put(`${API_BASE}/skins/${id}`, updates);
+  return {
+    ...response.skin,
+    createdAt: new Date(response.skin.createdAt),
+    updatedAt: new Date(response.skin.updatedAt),
+  };
+}
+
+/**
+ * Delete a custom skin
+ */
+export async function deleteSkinApi(id: string): Promise<void> {
+  await apiService.delete(`${API_BASE}/skins/${id}`);
+}
+
+// ==========================================================================
+// Storage Configuration API
+// ==========================================================================
+
+/**
+ * Get OAuth2 authorization URL for Google Drive
+ */
+export async function getGDriveAuthUrl(
+  clientId: string,
+  clientSecret: string,
+  redirectUri?: string
+): Promise<{ authUrl: string }> {
+  const params = new URLSearchParams({
+    clientId,
+    clientSecret,
+    ...(redirectUri && { redirectUri }),
+  });
+  return await apiService.get(`${API_BASE}/storage/gdrive/auth-url?${params.toString()}`);
+}
+
+/**
+ * Exchange OAuth2 code for tokens
+ */
+export async function exchangeGDriveCode(
+  code: string,
+  clientId: string,
+  clientSecret: string,
+  redirectUri?: string
+): Promise<{
+  tokens: {
+    accessToken: string;
+    refreshToken: string;
+    expiryDate?: number;
+  };
+}> {
+  const params = new URLSearchParams({
+    code,
+    clientId,
+    clientSecret,
+    ...(redirectUri && { redirectUri }),
+  });
+  return await apiService.get(`${API_BASE}/storage/gdrive/callback?${params.toString()}`);
+}
+
+/**
+ * Refresh Google Drive tokens
+ */
+export async function refreshGDriveTokens(
+  clientId: string,
+  clientSecret: string,
+  refreshToken: string
+): Promise<{
+  tokens: {
+    accessToken: string;
+    refreshToken: string;
+    expiryDate?: number;
+  };
+}> {
+  return await apiService.post(`${API_BASE}/storage/gdrive/refresh-tokens`, {
+    clientId,
+    clientSecret,
+    refreshToken,
+  });
+}
+
+/**
+ * Test storage provider configuration
+ */
+export async function testStorageProvider(
+  provider: 'local' | 'gcs' | 'gdrive',
+  storageConfig: Record<string, unknown>
+): Promise<{ success: boolean; message: string }> {
+  return await apiService.post(`${API_BASE}/storage/${provider}/test`, {
+    storageConfig,
+  });
+}
+
+export interface BluDesignStorageConfigResponse {
+  providerType: 'local' | 'gcs' | 'gdrive';
+  providerConfig: Record<string, unknown>;
+  source: 'database' | 'env_fallback';
+}
+
+/**
+ * Get persisted BluDesign storage configuration
+ */
+export async function getBluDesignStorageConfig(): Promise<{
+  success: boolean;
+  config: BluDesignStorageConfigResponse;
+}> {
+  return await apiService.get(`${API_BASE}/storage/config`);
+}
+
+/**
+ * Save BluDesign storage configuration
+ */
+export async function saveBluDesignStorageConfig(
+  providerType: 'local' | 'gcs' | 'gdrive',
+  providerConfig: Record<string, unknown>
+): Promise<{ success: boolean; message: string }> {
+  return await apiService.put(`${API_BASE}/storage/config`, {
+    providerType,
+    providerConfig,
+  });
+}

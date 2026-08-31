@@ -11,9 +11,23 @@ FROM node:18-alpine AS builder
 WORKDIR /app
 
 COPY --from=deps /app/node_modules ./node_modules
-# Copy source and build
 COPY . .
+
+# Dummy env for OpenAPI generation (loads createApp(); no DB connection at build time)
+ENV NODE_ENV=test \
+    DB_NAME=openapi_build \
+    DB_USER=openapi \
+    DB_PASSWORD=build-placeholder-not-used \
+    JWT_SECRET=openapi-build-jwt-secret-minimum-32-chars \
+    OPS_ED25519_PRIVATE_KEY_B64=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA \
+    OPS_ED25519_PUBLIC_KEY_B64=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA \
+    ROOT_ED25519_PUBLIC_KEY_B64=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+
 RUN npm run build
+RUN npm run openapi:generate -- --strict && npm run openapi:audit && node scripts/copy-build-assets.js
+RUN test -f openapi/generated.json
+RUN test -f dist/openapi/generated.json
+RUN test -f dist/src/bludesign/layout-import/ocr/tessdata/eng.traineddata.gz
 
 # Production stage
 FROM node:18-alpine AS production
@@ -45,4 +59,4 @@ USER backend
 EXPOSE 8080
 
 # Start application
-CMD ["npm", "start"]
+CMD ["node", "dist/src/index.js"]

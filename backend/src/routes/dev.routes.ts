@@ -58,12 +58,24 @@ import { UserRole } from '../types/auth.types';
 import { DatabaseService } from '../services/database.service';
 import { MigrationService } from '../services/migration.service';
 import { v4 as uuidv4 } from 'uuid';
+import { config } from '@/config/environment';
 import fs from 'fs';
 import path from 'path';
 import { WebSocketService } from '../services/websocket.service';
 import { logger } from '../utils/logger';
+import { registerGet, registerPost, registerPut } from '@/openapi/register-route';
+import { devLogsQuerySchema, firmwareTimeoutsBodySchema, gatewayOfflineGraceBodySchema, simulatorUserSessionSchema } from '@/schemas/dev.schemas';
+import { UserModel } from '@/models/user.model';
+import { AuthService } from '@/services/auth.service';
+import { FacilityAccessService } from '@/services/facility-access.service';
+import { Ed25519Service } from '@/services/crypto/ed25519.service';
+import { GatewayEventsService } from '@/services/gateway/gateway-events.service';
+import { FirmwareService } from '@/services/firmware/firmware.service';
+import { DEFAULT_GATEWAY_OFFLINE_GRACE_MS } from '@/constants/gateway-liveness.constants';
+import jwt from 'jsonwebtoken';
 
 const router = Router();
+const MOUNT = '/api/v1/dev';
 
 // Middleware to ensure only admins and dev admins can access these routes
 const requireDevAccess = (req: AuthenticatedRequest, res: Response, next: any): void => {
@@ -80,8 +92,16 @@ const requireDevAccess = (req: AuthenticatedRequest, res: Response, next: any): 
 // Apply dev access middleware to all routes
 router.use(requireDevAccess);
 
-// POST /dev/create-admin-users - Create admin and dev admin users
-router.post('/create-admin-users', asyncHandler(async (_req: AuthenticatedRequest, res: Response): Promise<void> => {
+registerPost(
+  router,
+  '/create-admin-users',
+  {
+    openApiPath: `${MOUNT}/create-admin-users`,
+    tags: ['Admin'],
+    summary: 'Create admin and dev admin users',
+    security: 'bearer',
+  },
+  asyncHandler(async (_req: AuthenticatedRequest, res: Response): Promise<void> => {
   try {
     const db = DatabaseService.getInstance();
     const bcrypt = require('bcrypt');
@@ -159,10 +179,19 @@ router.post('/create-admin-users', asyncHandler(async (_req: AuthenticatedReques
       error: error.message
     });
   }
-}));
+  }),
+);
 
-// POST /dev/seed-comprehensive-data - Seed comprehensive test data
-router.post('/seed-comprehensive-data', asyncHandler(async (_req: AuthenticatedRequest, res: Response): Promise<void> => {
+registerPost(
+  router,
+  '/seed-comprehensive-data',
+  {
+    openApiPath: `${MOUNT}/seed-comprehensive-data`,
+    tags: ['Admin'],
+    summary: 'Seed comprehensive test data',
+    security: 'bearer',
+  },
+  asyncHandler(async (_req: AuthenticatedRequest, res: Response): Promise<void> => {
   try {
     const db = DatabaseService.getInstance();
     
@@ -232,10 +261,19 @@ router.post('/seed-comprehensive-data', asyncHandler(async (_req: AuthenticatedR
       error: error.message
     });
   }
-}));
+  }),
+);
 
-// POST /dev/reset-database - Reset database to initial seed state
-router.post('/reset-database', asyncHandler(async (_req: AuthenticatedRequest, res: Response): Promise<void> => {
+registerPost(
+  router,
+  '/reset-database',
+  {
+    openApiPath: `${MOUNT}/reset-database`,
+    tags: ['Admin'],
+    summary: 'Reset database to initial seed state',
+    security: 'bearer',
+  },
+  asyncHandler(async (_req: AuthenticatedRequest, res: Response): Promise<void> => {
   try {
     const db = DatabaseService.getInstance();
 
@@ -255,6 +293,9 @@ router.post('/reset-database', asyncHandler(async (_req: AuthenticatedRequest, r
     // Recreate the schema
     await db.connection.raw(`CREATE SCHEMA \`${dbName}\``);
     console.log(`Recreated schema: ${dbName}`);
+
+    // Ensure the connection is using the newly created schema
+    await db.connection.raw(`USE \`${dbName}\``);
 
     // Step 2: Clear migration tracking tables
     console.log('Step 2: Clearing migration tracking...');
@@ -299,9 +340,10 @@ router.post('/reset-database', asyncHandler(async (_req: AuthenticatedRequest, r
     console.log('Step 5: Running basic seeds...');
     try {
       // Run specific seeds in order
-      await db.connection.seed.run({ specific: '001_device_types.ts' });
-      await db.connection.seed.run({ specific: '002_default_users.ts' });
-      await db.connection.seed.run({ specific: '003_default_widget_templates.ts' });
+      const ext = config.nodeEnv === 'production' ? 'js' : 'ts';
+      await db.connection.seed.run({ specific: `001_device_types.${ext}` });
+      await db.connection.seed.run({ specific: `002_default_users.${ext}` });
+      await db.connection.seed.run({ specific: `003_default_widget_templates.${ext}` });
       console.log('Basic seeds completed successfully');
     } catch (error) {
       console.error('Error running seeds:', error);
@@ -322,10 +364,20 @@ router.post('/reset-database', asyncHandler(async (_req: AuthenticatedRequest, r
       error: error.message
     });
   }
-}));
+  }),
+);
 
-// GET /dev/logs - Get backend logs
-router.get('/logs', asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+registerGet(
+  router,
+  '/logs',
+  {
+    openApiPath: `${MOUNT}/logs`,
+    tags: ['Admin'],
+    summary: 'Get backend logs',
+    security: 'bearer',
+    query: devLogsQuerySchema,
+  },
+  asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   try {
     const { type = 'all', lines = '100' } = req.query;
     const linesCount = parseInt(lines as string) || 100;
@@ -384,10 +436,19 @@ router.get('/logs', asyncHandler(async (req: AuthenticatedRequest, res: Response
       error: error.message
     });
   }
-}));
+  }),
+);
 
-// GET /dev/websocket-stats - Get WebSocket statistics
-router.get('/websocket-stats', asyncHandler(async (_req: AuthenticatedRequest, res: Response): Promise<void> => {
+registerGet(
+  router,
+  '/websocket-stats',
+  {
+    openApiPath: `${MOUNT}/websocket-stats`,
+    tags: ['Admin'],
+    summary: 'Get WebSocket statistics',
+    security: 'bearer',
+  },
+  asyncHandler(async (_req: AuthenticatedRequest, res: Response): Promise<void> => {
   try {
     const wsService = WebSocketService.getInstance();
     const stats = wsService.getStats();
@@ -404,7 +465,120 @@ router.get('/websocket-stats', asyncHandler(async (_req: AuthenticatedRequest, r
       error: error.message
     });
   }
-}));
+  }),
+);
+
+registerGet(
+  router,
+  '/gateway-offline-grace',
+  {
+    openApiPath: `${MOUNT}/gateway-offline-grace`,
+    tags: ['Admin'],
+    summary: 'Get gateway offline grace (effective + default)',
+    security: 'bearer',
+  },
+  asyncHandler(async (_req: AuthenticatedRequest, res: Response): Promise<void> => {
+    const events = GatewayEventsService.getInstance();
+    res.json({
+      success: true,
+      data: {
+        grace_ms: events.getOfflineGraceMs(),
+        default_grace_ms: DEFAULT_GATEWAY_OFFLINE_GRACE_MS,
+        override_active: events.isOfflineGraceOverrideActive(),
+      },
+    });
+  }),
+);
+
+registerPut(
+  router,
+  '/gateway-offline-grace',
+  {
+    openApiPath: `${MOUNT}/gateway-offline-grace`,
+    tags: ['Admin'],
+    summary: 'Override gateway offline grace for this process (e2e / local)',
+    security: 'bearer',
+    body: gatewayOfflineGraceBodySchema,
+  },
+  asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+    const { grace_ms } = req.body as { grace_ms: number | null };
+    const events = GatewayEventsService.getInstance();
+    try {
+      const applied = events.setOfflineGraceMsOverride(grace_ms);
+      logger.info(
+        `Gateway offline grace ${grace_ms === null ? 'cleared' : `set to ${applied}ms`} by ${req.user?.email ?? req.user?.userId ?? 'unknown'}`,
+      );
+      res.json({
+        success: true,
+        data: {
+          grace_ms: applied,
+          default_grace_ms: DEFAULT_GATEWAY_OFFLINE_GRACE_MS,
+          override_active: events.isOfflineGraceOverrideActive(),
+        },
+      });
+    } catch (error: any) {
+      res.status(400).json({
+        success: false,
+        message: error?.message || 'Invalid grace_ms',
+      });
+    }
+  }),
+);
+
+registerGet(
+  router,
+  '/firmware-timeouts',
+  {
+    openApiPath: `${MOUNT}/firmware-timeouts`,
+    tags: ['Admin'],
+    summary: 'Get firmware OTA reconnect grace timeouts (effective + defaults)',
+    security: 'bearer',
+  },
+  asyncHandler(async (_req: AuthenticatedRequest, res: Response): Promise<void> => {
+    res.json({
+      success: true,
+      data: FirmwareService.getTimeoutSnapshot(),
+    });
+  }),
+);
+
+registerPut(
+  router,
+  '/firmware-timeouts',
+  {
+    openApiPath: `${MOUNT}/firmware-timeouts`,
+    tags: ['Admin'],
+    summary: 'Override firmware OTA reconnect grace timeouts for this process (e2e / local)',
+    security: 'bearer',
+    body: firmwareTimeoutsBodySchema,
+  },
+  asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+    const body = req.body as {
+      transfer_disconnect_grace_ms?: number | null;
+      verify_disconnect_grace_ms?: number | null;
+    };
+    try {
+      if (body.transfer_disconnect_grace_ms !== undefined) {
+        FirmwareService.setTransferDisconnectGraceMsOverride(body.transfer_disconnect_grace_ms);
+      }
+      if (body.verify_disconnect_grace_ms !== undefined) {
+        FirmwareService.setVerifyDisconnectGraceMsOverride(body.verify_disconnect_grace_ms);
+      }
+      logger.info(
+        `Firmware timeouts updated by ${req.user?.email ?? req.user?.userId ?? 'unknown'}: ${JSON.stringify(body)}`,
+      );
+      res.json({
+        success: true,
+        data: FirmwareService.getTimeoutSnapshot(),
+      });
+    } catch (error: any) {
+      res.status(400).json({
+        success: false,
+        message: error?.message || 'Invalid firmware timeout override',
+      });
+    }
+  }),
+);
 
 // Helper functions for comprehensive data seeding
 
@@ -491,6 +665,10 @@ async function createGateways(db: any, facilities: any[]): Promise<any[]> {
 async function createUnitsAndBluLokDevices(db: any, facilities: any[], gateways: any[]): Promise<{units: any[], blulokDevices: any[]}> {
   const units: any[] = [];
   const blulokDevices: any[] = [];
+
+  // Detect optional columns for flexible seeding across schema versions
+  const hasSizeSqft = await db.connection.schema.hasColumn('units', 'size_sqft');
+  const hasMonthlyRate = await db.connection.schema.hasColumn('units', 'monthly_rate');
   
   facilities.forEach((facility, facilityIndex) => {
     const gateway = gateways[facilityIndex];
@@ -512,25 +690,33 @@ async function createUnitsAndBluLokDevices(db: any, facilities: any[], gateways:
       const unitSize: typeof sizes[number] = sizes[Math.floor(Math.random() * sizes.length)] || 'medium';
       const rateMap: Record<typeof sizes[number], number> = { small: 89.99, medium: 129.99, large: 179.99, xl: 229.99 };
       
-      units.push({
+      const unit: any = {
         id: unitId,
         facility_id: facility.id,
         unit_number: unitNumber,
         unit_type: unitSize.charAt(0).toUpperCase() + unitSize.slice(1),
-        size_sqft: unitSize === 'small' ? 25 : unitSize === 'medium' ? 50 : unitSize === 'large' ? 100 : 200,
-        monthly_rate: rateMap[unitSize],
-        status: 'available' // All units start as available, will be updated to occupied when assigned
-      });
+        status: 'available', // All units start as available, will be updated to occupied when assigned
+      };
+      if (hasSizeSqft) {
+        unit.size_sqft = unitSize === 'small' ? 25 : unitSize === 'medium' ? 50 : unitSize === 'large' ? 100 : 200;
+      }
+      if (hasMonthlyRate) {
+        unit.monthly_rate = rateMap[unitSize];
+      }
+
+      units.push(unit);
       
       // Create corresponding BluLok device
       const lockStatus = Math.random() > 0.95 ? 'unlocked' : 'locked'; // 5% unlocked
       const batteryLevel = Math.floor(Math.random() * 100) + 1;
       
+      const generatedSerial = `BL-${Math.random().toString(36).substr(2, 8).toUpperCase()}`;
       blulokDevices.push({
         id: blulokId,
         gateway_id: gateway.id,
         unit_id: unitId,
-        device_serial: `BL-${Math.random().toString(36).substr(2, 8).toUpperCase()}`,
+        device_serial: generatedSerial,
+        serial: generatedSerial,
         firmware_version: '1.2.3',
         lock_status: lockStatus,
         device_status: batteryLevel < 20 ? 'low_battery' : 'online',
@@ -572,6 +758,7 @@ async function createAccessControlDevices(db: any, gateways: any[]): Promise<any
         device_type: deviceType,
         location_description: location,
         relay_channel: i + 1,
+        device_serial: `AC-DEV-${String(gateway.id).slice(0, 8)}-r${i + 1}`,
         status: Math.random() > 0.1 ? 'online' : 'offline',
         last_activity: new Date(Date.now() - Math.random() * 10 * 60 * 1000) // Within 10 minutes
       });
@@ -818,5 +1005,68 @@ async function createAccessHistory(db: any, users: any[], facilities: any[], uni
   await db.connection('access_logs').insert(accessLogs);
   return accessLogs.length;
 }
+
+registerPost(
+  router,
+  '/simulator/user-session',
+  {
+    openApiPath: `${MOUNT}/simulator/user-session`,
+    tags: ['Admin'],
+    summary: 'Mint a JWT for an existing user (gateway simulator)',
+    security: 'bearer',
+    body: simulatorUserSessionSchema,
+  },
+  asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+    if (req.user?.role !== UserRole.ADMIN && req.user?.role !== UserRole.DEV_ADMIN) {
+      res.status(403).json({
+        success: false,
+        message: 'Admin or Dev Admin role required for simulator user sessions',
+      });
+      return;
+    }
+
+    const { userId } = req.body as { userId: string };
+    const user = (await UserModel.findById(userId)) as import('@/models/user.model').User | undefined;
+    if (!user) {
+      res.status(404).json({ success: false, message: 'User not found' });
+      return;
+    }
+    if (!user.is_active) {
+      res.status(400).json({ success: false, message: 'User account is deactivated' });
+      return;
+    }
+
+    let facilityIds: string[] = [];
+    if (AuthService.isFacilityScoped(user.role as UserRole)) {
+      facilityIds = await FacilityAccessService.getUserFacilityIds(user.id, user.role as UserRole);
+    }
+
+    const token = AuthService.generateToken(user, facilityIds);
+    const decoded = jwt.decode(token) as { exp?: number } | null;
+
+    let ops_public_key: string | undefined;
+    try {
+      ops_public_key = Ed25519Service.getOpsPublicKeyB64();
+    } catch {
+      /* optional */
+    }
+
+    logger.info(`Simulator user session minted for ${user.email ?? user.id} by ${req.user.email}`);
+
+    res.json({
+      success: true,
+      token,
+      expiresAt: decoded?.exp,
+      user: {
+        id: user.id,
+        email: user.email,
+        firstName: user.first_name,
+        lastName: user.last_name,
+        role: user.role,
+      },
+      ops_public_key,
+    });
+  }),
+);
 
 export { router as devRouter };

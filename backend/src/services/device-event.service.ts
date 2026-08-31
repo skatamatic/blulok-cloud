@@ -1,5 +1,8 @@
 import { EventEmitter } from 'events';
 import { WebSocketService } from './websocket.service';
+import { logger } from '@/utils/logger';
+import { isLoggableLockStatusTransition } from '@/utils/lock-status-activity.utils';
+import { SettledLockActivityLogger } from '@/services/access/settled-lock-activity-logger.service';
 
 /**
  * Device Event Types
@@ -12,6 +15,8 @@ export enum DeviceEvent {
   DEVICE_STATUS_CHANGED = 'deviceStatusChanged',
   /** Lock mechanism state transitioned (locked/unlocked/error) */
   LOCK_STATUS_CHANGED = 'lockStatusChanged',
+  /** Device telemetry updated (battery, signal, temperature, etc.) */
+  DEVICE_TELEMETRY_UPDATED = 'deviceTelemetryUpdated',
   /** New device discovered and registered in the system */
   DEVICE_ADDED = 'deviceAdded',
   /** Device removed or decommissioned from the system */
@@ -51,9 +56,9 @@ export interface LockStatusChangedEvent {
   /** Lock device identifier */
   deviceId: string;
   /** Previous lock state */
-  oldStatus: 'locked' | 'unlocked' | 'error' | 'maintenance' | 'unknown';
+  oldStatus: 'locked' | 'unlocked' | 'locking' | 'unlocking' | 'error' | 'maintenance' | 'unknown';
   /** New lock state */
-  newStatus: 'locked' | 'unlocked' | 'error' | 'maintenance' | 'unknown';
+  newStatus: 'locked' | 'unlocked' | 'locking' | 'unlocking' | 'error' | 'maintenance' | 'unknown';
   /** Gateway managing this lock */
   gatewayId: string;
   /** Unit this lock secures */
@@ -90,6 +95,10 @@ export interface DeviceRemovedEvent {
   deviceType: 'blulok' | 'access_control';
   /** Gateway that was managing the device */
   gatewayId: string;
+  /** Facility containing the device (preferred for fanout after delete) */
+  facilityId?: string;
+  /** Unit the device was assigned to, if any */
+  unitId?: string | null;
 }
 
 /**
@@ -129,8 +138,23 @@ export interface DeviceUnassignedEvent {
   metadata?: {
     source?: 'manual' | 'fms_sync' | 'api';
     performedBy?: string;
-    reason?: 'manual' | 'reassigned' | 'unit_deleted';
+    reason?: 'manual' | 'reassigned' | 'unit_deleted' | 'inventory_removed';
   };
+}
+
+/**
+ * Device Telemetry Updated Event Interface
+ *
+ * Emitted when a device's telemetry data changes (battery, signal, temperature, etc.).
+ * Triggers real-time updates to device status subscribers.
+ */
+export interface DeviceTelemetryUpdatedEvent {
+  /** Device identifier */
+  deviceId: string;
+  /** Gateway managing this device */
+  gatewayId?: string;
+  /** Facility containing the device */
+  facilityId?: string;
 }
 
 /**
@@ -180,30 +204,101 @@ export class DeviceEventService extends EventEmitter {
    * Setup event listeners for broadcasting
    */
   private setupEventListeners(): void {
-    // Broadcast units update when lock status changes
-    this.on(DeviceEvent.LOCK_STATUS_CHANGED, async (_event: LockStatusChangedEvent) => {
+    // Broadcast units update and device status update when lock status changes
+    this.on(DeviceEvent.LOCK_STATUS_CHANGED, async (event: LockStatusChangedEvent) => {
       try {
         if (this.wsService) {
-          await this.wsService.broadcastUnitsUpdate();
+          await this.wsService.broadcastUnitsUpdate({
+            unitId: event.unitId || null,
+            deviceId: event.deviceId,
+          });
+          // Also broadcast device status update for the specific device
+          await this.wsService.broadcastDeviceStatusUpdate(event.deviceId);
         } else {
           console.warn('WebSocketService not initialized, skipping units update broadcast');
         }
       } catch (error) {
         console.error('Failed to broadcast units update:', error);
       }
+
+      // Log activity for lock status changes (settled and in-flight remote/gateway commands)
+      if (isLoggableLockStatusTransition(event.newStatus)) {
+        this.logLockActivity(event).catch(err =>
+          logger.error('Failed to log lock activity:', err)
+        );
+      }
     });
 
-    // Broadcast battery status updates when device status changes
-    this.on(DeviceEvent.DEVICE_STATUS_CHANGED, async (_event: DeviceStatusChangedEvent) => {
+    // Broadcast updates when device status changes (online/offline)
+    // This affects units display (device availability) and battery monitoring
+    this.on(DeviceEvent.DEVICE_STATUS_CHANGED, async (event: DeviceStatusChangedEvent) => {
       try {
         if (this.wsService) {
+          // Device status changes affect units display (device online/offline)
+          await this.wsService.broadcastUnitsUpdate({ deviceId: event.deviceId });
           // Battery status updates affect battery monitoring
           await this.wsService.broadcastBatteryStatusUpdate();
+          // Also broadcast device status update for the specific device
+          await this.wsService.broadcastDeviceStatusUpdate(event.deviceId);
         } else {
-          console.warn('WebSocketService not initialized, skipping battery status update broadcast');
+          console.warn('WebSocketService not initialized, skipping device status update broadcast');
         }
       } catch (error) {
-        console.error('Failed to broadcast battery status update:', error);
+        console.error('Failed to broadcast device status update:', error);
+      }
+
+      // Log activity for device status changes
+      this.logDeviceStatusActivity(event).catch(err =>
+        logger.error('Failed to log device status activity:', err)
+      );
+    });
+
+    this.on(DeviceEvent.DEVICE_UNASSIGNED, async (event: DeviceUnassignedEvent) => {
+      try {
+        if (this.wsService) {
+          await this.wsService.broadcastUnitsUpdate({
+            facilityId: event.facilityId,
+            unitId: event.unitId,
+            deviceId: event.deviceId,
+          });
+        }
+      } catch (error) {
+        console.error('Failed to broadcast units update after device unassigned:', error);
+      }
+    });
+
+    this.on(DeviceEvent.DEVICE_REMOVED, async (event: DeviceRemovedEvent) => {
+      try {
+        if (this.wsService) {
+          await this.wsService.broadcastUnitsUpdate({
+            facilityId: event.facilityId,
+            unitId: event.unitId,
+            deviceId: event.deviceId,
+          });
+        }
+      } catch (error) {
+        console.error('Failed to broadcast units update after device removed:', error);
+      }
+    });
+
+    // Broadcast updates when telemetry changes (battery, signal, temperature, errors)
+    // Low battery and error states affect unit display
+    this.on(DeviceEvent.DEVICE_TELEMETRY_UPDATED, async (event: DeviceTelemetryUpdatedEvent) => {
+      try {
+        if (this.wsService) {
+          // Telemetry updates may affect units display (low battery alerts, errors)
+          await this.wsService.broadcastUnitsUpdate({
+            facilityId: event.facilityId,
+            deviceId: event.deviceId,
+          });
+          // Telemetry updates affect device status and battery monitoring
+          await this.wsService.broadcastDeviceStatusUpdate(event.deviceId, event.facilityId);
+          await this.wsService.broadcastBatteryStatusUpdate();
+        } else {
+          console.warn('WebSocketService not initialized, skipping telemetry update broadcast');
+        }
+      } catch (error) {
+        console.error('Failed to broadcast telemetry update:', error);
       }
     });
   }
@@ -248,5 +343,47 @@ export class DeviceEventService extends EventEmitter {
    */
   public emitDeviceUnassigned(event: DeviceUnassignedEvent): void {
     this.emit(DeviceEvent.DEVICE_UNASSIGNED, event);
+  }
+
+  /**
+   * Emit device telemetry updated event
+   */
+  public emitDeviceTelemetryUpdated(event: DeviceTelemetryUpdatedEvent): void {
+    this.emit(DeviceEvent.DEVICE_TELEMETRY_UPDATED, event);
+  }
+
+  // ============================================
+  // Activity logging helpers
+  // ============================================
+
+  /**
+   * Log terminal lock/unlock activity when gateway state sync reports a settled status.
+   */
+  private async logLockActivity(event: LockStatusChangedEvent): Promise<void> {
+    await SettledLockActivityLogger.logSettledLockTransition(event);
+  }
+
+  /**
+   * Log an activity when a device's connectivity status changes.
+   * Uses dynamic import to avoid circular dependency issues at startup.
+   */
+  private async logDeviceStatusActivity(event: DeviceStatusChangedEvent): Promise<void> {
+    const { ActivityService } = await import('@/services/activity.service');
+    const { DeviceModel } = await import('@/models/device.model');
+
+    const deviceModel = new DeviceModel();
+    const gateway = await deviceModel.findGatewayById(event.gatewayId);
+    if (!gateway) {
+      logger.warn(`Cannot log device status activity: gateway ${event.gatewayId} not found`);
+      return;
+    }
+
+    await ActivityService.getInstance().logStatusChange(
+      event.deviceId,
+      gateway.facility_id,
+      event.oldStatus,
+      event.newStatus,
+      { gatewayId: event.gatewayId, deviceType: event.deviceType }
+    );
   }
 }

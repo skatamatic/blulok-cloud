@@ -1,8 +1,7 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import {
   HomeIcon,
   UserIcon,
-  TagIcon,
   CheckIcon,
   BuildingOfficeIcon
 } from '@heroicons/react/24/outline';
@@ -17,7 +16,6 @@ interface CreateUnitData {
   unit_type: string;
   status: 'available' | 'occupied' | 'maintenance' | 'reserved';
   description: string;
-  features: string[];
 }
 
 interface AddUnitModalProps {
@@ -40,19 +38,6 @@ const UNIT_TYPES = [
   'Business Storage'
 ];
 
-const COMMON_FEATURES = [
-  'Climate Controlled',
-  'Drive-up Access',
-  '24/7 Access',
-  'Security Cameras',
-  'Lighting',
-  'Ground Floor',
-  'Elevator Access',
-  'Loading Dock',
-  'Power Outlet',
-  'Shelving Available'
-];
-
 export function AddUnitModal({ isOpen, onClose, onSuccess, facilityId }: AddUnitModalProps) {
   const [formData, setFormData] = useState<CreateUnitData>({
     facility_id: facilityId || '',
@@ -60,7 +45,6 @@ export function AddUnitModal({ isOpen, onClose, onSuccess, facilityId }: AddUnit
     unit_type: '',
     status: 'available',
     description: '',
-    features: []
   });
   
   const [facilities, setFacilities] = useState<Facility[]>([]);
@@ -69,6 +53,18 @@ export function AddUnitModal({ isOpen, onClose, onSuccess, facilityId }: AddUnit
   const [loading, setLoading] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [step, setStep] = useState<'unit' | 'tenant'>('unit');
+  const isMountedRef = useRef(true);
+  const isOpenRef = useRef(isOpen);
+
+  useEffect(() => {
+    isOpenRef.current = isOpen;
+  }, [isOpen]);
+
+  useEffect(() => {
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
 
   useEffect(() => {
     if (isOpen) {
@@ -82,8 +78,10 @@ export function AddUnitModal({ isOpen, onClose, onSuccess, facilityId }: AddUnit
   const loadFacilities = async () => {
     try {
       const response = await apiService.getFacilities();
+      if (!isMountedRef.current || !isOpenRef.current) return;
       setFacilities(response.facilities || []);
     } catch (error) {
+      if (!isMountedRef.current || !isOpenRef.current) return;
       console.error('Failed to load facilities:', error);
     }
   };
@@ -93,8 +91,10 @@ export function AddUnitModal({ isOpen, onClose, onSuccess, facilityId }: AddUnit
       const response = await apiService.getUsers({ 
         role: 'tenant'
       });
+      if (!isMountedRef.current || !isOpenRef.current) return;
       setTenants(response.users || []);
     } catch (error) {
+      if (!isMountedRef.current || !isOpenRef.current) return;
       console.error('Failed to load tenants:', error);
     }
   };
@@ -116,18 +116,11 @@ export function AddUnitModal({ isOpen, onClose, onSuccess, facilityId }: AddUnit
     return Object.keys(newErrors).length === 0;
   };
 
-  const handleInputChange = (field: keyof CreateUnitData, value: string | number | string[]) => {
+  const handleInputChange = (field: keyof CreateUnitData, value: string) => {
     setFormData(prev => ({ ...prev, [field]: value }));
     if (errors[field]) {
       setErrors(prev => ({ ...prev, [field]: '' }));
     }
-  };
-
-  const handleFeatureToggle = (feature: string) => {
-    const newFeatures = formData.features.includes(feature)
-      ? formData.features.filter(f => f !== feature)
-      : [...formData.features, feature];
-    handleInputChange('features', newFeatures);
   };
 
   const handleNext = () => {
@@ -168,7 +161,6 @@ export function AddUnitModal({ isOpen, onClose, onSuccess, facilityId }: AddUnit
       unit_type: '',
       status: 'available',
       description: '',
-      features: []
     });
     setSelectedTenant('');
     setErrors({});
@@ -198,7 +190,7 @@ export function AddUnitModal({ isOpen, onClose, onSuccess, facilityId }: AddUnit
             </h3>
             <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
               {step === 'unit' 
-                ? 'Create a new storage unit with details and features' 
+                ? 'Create a new storage unit with its details' 
                 : 'Assign a tenant to this storage unit (optional)'
               }
             </p>
@@ -303,9 +295,6 @@ export function AddUnitModal({ isOpen, onClose, onSuccess, facilityId }: AddUnit
                 </div>
               </div>
 
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              </div>
-
               <div>
                 <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
                   Description
@@ -317,36 +306,6 @@ export function AddUnitModal({ isOpen, onClose, onSuccess, facilityId }: AddUnit
                   className="block w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg shadow-sm focus:outline-none focus:ring-1 focus:ring-primary-500 focus:border-primary-500 bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
                   placeholder="Enter unit description"
                 />
-              </div>
-            </div>
-
-            {/* Features */}
-            <div className="space-y-4">
-              <h4 className="text-sm font-medium text-gray-900 dark:text-white flex items-center">
-                <TagIcon className="h-4 w-4 mr-2" />
-                Features
-              </h4>
-              
-              <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
-                {COMMON_FEATURES.map((feature) => (
-                  <button
-                    key={feature}
-                    type="button"
-                    onClick={() => handleFeatureToggle(feature)}
-                    className={`text-left px-3 py-2 text-sm rounded-lg border transition-colors ${
-                      formData.features.includes(feature)
-                        ? 'border-primary-200 bg-primary-50 text-primary-700 dark:border-primary-700 dark:bg-primary-900/20 dark:text-primary-400'
-                        : 'border-gray-200 hover:border-gray-300 text-gray-700 dark:border-gray-700 dark:hover:border-gray-600 dark:text-gray-300'
-                    }`}
-                  >
-                    <div className="flex items-center justify-between">
-                      <span>{feature}</span>
-                      {formData.features.includes(feature) && (
-                        <CheckIcon className="h-4 w-4 text-primary-600 dark:text-primary-400" />
-                      )}
-                    </div>
-                  </button>
-                ))}
               </div>
             </div>
           </div>

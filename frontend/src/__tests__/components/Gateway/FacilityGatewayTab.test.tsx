@@ -3,11 +3,34 @@
  */
 
 import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { apiService } from '@/services/api.service';
 import { WebSocketProvider } from '@/contexts/WebSocketContext';
+import { getWsBaseUrl } from '@/services/appConfig';
+import { useAuth } from '@/contexts/AuthContext';
+import FacilityGatewayTab from '@/components/Gateway/FacilityGatewayTab';
+import type { useFacilityGatewayLiveStatus } from '@/hooks/useFacilityGatewayLiveStatus';
+
+type FacilityGatewayLiveStatus = ReturnType<typeof useFacilityGatewayLiveStatus>;
+
+function createLiveStatus(overrides: Partial<FacilityGatewayLiveStatus> = {}): FacilityGatewayLiveStatus {
+  return {
+    gateway: null,
+    wsConnected: false,
+    lastActivityAt: null,
+    effectiveStatus: 'offline',
+    loading: false,
+    reload: jest.fn().mockResolvedValue(undefined),
+    ...overrides,
+  };
+}
 
 // Mock the API service
 jest.mock('@/services/api.service');
+jest.mock('@/services/appConfig', () => ({
+  getWsBaseUrl: jest.fn(() => 'ws://backend.example.com'),
+  getApiBaseUrl: jest.fn(() => 'http://localhost:3000'),
+}));
 
 // Mock the toast context
 const mockAddToast = jest.fn();
@@ -31,6 +54,7 @@ jest.mock('@/contexts/AuthContext', () => {
 });
 
 const mockApiService = apiService as jest.Mocked<typeof apiService>;
+const mockGetWsBaseUrl = getWsBaseUrl as jest.Mock;
 
 describe('FacilityGatewayTab', () => {
   const facilityId = 'test-facility-1';
@@ -44,18 +68,72 @@ describe('FacilityGatewayTab', () => {
       success: true,
       gateways: []
     });
+    mockApiService.getGatewayWsStatus = jest.fn().mockResolvedValue({
+      success: true,
+      facilityId,
+      connected: false,
+    });
+    Object.defineProperty(navigator, 'clipboard', {
+      value: {
+        writeText: jest.fn().mockResolvedValue(undefined),
+      },
+      configurable: true,
+    });
+  });
+  describe('WebSocket URL display', () => {
+    it('uses backend WebSocket base URL and copies to clipboard', async () => {
+      mockGetWsBaseUrl.mockReturnValue('wss://api.backend.com');
+      const mockGateway = {
+        id: 'gateway-1',
+        facility_id: facilityId,
+        name: 'Test Gateway',
+        status: 'online',
+        gateway_type: 'physical',
+      };
+      mockApiService.getGateways.mockResolvedValue({
+        success: true,
+        gateways: [mockGateway],
+      });
+
+      renderComponent(true, createLiveStatus({
+        gateway: mockGateway as any,
+        effectiveStatus: 'online',
+        wsConnected: true,
+      }));
+
+      // First wait for the gateway to load
+      await waitFor(() => {
+        expect(screen.getAllByText('Test Gateway').length).toBeGreaterThan(0);
+      }, { timeout: 10000 });
+
+      // Now check for the WebSocket URL - it should be on the Overview tab by default
+      await waitFor(() => {
+        const wsUrlElements = screen.queryAllByText(/\/ws\/gateway/);
+        expect(wsUrlElements.length).toBeGreaterThan(0);
+      }, { timeout: 10000 });
+
+      // Find and click the copy button
+      const copyButtons = screen.getAllByRole('button', { name: /copy websocket url/i });
+      fireEvent.click(copyButtons[0]);
+
+      await waitFor(() => {
+        expect((navigator.clipboard as any).writeText).toHaveBeenCalled();
+        expect(mockAddToast).toHaveBeenCalledWith({ type: 'success', title: 'Copied WebSocket URL' });
+      });
+    }, 20_000);
   });
 
-  const renderComponent = (canManageGateway = true) => {
-    // Import component dynamically to avoid issues
-    const FacilityGatewayTab = require('@/components/Gateway/FacilityGatewayTab').default;
-
+  const renderComponent = (
+    canManageGateway = true,
+    liveStatus: FacilityGatewayLiveStatus = createLiveStatus(),
+  ) => {
     return render(
       <WebSocketProvider>
         <FacilityGatewayTab
           facilityId={facilityId}
           facilityName={facilityName}
           canManageGateway={canManageGateway}
+          liveStatus={liveStatus}
         />
       </WebSocketProvider>
     );
@@ -63,334 +141,128 @@ describe('FacilityGatewayTab', () => {
 
   describe('Rendering', () => {
     it('should render loading state initially', async () => {
-      renderComponent();
+      renderComponent(true, createLiveStatus({ loading: true }));
       await waitFor(() => {
         expect(screen.getByText('Loading gateway configuration...')).toBeInTheDocument();
-      });
-    });
-
-    it('should load gateway configuration on mount', async () => {
-      renderComponent();
-      await waitFor(() => {
-        expect(mockApiService.getGateways).toHaveBeenCalledWith({ facility_id: facilityId });
       });
     });
 
     it('should render no gateway message when no gateway exists', async () => {
       renderComponent();
       await waitFor(() => {
-        expect(screen.getByText('No Gateway Configured')).toBeInTheDocument();
+        expect(screen.getByText('No gateway assigned')).toBeInTheDocument();
+        expect(screen.getByRole('button', { name: 'Open Swap / Recovery' })).toBeInTheDocument();
       });
     });
 
-    it('should render gateway status when gateway exists', async () => {
-      const mockGateway = {
-        id: 'gateway-1',
-        facility_id: facilityId,
-        name: 'Test Gateway',
-        status: 'online',
-        gateway_type: 'http',
-        protocol_version: '1.1',
-        ip_address: '192.168.1.100'
-      };
+    it('shows inbound WebSocket banner when no gateway row but session is connected', async () => {
+      renderComponent(true, createLiveStatus({
+        wsConnected: true,
+        lastActivityAt: new Date('2025-01-01T12:00:00.000Z').getTime(),
+      }));
 
-      mockApiService.getGateways.mockResolvedValue({
-        success: true,
-        gateways: [mockGateway]
-      });
-
-      renderComponent();
       await waitFor(() => {
-        expect(screen.getByText('Test Gateway')).toBeInTheDocument();
+        expect(screen.getByRole('status')).toBeInTheDocument();
+        expect(screen.getByText('Gateway connected, but not assigned yet')).toBeInTheDocument();
+        expect(screen.getByText(/A gateway is talking to this facility/i)).toBeInTheDocument();
+      });
+    });
+
+    it('shows gateway status when a gateway row exists', async () => {
+      renderComponent(true, createLiveStatus({
+        gateway: {
+          id: 'gateway-1',
+          facility_id: facilityId,
+          name: 'Row Gateway',
+          status: 'online',
+          gateway_type: 'physical',
+        },
+        wsConnected: false,
+        effectiveStatus: 'offline',
+      }));
+
+      await waitFor(() => {
+        expect(screen.getByText('Gateway status')).toBeInTheDocument();
+        expect(screen.getByText('offline')).toBeInTheDocument();
+        expect(screen.getAllByText('Row Gateway').length).toBeGreaterThan(0);
+      });
+    });
+
+    it('renames a gateway from the overview', async () => {
+      const user = userEvent.setup();
+      const reload = jest.fn().mockResolvedValue(undefined);
+      mockApiService.updateGateway.mockResolvedValue({
+        success: true,
+        gateway: { id: 'gateway-1', name: 'North Entry Gateway' },
+      } as any);
+
+      renderComponent(true, createLiveStatus({
+        gateway: {
+          id: 'gateway-1',
+          facility_id: facilityId,
+          name: 'Gateway f6655dca',
+          status: 'online',
+          gateway_type: 'physical',
+        },
+        effectiveStatus: 'online',
+        reload,
+      }));
+
+      await user.click(screen.getByRole('button', { name: /Rename gateway|Edit/i }));
+      const input = screen.getByRole('textbox', { name: 'Gateway name' });
+      await user.clear(input);
+      await user.type(input, 'North Entry Gateway');
+      await user.click(screen.getByRole('button', { name: 'Save' }));
+
+      await waitFor(() => {
+        expect(mockApiService.updateGateway).toHaveBeenCalledWith(
+          'gateway-1',
+          { name: 'North Entry Gateway' },
+        );
+        expect(reload).toHaveBeenCalled();
+        expect(mockAddToast).toHaveBeenCalledWith({ type: 'success', title: 'Gateway renamed' });
+      });
+    });
+
+    it('shows swap recovery entry point when no gateway exists and user can manage gateway', async () => {
+      renderComponent();
+
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: 'Open Swap / Recovery' })).toBeInTheDocument();
+      });
+    });
+
+    it('shows online when websocket session is active for physical gateway', async () => {
+      renderComponent(true, createLiveStatus({
+        gateway: {
+          id: 'gateway-1',
+          facility_id: facilityId,
+          name: 'Test Gateway',
+          status: 'offline',
+          gateway_type: 'physical',
+          ip_address: '192.168.1.100',
+        },
+        wsConnected: true,
+        effectiveStatus: 'online',
+        lastActivityAt: Date.now(),
+      }));
+      await waitFor(() => {
+        expect(screen.getAllByText('Test Gateway').length).toBeGreaterThan(0);
         expect(screen.getByText('online')).toBeInTheDocument();
       });
     });
 
-    it('should not show configure button for non-admin users', async () => {
+    it('should render tabs for non-admin users', async () => {
       renderComponent(false);
       await waitFor(() => {
-        expect(screen.queryByText('Configure')).not.toBeInTheDocument();
+        expect(screen.getByText('Overview')).toBeInTheDocument();
+        expect(screen.getByText('Sync')).toBeInTheDocument();
+        expect(screen.getByText('DevTools/Diag')).toBeInTheDocument();
       });
     });
   });
 
-  describe('Configuration', () => {
-    it('should expand configuration section when configure button is clicked', async () => {
-      const mockGateway = {
-        id: 'gateway-1',
-        facility_id: facilityId,
-        name: 'Test Gateway',
-        status: 'online',
-        gateway_type: 'http',
-        protocol_version: '1.1'
-      };
-
-      mockApiService.getGateways.mockResolvedValue({
-        success: true,
-        gateways: [mockGateway]
-      });
-
-      renderComponent();
-      // Wait for gateway to load, then navigate to Setup tab
-      await waitFor(() => {
-        expect(screen.getByText('Setup')).toBeInTheDocument();
-      });
-
-      // Click the Setup tab
-      const setupTab = screen.getByText('Setup');
-      await act(async () => { fireEvent.click(setupTab); });
-
-      // Wait for and expand configuration
-      await waitFor(() => {
-        expect(screen.getByText('Show Configuration')).toBeInTheDocument();
-      });
-
-      const showConfigBtn = screen.getByText('Show Configuration');
-      await act(async () => { fireEvent.click(showConfigBtn); });
-
-      await waitFor(() => {
-        expect(screen.getByText('Gateway Type')).toBeInTheDocument();
-      });
-    });
-
-    it('should create new gateway when saving configuration without existing gateway', async () => {
-      mockApiService.createGateway.mockResolvedValue({
-        success: true,
-        gateway: { id: 'new-gateway', name: 'Test Facility Gateway' }
-      });
-
-      renderComponent();
-      // Wait for gateway to load, then navigate to Setup tab
-      await waitFor(() => {
-        expect(screen.getByText('Setup')).toBeInTheDocument();
-      });
-
-      // Click the Setup tab
-      const setupTab = screen.getByText('Setup');
-      await act(async () => { fireEvent.click(setupTab); });
-
-      // Wait for Configure Gateway button
-      await waitFor(() => {
-        expect(screen.getByText('Configure Gateway')).toBeInTheDocument();
-      });
-
-      await act(async () => {
-        fireEvent.click(screen.getByText('Configure Gateway'));
-      });
-
-      // Wait for form to appear
-      await waitFor(() => {
-        expect(screen.getByText('Gateway Type')).toBeInTheDocument();
-      });
-
-      // Fill out the form
-      const typeSelect = screen.getByDisplayValue('HTTP (Mesh Manager API)');
-      fireEvent.change(typeSelect, { target: { value: 'http' } });
-
-      const baseUrlInput = screen.getByPlaceholderText('https://mesh-manager.example.com/api');
-      fireEvent.change(baseUrlInput, { target: { value: 'https://api.example.com' } });
-
-      // Find API key input by its label
-      const apiKeyLabel = screen.getByText('API Key');
-      const apiKeyInput = apiKeyLabel.parentElement?.querySelector('input') as HTMLInputElement;
-      fireEvent.change(apiKeyInput, { target: { value: 'test-api-key' } });
-
-      fireEvent.click(screen.getByText('Create Gateway'));
-
-      await waitFor(() => {
-        expect(mockApiService.createGateway).toHaveBeenCalledWith({
-          facility_id: facilityId,
-          name: 'Test Facility Gateway',
-          gateway_type: 'http',
-          base_url: 'https://api.example.com',
-          connection_url: '',
-          api_key: 'test-api-key',
-          username: 'admin',
-          password: undefined,
-          protocol_version: '1.1',
-          poll_frequency_ms: 30000,
-          ignore_ssl_cert: false
-        });
-        expect(mockAddToast).toHaveBeenCalledWith({ type: 'success', title: 'Gateway created successfully' });
-      });
-    });
-
-    it('should update existing gateway when saving configuration', async () => {
-      const mockGateway = {
-        id: 'gateway-1',
-        facility_id: facilityId,
-        name: 'Test Gateway',
-        status: 'online',
-        gateway_type: 'http',
-        protocol_version: '1.1',
-        base_url: 'https://old-api.example.com'
-      };
-
-      mockApiService.getGateways.mockResolvedValue({
-        success: true,
-        gateways: [mockGateway]
-      });
-
-      mockApiService.updateGateway.mockResolvedValue({
-        success: true,
-        gateway: mockGateway
-      });
-
-      renderComponent();
-      // Wait for gateway to load, then navigate to Setup tab
-      await waitFor(() => {
-        expect(screen.getByText('Setup')).toBeInTheDocument();
-      });
-
-      // Click the Setup tab
-      const setupTab = screen.getByText('Setup');
-      await act(async () => { fireEvent.click(setupTab); });
-
-      // Wait for and expand configuration
-      await waitFor(() => {
-        expect(screen.getByText('Show Configuration')).toBeInTheDocument();
-      });
-
-      const showConfigBtn = screen.getByText('Show Configuration');
-      await act(async () => { fireEvent.click(showConfigBtn); });
-
-      await waitFor(() => {
-        expect(screen.getByText('Gateway Type')).toBeInTheDocument();
-      });
-
-      // Update the base URL
-      const baseUrlInput = screen.getByDisplayValue('https://old-api.example.com');
-      fireEvent.change(baseUrlInput, { target: { value: 'https://new-api.example.com' } });
-
-      fireEvent.click(screen.getByText('Update Configuration'));
-
-      await waitFor(() => {
-        expect(mockApiService.updateGateway).toHaveBeenCalledWith('gateway-1', {
-          gateway_type: 'http',
-          base_url: 'https://new-api.example.com',
-          connection_url: '',
-          api_key: '',
-          username: 'admin',
-          password: undefined,
-          protocol_version: '1.1',
-          poll_frequency_ms: 30000,
-          ignore_ssl_cert: false
-        });
-        expect(mockAddToast).toHaveBeenCalledWith({ type: 'success', title: 'Gateway configuration updated successfully' });
-      });
-    });
-  });
-
-  describe('Connection Testing', () => {
-    it('should test gateway connection successfully', async () => {
-      const mockGateway = {
-        id: 'gateway-1',
-        facility_id: facilityId,
-        name: 'Test Gateway',
-        status: 'online',
-        gateway_type: 'http',
-        base_url: 'https://test.example.com'
-      };
-
-      mockApiService.getGateways.mockResolvedValue({
-        success: true,
-        gateways: [mockGateway]
-      });
-
-      mockApiService.testGatewayConnection.mockResolvedValue({
-        success: true,
-        message: 'Connection successful'
-      });
-
-      renderComponent();
-      // Wait for gateway to load, then navigate to Setup tab
-      await waitFor(() => {
-        expect(screen.getByText('Setup')).toBeInTheDocument();
-      });
-
-      // Click the Setup tab
-      const setupTab = screen.getByText('Setup');
-      await act(async () => { fireEvent.click(setupTab); });
-
-      // Wait for and expand configuration
-      await waitFor(() => {
-        expect(screen.getByText('Show Configuration')).toBeInTheDocument();
-      });
-
-      const showConfigBtn = screen.getByText('Show Configuration');
-      await act(async () => { fireEvent.click(showConfigBtn); });
-
-      // Now Test Connection button should be visible
-      await waitFor(() => {
-        expect(screen.getByText('Test Connection')).toBeInTheDocument();
-      });
-
-      fireEvent.click(screen.getByText('Test Connection'));
-
-      // Should show loading state
-      expect(screen.getByText('Testing...')).toBeInTheDocument();
-
-      await waitFor(() => {
-        expect(mockApiService.testGatewayConnection).toHaveBeenCalledWith('gateway-1');
-        expect(mockAddToast).toHaveBeenCalledWith({ type: 'success', title: 'Gateway connection test successful' });
-      });
-    });
-
-    it('should handle connection test failure', async () => {
-      const mockGateway = {
-        id: 'gateway-1',
-        facility_id: facilityId,
-        name: 'Test Gateway',
-        status: 'offline',
-        gateway_type: 'http',
-        base_url: 'https://test.example.com'
-      };
-
-      mockApiService.getGateways.mockResolvedValue({
-        success: true,
-        gateways: [mockGateway]
-      });
-
-      const errorMessage = 'Connection timeout';
-      mockApiService.testGatewayConnection.mockRejectedValue({
-        response: {
-          data: {
-            message: errorMessage
-          }
-        }
-      });
-
-      renderComponent();
-      // Wait for gateway to load, then navigate to Setup tab
-      await waitFor(() => {
-        expect(screen.getByText('Setup')).toBeInTheDocument();
-      });
-
-      // Click the Setup tab
-      const setupTab = screen.getByText('Setup');
-      await act(async () => { fireEvent.click(setupTab); });
-
-      // Wait for and expand configuration
-      await waitFor(() => {
-        expect(screen.getByText('Show Configuration')).toBeInTheDocument();
-      });
-
-      const showConfigBtn = screen.getByText('Show Configuration');
-      await act(async () => { fireEvent.click(showConfigBtn); });
-
-      // Now Test Connection button should be visible
-      await waitFor(() => {
-        expect(screen.getByText('Test Connection')).toBeInTheDocument();
-      });
-
-      fireEvent.click(screen.getByText('Test Connection'));
-
-      await waitFor(() => {
-        expect(mockApiService.testGatewayConnection).toHaveBeenCalledWith('gateway-1');
-        expect(mockAddToast).toHaveBeenCalledWith({ type: 'error', title: errorMessage });
-      });
-    });
-  });
+  // Connection testing UI removed in the simplified Setup tab; skip those tests
 
   describe('Sync Now', () => {
     it('should perform manual sync successfully', async () => {
@@ -401,17 +273,12 @@ describe('FacilityGatewayTab', () => {
         status: 'online'
       };
 
-      mockApiService.getGateways.mockResolvedValue({
-        success: true,
-        gateways: [mockGateway]
-      });
-
       mockApiService.syncGateway.mockResolvedValue({
         success: true,
         message: 'Gateway synchronization completed successfully'
       });
 
-      renderComponent();
+      renderComponent(true, createLiveStatus({ gateway: mockGateway as any, effectiveStatus: 'online' }));
       // Wait for gateway to load, then navigate to Sync tab
       await waitFor(() => {
         expect(screen.getByText('Sync')).toBeInTheDocument();
@@ -447,11 +314,6 @@ describe('FacilityGatewayTab', () => {
         status: 'error'
       };
 
-      mockApiService.getGateways.mockResolvedValue({
-        success: true,
-        gateways: [mockGateway]
-      });
-
       const errorMessage = 'Sync failed: Network error';
       mockApiService.syncGateway.mockRejectedValue({
         response: {
@@ -462,7 +324,7 @@ describe('FacilityGatewayTab', () => {
         }
       });
 
-      renderComponent();
+      renderComponent(true, createLiveStatus({ gateway: mockGateway as any, effectiveStatus: 'error' }));
       // Wait for gateway to load, then navigate to Sync tab
       await waitFor(() => {
         expect(screen.getByText('Sync')).toBeInTheDocument();
@@ -496,17 +358,12 @@ describe('FacilityGatewayTab', () => {
         last_seen: new Date().toISOString()
       };
 
-      mockApiService.getGateways.mockResolvedValue({
-        success: true,
-        gateways: [mockGateway]
-      });
-
       mockApiService.syncGateway.mockResolvedValue({
         success: true,
         message: 'Sync completed'
       });
 
-      renderComponent();
+      renderComponent(true, createLiveStatus({ gateway: mockGateway as any, effectiveStatus: 'online' }));
       // Wait for gateway to load, then navigate to Sync tab
       await waitFor(() => {
         expect(screen.getByText('Sync')).toBeInTheDocument();
@@ -529,145 +386,66 @@ describe('FacilityGatewayTab', () => {
     });
   });
 
-  describe('Gateway Types', () => {
-    it('should show HTTP-specific fields for HTTP gateway type', async () => {
+  describe('Gateway Actions', () => {
+    it('shows ZTP release control and releases via API', async () => {
+      const reload = jest.fn().mockResolvedValue(undefined);
       const mockGateway = {
         id: 'gateway-1',
         facility_id: facilityId,
-        name: 'Test Gateway',
-        status: 'online',
-        gateway_type: 'http'
-      };
-
-      mockApiService.getGateways.mockResolvedValue({
-        success: true,
-        gateways: [mockGateway]
-      });
-
-      renderComponent();
-      // Wait for gateway to load, then navigate to Setup tab
-      await waitFor(() => {
-        expect(screen.getByText('Setup')).toBeInTheDocument();
-      });
-
-      // Click the Setup tab
-      const setupTab = screen.getByText('Setup');
-      await act(async () => { fireEvent.click(setupTab); });
-
-      // Wait for and expand configuration
-      await waitFor(() => {
-        expect(screen.getByText('Show Configuration')).toBeInTheDocument();
-      });
-
-      const showConfigBtn = screen.getByText('Show Configuration');
-      await act(async () => { fireEvent.click(showConfigBtn); });
-
-      await waitFor(() => {
-        expect(screen.getByText('Base URL')).toBeInTheDocument();
-        expect(screen.getByText('API Key')).toBeInTheDocument();
-        expect(screen.getByText('Poll Frequency (ms)')).toBeInTheDocument();
-      });
-    });
-
-    it('should show WebSocket fields for physical gateway type', async () => {
-      renderComponent();
-      // Wait for gateway to load, then navigate to Setup tab
-      await waitFor(() => {
-        expect(screen.getByText('Setup')).toBeInTheDocument();
-      });
-
-      // Click the Setup tab
-      const setupTab = screen.getByText('Setup');
-      await act(async () => { fireEvent.click(setupTab); });
-
-      // Wait for Configure Gateway button
-      await waitFor(() => {
-        expect(screen.getByText('Configure Gateway')).toBeInTheDocument();
-      });
-
-      await act(async () => {
-        fireEvent.click(screen.getByText('Configure Gateway'));
-      });
-
-      // Wait for form to appear
-      await waitFor(() => {
-        expect(screen.getByText('Gateway Type')).toBeInTheDocument();
-      });
-
-      const typeSelect = screen.getByDisplayValue('HTTP (Mesh Manager API)');
-      fireEvent.change(typeSelect, { target: { value: 'physical' } });
-
-      await waitFor(() => {
-        expect(screen.getByText('Connection URL')).toBeInTheDocument();
-      });
-    });
-  });
-
-  describe('Access Control', () => {
-    it('should hide configuration and actions for non-admin users', async () => {
-      renderComponent(false);
-      await waitFor(() => {
-        expect(screen.queryByText('Configure Gateway')).not.toBeInTheDocument();
-        expect(screen.queryByText('Test Connection')).not.toBeInTheDocument();
-        expect(screen.queryByText('Sync Now')).not.toBeInTheDocument();
-      });
-    });
-
-    it('should show actions for admin users', async () => {
-      const mockGateway = {
-        id: 'gateway-1',
-        facility_id: facilityId,
-        name: 'Test Gateway',
+        name: 'GW',
         status: 'online',
         gateway_type: 'http',
-        base_url: 'https://test.example.com'
-      };
-
-      mockApiService.getGateways.mockResolvedValue({
+        public_key: 'ztp-pubkey',
+      } as any;
+      mockApiService.releaseGateway = jest.fn().mockResolvedValue({
         success: true,
-        gateways: [mockGateway]
+        gateway: { ...mockGateway, facility_id: null },
       });
 
-      renderComponent(true);
-      // Wait for gateway to load
+      renderComponent(true, createLiveStatus({ gateway: mockGateway, effectiveStatus: 'online', reload }));
+
       await waitFor(() => {
-        expect(screen.getByText('Setup')).toBeInTheDocument();
-        expect(screen.getByText('Sync')).toBeInTheDocument();
+        expect(screen.getByText('Release from facility')).toBeInTheDocument();
       });
 
-      // Navigate to Setup tab and expand configuration to see Test Connection
-      const setupTab = screen.getByText('Setup');
-      await act(async () => { fireEvent.click(setupTab); });
-
+      fireEvent.click(screen.getByText('Release from facility'));
       await waitFor(() => {
-        expect(screen.getByText('Show Configuration')).toBeInTheDocument();
+        expect(screen.getByText(/Release GW from Test Facility\?/)).toBeInTheDocument();
       });
 
-      const showConfigBtn = screen.getByText('Show Configuration');
-      await act(async () => { fireEvent.click(showConfigBtn); });
-
+      fireEvent.click(screen.getByRole('button', { name: 'Release gateway' }));
       await waitFor(() => {
-        expect(screen.getByText('Test Connection')).toBeInTheDocument();
-      });
-
-      // Navigate to Sync tab to see Sync Now
-      const syncTab = screen.getByText('Sync');
-      await act(async () => { fireEvent.click(syncTab); });
-
-      await waitFor(() => {
-        expect(screen.getByText('Sync Now')).toBeInTheDocument();
+        expect(mockApiService.releaseGateway).toHaveBeenCalledWith('gateway-1');
+        expect(reload).toHaveBeenCalled();
+        expect(mockAddToast).toHaveBeenCalledWith(
+          expect.objectContaining({ type: 'success', title: 'Gateway released' }),
+        );
       });
     });
-  });
 
-  describe('Gateway Actions', () => {
+    it('hides ZTP release control for legacy gateways without public_key', async () => {
+      const mockGateway = {
+        id: 'gateway-1',
+        facility_id: facilityId,
+        name: 'Legacy GW',
+        status: 'online',
+        gateway_type: 'http',
+      } as any;
+
+      renderComponent(true, createLiveStatus({ gateway: mockGateway, effectiveStatus: 'online' }));
+
+      await waitFor(() => {
+        expect(screen.getAllByText('Legacy GW').length).toBeGreaterThan(0);
+      });
+      expect(screen.queryByText('Release from facility')).not.toBeInTheDocument();
+    });
+
     it('should invoke time sync endpoints', async () => {
       const mockGateway = { id: 'gateway-1', facility_id: facilityId, name: 'GW', status: 'online', gateway_type: 'http', protocol_version: '1.1' } as any;
-      mockApiService.getGateways.mockResolvedValue({ success: true, gateways: [mockGateway] } as any);
       mockApiService.getSecureTimeSyncPacket.mockResolvedValue({ success: true, timeSyncPacket: [{ ts: 1, cmd_type: 'SECURE_TIME_SYNC' }, 'sig'] } as any);
       mockApiService.requestTimeSyncForLock.mockResolvedValue({ success: true, timeSyncPacket: [{ ts: 2, cmd_type: 'SECURE_TIME_SYNC' }, 'sig'] } as any);
 
-      renderComponent();
+      renderComponent(true, createLiveStatus({ gateway: mockGateway, effectiveStatus: 'online' }));
       // Wait for gateway to load, then click DevTools/Diag tab
       await waitFor(() => {
         expect(screen.getByText('DevTools/Diag')).toBeInTheDocument();
@@ -686,30 +464,38 @@ describe('FacilityGatewayTab', () => {
       await waitFor(() => expect(mockApiService.getSecureTimeSyncPacket).toHaveBeenCalled());
 
       // Request Time Sync (Lock)
+      const user = userEvent.setup();
       const reqBtn = screen.getByText('Request Time Sync (Lock)');
-      const promptSpy = jest.spyOn(window, 'prompt').mockReturnValue('lock-1');
       await act(async () => { fireEvent.click(reqBtn); });
-      promptSpy.mockRestore();
+      await waitFor(() => expect(screen.getByRole('dialog')).toBeInTheDocument());
+      await user.type(screen.getByLabelText(/lock id/i), 'lock-1');
+      await user.click(screen.getByRole('button', { name: 'Submit' }));
       await waitFor(() => expect(mockApiService.requestTimeSyncForLock).toHaveBeenCalledWith('lock-1'));
     });
 
     it('should submit fallback and rotation from debug panel', async () => {
       const mockGateway = { id: 'gateway-1', facility_id: facilityId, name: 'GW', status: 'online', gateway_type: 'http', protocol_version: '1.1' } as any;
-      mockApiService.getGateways.mockResolvedValue({ success: true, gateways: [mockGateway] } as any);
       mockApiService.requestFallbackPass.mockResolvedValue({ success: true } as any);
-      mockApiService.broadcastOpsKeyRotation.mockResolvedValue({ success: true } as any);
+      mockApiService.rotateOpsKey.mockResolvedValue({
+        payload: { cmd_type: 'ROTATE_OPERATIONS_KEY', new_ops_pubkey: 'pub', ts: 1700000000 },
+        signature: 'sig',
+        generated_ops_key_pair: {
+          private_key_b64: 'priv',
+          public_key_b64: 'pub',
+        },
+      } as any);
 
       // Elevate role to dev_admin for this test so rotation button is visible
-      const { useAuth } = require('@/contexts/AuthContext') as { useAuth: jest.Mock };
-      useAuth.mockReturnValue({ authState: { user: { id: 'test-user', role: 'dev_admin' } } });
-
-      const FacilityGatewayTab = require('@/components/Gateway/FacilityGatewayTab').default;
+      (useAuth as jest.MockedFunction<typeof useAuth>).mockReturnValue({
+        authState: { user: { id: 'test-user', role: 'dev_admin' } },
+      } as ReturnType<typeof useAuth>);
       render(
         <WebSocketProvider>
           <FacilityGatewayTab
             facilityId={facilityId}
             facilityName={facilityName}
             canManageGateway={true}
+            liveStatus={createLiveStatus({ gateway: mockGateway, effectiveStatus: 'online' })}
           />
         </WebSocketProvider>
       );
@@ -726,20 +512,33 @@ describe('FacilityGatewayTab', () => {
       await waitFor(() => expect(screen.getByText('Gateway Debug')).toBeInTheDocument());
 
       // Fallback (select textarea by traversing from label)
-      const fallbackLabel = screen.getByText('Fallback JWT (App-signed)');
+      const fallbackLabel = screen.getByText('Fallback token (app-signed)');
       const fallbackTextarea = fallbackLabel.parentElement?.querySelector('textarea') as HTMLTextAreaElement;
       fireEvent.change(fallbackTextarea, { target: { value: 'jwt' } });
       await act(async () => { fireEvent.click(screen.getByText('Submit Fallback')); });
       await waitFor(() => expect(mockApiService.requestFallbackPass).toHaveBeenCalledWith('jwt'));
 
-      // Rotation (select textarea by traversing from label)
-      const rotationLabel = screen.getByText('Rotation Payload (Root-signed)');
-      const rotationTextarea = rotationLabel.parentElement?.querySelector('textarea') as HTMLTextAreaElement;
-      fireEvent.change(rotationTextarea, { target: { value: '{"cmd_type":"ROTATE_OPERATIONS_KEY","new_ops_pubkey":"b64","ts":1}' } });
-      const sigInput = screen.getByText('Signature (base64url)').parentElement?.querySelector('input') as HTMLInputElement;
-      fireEvent.change(sigInput, { target: { value: 'sig' } });
-      await act(async () => { fireEvent.click(screen.getByText('Broadcast Rotation')); });
-      await waitFor(() => expect(mockApiService.broadcastOpsKeyRotation).toHaveBeenCalled());
+      // Rotation flow (new managed UI)
+      const rootKeyLabel = screen.getByText('Root Private Key (base64url, 32-byte)');
+      const rootKeyTextarea = rootKeyLabel.parentElement?.querySelector('textarea') as HTMLTextAreaElement;
+      fireEvent.change(rootKeyTextarea, { target: { value: 'root-key' } });
+
+      const rotateButton = screen.getByText('Rotate Ops Key');
+      await act(async () => { fireEvent.click(rotateButton); });
+
+      await waitFor(() => expect(screen.getByText('Confirm Operations Key Rotation')).toBeInTheDocument());
+
+      const modalRotateBtn = screen.getAllByRole('button', { name: 'Rotate Ops Key' }).pop() as HTMLElement;
+      await act(async () => { fireEvent.click(modalRotateBtn); });
+
+      await waitFor(() => {
+        expect(mockApiService.rotateOpsKey).toHaveBeenCalledWith({
+          rootPrivateKeyB64: 'root-key',
+          customOpsPublicKeyB64: undefined,
+        });
+        expect(screen.getByText('Ops Key Rotation Broadcasted')).toBeInTheDocument();
+        expect(screen.getByText('OPS_ED25519_PRIVATE_KEY_B64')).toBeInTheDocument();
+      });
     });
   });
 });

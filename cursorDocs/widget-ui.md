@@ -4,12 +4,29 @@
 
 The BluLok Cloud widget system provides a flexible, drag-and-drop dashboard interface that adapts to user roles and preferences. Widgets are the primary building blocks for displaying data and functionality in the application.
 
+## Per-size layout contract (grid cells)
+
+Widgets live inside **react-grid-layout** cells with a fixed height. Follow this so content never clips spinners, icons, or controls:
+
+1. **Shell**: The shared `Widget` / `CompactWidget` wrapper uses **`h-full min-h-0 flex flex-col overflow-hidden`**. **Header chrome is uniform** for every non-tiny size via **`STANDARD_WIDGET_HEADER`** in `frontend/src/utils/widget-layout.utils.ts` (`text-xs` title, `px-3 py-1.5` bar, `h-3 w-3` action icons). Body padding still scales via **`getWidgetLayoutProfile(size)`** (dock sizes use tighter `px-3 py-2` content; medium/large use `p-4`/`p-5`). Tiny tiles use **`CompactWidget`** with no header row.
+2. **Body**: Use **`WIDGET_BODY_CLASS`** (`flex flex-col flex-1 min-h-0 overflow-hidden`) and **`WIDGET_LIST_SCROLL_CLASS`** for scrollable lists. Call **`getWidgetListCap(size)`** (or `profile.listCap`) instead of per-widget magic numbers.
+3. **Dock / fullscreen**: Dock widgets should hide non-essential columns and use compact typography; fullscreen uses the same profile with `isFullscreen: true` and a higher list cap.
+4. **Edge-to-edge**: Pass **`edgeToEdge`** on `Widget` when content must bleed to the cell border (3D viewer).
+5. **Typography (guideline)**:
+   - **`small` / `tiny`**: Prefer **single-line** titles/status; tiny tiles use **`StatTinyContent`** (~27px icons, stepped value type with **`leading-tight`** so descenders are not clipped, 12px footer labels).
+   - **`medium`**: **`text-xs`–`text-sm`** body; cap list rows to what fits **~3–4** lines without scroll, or scroll the inner region.
+   - **`large`+**: Full detail, filters, secondary actions.
+
+4. **Facility scope**: When the global facility selector is a **single facility**, pass **`facility_id` / `facilityId`** query params from dashboard widgets; when **“All facilities”** is selected, omit the filter and rely on backend role scope.
+
+**Units Manager tenant actions:** expanded Tenant column hosts Resend invite / Reset account (`InviteActions`); Device column Unlock matches its footer baseline. Resend stays primary; Reset and occupied-override Unlock use warning tone.
+
 ## Widget Interaction Design
 
 ### Drag and Drop Behavior
 
 **Drag Initiation:**
-- **Drag Handle**: Only the widget header area is draggable
+- **Drag Handle**: Only the widget title strip is draggable (header action buttons are outside the drag zone)
 - **Visual Feedback**: Header shows drag handle (hamburger icon) on hover
 - **Cursor Following**: Widget follows cursor exactly during drag (no snapping to grid during drag)
 - **Smooth Movement**: 60fps smooth movement with proper transform handling
@@ -70,10 +87,14 @@ const sizeMap = {
 ```
 
 **Resize Interface:**
-- **Hamburger Menu**: Click to show size options
-- **Dropdown Menu**: Select from available sizes
-- **Instant Resize**: Immediate layout adjustment
-- **Content Adaptation**: Widget content adapts to new size
+- **Drag handles**: Title strip in the widget header (grab cursor). Header **⋮ / fullscreen buttons** always win pointer events over corner grips.
+- **Corner resize grips**: All four corners (`sw`, `se`, `nw`, `ne`) use a 28×28px hit zone above the card. The blue L indicator appears only when the pointer is over that corner's hit zone (not on general widget hover). While actively resizing, the active corner indicator stays visible.
+- **NE corner priority arbitration**: The widget header `⋮` menu sits at `z-index: 400`, above the resize handle (`z-index: 300`), inside the grid item's stacking context. Because `.card` does not create its own stacking context, the menu's z-index competes directly with the handle's. The result:
+  - Mouse over the `⋮` button → button wins (pointer cursor + click)
+  - Mouse over the rest of the NE corner → handle wins (resize cursor + grip indicator)
+  - This requires `.card` and `.widget-header` to **not** set `z-index` or `isolation` (otherwise the menu becomes trapped in a child stacking context capped below the handle).
+- **Widget ⋮ menu**: Dock layout presets only (when supported); configuration and remove
+- **Content Adaptation**: Widget content adapts to snapped grid size
 
 ## Widget Types & Sizing
 
@@ -115,6 +136,13 @@ if (size === 'small') {
 return <FullStatsLayout />;
 ```
 
+### Dashboard stats & alerts (facility scope)
+
+- **REST bootstrap**: `GET /api/v1/dashboard/general-stats` returns the same payload as WebSocket `general_stats_update` so facility admins / maintenance / admins see numbers on first paint (not only after WS connects).
+- **Roles**: `ADMIN`, `DEV_ADMIN`, `FACILITY_ADMIN`, and `MAINTENANCE` receive scoped stats; facility-limited users only see facilities/devices/users tied to their associations.
+- **“Active Alerts” widget (`stats-alerts`)**: shows **`alerts.open`** — count of **unread** notifications with priority **high** or **urgent**, scoped to the user’s facilities when applicable (global notifications with `facility_id` null still count). This is **notification-based**, not activity-log alerts; it complements the Activity Monitor.
+- **Battery Status**: loads units via **`GET /api/v1/units`** (role-scoped) for an initial list, then follows **`battery_status`** WebSocket updates. Backend payloads include **`rankedUnits`** (online units lowest-battery-first, then offline) for consistent sorting with the UI.
+
 ### Activity Widget
 
 **Available Sizes:**
@@ -138,6 +166,38 @@ return <FullStatsLayout />;
 - **Chart Widgets**: Always large or huge (need space for visualization)
 - **Map Widgets**: Always large or huge (geographic data needs space)
 - **Table Widgets**: Always medium or larger (tabular data requirements)
+
+### Facility Viewer Widget (`facility-viewer`)
+
+**Available Sizes:**
+- **Huge** (6x4): Full 3D facility visualization (default)
+- **Huge-Wide** (8x4): Extended width for wider facilities
+
+**Content:**
+- Interactive 3D view of the BluDesign model linked to the **globally selected facility**
+- Floor selector panel (collapsible, bottom-right)
+- Object selection with properties panel
+- Camera rotation controls (bottom center)
+- Real-time smart asset state updates via WebSocket
+
+**Facility scope:**
+- **Single facility:** Renders the 3D viewer only when the selected facility has a linked BluDesign model; otherwise the widget body is empty (no picker, no placeholder).
+- **All facilities:** Widget body is empty — no model picker and no 3D view. Select a specific facility to see its linked model.
+
+**Visibility:**
+- Only available for facilities with linked BluDesign 3D models in the "Add Widget" modal
+- `facility.bluDesignFacilityId` must exist for widget to appear in "Add Widget" modal
+
+**Implementation:**
+```tsx
+<FacilityViewerWidget
+  id={widget.id}
+  title={widget.title}
+  initialSize="huge"
+  onRemove={() => removeWidget(widget.id)}
+/>
+```
+(Facility/model IDs are resolved from `GlobalFacilityContext`, not widget config.)
 
 ## Responsive Content Design
 
@@ -275,17 +335,10 @@ const gridProps = {
 .drag-handle {
   cursor: grab;
   user-select: none;
-  transition: background-color 0.2s ease;
 }
 
-.drag-handle:hover {
-  background-color: rgba(0, 0, 0, 0.02);
-}
-
-.drag-handle:active,
 .dragging .drag-handle {
   cursor: grabbing;
-  background-color: rgba(0, 0, 0, 0.05);
 }
 ```
 
@@ -448,6 +501,10 @@ const handleLayoutChange = useCallback(
 | **Large** | 4x3 | 592x424 | Detailed content, tables, extended analytics |
 | **Huge** | 6x4 | 880x544 | Complex visualizations, comprehensive dashboards |
 
+### Dock sizes (dashboard v2)
+
+Fixed regions on a **6×12** grid (no page scroll): `dock-top`, `dock-bottom`, `dock-left`, `dock-right`, `dock-bottom-two-thirds`, `dock-full` (entire page). Docked widgets cannot be dragged; choose dock presets from **Dock layout** in the widget **⋮** menu (standard sizes are set by drag-resize on the grid). Fullscreen **focus mode** (maximize) is separate from `dock-full`. See `dashboard-layout-engine` and [dashboard-widgets.md](./dashboard-widgets.md).
+
 ### Content Adaptation Rules
 
 **Stats Widget Sizes:**
@@ -516,7 +573,7 @@ interface LayoutConfig {
     w: number;        // Width in grid units
     h: number;        // Height in grid units
   };
-  size: WidgetSize;   // Current size preset
+  size: WidgetSize;   // Content tier (compact/expanded UI); grid w/h are authoritative for geometry
   [key: string]: any; // Widget-specific configuration
 }
 ```

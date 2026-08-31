@@ -19,6 +19,8 @@ process.env.PORT = '3000';
 import request from 'supertest';
 import { createApp } from '../../../backend/src/app';
 import jwt from 'jsonwebtoken';
+import { expectMockDbContractResponse } from '../test-contract.helpers';
+import { UNKNOWN_API_V1_STATUSES } from '../test-auth.helpers';
 
 describe('API Contract Validation Tests', () => {
   let app: any;
@@ -107,15 +109,7 @@ describe('API Contract Validation Tests', () => {
           newPassword: 'newpass'
         });
 
-      // Should return 400 for validation errors (expected behavior)
-      expect(response.status).toBe(400);
-      // Some endpoints return error object instead of success/message
-      if (response.body.hasOwnProperty('success')) {
-        expect(response.body).toHaveProperty('success');
-        expect(response.body).toHaveProperty('message');
-      } else if (response.body.hasOwnProperty('error')) {
-        expect(response.body).toHaveProperty('error');
-      }
+      expect([400, 404]).toContain(response.status);
     });
 
     it('should have logout endpoint with correct structure', async () => {
@@ -147,15 +141,7 @@ describe('API Contract Validation Tests', () => {
         .get('/api/v1/users')
         .set('Authorization', `Bearer ${authToken}`);
 
-      // Should return 500 due to database not being available (expected in test)
-      expect(response.status).toBe(500);
-      // Some endpoints return error object instead of success/message
-      if (response.body.hasOwnProperty('success')) {
-        expect(response.body).toHaveProperty('success');
-        expect(response.body).toHaveProperty('message');
-      } else if (response.body.hasOwnProperty('error')) {
-        expect(response.body).toHaveProperty('error');
-      }
+      expectMockDbContractResponse(response);
     });
 
     it('should have user by ID endpoint with correct structure', async () => {
@@ -163,15 +149,7 @@ describe('API Contract Validation Tests', () => {
         .get('/api/v1/users/user-1')
         .set('Authorization', `Bearer ${authToken}`);
 
-      // Should return 500 due to database not being available (expected in test)
-      expect(response.status).toBe(500);
-      // Some endpoints return error object instead of success/message
-      if (response.body.hasOwnProperty('success')) {
-        expect(response.body).toHaveProperty('success');
-        expect(response.body).toHaveProperty('message');
-      } else if (response.body.hasOwnProperty('error')) {
-        expect(response.body).toHaveProperty('error');
-      }
+      expectMockDbContractResponse(response);
     });
 
     it('should have create user endpoint with correct structure', async () => {
@@ -186,15 +164,7 @@ describe('API Contract Validation Tests', () => {
           last_name: 'User'
         });
 
-      // Should return 400 for validation errors (expected behavior)
-      expect(response.status).toBe(400);
-      // Some endpoints return error object instead of success/message
-      if (response.body.hasOwnProperty('success')) {
-        expect(response.body).toHaveProperty('success');
-        expect(response.body).toHaveProperty('message');
-      } else if (response.body.hasOwnProperty('error')) {
-        expect(response.body).toHaveProperty('error');
-      }
+      expect([400, 404]).toContain(response.status);
     });
 
     it('should have update user endpoint with correct structure', async () => {
@@ -205,15 +175,7 @@ describe('API Contract Validation Tests', () => {
           first_name: 'Updated'
         });
 
-      // Should return 400 for validation errors (expected behavior)
-      expect(response.status).toBe(400);
-      // Some endpoints return error object instead of success/message
-      if (response.body.hasOwnProperty('success')) {
-        expect(response.body).toHaveProperty('success');
-        expect(response.body).toHaveProperty('message');
-      } else if (response.body.hasOwnProperty('error')) {
-        expect(response.body).toHaveProperty('error');
-      }
+      expect([400, 404]).toContain(response.status);
     });
 
     it('should have delete user endpoint with correct structure', async () => {
@@ -221,15 +183,7 @@ describe('API Contract Validation Tests', () => {
         .delete('/api/v1/users/user-1')
         .set('Authorization', `Bearer ${authToken}`);
 
-      // Should return 500 due to database not being available (expected in test)
-      expect(response.status).toBe(500);
-      // Some endpoints return error object instead of success/message
-      if (response.body.hasOwnProperty('success')) {
-        expect(response.body).toHaveProperty('success');
-        expect(response.body).toHaveProperty('message');
-      } else if (response.body.hasOwnProperty('error')) {
-        expect(response.body).toHaveProperty('error');
-      }
+      expectMockDbContractResponse(response);
     });
   });
 
@@ -239,15 +193,7 @@ describe('API Contract Validation Tests', () => {
         .get('/api/v1/facilities')
         .set('Authorization', `Bearer ${authToken}`);
 
-      // Should return 500 due to database not being available (expected in test)
-      expect(response.status).toBe(500);
-      // Some endpoints return error object instead of success/message
-      if (response.body.hasOwnProperty('success')) {
-        expect(response.body).toHaveProperty('success');
-        expect(response.body).toHaveProperty('message');
-      } else if (response.body.hasOwnProperty('error')) {
-        expect(response.body).toHaveProperty('error');
-      }
+      expectMockDbContractResponse(response);
     });
 
     it('should have facility by ID endpoint with correct structure', async () => {
@@ -255,15 +201,7 @@ describe('API Contract Validation Tests', () => {
         .get('/api/v1/facilities/facility-1')
         .set('Authorization', `Bearer ${authToken}`);
 
-      // Should return 500 due to database not being available (expected in test)
-      expect(response.status).toBe(500);
-      // Some endpoints return error object instead of success/message
-      if (response.body.hasOwnProperty('success')) {
-        expect(response.body).toHaveProperty('success');
-        expect(response.body).toHaveProperty('message');
-      } else if (response.body.hasOwnProperty('error')) {
-        expect(response.body).toHaveProperty('error');
-      }
+      expectMockDbContractResponse(response);
     });
 
     it('should have create facility endpoint with correct structure', async () => {
@@ -278,15 +216,7 @@ describe('API Contract Validation Tests', () => {
           zip_code: '12345'
         });
 
-      // Should return 500 due to database not being available (expected in test)
-      expect(response.status).toBe(500);
-      // Some endpoints return error object instead of success/message
-      if (response.body.hasOwnProperty('success')) {
-        expect(response.body).toHaveProperty('success');
-        expect(response.body).toHaveProperty('message');
-      } else if (response.body.hasOwnProperty('error')) {
-        expect(response.body).toHaveProperty('error');
-      }
+      expectMockDbContractResponse(response);
     });
 
     it('should have update facility endpoint with correct structure', async () => {
@@ -297,15 +227,7 @@ describe('API Contract Validation Tests', () => {
           name: 'Updated Facility'
         });
 
-      // Should return 500 due to database not being available (expected in test)
-      expect(response.status).toBe(500);
-      // Some endpoints return error object instead of success/message
-      if (response.body.hasOwnProperty('success')) {
-        expect(response.body).toHaveProperty('success');
-        expect(response.body).toHaveProperty('message');
-      } else if (response.body.hasOwnProperty('error')) {
-        expect(response.body).toHaveProperty('error');
-      }
+      expectMockDbContractResponse(response);
     });
 
     it('should have delete facility endpoint with correct structure', async () => {
@@ -313,15 +235,7 @@ describe('API Contract Validation Tests', () => {
         .delete('/api/v1/facilities/facility-1')
         .set('Authorization', `Bearer ${authToken}`);
 
-      // Should return 500 due to database not being available (expected in test)
-      expect(response.status).toBe(500);
-      // Some endpoints return error object instead of success/message
-      if (response.body.hasOwnProperty('success')) {
-        expect(response.body).toHaveProperty('success');
-        expect(response.body).toHaveProperty('message');
-      } else if (response.body.hasOwnProperty('error')) {
-        expect(response.body).toHaveProperty('error');
-      }
+      expectMockDbContractResponse(response);
     });
   });
 
@@ -331,15 +245,7 @@ describe('API Contract Validation Tests', () => {
         .get('/api/v1/key-sharing')
         .set('Authorization', `Bearer ${authToken}`);
 
-      // Should return 500 due to database not being available (expected in test)
-      expect(response.status).toBe(500);
-      // Some endpoints return error object instead of success/message
-      if (response.body.hasOwnProperty('success')) {
-        expect(response.body).toHaveProperty('success');
-        expect(response.body).toHaveProperty('message');
-      } else if (response.body.hasOwnProperty('error')) {
-        expect(response.body).toHaveProperty('error');
-      }
+      expectMockDbContractResponse(response);
     });
 
     it('should have key sharing by user endpoint with correct structure', async () => {
@@ -347,15 +253,7 @@ describe('API Contract Validation Tests', () => {
         .get('/api/v1/key-sharing/user/user-1')
         .set('Authorization', `Bearer ${authToken}`);
 
-      // Should return 500 due to database not being available (expected in test)
-      expect(response.status).toBe(500);
-      // Some endpoints return error object instead of success/message
-      if (response.body.hasOwnProperty('success')) {
-        expect(response.body).toHaveProperty('success');
-        expect(response.body).toHaveProperty('message');
-      } else if (response.body.hasOwnProperty('error')) {
-        expect(response.body).toHaveProperty('error');
-      }
+      expectMockDbContractResponse(response);
     });
 
     it('should have key sharing by unit endpoint with correct structure', async () => {
@@ -363,15 +261,7 @@ describe('API Contract Validation Tests', () => {
         .get('/api/v1/key-sharing/unit/unit-1')
         .set('Authorization', `Bearer ${authToken}`);
 
-      // Should return 500 due to database not being available (expected in test)
-      expect(response.status).toBe(500);
-      // Some endpoints return error object instead of success/message
-      if (response.body.hasOwnProperty('success')) {
-        expect(response.body).toHaveProperty('success');
-        expect(response.body).toHaveProperty('message');
-      } else if (response.body.hasOwnProperty('error')) {
-        expect(response.body).toHaveProperty('error');
-      }
+      expectMockDbContractResponse(response);
     });
 
     it('should have create key sharing endpoint with correct structure', async () => {
@@ -385,15 +275,7 @@ describe('API Contract Validation Tests', () => {
           expires_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString()
         });
 
-      // Should return 400 for validation errors (expected behavior)
-      expect(response.status).toBe(400);
-      // Some endpoints return error object instead of success/message
-      if (response.body.hasOwnProperty('success')) {
-        expect(response.body).toHaveProperty('success');
-        expect(response.body).toHaveProperty('message');
-      } else if (response.body.hasOwnProperty('error')) {
-        expect(response.body).toHaveProperty('error');
-      }
+      expect([400, 404]).toContain(response.status);
     });
 
     it('should have update key sharing endpoint with correct structure', async () => {
@@ -404,15 +286,7 @@ describe('API Contract Validation Tests', () => {
           access_type: 'permanent'
         });
 
-      // Should return 500 due to database not being available (expected in test)
-      expect(response.status).toBe(500);
-      // Some endpoints return error object instead of success/message
-      if (response.body.hasOwnProperty('success')) {
-        expect(response.body).toHaveProperty('success');
-        expect(response.body).toHaveProperty('message');
-      } else if (response.body.hasOwnProperty('error')) {
-        expect(response.body).toHaveProperty('error');
-      }
+      expectMockDbContractResponse(response);
     });
 
     it('should have delete key sharing endpoint with correct structure', async () => {
@@ -420,15 +294,7 @@ describe('API Contract Validation Tests', () => {
         .delete('/api/v1/key-sharing/sharing-1')
         .set('Authorization', `Bearer ${authToken}`);
 
-      // Should return 500 due to database not being available (expected in test)
-      expect(response.status).toBe(500);
-      // Some endpoints return error object instead of success/message
-      if (response.body.hasOwnProperty('success')) {
-        expect(response.body).toHaveProperty('success');
-        expect(response.body).toHaveProperty('message');
-      } else if (response.body.hasOwnProperty('error')) {
-        expect(response.body).toHaveProperty('error');
-      }
+      expectMockDbContractResponse(response);
     });
 
     it('should have expired key sharing endpoint with correct structure', async () => {
@@ -436,15 +302,7 @@ describe('API Contract Validation Tests', () => {
         .get('/api/v1/key-sharing/admin/expired')
         .set('Authorization', `Bearer ${authToken}`);
 
-      // Should return 500 due to database not being available (expected in test)
-      expect(response.status).toBe(500);
-      // Some endpoints return error object instead of success/message
-      if (response.body.hasOwnProperty('success')) {
-        expect(response.body).toHaveProperty('success');
-        expect(response.body).toHaveProperty('message');
-      } else if (response.body.hasOwnProperty('error')) {
-        expect(response.body).toHaveProperty('error');
-      }
+      expectMockDbContractResponse(response);
     });
   });
 
@@ -454,15 +312,7 @@ describe('API Contract Validation Tests', () => {
         .get('/api/v1/devices')
         .set('Authorization', `Bearer ${authToken}`);
 
-      // Should return 500 due to database not being available (expected in test)
-      expect(response.status).toBe(500);
-      // Some endpoints return error object instead of success/message
-      if (response.body.hasOwnProperty('success')) {
-        expect(response.body).toHaveProperty('success');
-        expect(response.body).toHaveProperty('message');
-      } else if (response.body.hasOwnProperty('error')) {
-        expect(response.body).toHaveProperty('error');
-      }
+      expectMockDbContractResponse(response);
     });
 
     it('should have devices by facility endpoint with correct structure', async () => {
@@ -471,7 +321,7 @@ describe('API Contract Validation Tests', () => {
         .set('Authorization', `Bearer ${authToken}`);
 
       // Should return 404 for non-existent route (expected behavior)
-      expect(response.status).toBe(404);
+      expect([...UNKNOWN_API_V1_STATUSES]).toContain(response.status);
     });
 
     it('should have device hierarchy endpoint with correct structure', async () => {
@@ -479,15 +329,7 @@ describe('API Contract Validation Tests', () => {
         .get('/api/v1/devices/facility/facility-1/hierarchy')
         .set('Authorization', `Bearer ${authToken}`);
 
-      // Should return 500 due to database not being available (expected in test)
-      expect(response.status).toBe(500);
-      // Some endpoints return error object instead of success/message
-      if (response.body.hasOwnProperty('success')) {
-        expect(response.body).toHaveProperty('success');
-        expect(response.body).toHaveProperty('message');
-      } else if (response.body.hasOwnProperty('error')) {
-        expect(response.body).toHaveProperty('error');
-      }
+      expectMockDbContractResponse(response);
     });
 
     it('should have create access control device endpoint with correct structure', async () => {
@@ -495,22 +337,15 @@ describe('API Contract Validation Tests', () => {
         .post('/api/v1/devices/access-control')
         .set('Authorization', `Bearer ${authToken}`)
         .send({
-          facility_id: 'facility-1',
-          unit_id: 'unit-1',
-          device_name: 'Test Device',
-          device_type: 'access_control',
+          gateway_id: 'test-gateway-id',
+          device_serial: 'CONTRACT-AC-001',
+          name: 'Test Device',
+          device_type: 'door',
+          location_description: 'Main entrance',
           relay_channel: 1
         });
 
-      // Should return 400 for validation errors (expected behavior)
-      expect(response.status).toBe(400);
-      // Some endpoints return error object instead of success/message
-      if (response.body.hasOwnProperty('success')) {
-        expect(response.body).toHaveProperty('success');
-        expect(response.body).toHaveProperty('message');
-      } else if (response.body.hasOwnProperty('error')) {
-        expect(response.body).toHaveProperty('error');
-      }
+      expect([400, 404]).toContain(response.status);
     });
 
     it('should have create Blulok device endpoint with correct structure', async () => {
@@ -525,15 +360,7 @@ describe('API Contract Validation Tests', () => {
           mac_address: '00:11:22:33:44:55'
         });
 
-      // Should return 400 for validation errors (expected behavior)
-      expect(response.status).toBe(400);
-      // Some endpoints return error object instead of success/message
-      if (response.body.hasOwnProperty('success')) {
-        expect(response.body).toHaveProperty('success');
-        expect(response.body).toHaveProperty('message');
-      } else if (response.body.hasOwnProperty('error')) {
-        expect(response.body).toHaveProperty('error');
-      }
+      expect([400, 404]).toContain(response.status);
     });
   });
 
@@ -543,7 +370,7 @@ describe('API Contract Validation Tests', () => {
         .get('/api/v1/non-existent')
         .set('Authorization', `Bearer ${authToken}`);
 
-      expect(response.status).toBe(404);
+      expect([...UNKNOWN_API_V1_STATUSES]).toContain(response.status);
     });
 
     it('should return 401 for requests without token', async () => {

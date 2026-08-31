@@ -52,13 +52,17 @@ export const mockApiService = {
   createBluLokDevice: jest.fn(),
   updateDeviceStatus: jest.fn(),
   updateLockStatus: jest.fn(),
+  updateAccessControlLockStatus: jest.fn(),
   getDevice: jest.fn(),
   createDevice: jest.fn(),
 
   // Access History
   getAccessHistory: jest.fn(),
+  getAccessSessions: jest.fn(),
+  getAccessSessionById: jest.fn(),
   getAccessLog: jest.fn(),
   exportAccessHistory: jest.fn(),
+  exportAccessSessions: jest.fn(),
 
   // Key Sharing
   getKeySharing: jest.fn(),
@@ -97,15 +101,18 @@ jest.mock('@/services/websocket.service', () => ({
     connect: jest.fn(),
     disconnect: jest.fn(),
     subscribe: jest.fn(),
+    reassertSubscription: jest.fn(),
     unsubscribe: jest.fn(),
     onMessage: jest.fn().mockReturnValue(() => {}),
     onConnectionChange: jest.fn().mockReturnValue(() => {}),
+    onReconnectingChange: jest.fn().mockReturnValue(() => {}),
     requestDiagnostics: jest.fn(),
     getSubscriptionStatus: jest.fn().mockReturnValue({}),
     unsubscribeAll: jest.fn(),
     retryConnectionIfNeeded: jest.fn(),
     isConnected: false,
     isWebSocketConnected: jest.fn().mockReturnValue(false),
+    isWebSocketReconnecting: jest.fn().mockReturnValue(false),
   }
 }));
 

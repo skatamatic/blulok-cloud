@@ -1,13 +1,26 @@
 import { DashboardLayoutSubscriptionManager } from '../../../services/subscriptions/dashboard-layout-subscription-manager';
 import { UserRole } from '@/types/auth.types';
 import { WebSocket } from 'ws';
+import { ALL_FACILITIES_ID } from '@/utils/dashboard-assignment.utils';
 
-// Mock the UserWidgetLayoutModel
 jest.mock('../../../models/user-widget-layout.model');
+jest.mock('../../../models/saved-dashboard.model', () => ({
+  SavedDashboardModel: { findById: jest.fn() },
+  DashboardAssignmentModel: {
+    resolveAssignment: jest.fn().mockResolvedValue(null),
+  },
+}));
 
 describe('DashboardLayoutSubscriptionManager', () => {
   let manager: DashboardLayoutSubscriptionManager;
   let mockWebSocket: jest.Mocked<WebSocket>;
+
+  const mockClient = {
+    userId: 'test-user',
+    userRole: UserRole.TENANT,
+    subscriptions: new Map(),
+    facilityIds: ['facility-1'],
+  };
 
   beforeEach(() => {
     manager = new DashboardLayoutSubscriptionManager();
@@ -17,9 +30,6 @@ describe('DashboardLayoutSubscriptionManager', () => {
       close: jest.fn(),
       on: jest.fn(),
     } as any;
-  });
-
-  afterEach(() => {
     jest.clearAllMocks();
   });
 
@@ -39,83 +49,52 @@ describe('DashboardLayoutSubscriptionManager', () => {
   });
 
   describe('handleSubscription', () => {
-    const mockClient = {
-      userId: 'test-user',
-      userRole: UserRole.TENANT,
-      subscriptions: new Map()
-    };
-
-    it('should load and send user layout data', async () => {
+    it('should send resolved API layout payload on subscribe', async () => {
       const message = {
         type: 'subscription' as const,
         subscriptionType: 'dashboard_layout',
         subscriptionId: 'test-sub',
-        data: {}
+        data: { activeFacilityId: ALL_FACILITIES_ID },
       };
 
-      // Mock the UserWidgetLayoutModel
-      const mockLayouts = [
-        {
-          widget_id: 'facilities_stats',
-          widget_type: 'stats',
-          layout_config: JSON.stringify({
-            position: { x: 0, y: 0, w: 3, h: 2 },
-            title: 'Facilities'
-          })
-        }
-      ];
-
       const { UserWidgetLayoutModel } = require('../../../models/user-widget-layout.model');
-      UserWidgetLayoutModel.findByUserId = jest.fn().mockResolvedValue(mockLayouts);
+      UserWidgetLayoutModel.findPagesWithWidgets = jest.fn().mockResolvedValue({
+        pages: [],
+        widgetsByPageId: new Map(),
+      });
 
       await manager.handleSubscription(mockWebSocket, message, mockClient);
 
-      expect(mockWebSocket.send).toHaveBeenCalledWith(
-        expect.stringContaining('"type":"dashboard_layout_update"')
-      );
-
-      // Verify the data structure
       expect(mockWebSocket.send).toHaveBeenCalledTimes(1);
-      const sentCall = mockWebSocket.send.mock.calls[0];
-      expect(sentCall).toBeDefined();
-      expect(sentCall![0]).toBeDefined();
-      
-      const sentData = JSON.parse(sentCall![0] as string);
-      expect(sentData.data.layouts).toHaveProperty('lg');
-      expect(sentData.data.widgetInstances).toHaveLength(1);
-      expect(sentData.data.widgetInstances[0]).toMatchObject({
-        id: 'facilities_stats',
-        type: 'stats-facilities',
-        title: 'Facilities Count'
-      });
+      const sentData = JSON.parse(mockWebSocket.send.mock.calls[0][0] as string);
+      expect(sentData.type).toBe('dashboard_layout_update');
+      expect(sentData.data).toHaveProperty('layoutSource');
+      expect(sentData.data).toHaveProperty('pages');
+      expect(sentData.data).toHaveProperty('layouts');
+      expect(Array.isArray(sentData.data.layouts)).toBe(true);
+      expect(sentData.data.canEditLayout).toBe(false);
     });
 
-    it('should handle empty layout data gracefully', async () => {
+    it('should use activeFacilityId filter when provided', async () => {
+      const facilityId = '11111111-1111-1111-1111-111111111111';
       const message = {
         type: 'subscription' as const,
         subscriptionType: 'dashboard_layout',
-        subscriptionId: 'test-sub',
-        data: {}
+        subscriptionId: 'facility-sub',
+        data: { activeFacilityId: facilityId },
       };
 
-      // Mock empty layout data
       const { UserWidgetLayoutModel } = require('../../../models/user-widget-layout.model');
-      UserWidgetLayoutModel.findByUserId = jest.fn().mockResolvedValue([]);
+      UserWidgetLayoutModel.findPagesWithWidgets = jest.fn().mockResolvedValue({
+        pages: [],
+        widgetsByPageId: new Map(),
+      });
 
       await manager.handleSubscription(mockWebSocket, message, mockClient);
 
-      expect(mockWebSocket.send).toHaveBeenCalledWith(
-        expect.stringContaining('"type":"dashboard_layout_update"')
-      );
-
       expect(mockWebSocket.send).toHaveBeenCalledTimes(1);
-      const sentCall = mockWebSocket.send.mock.calls[0];
-      expect(sentCall).toBeDefined();
-      expect(sentCall![0]).toBeDefined();
-      
-      const sentData = JSON.parse(sentCall![0] as string);
-      expect(sentData.data.layouts.lg).toHaveLength(0);
-      expect(sentData.data.widgetInstances).toHaveLength(0);
+      const sentData = JSON.parse(mockWebSocket.send.mock.calls[0][0] as string);
+      expect(sentData.data.layoutSource).toBeDefined();
     });
 
     it('should handle database errors gracefully', async () => {
@@ -123,86 +102,88 @@ describe('DashboardLayoutSubscriptionManager', () => {
         type: 'subscription' as const,
         subscriptionType: 'dashboard_layout',
         subscriptionId: 'test-sub',
-        data: {}
+        data: {},
       };
 
-      // Mock database error
       const { UserWidgetLayoutModel } = require('../../../models/user-widget-layout.model');
-      UserWidgetLayoutModel.getUserWidgetLayouts = jest.fn().mockRejectedValue(new Error('Database error'));
+      UserWidgetLayoutModel.findPagesWithWidgets = jest
+        .fn()
+        .mockRejectedValue(new Error('Database error'));
 
       await manager.handleSubscription(mockWebSocket, message, mockClient);
 
-      expect(mockWebSocket.send).toHaveBeenCalledWith(
-        expect.stringContaining('"type":"dashboard_layout_update"')
-      );
-
-      // Should send empty data as fallback
       expect(mockWebSocket.send).toHaveBeenCalledTimes(1);
-      const sentCall = mockWebSocket.send.mock.calls[0];
-      expect(sentCall).toBeDefined();
-      expect(sentCall![0]).toBeDefined();
-      
-      const sentData = JSON.parse(sentCall![0] as string);
-      expect(sentData.data.layouts.lg).toHaveLength(0);
-      expect(sentData.data.widgetInstances).toHaveLength(0);
+      const sentData = JSON.parse(mockWebSocket.send.mock.calls[0][0] as string);
+      expect(sentData.data.layoutSource).toBe('default');
+      expect(sentData.data.pages).toEqual([]);
     });
   });
 
-  describe('broadcastLayoutUpdate', () => {
-    it('should broadcast to all watchers for a specific user', () => {
-      const mockWebSocket1 = { 
-        ...mockWebSocket, 
+  describe('broadcastResolvedLayoutToUser', () => {
+    it('should broadcast to subscribed watchers for a specific user', async () => {
+      const mockWebSocket1 = {
+        ...mockWebSocket,
         readyState: WebSocket.OPEN,
-        send: jest.fn()
+        send: jest.fn(),
       };
-      const mockWebSocket2 = { 
-        ...mockWebSocket, 
+      const mockWebSocket2 = {
+        ...mockWebSocket,
         readyState: WebSocket.OPEN,
-        send: jest.fn()
+        send: jest.fn(),
       };
-      
-      const mockClient1 = { userId: 'user1', userRole: UserRole.TENANT, subscriptions: new Map() };
-      const mockClient2 = { userId: 'user2', userRole: UserRole.TENANT, subscriptions: new Map() };
 
-      // Add watchers for different users using the overridden addWatcher method
-      manager['addWatcher']('sub1', mockWebSocket1, mockClient1);
-      manager['addWatcher']('sub2', mockWebSocket2, mockClient2);
+      const client1 = { userId: 'user1', userRole: UserRole.TENANT, subscriptions: new Map(), facilityIds: [] };
+      const client2 = { userId: 'user2', userRole: UserRole.TENANT, subscriptions: new Map(), facilityIds: [] };
 
-      const testLayouts = { lg: [{ i: 'widget1', x: 0, y: 0, w: 3, h: 2 }] };
-      const testInstances = [{ id: 'widget1', type: 'facilities', title: 'Facilities' }];
+      const { UserWidgetLayoutModel } = require('../../../models/user-widget-layout.model');
+      UserWidgetLayoutModel.findPagesWithWidgets = jest.fn().mockResolvedValue({
+        pages: [],
+        widgetsByPageId: new Map(),
+      });
 
-      // Broadcast to user1 only
-      manager.broadcastLayoutUpdate('user1', testLayouts, testInstances);
+      await manager.handleSubscription(mockWebSocket1, {
+        type: 'subscription',
+        subscriptionType: 'dashboard_layout',
+        subscriptionId: 'sub-user1',
+        data: {},
+      }, client1);
+      await manager.handleSubscription(mockWebSocket2, {
+        type: 'subscription',
+        subscriptionType: 'dashboard_layout',
+        subscriptionId: 'sub-user2',
+        data: {},
+      }, client2);
 
-      // Only user1's WebSocket should receive the message
+      await manager.broadcastResolvedLayoutToUser('user1');
+
       expect(mockWebSocket1.send).toHaveBeenCalled();
-      expect(mockWebSocket2.send).not.toHaveBeenCalled();
+      expect(mockWebSocket2.send).toHaveBeenCalledTimes(1);
     });
 
-    it('should not broadcast if no watchers exist for user', () => {
-      const testLayouts = { lg: [] };
-      const testInstances: any[] = [];
-
-      manager.broadcastLayoutUpdate('nonexistent-user', testLayouts, testInstances);
-
+    it('should not broadcast if no watchers exist for user', async () => {
+      await manager.broadcastResolvedLayoutToUser('nonexistent-user');
       expect(mockWebSocket.send).not.toHaveBeenCalled();
     });
 
-    it('should handle closed WebSocket connections', () => {
-      const mockClosedWebSocket = { ...mockWebSocket, readyState: WebSocket.CLOSED };
-      const mockClient = { userId: 'user1', userRole: UserRole.TENANT, subscriptions: new Map() };
+    it('should skip closed WebSocket connections', async () => {
+      const closedSocket = { ...mockWebSocket, readyState: WebSocket.CLOSED, send: jest.fn() };
+      const client = { userId: 'user1', userRole: UserRole.TENANT, subscriptions: new Map(), facilityIds: [] };
 
-      manager['addWatcher']('sub1', mockClosedWebSocket, mockClient);
+      const { UserWidgetLayoutModel } = require('../../../models/user-widget-layout.model');
+      UserWidgetLayoutModel.findPagesWithWidgets = jest.fn().mockResolvedValue({
+        pages: [],
+        widgetsByPageId: new Map(),
+      });
 
-      const testLayouts = { lg: [] };
-      const testInstances: any[] = [];
+      await manager.handleSubscription(closedSocket, {
+        type: 'subscription',
+        subscriptionType: 'dashboard_layout',
+        subscriptionId: 'sub-closed',
+        data: {},
+      }, client);
 
-      manager.broadcastLayoutUpdate('user1', testLayouts, testInstances);
-
-      // Should not send to closed WebSocket
-      expect(mockClosedWebSocket.send).not.toHaveBeenCalled();
+      await manager.broadcastResolvedLayoutToUser('user1');
+      expect(closedSocket.send).not.toHaveBeenCalled();
     });
   });
-
-  // Note: getWidgetSizeFromGrid method was removed from the class
 });

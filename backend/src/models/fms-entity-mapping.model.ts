@@ -89,6 +89,21 @@ export class FMSEntityMappingModel {
     );
 
     if (!existing) {
+      const byInternal = await this.findByInternalId(
+        data.facility_id,
+        data.entity_type,
+        data.internal_id
+      );
+      if (byInternal && byInternal.external_id !== data.external_id) {
+        const err = new Error(
+          'FMS mapping conflict: BluLok entity is already mapped to a different FMS id'
+        );
+        (err as any).code = 'FMS_MAPPING_CONFLICT';
+        (err as any).existing_external_id = byInternal.external_id;
+        (err as any).expected_external_id = data.external_id;
+        (err as any).internal_id = data.internal_id;
+        throw err;
+      }
       return await this.create(data);
     }
 

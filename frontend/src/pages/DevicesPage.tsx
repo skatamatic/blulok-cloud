@@ -1,38 +1,43 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { useWebSocket } from '@/contexts/WebSocketContext';
+import { useLockDeviceRealtime } from '@/hooks/useLockDeviceRealtime';
+import { shouldRefreshDeviceListForPayload, type LockDeviceSnapshot } from '@/utils/deviceStatusWs.utils';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { generateHighlightId } from '@/utils/navigation.utils';
 import { useHighlightWithPagination } from '@/hooks/useHighlightWithPagination';
 import { navigateAndHighlight, calculatePageForItem } from '@/utils/navigation.utils';
 import { ExpandableFilters } from '@/components/Common/ExpandableFilters';
+import { ListPageHeader } from '@/components/Common/DetailsPageLayout';
+import { DeviceTypeBadge, DeviceTypeIcon } from '@/components/Common/DeviceTypeIcon';
 import { ConfirmModal } from '@/components/Modal/ConfirmModal';
 import { useToast } from '@/contexts/ToastContext';
 import { 
   ServerIcon,
   FunnelIcon,
   BoltIcon,
-  CubeIcon,
   KeyIcon,
-  LockClosedIcon,
-  LockOpenIcon,
   ExclamationTriangleIcon,
   CheckCircleIcon,
   WrenchScrewdriverIcon,
-  QuestionMarkCircleIcon,
   BuildingOfficeIcon,
-  UserIcon,
-  EyeIcon,
   ArrowTopRightOnSquareIcon,
-  HomeIcon,
-  Squares2X2Icon,
-  ListBulletIcon,
-  CpuChipIcon,
-  XMarkIcon
 } from '@heroicons/react/24/outline';
 import { apiService } from '@/services/api.service';
-import { AccessControlDevice, BluLokDevice, DeviceFilters } from '@/types/facility.types';
+import { AccessControlDevice, BluLokDevice, DeviceFilters, NetworkInfraDevice } from '@/types/facility.types';
 import { useAuth } from '@/contexts/AuthContext';
+import { useGlobalFacility, ALL_FACILITIES_ID } from '@/contexts/GlobalFacilityContext';
 import { AddDeviceModal } from '@/components/Devices/AddDeviceModal';
+import { AccessControlDeviceCard as ACDeviceCardShared, BluLokDeviceCard as BluLokDeviceCardShared, NetworkInfraDeviceCard } from '@/components/Devices/DeviceCards';
+import { withReturnPath } from '@/hooks/useBackNavigation';
+import { ViewModeToggle } from '@/components/Common/ViewModeToggle';
+import { SortableTableTh } from '@/components/Common/SortableTableTh';
+import { formatAccessDeviceListSubtitle } from '@/utils/accessDeviceDisplay.utils';
+import { formatDate, formatDateTime } from '@/utils/datetime.utils';
+import {
+  formatBluLokDeviceSubtitle,
+  formatBluLokUserFacingLabel,
+} from '@/utils/blulokDeviceDisplay.utils';
+import { formatNetworkInfraKindLabel } from '@/utils/device-icon.utils';
 
 const statusColors = {
   online: 'bg-green-100 text-green-800 dark:bg-green-900/20 dark:text-green-400',
@@ -45,13 +50,6 @@ const statusColors = {
   unknown: 'bg-gray-100 text-gray-800 dark:bg-gray-900/20 dark:text-gray-400'
 };
 
-const deviceTypeIcons = {
-  gate: BoltIcon,
-  elevator: CubeIcon,
-  door: KeyIcon,
-  blulok: LockClosedIcon
-};
-
 const statusIcons = {
   online: CheckCircleIcon,
   offline: ExclamationTriangleIcon,
@@ -61,7 +59,21 @@ const statusIcons = {
 };
 
 interface DevicesPageProps {
-  initialCommandQueue?: { items: any[]; total: number };
+  initialCommandQueue?: { items: CommandQueueItem[]; total: number };
+}
+
+type DeviceListItem =
+  | ((AccessControlDevice | BluLokDevice) & { device_category: string })
+  | NetworkInfraDevice;
+
+interface CommandQueueItem {
+  id: string;
+  facility_id?: string;
+  device_id?: string;
+  command_type?: string;
+  status?: string;
+  attempt_count?: number;
+  next_attempt_at?: string | null;
 }
 
 export default function DevicesPage({ initialCommandQueue }: DevicesPageProps = {}) {
@@ -69,58 +81,125 @@ export default function DevicesPage({ initialCommandQueue }: DevicesPageProps = 
   const navigate = useNavigate();
   const location = useLocation();
   const { authState } = useAuth();
-  const [devices, setDevices] = useState<(AccessControlDevice & { device_category: string } | BluLokDevice & { device_category: string })[]>([]);
-  const [allDevices, setAllDevices] = useState<(AccessControlDevice & { device_category: string } | BluLokDevice & { device_category: string })[]>([]); // Store full dataset for pagination calculations
+  const { addToast } = useToast();
+  const { selectedFacilityId } = useGlobalFacility();
+  const [devices, setDevices] = useState<DeviceListItem[]>([]);
+  /** Full ordered ids for highlight / pagination math; may be id-only from API when projection=id. */
+  const [allDevices, setAllDevices] = useState<Array<{ id: string; device_category?: string }>>([]);
   const [loading, setLoading] = useState(true);
   const [showAddDeviceModal, setShowAddDeviceModal] = useState(false);
-  const [selectedDeviceType, setSelectedDeviceType] = useState<'access_control' | 'blulok'>('access_control');
   const [currentPage, setCurrentPage] = useState(1);
   const [total, setTotal] = useState(0);
   const [totalPages, setTotalPages] = useState(0);
   const [filters, setFilters] = useState<DeviceFilters>({
     search: '',
     device_type: 'all',
+    device_scope: 'operational',
     status: '',
     sortBy: 'name',
     sortOrder: 'asc',
-    facility_id: location.state?.facilityFilter || '',
     limit: 30,
     offset: 0
   });
-  const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
   const [filtersExpanded, setFiltersExpanded] = useState(false);
-  const [activeTab, setActiveTab] = useState<'grid' | 'list' | 'commands'>(initialCommandQueue ? 'commands' : 'grid');
-  const [commandQueue, setCommandQueue] = useState<{ items: any[]; total: number } | null>(initialCommandQueue || null);
+  const [activeTab, setActiveTab] = useState<'grid' | 'table' | 'commands'>(initialCommandQueue ? 'commands' : 'table');
+  const [commandQueue, setCommandQueue] = useState<{ items: CommandQueueItem[]; total: number } | null>(initialCommandQueue || null);
   const [cmdFilters, setCmdFilters] = useState<{ status: string }>({ status: '' });
   const [showUnassignConfirm, setShowUnassignConfirm] = useState<{ deviceId: string; deviceSerial: string } | null>(null);
+  const [showDeleteInfraConfirm, setShowDeleteInfraConfirm] = useState<NetworkInfraDevice | null>(null);
+  const [deletingInfraDevice, setDeletingInfraDevice] = useState(false);
   const [unassigningDevice, setUnassigningDevice] = useState(false);
+
+  const isNetworkInfraScope = filters.device_scope === 'network_infra';
 
   const canManage = ['admin', 'dev_admin', 'facility_admin'].includes(authState.user?.role || '');
 
-  useEffect(() => {
-    loadDevices();
-  }, [filters, currentPage]);
+  // Ref to track the latest loadDevices for WebSocket debounced refresh (stable callback below).
+  const loadDevicesRef = useRef<(opts?: { background?: boolean }) => void | Promise<void>>(async () => {});
+  const deviceIdsRef = useRef<Set<string>>(new Set());
+  deviceIdsRef.current = new Set(allDevices.map((d) => d.id));
 
-  // Command queue subscription
-  useEffect(() => {
-    if (activeTab !== 'commands') return;
-    const subId = ws.subscribe('command_queue', (data: any) => {
-      setCommandQueue({ items: data.items || [], total: data.total || 0 });
+  const debouncedWsDevicesRefresh = useCallback(() => {
+    void loadDevicesRef.current({ background: true });
+  }, []);
+
+  const applyDeviceSnapshots = useCallback((rows: LockDeviceSnapshot[]) => {
+    if (!rows.length) return;
+    setDevices((prev) => {
+      let changed = false;
+      const next = prev.map((device) => {
+        const snap = rows.find((r) => r.device_id === device.id);
+        if (!snap) return device;
+
+        if (device.device_category === 'blulok') {
+          const d = device as BluLokDevice & { device_category: string };
+          const patch: Partial<BluLokDevice> = {};
+          if (snap.device_status) patch.device_status = snap.device_status as BluLokDevice['device_status'];
+          if (snap.lock_status) patch.lock_status = snap.lock_status as BluLokDevice['lock_status'];
+          if (snap.battery_level != null) patch.battery_level = snap.battery_level;
+          if (snap.last_activity) patch.last_activity = snap.last_activity;
+          if (snap.last_seen) patch.last_seen = snap.last_seen;
+          if (Object.keys(patch).length === 0) return device;
+          changed = true;
+          return { ...d, ...patch };
+        }
+
+        if (device.device_category === 'access_control') {
+          const d = device as AccessControlDevice & { device_category: string };
+          const patch: Partial<AccessControlDevice> = {};
+          if (snap.device_status) patch.status = snap.device_status as AccessControlDevice['status'];
+          if (snap.lock_status) patch.is_locked = snap.lock_status === 'locked';
+          if (snap.last_activity) patch.last_activity = snap.last_activity;
+          if (snap.last_seen) patch.last_seen = snap.last_seen;
+          if (Object.keys(patch).length === 0) return device;
+          changed = true;
+          return { ...d, ...patch };
+        }
+
+        return device;
+      });
+      return changed ? next : prev;
     });
-    // initial fetch
-    apiService.getCommandQueue({ status: cmdFilters.status || undefined }).then(data => setCommandQueue({ items: data.items || [], total: data.total || 0 })).catch(() => {});
-    return () => {
-      if (subId) ws.unsubscribe(subId);
-    };
-  }, [activeTab, cmdFilters.status]);
+  }, []);
 
-  const loadDevices = async () => {
+  useLockDeviceRealtime({
+    enabled: activeTab !== 'commands',
+    facilityId:
+      selectedFacilityId && selectedFacilityId !== ALL_FACILITIES_ID
+        ? selectedFacilityId
+        : undefined,
+    onDeviceRows: applyDeviceSnapshots,
+    debouncedRefresh: debouncedWsDevicesRefresh,
+    debounceRefreshFilter: (p) => shouldRefreshDeviceListForPayload(p, deviceIdsRef.current),
+    debounceMs: 500,
+  });
+
+  const loadDevices = useCallback(async (options?: { background?: boolean }) => {
     try {
-      setLoading(true);
-      const queryFilters = {
-        ...filters,
-        offset: (currentPage - 1) * (filters.limit || 30),
+      if (!options?.background) {
+        setLoading(true);
+      }
+      const normalize = (obj: Record<string, unknown>) => {
+        const out: Record<string, unknown> = {};
+        Object.entries(obj).forEach(([k, v]) => {
+          if (v === undefined || v === null) return;
+          if (typeof v === 'string' && v.trim() === '') return;
+          if (k === 'device_type' && v === 'all') return;
+          if (k === 'device_scope' && v === 'operational') return;
+          out[k] = v;
+        });
+        return out;
       };
+
+      const cardSortOverlay =
+        activeTab === 'grid' ? { sortBy: 'name' as const, sortOrder: 'asc' as const } : {};
+      const queryFilters = normalize({
+        ...filters,
+        ...cardSortOverlay,
+        offset: (currentPage - 1) * (filters.limit || 30),
+        // Add facility_id from global context if not "All Facilities"
+        ...(selectedFacilityId && selectedFacilityId !== ALL_FACILITIES_ID && { facility_id: selectedFacilityId }),
+      });
       const response = await apiService.getDevices(queryFilters);
       setDevices(response.devices || []);
       setTotal(response.total || 0);
@@ -128,12 +207,16 @@ export default function DevicesPage({ initialCommandQueue }: DevicesPageProps = 
 
       // Also load full dataset for pagination calculations
       try {
-        const fullDatasetFilters = {
+        const fullDatasetFilters = normalize({
           ...filters,
+          ...cardSortOverlay,
+          projection: 'id' as const,
           // Remove pagination parameters to get all data
           offset: undefined,
-          limit: undefined
-        };
+          limit: undefined,
+          // Add facility_id from global context if not "All Facilities"
+          ...(selectedFacilityId && selectedFacilityId !== ALL_FACILITIES_ID && { facility_id: selectedFacilityId }),
+        });
         
         const fullResponse = await apiService.getDevices(fullDatasetFilters);
         setAllDevices(fullResponse.devices || []);
@@ -144,10 +227,39 @@ export default function DevicesPage({ initialCommandQueue }: DevicesPageProps = 
       }
     } catch (error) {
       console.error('Failed to load devices:', error);
+      addToast({ type: 'error', title: 'Failed to load devices' });
     } finally {
       setLoading(false);
     }
-  };
+  }, [filters, currentPage, selectedFacilityId, activeTab]);
+
+  useEffect(() => {
+    loadDevicesRef.current = loadDevices;
+  }, [loadDevices]);
+
+  useEffect(() => {
+    void loadDevices();
+  }, [loadDevices]);
+
+  // Command queue subscription
+  useEffect(() => {
+    if (activeTab !== 'commands') return;
+    const subId = ws.subscribe(
+      'command_queue',
+      (data: unknown) => {
+        const payload = (data || {}) as { items?: CommandQueueItem[]; total?: number };
+        setCommandQueue({ items: payload.items || [], total: payload.total || 0 });
+      },
+      undefined // no error handler needed
+    );
+    // initial fetch
+    apiService.getCommandQueue({ status: cmdFilters.status || undefined })
+      .then(data => setCommandQueue({ items: data.items || [], total: data.total || 0 }))
+      .catch(() => {});
+    return () => {
+      if (subId) ws.unsubscribe(subId);
+    };
+  }, [activeTab, cmdFilters.status, ws]);
 
   const handleSearch = (value: string) => {
     setFilters(prev => ({ ...prev, search: value }));
@@ -155,7 +267,16 @@ export default function DevicesPage({ initialCommandQueue }: DevicesPageProps = 
   };
 
   const handleTypeFilter = (type: string) => {
-    setFilters(prev => ({ ...prev, device_type: type as any }));
+    setFilters(prev => ({ ...prev, device_type: type as DeviceFilters['device_type'] }));
+    setCurrentPage(1);
+  };
+
+  const handleScopeFilter = (scope: string) => {
+    setFilters(prev => ({
+      ...prev,
+      device_scope: scope as DeviceFilters['device_scope'],
+      device_type: scope === 'network_infra' ? 'all' : prev.device_type,
+    }));
     setCurrentPage(1);
   };
 
@@ -168,15 +289,19 @@ export default function DevicesPage({ initialCommandQueue }: DevicesPageProps = 
     setCurrentPage(page);
   };
 
-  // Helper function to safely access device properties
-  const getDeviceProperty = (device: any, property: string) => {
-    if ('facility_id' in device) {
-      // BluLok device
-      return device[property];
-    } else {
-      // AccessControl device - doesn't have these properties
-      return null;
-    }
+  const handleDeviceColumnSort = (columnKey: string) => {
+    setFilters((prev) => ({
+      ...prev,
+      sortBy: columnKey as DeviceFilters['sortBy'],
+      sortOrder:
+        prev.sortBy === columnKey ? (prev.sortOrder === 'asc' ? 'desc' : 'asc') : 'asc',
+    }));
+    setCurrentPage(1);
+  };
+
+  const getFacilityId = (device: DeviceListItem): string | undefined => {
+    const value = (device as { facility_id?: unknown }).facility_id;
+    return typeof value === 'string' ? value : undefined;
   };
 
   // Handle highlighting when page loads - use allDevices for proper pagination calculation
@@ -189,18 +314,6 @@ export default function DevicesPage({ initialCommandQueue }: DevicesPageProps = 
     handlePageChange
   );
 
-  const handleLockToggle = async (device: BluLokDevice & { device_category: string }) => {
-    if (device.device_category !== 'blulok') return;
-    
-    try {
-      const newStatus = device.lock_status === 'locked' ? 'unlocked' : 'locked';
-      await apiService.updateLockStatus(device.id, newStatus);
-      await loadDevices(); // Refresh data
-    } catch (error) {
-      console.error('Failed to toggle lock:', error);
-    }
-  };
-
   const handleUnassignDevice = async () => {
     if (!showUnassignConfirm) return;
 
@@ -210,315 +323,82 @@ export default function DevicesPage({ initialCommandQueue }: DevicesPageProps = 
       addToast({ type: 'success', title: 'Device unassigned successfully' });
       await loadDevices(); // Refresh data
       setShowUnassignConfirm(null);
-    } catch (error: any) {
+    } catch (error: unknown) {
+      const apiError = error as { response?: { data?: { message?: string } } };
       console.error('Failed to unassign device:', error);
       addToast({ 
         type: 'error', 
-        title: error?.response?.data?.message || 'Failed to unassign device from unit' 
+        title: apiError?.response?.data?.message || 'Failed to unassign device from unit' 
       });
     } finally {
       setUnassigningDevice(false);
     }
   };
 
-  const AccessControlDeviceCard = ({ device }: { device: AccessControlDevice & { device_category: string } }) => {
-    const DeviceIcon = deviceTypeIcons[device.device_type];
-    const StatusIcon = statusIcons[device.status];
-    
-    return (
-      <div 
-        id={generateHighlightId('device', device.id)}
-        className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6 transition-all duration-200 cursor-pointer hover:shadow-lg hover:scale-[1.01] hover:bg-blue-50 dark:hover:bg-blue-900/20"
-        onClick={() => navigate(`/devices/${device.id}`)}
-      >
-        <div className="flex items-start justify-between mb-4">
-          <div className="flex items-center">
-            <div className="p-3 bg-primary-100 dark:bg-primary-900/20 rounded-lg mr-4">
-              <DeviceIcon className="h-6 w-6 text-primary-600 dark:text-primary-400" />
-            </div>
-            <div>
-              <h3 className="text-lg font-medium text-gray-900 dark:text-white">{device.name}</h3>
-              <p className="text-sm text-gray-500 dark:text-gray-400 capitalize">{device.device_type} Controller</p>
-            </div>
-          </div>
-          <div className="flex items-center space-x-2">
-            <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${statusColors[device.status]}`}>
-              <StatusIcon className="h-3 w-3 mr-1" />
-              {device.status}
-            </span>
-          </div>
-        </div>
+  const handleDeleteInfraDevice = async () => {
+    if (!showDeleteInfraConfirm) return;
 
-        {device.location_description && (
-          <p className="text-sm text-gray-600 dark:text-gray-400 mb-4">{device.location_description}</p>
-        )}
-
-        <div className="space-y-3">
-          <div className="flex items-center justify-between text-sm">
-            <span className="text-gray-500 dark:text-gray-400">Relay Channel</span>
-            <span className="font-medium text-gray-900 dark:text-white">#{device.relay_channel}</span>
-          </div>
-          <div className="flex items-center justify-between text-sm">
-            <span className="text-gray-500 dark:text-gray-400">Lock Status</span>
-            <span className={`font-medium ${device.is_locked ? 'text-red-600' : 'text-green-600'}`}>
-              {device.is_locked ? 'Locked' : 'Unlocked'}
-            </span>
-          </div>
-          {device.last_activity && (
-            <div className="flex items-center justify-between text-sm">
-              <span className="text-gray-500 dark:text-gray-400">Last Activity</span>
-              <span className="font-medium text-gray-900 dark:text-white">
-                {new Date(device.last_activity).toLocaleString()}
-              </span>
-            </div>
-          )}
-        </div>
-
-        <div className="mt-6 pt-4 border-t border-gray-100 dark:border-gray-700">
-          <div className="flex items-center justify-between">
-            <button
-              onClick={(e) => {
-                e.stopPropagation();
-                const facilityIndex = devices.findIndex(d => d.gateway_id === device.gateway_id);
-                const calculatedPage = facilityIndex !== -1 ? calculatePageForItem(facilityIndex, 20) : 1;
-                navigateAndHighlight(navigate, { id: device.gateway_id, type: 'facility', page: calculatedPage });
-              }}
-              className="inline-flex items-center text-sm text-primary-600 dark:text-primary-400 hover:text-primary-700 dark:hover:text-primary-300"
-            >
-              <BuildingOfficeIcon className="h-4 w-4 mr-1" />
-              View Facility
-              <ArrowTopRightOnSquareIcon className="h-3 w-3 ml-1" />
-            </button>
-            {canManage && (
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  navigate(`/devices/${device.id}`);
-                }}
-                className="inline-flex items-center px-3 py-1.5 text-sm font-medium text-primary-700 bg-primary-100 hover:bg-primary-200 dark:bg-primary-900/20 dark:text-primary-400 rounded-md transition-colors"
-              >
-                <EyeIcon className="h-4 w-4 mr-1" />
-                Manage
-              </button>
-            )}
-          </div>
-        </div>
-      </div>
-    );
+    try {
+      setDeletingInfraDevice(true);
+      await apiService.removeNetworkInfraDeviceFromCloudInventory(showDeleteInfraConfirm.id);
+      addToast({ type: 'success', title: 'Network device removed from inventory' });
+      await loadDevices();
+      setShowDeleteInfraConfirm(null);
+    } catch (error: unknown) {
+      const apiError = error as { response?: { data?: { message?: string } } };
+      addToast({
+        type: 'error',
+        title: apiError?.response?.data?.message || 'Failed to remove network device',
+      });
+    } finally {
+      setDeletingInfraDevice(false);
+    }
   };
 
-  const BluLokDeviceCard = ({ device }: { device: BluLokDevice & { device_category: string } }) => {
-    const StatusIcon = statusIcons[device.device_status];
-    const batteryColor = device.battery_level && device.battery_level < 20 ? 'text-red-500' : 
-                        device.battery_level && device.battery_level < 50 ? 'text-yellow-500' : 'text-green-500';
-    
-    return (
-      <div 
-        id={generateHighlightId('device', device.id)}
-        className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6 transition-all duration-200 cursor-pointer hover:shadow-lg hover:scale-[1.01] hover:bg-blue-50 dark:hover:bg-blue-900/20"
-        onClick={() => navigate(`/devices/${device.id}`)}
-      >
-        <div className="flex items-start justify-between mb-4">
-          <div className="flex items-center">
-            <div className="p-3 bg-blue-100 dark:bg-blue-900/20 rounded-lg mr-4">
-              <LockClosedIcon className="h-6 w-6 text-blue-600 dark:text-blue-400" />
-            </div>
-            <div>
-              <h3 className="text-lg font-medium text-gray-900 dark:text-white">
-                Unit {device.unit_number}
-              </h3>
-              <p className="text-sm text-gray-500 dark:text-gray-400">{device.device_serial}</p>
-            </div>
-          </div>
-          <div className="flex items-center space-x-2">
-            <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${statusColors[device.device_status]}`}>
-              <StatusIcon className="h-3 w-3 mr-1" />
-              {device.device_status}
-            </span>
-          </div>
-        </div>
-
-        {device.primary_tenant && (
-          <div className="flex items-center text-sm text-gray-600 dark:text-gray-400 mb-4">
-            <UserIcon className="h-4 w-4 mr-2" />
-            <span>
-              {device.primary_tenant.first_name} {device.primary_tenant.last_name}
-            </span>
-          </div>
-        )}
-
-        <div className="space-y-3">
-          <div className="flex items-center justify-between text-sm">
-            <span className="text-gray-500 dark:text-gray-400">Lock Status</span>
-            <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${statusColors[device.lock_status] || statusColors.unknown}`}>
-              {device.lock_status === 'locked' ? <LockClosedIcon className="h-3 w-3 mr-1" /> : 
-               device.lock_status === 'unlocked' ? <LockOpenIcon className="h-3 w-3 mr-1" /> :
-               <QuestionMarkCircleIcon className="h-3 w-3 mr-1" />}
-              {device.lock_status}
-            </span>
-          </div>
-          {device.battery_level && (
-            <div className="flex items-center justify-between text-sm">
-              <span className="text-gray-500 dark:text-gray-400">Battery Level</span>
-              <span className={`font-medium ${batteryColor}`}>
-                {device.battery_level}%
-              </span>
-            </div>
-          )}
-          <div className="flex items-center justify-between text-sm">
-            <span className="text-gray-500 dark:text-gray-400">Facility</span>
-            <span className="font-medium text-gray-900 dark:text-white">{device.facility_name}</span>
-          </div>
-          {device.last_activity && (
-            <div className="flex items-center justify-between text-sm">
-              <span className="text-gray-500 dark:text-gray-400">Last Activity</span>
-              <span className="font-medium text-gray-900 dark:text-white">
-                {new Date(device.last_activity).toLocaleString()}
-              </span>
-            </div>
-          )}
-        </div>
-
-        <div className="mt-6 pt-4 border-t border-gray-100 dark:border-gray-700">
-          <div className="flex items-center justify-between space-x-2">
-            <div className="flex space-x-3">
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  navigate(`/devices/${device.id}`);
-                }}
-                className="inline-flex items-center text-sm text-primary-600 dark:text-primary-400 hover:text-primary-700 dark:hover:text-primary-300"
-              >
-                <CpuChipIcon className="h-4 w-4 mr-1" />
-                View Details
-                <ArrowTopRightOnSquareIcon className="h-3 w-3 ml-1" />
-              </button>
-              {device.unit_id && (
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    navigate(`/units/${device.unit_id}`);
-                  }}
-                className="inline-flex items-center text-sm text-primary-600 dark:text-primary-400 hover:text-primary-700 dark:hover:text-primary-300"
-              >
-                <HomeIcon className="h-4 w-4 mr-1" />
-                View Unit
-                <ArrowTopRightOnSquareIcon className="h-3 w-3 ml-1" />
-              </button>
-              )}
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  const facilityId = getDeviceProperty(device, 'facility_id');
-                  if (facilityId) {
-                    const facilityIndex = devices.findIndex(d => getDeviceProperty(d, 'facility_id') === facilityId);
-                    const calculatedPage = facilityIndex !== -1 ? calculatePageForItem(facilityIndex, 20) : 1;
-                    navigateAndHighlight(navigate, { id: facilityId, type: 'facility', page: calculatedPage });
-                  }
-                }}
-                className="inline-flex items-center text-sm text-primary-600 dark:text-primary-400 hover:text-primary-700 dark:hover:text-primary-300"
-              >
-                <BuildingOfficeIcon className="h-4 w-4 mr-1" />
-                View Facility
-                <ArrowTopRightOnSquareIcon className="h-3 w-3 ml-1" />
-              </button>
-            </div>
-            {canManage && (
-              <>
-                {device.unit_id && (
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setShowUnassignConfirm({ deviceId: device.id, deviceSerial: device.device_serial });
-                    }}
-                    className="px-3 py-1.5 text-xs font-medium rounded-md transition-colors bg-gray-100 text-gray-700 hover:bg-gray-200 dark:bg-gray-900/20 dark:text-gray-400 dark:hover:bg-gray-800"
-                    title="Unassign device from unit"
-                  >
-                    <XMarkIcon className="h-4 w-4" />
-                  </button>
-                )}
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    handleLockToggle(device);
-                  }}
-                  className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${
-                    device.lock_status === 'locked'
-                      ? 'bg-green-100 text-green-700 hover:bg-green-200 dark:bg-green-900/20 dark:text-green-400'
-                      : 'bg-red-100 text-red-700 hover:bg-red-200 dark:bg-red-900/20 dark:text-red-400'
-                  }`}
-                >
-                  {device.lock_status === 'locked' ? 'Unlock' : 'Lock'}
-                </button>
-              </>
-            )}
-          </div>
-        </div>
-      </div>
-    );
-  };
+  // Use shared cards to unify UI with Facility Devices and Device Management
 
 
   return (
-    <div className="space-y-6">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold text-gray-900 dark:text-white">Devices</h1>
-          <p className="mt-1 text-sm text-gray-600 dark:text-gray-400">
-            Monitor and manage all facility devices
-          </p>
-        </div>
-        <div className="flex items-center space-x-3">
-          <div className="flex bg-gray-100 dark:bg-gray-800 rounded-lg p-1">
-            <button
-              onClick={() => { setActiveTab('grid'); setViewMode('grid'); }}
-              className={`px-3 py-1.5 text-sm font-medium rounded-md transition-colors ${
-                activeTab === 'grid'
-                  ? 'bg-white dark:bg-gray-700 text-gray-900 dark:text-white shadow-sm'
-                  : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'
-              }`}
-            >
-              <Squares2X2Icon className="h-4 w-4" />
-            </button>
-            <button
-              onClick={() => { setActiveTab('list'); setViewMode('list'); }}
-              className={`px-3 py-1.5 text-sm font-medium rounded-md transition-colors ${
-                activeTab === 'list'
-                  ? 'bg-white dark:bg-gray-700 text-gray-900 dark:text-white shadow-sm'
-                  : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'
-              }`}
-            >
-              <ListBulletIcon className="h-4 w-4" />
-            </button>
-            <button
-              onClick={() => setActiveTab('commands')}
-              className={`px-3 py-1.5 text-sm font-medium rounded-md transition-colors ${
-                activeTab === 'commands'
-                  ? 'bg-white dark:bg-gray-700 text-gray-900 dark:text-white shadow-sm'
-                  : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'
-              }`}
-            >
-              <KeyIcon className="h-4 w-4" />
-            </button>
-          </div>
-          
-          {canManage && (
-            <div className="relative">
+    <div className="space-y-4">
+      <ListPageHeader
+        title="Devices"
+        subtitle="Monitor and manage all facility devices"
+        actions={
+          <>
+            <div className="flex items-center gap-1 rounded-lg bg-gray-100 p-1 dark:bg-gray-800">
+              <ViewModeToggle
+                value={activeTab === 'table' ? 'table' : 'grid'}
+                onChange={(m) => setActiveTab(m)}
+                showText={false}
+                noneSelected={activeTab === 'commands'}
+              />
               <button
-                onClick={() => {
-                  setSelectedDeviceType('access_control');
-                  setShowAddDeviceModal(true);
-                }}
-                className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-lg shadow-sm text-white bg-primary-600 hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500 transition-colors"
+                type="button"
+                onClick={() => setActiveTab('commands')}
+                className={`rounded-md px-3 py-1.5 text-sm font-medium transition-colors ${
+                  activeTab === 'commands'
+                    ? 'bg-white text-gray-900 shadow-sm dark:bg-gray-700 dark:text-white'
+                    : 'text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200'
+                }`}
+                title="Command queue"
+                aria-label="Command queue"
               >
-                <ServerIcon className="h-4 w-4 mr-2" />
-                Add Device
+                <KeyIcon className="h-4 w-4" />
               </button>
             </div>
-          )}
-        </div>
-      </div>
+
+            {canManage && !isNetworkInfraScope && (
+              <button
+                onClick={() => setShowAddDeviceModal(true)}
+                className="inline-flex items-center rounded-lg border border-transparent bg-primary-600 px-4 py-2 text-sm font-medium text-white shadow-sm transition-colors hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2"
+              >
+                <ServerIcon className="mr-2 h-4 w-4" />
+                Add Device
+              </button>
+            )}
+          </>
+        }
+      />
 
       {/* Filters */}
       <ExpandableFilters
@@ -531,8 +411,8 @@ export default function DevicesPage({ initialCommandQueue }: DevicesPageProps = 
           setFilters({
             search: '',
             device_type: 'all' as const,
+            device_scope: 'operational' as const,
             status: '',
-            facility_id: '',
             sortBy: 'name',
             sortOrder: 'asc',
             limit: 30,
@@ -541,19 +421,35 @@ export default function DevicesPage({ initialCommandQueue }: DevicesPageProps = 
         }}
         sections={[
           {
-            title: 'Device Type',
-            icon: <FunnelIcon className="h-5 w-5" />,
+            title: 'Device Scope',
+            icon: <ServerIcon className="h-4 w-4" />,
+            span: 'full',
             options: [
               { key: 'all', label: 'All Devices', color: 'primary' },
-              { key: 'access_control', label: 'Access Control', color: 'blue' },
-              { key: 'blulok', label: 'BluLok', color: 'green' }
+              { key: 'operational', label: 'Access + Locks', color: 'blue' },
+              { key: 'network_infra', label: 'Network Infra', color: 'gray' },
             ],
-            selected: filters.device_type || '',
-            onSelect: handleTypeFilter
+            selected: filters.device_scope || 'operational',
+            onSelect: handleScopeFilter,
           },
+          ...(!isNetworkInfraScope
+            ? [
+                {
+                  title: 'Device Type',
+                  icon: <FunnelIcon className="h-4 w-4" />,
+                  options: [
+                    { key: 'all', label: 'All Types', color: 'primary' },
+                    { key: 'access_control', label: 'Access Control', color: 'blue' },
+                    { key: 'blulok', label: 'BluLok', color: 'green' },
+                  ],
+                  selected: filters.device_type || 'all',
+                  onSelect: handleTypeFilter,
+                },
+              ]
+            : []),
           {
             title: 'Status',
-            icon: <BoltIcon className="h-5 w-5" />,
+            icon: <BoltIcon className="h-4 w-4" />,
             options: [
               { key: '', label: 'All Status', color: 'primary' },
               { key: 'online', label: 'Online', color: 'green' },
@@ -608,14 +504,14 @@ export default function DevicesPage({ initialCommandQueue }: DevicesPageProps = 
               </tr>
             </thead>
             <tbody className="bg-white dark:bg-gray-800">
-              {(commandQueue?.items || []).map((cmd: any) => (
+              {(commandQueue?.items || []).map((cmd) => (
                 <tr key={cmd.id} className="border-b border-gray-200 dark:border-gray-700 last:border-b-0">
                   <td className="px-6 py-3 text-sm">{cmd.facility_id}</td>
                   <td className="px-6 py-3 text-sm">{cmd.device_id}</td>
                   <td className="px-6 py-3 text-sm">{cmd.command_type}</td>
                   <td className="px-6 py-3 text-sm">{cmd.status}</td>
                   <td className="px-6 py-3 text-sm">{cmd.attempt_count}</td>
-                  <td className="px-6 py-3 text-sm">{cmd.next_attempt_at ? new Date(cmd.next_attempt_at).toLocaleString() : '-'}</td>
+                  <td className="px-6 py-3 text-sm">{cmd.next_attempt_at ? formatDateTime(cmd.next_attempt_at) : '-'}</td>
                   <td className="px-6 py-3 text-sm text-right space-x-2">
                     <button onClick={() => apiService.retryCommand(cmd.id)} className="px-2 py-1 text-xs rounded bg-blue-100 text-blue-700 dark:bg-blue-900/20 dark:text-blue-400">Retry</button>
                     <button onClick={() => apiService.cancelCommand(cmd.id)} className="px-2 py-1 text-xs rounded bg-gray-100 text-gray-700 dark:bg-gray-900/20 dark:text-gray-300">Cancel</button>
@@ -629,7 +525,7 @@ export default function DevicesPage({ initialCommandQueue }: DevicesPageProps = 
           </table>
         </div>
       ) : loading ? (
-        <div className={viewMode === 'grid' ? 'grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6' : 'space-y-4'}>
+        <div className={activeTab === 'grid' ? 'grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6' : 'space-y-4'}>
           {[...Array(6)].map((_, i) => (
             <div key={i} className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6 animate-pulse">
               <div className="flex items-center space-x-4 mb-4">
@@ -651,18 +547,33 @@ export default function DevicesPage({ initialCommandQueue }: DevicesPageProps = 
           <ServerIcon className="mx-auto h-12 w-12 text-gray-400" />
           <h3 className="mt-2 text-sm font-medium text-gray-900 dark:text-white">No devices found</h3>
           <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
-            {filters.search || filters.status || filters.device_type !== 'all' 
+            {filters.search || filters.status || (!isNetworkInfraScope && filters.device_type !== 'all')
               ? 'Try adjusting your filters.' 
               : 'No devices are configured yet.'}
           </p>
         </div>
-      ) : viewMode === 'grid' ? (
+      ) : activeTab === 'grid' ? (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
           {devices.map((device) => (
-            device.device_category === 'blulok' ? (
-              <BluLokDeviceCard key={`blulok-${device.id}`} device={device as BluLokDevice & { device_category: string }} />
+            device.device_category === 'network_infra' ? (
+              <NetworkInfraDeviceCard
+                key={`infra-${device.id}`}
+                device={device as NetworkInfraDevice}
+                canManage={canManage}
+                onDelete={(d) => setShowDeleteInfraConfirm(d)}
+              />
+            ) : device.device_category === 'blulok' ? (
+              <BluLokDeviceCardShared
+                key={`blulok-${device.id}`}
+                device={device as BluLokDevice & { device_category: string }}
+                onViewDevice={() => navigate(`/devices/${device.id}`, { state: withReturnPath(location, { from: 'devices' }) })}
+              />
             ) : (
-              <AccessControlDeviceCard key={`access-${device.id}`} device={device as AccessControlDevice & { device_category: string }} />
+              <ACDeviceCardShared
+                key={`access-${device.id}`}
+                device={device as AccessControlDevice & { device_category: string }}
+                onViewDevice={() => navigate(`/devices/${device.id}`, { state: withReturnPath(location, { from: 'devices' }) })}
+              />
             )
           ))}
         </div>
@@ -671,21 +582,41 @@ export default function DevicesPage({ initialCommandQueue }: DevicesPageProps = 
           <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
             <thead className="bg-gray-50 dark:bg-gray-900">
               <tr>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
-                  Device
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
-                  Type
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
-                  Status
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
-                  Location
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
-                  Last Activity
-                </th>
+                <SortableTableTh
+                  label="Device"
+                  columnKey="name"
+                  sortBy={filters.sortBy || 'name'}
+                  sortOrder={filters.sortOrder === 'desc' ? 'desc' : 'asc'}
+                  onSort={handleDeviceColumnSort}
+                />
+                <SortableTableTh
+                  label="Type"
+                  columnKey="device_type"
+                  sortBy={filters.sortBy || 'name'}
+                  sortOrder={filters.sortOrder === 'desc' ? 'desc' : 'asc'}
+                  onSort={handleDeviceColumnSort}
+                />
+                <SortableTableTh
+                  label="Status"
+                  columnKey="status"
+                  sortBy={filters.sortBy || 'name'}
+                  sortOrder={filters.sortOrder === 'desc' ? 'desc' : 'asc'}
+                  onSort={handleDeviceColumnSort}
+                />
+                <SortableTableTh
+                  label="Location"
+                  columnKey="facility_name"
+                  sortBy={filters.sortBy || 'name'}
+                  sortOrder={filters.sortOrder === 'desc' ? 'desc' : 'asc'}
+                  onSort={handleDeviceColumnSort}
+                />
+                <SortableTableTh
+                  label="Last Activity"
+                  columnKey="last_activity"
+                  sortBy={filters.sortBy || 'name'}
+                  sortOrder={filters.sortOrder === 'desc' ? 'desc' : 'asc'}
+                  onSort={handleDeviceColumnSort}
+                />
                 <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
                   Actions
                 </th>
@@ -693,60 +624,124 @@ export default function DevicesPage({ initialCommandQueue }: DevicesPageProps = 
             </thead>
             <tbody className="bg-white dark:bg-gray-800">
               {devices.map((device) => {
+                if (device.device_category === 'network_infra') {
+                  const infraDevice = device as NetworkInfraDevice;
+                  const StatusIcon = statusIcons[infraDevice.status as keyof typeof statusIcons] || CheckCircleIcon;
+                  const infraIconDevice = {
+                    device_category: 'network_infra' as const,
+                    device_kind: infraDevice.device_kind,
+                  };
+                  return (
+                    <tr
+                      key={`network-infra-${infraDevice.id}`}
+                      id={generateHighlightId('device', infraDevice.id)}
+                      className="group transition-all duration-200 border-b border-gray-200 dark:border-gray-700 last:border-b-0"
+                    >
+                      <td className="px-6 py-4 whitespace-nowrap">
+                        <div className="flex items-center">
+                          <DeviceTypeIcon device={infraIconDevice} size="sm" className="mr-3" />
+                          <div>
+                            <div className="text-sm font-medium text-gray-900 dark:text-white">
+                              {infraDevice.device_kind === 'gateway'
+                                ? infraDevice.name
+                                : formatNetworkInfraKindLabel(infraDevice.device_kind)}
+                            </div>
+                            <div className="text-sm text-gray-500 dark:text-gray-400 font-mono">
+                              {infraDevice.device_serial}
+                            </div>
+                          </div>
+                        </div>
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap">
+                        <DeviceTypeBadge device={infraIconDevice} />
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap">
+                        <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${statusColors[infraDevice.status as keyof typeof statusColors] || statusColors.unknown}`}>
+                          <StatusIcon className="h-3 w-3 mr-1" />
+                          {infraDevice.status}
+                        </span>
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-white">{infraDevice.facility_name || 'N/A'}</td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400">
+                        {infraDevice.last_seen ? formatDateTime(infraDevice.last_seen) : 'Never'}
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
+                        {canManage && infraDevice.deletable && (
+                          <button
+                            type="button"
+                            onClick={() => setShowDeleteInfraConfirm(infraDevice)}
+                            className="text-red-600 hover:text-red-800 dark:text-red-400 dark:hover:text-red-300"
+                          >
+                            Remove
+                          </button>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                }
+
                 const isBlulok = device.device_category === 'blulok';
-                const DeviceIcon = isBlulok ? LockClosedIcon : deviceTypeIcons[(device as any).device_type as keyof typeof deviceTypeIcons] || ServerIcon;
-                const StatusIcon = statusIcons[isBlulok ? (device as any).device_status as keyof typeof statusIcons : (device as any).status as keyof typeof statusIcons] || CheckCircleIcon;
+                const accessDevice = device as AccessControlDevice & { device_category: string };
+                const blulokDevice = device as BluLokDevice & { device_category: string };
+                const lastActivity = isBlulok ? blulokDevice.last_activity : accessDevice.last_activity;
+                const iconDevice = isBlulok
+                  ? ({ device_category: 'blulok' } as const)
+                  : ({
+                      device_category: 'access_control' as const,
+                      device_type: accessDevice.device_type,
+                    } as const);
+                const StatusIcon = statusIcons[isBlulok ? blulokDevice.device_status as keyof typeof statusIcons : accessDevice.status as keyof typeof statusIcons] || CheckCircleIcon;
                 
                 return (
                   <tr 
                     key={`${device.device_category}-${device.id}`}
                     id={generateHighlightId('device', device.id)}
+                    onClick={() => navigate(`/devices/${device.id}`, { state: withReturnPath(location, { from: 'devices' }) })}
                     className="group transition-all duration-200 cursor-pointer hover:shadow-sm border-b border-gray-200 dark:border-gray-700 last:border-b-0"
                   >
                     <td className="px-6 py-4 whitespace-nowrap group-hover:bg-blue-50 dark:group-hover:bg-blue-900/20 transition-colors duration-200">
                       <div className="flex items-center">
-                        <div className={`p-2 rounded-lg ${isBlulok ? 'bg-blue-100 dark:bg-blue-900/20' : 'bg-primary-100 dark:bg-primary-900/20'}`}>
-                          <DeviceIcon className={`h-4 w-4 ${isBlulok ? 'text-blue-600 dark:text-blue-400' : 'text-primary-600 dark:text-primary-400'}`} />
-                        </div>
-                        <div className="ml-3">
+                        <DeviceTypeIcon device={iconDevice} size="sm" className="mr-3" />
+                        <div>
                           <div className="text-sm font-medium text-gray-900 dark:text-white">
-                            {isBlulok ? `Unit ${(device as any).unit_number}` : (device as any).name}
+                            {isBlulok
+                              ? formatBluLokUserFacingLabel(blulokDevice)
+                              : accessDevice.name}
                           </div>
                           <div className="text-sm text-gray-500 dark:text-gray-400">
-                            {isBlulok ? (device as any).device_serial : (device as any).location_description || 'N/A'}
+                            {isBlulok
+                              ? formatBluLokDeviceSubtitle(blulokDevice)
+                              : formatAccessDeviceListSubtitle(accessDevice)}
                           </div>
                         </div>
                       </div>
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap group-hover:bg-blue-50 dark:group-hover:bg-blue-900/20 transition-colors duration-200">
-                      <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
-                        isBlulok 
-                          ? 'bg-blue-100 text-blue-800 dark:bg-blue-900/20 dark:text-blue-400'
-                          : 'bg-primary-100 text-primary-800 dark:bg-primary-900/20 dark:text-primary-400'
-                      }`}>
-                        {isBlulok ? 'BluLok Device' : (device as any).device_type?.replace('_', ' ').toUpperCase() || 'Access Control'}
-                      </span>
+                      <DeviceTypeBadge device={iconDevice} />
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap group-hover:bg-blue-50 dark:group-hover:bg-blue-900/20 transition-colors duration-200">
-                      <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${statusColors[isBlulok ? (device as any).device_status as keyof typeof statusColors : (device as any).status as keyof typeof statusColors] || 'bg-gray-100 text-gray-800'}`}>
+                      <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${statusColors[isBlulok ? blulokDevice.device_status as keyof typeof statusColors : accessDevice.status as keyof typeof statusColors] || 'bg-gray-100 text-gray-800'}`}>
                         <StatusIcon className="h-3 w-3 mr-1" />
-                        {isBlulok ? (device as any).device_status : (device as any).status}
+                        {isBlulok ? blulokDevice.device_status : accessDevice.status}
                       </span>
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-white group-hover:bg-blue-50 dark:group-hover:bg-blue-900/20 transition-colors duration-200">
-                      {isBlulok ? (device as any).facility_name : (device as any).location_description || 'N/A'}
+                      {isBlulok
+                        ? blulokDevice.facility_name || 'N/A'
+                        : accessDevice.facility_name || accessDevice.location_description || 'N/A'}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400 group-hover:bg-blue-50 dark:group-hover:bg-blue-900/20 transition-colors duration-200">
-                      {device.last_activity ? new Date(device.last_activity).toLocaleDateString() : 'Never'}
+                      {lastActivity ? formatDate(lastActivity) : 'Never'}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium group-hover:bg-blue-50 dark:group-hover:bg-blue-900/20 transition-colors duration-200">
                       <div className="flex items-center justify-end space-x-2">
-                        {isBlulok && getDeviceProperty(device, 'facility_id') && (
+                        {isBlulok && getFacilityId(device) && (
                           <button
-                            onClick={() => {
-                              const facilityId = getDeviceProperty(device, 'facility_id');
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              const facilityId = getFacilityId(device);
                               if (facilityId) {
-                                const facilityIndex = devices.findIndex(d => getDeviceProperty(d, 'facility_id') === facilityId);
+                                const facilityIndex = devices.findIndex(d => getFacilityId(d) === facilityId);
                                 const calculatedPage = facilityIndex !== -1 ? calculatePageForItem(facilityIndex, 20) : 1;
                                 navigateAndHighlight(navigate, { id: facilityId, type: 'facility', page: calculatedPage });
                               }
@@ -760,7 +755,8 @@ export default function DevicesPage({ initialCommandQueue }: DevicesPageProps = 
                         )}
                         {!isBlulok && device.gateway_id && (
                           <button
-                            onClick={() => {
+                            onClick={(e) => {
+                              e.stopPropagation();
                               const facilityIndex = devices.findIndex(d => d.gateway_id === device.gateway_id);
                               const calculatedPage = facilityIndex !== -1 ? calculatePageForItem(facilityIndex, 20) : 1;
                               navigateAndHighlight(navigate, { id: device.gateway_id, type: 'facility', page: calculatedPage });
@@ -857,7 +853,6 @@ export default function DevicesPage({ initialCommandQueue }: DevicesPageProps = 
           loadDevices();
           setShowAddDeviceModal(false);
         }}
-        deviceType={selectedDeviceType}
       />
 
       {/* Unassign Device Confirmation Modal */}
@@ -874,6 +869,21 @@ export default function DevicesPage({ initialCommandQueue }: DevicesPageProps = 
         confirmText="Unassign"
         cancelText="Cancel"
         isLoading={unassigningDevice}
+      />
+
+      <ConfirmModal
+        isOpen={!!showDeleteInfraConfirm}
+        onClose={() => setShowDeleteInfraConfirm(null)}
+        onConfirm={handleDeleteInfraDevice}
+        title="Remove Network Device"
+        message={
+          showDeleteInfraConfirm
+            ? `Remove ${showDeleteInfraConfirm.device_kind.replace('_', ' ')} "${showDeleteInfraConfirm.device_serial}" from cloud inventory? The gateway will be notified to stop reporting this device.`
+            : ''
+        }
+        confirmText="Remove"
+        cancelText="Cancel"
+        isLoading={deletingInfraDevice}
       />
     </div>
   );
