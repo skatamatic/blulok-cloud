@@ -15,6 +15,7 @@ import {
   DenialEventParams,
   UnlockStateParams,
   LockStateParams,
+  LockStateEchoParams,
   FailSessionParams,
 } from '@/services/access/access-session-correlator.service';
 import { AccessSessionEventsService } from '@/services/events/access-session-events.service';
@@ -96,6 +97,18 @@ export class AccessSessionService {
     const session = await this.correlator.onDeviceLocked(params);
     this.emitUpsert(session, ['state', 'closed_at', 'open_duration_sec']);
     this.emitTrace('lock', session, params);
+    return session;
+  }
+
+  /** Firmware lock-state heartbeat posted as access-events — never creates a session. */
+  async attachLockStateEcho(params: LockStateEchoParams): Promise<AccessSession | null> {
+    const session = await this.correlator.attachLockStateEcho(params);
+    if (session) {
+      this.emitUpsert(session, ['state', 'closed_at', 'opened_at', 'settled_at']);
+      this.emitTrace('lock_state_echo', session, params);
+    } else {
+      this.emitTrace('lock_state_echo', null, params);
+    }
     return session;
   }
 

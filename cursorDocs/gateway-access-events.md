@@ -185,6 +185,8 @@ When the cloud sends BluLok `UNLOCK` JWTs:
 
 This updates `is_locked` / online status and dashboard WebSocket feeds. It does **not** create Access History rows for local relay activity. Send **`access-events`** when a user/credential actually opened or was denied.
 
+**Mis-wrapped lock state:** if firmware still posts `access-events` with `metadata.source: gateway_lock_state` and `metadata.event: none` (no user / keypad / route pass), cloud treats that as this path — not a new grant. The raw payload is stored as a `lock`/`unlock` activity (`lock_state_echo`) and attached to the live session when one exists. Prefer sending `devices/state` instead.
+
 ---
 
 ## Path 2 — Access events (`POST /access-events`)

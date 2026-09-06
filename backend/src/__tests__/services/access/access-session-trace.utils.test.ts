@@ -108,6 +108,10 @@ describe('access-session-trace.utils', () => {
     expect(inferCorrelatorDecision('confirm_locked', session({ state: 'closed' }))).toBe(
       'confirm_locked:closed',
     );
+    expect(inferCorrelatorDecision('lock_state_echo', null)).toBe('lock_state_echo:no_session');
+    expect(inferCorrelatorDecision('lock_state_echo', session({ state: 'closed' }))).toBe(
+      'lock_state_echo:closed',
+    );
     expect(
       inferCorrelatorDecision('expire', session({ state: 'timed_out', denial_reason: 'timeout' })),
     ).toBe('expire:timed_out:timeout');

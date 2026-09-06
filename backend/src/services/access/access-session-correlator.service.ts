@@ -80,6 +80,10 @@ export type LockStateParams = {
   occurredAt?: Date;
 };
 
+export type LockStateEchoParams = LockStateParams & {
+  polarity: 'locked' | 'unlocked' | 'unknown';
+};
+
 export type FailSessionParams = {
   sessionId?: string;
   deviceId?: string;
@@ -389,9 +393,30 @@ export class AccessSessionCorrelator {
   }
 
   /**
-   * Close live open/pending sessions when the device is confirmed locked, without
-   * synthesizing a new session. Used for same-state locked re-reports.
+   * Lock-state heartbeat mis-posted as an access-event.
+   * Never creates a new session. Settles live pending/open; otherwise only
+   * returns an existing row so the raw log can stay linked.
    */
+  async attachLockStateEcho(params: LockStateEchoParams): Promise<AccessSession | null> {
+    if (params.polarity === 'unlocked') {
+      const pending = await this.model.findPendingByDevice(params.deviceId);
+      if (pending) {
+        return this.onDeviceUnlocked(params);
+      }
+      return this.model.findOpenByDevice(params.deviceId);
+    }
+    if (params.polarity === 'locked') {
+      const live = await this.confirmLockedIfLive(params);
+      if (live) return live;
+      return this.model.findLatestUnlockSessionByDevice(params.deviceId);
+    }
+    return (
+      (await this.model.findOpenByDevice(params.deviceId))
+      || (await this.model.findPendingByDevice(params.deviceId))
+      || (await this.model.findLatestUnlockSessionByDevice(params.deviceId))
+    );
+  }
+
   async confirmLockedIfLive(params: LockStateParams): Promise<AccessSession | null> {
     const open = await this.model.findOpenByDevice(params.deviceId);
     if (open) {

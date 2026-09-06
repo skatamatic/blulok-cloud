@@ -17,6 +17,7 @@ describe('AccessEventIngestionService', () => {
   let logActivity: jest.Mock;
   let onGrantAccessEvent: jest.Mock;
   let onDenialAccessEvent: jest.Mock;
+  let attachLockStateEcho: jest.Mock;
   let resolve: jest.Mock;
   let findBluLokDeviceById: jest.Mock;
   let findAccessControlDeviceWithGateway: jest.Mock;
@@ -49,6 +50,7 @@ describe('AccessEventIngestionService', () => {
     logActivity = jest.fn().mockResolvedValue({ id: 'activity-1' });
     onGrantAccessEvent = jest.fn().mockResolvedValue({ id: 'session-1' });
     onDenialAccessEvent = jest.fn().mockResolvedValue({ id: 'session-deny-1' });
+    attachLockStateEcho = jest.fn().mockResolvedValue({ id: 'session-live-1' });
     resolve = jest.fn();
     findBluLokDeviceById = jest.fn().mockResolvedValue({
       id: 'cloud-device-1',
@@ -63,6 +65,7 @@ describe('AccessEventIngestionService', () => {
     (AccessSessionService.getInstance as jest.Mock) = jest.fn().mockReturnValue({
       onGrantAccessEvent,
       onDenialAccessEvent,
+      attachLockStateEcho,
     });
     (AccessEventEntityResolverService as unknown as jest.Mock).mockImplementation(() => ({
       resolve,
@@ -280,5 +283,126 @@ describe('AccessEventIngestionService', () => {
         result: 'failure',
       }),
     );
+  });
+
+  it('routes lock-state echoes to attachLockStateEcho instead of creating a grant', async () => {
+    resolve.mockResolvedValue({
+      event: {
+        ...rawEvent(),
+        event_id: 'gateway-a26628fd-09d8-46e9-a1f3-5ac1c1738610',
+        device_id: 'cloud-device-1',
+        actor: { role: 'unknown', name: 'user' },
+        metadata: {
+          source: 'gateway_lock_state',
+          lock: 'closed',
+          event: 'none',
+          reason: 'none',
+          hardware_lock_id: 'hw-lock-1',
+          placeholder_fields: true,
+        },
+      },
+      deviceType: 'blulok',
+    });
+
+    await service.ingestOne(
+      {
+        ...rawEvent(),
+        actor: { role: 'unknown', name: 'user' },
+        metadata: {
+          source: 'gateway_lock_state',
+          lock: 'closed',
+          event: 'none',
+          hardware_lock_id: 'hw-lock-1',
+        },
+      },
+      { facilityId, source: 'gateway_internal_api' },
+    );
+
+    expect(onGrantAccessEvent).not.toHaveBeenCalled();
+    expect(onDenialAccessEvent).not.toHaveBeenCalled();
+    expect(attachLockStateEcho).toHaveBeenCalledWith(
+      expect.objectContaining({
+        deviceId: 'cloud-device-1',
+        polarity: 'locked',
+      }),
+    );
+    expect(logActivity).toHaveBeenCalledWith(
+      expect.objectContaining({
+        activityType: 'lock',
+        actorType: 'gateway',
+        accessSessionId: 'session-live-1',
+        title: 'Device Locked',
+        metadata: expect.objectContaining({
+          lock_state_echo: true,
+          original_action: 'access_granted',
+        }),
+      }),
+    );
+  });
+
+  it('still writes a lock-state echo activity when no live session exists', async () => {
+    attachLockStateEcho.mockResolvedValue(null);
+    resolve.mockResolvedValue({
+      event: {
+        ...rawEvent(),
+        device_id: 'cloud-device-1',
+        actor: { role: 'unknown', name: 'user' },
+        metadata: {
+          source: 'gateway_lock_state',
+          lock: 'closed',
+          event: 'none',
+          hardware_lock_id: 'hw-lock-1',
+        },
+      },
+      deviceType: 'blulok',
+    });
+
+    await service.ingestOne(
+      {
+        ...rawEvent(),
+        actor: { role: 'unknown', name: 'user' },
+        metadata: {
+          source: 'gateway_lock_state',
+          lock: 'closed',
+          event: 'none',
+          hardware_lock_id: 'hw-lock-1',
+        },
+      },
+      { facilityId, source: 'gateway_internal_api' },
+    );
+
+    expect(onGrantAccessEvent).not.toHaveBeenCalled();
+    expect(logActivity).toHaveBeenCalledWith(
+      expect.objectContaining({
+        activityType: 'lock',
+        accessSessionId: undefined,
+        metadata: expect.objectContaining({ lock_state_echo: true }),
+      }),
+    );
+  });
+
+  it('does not treat a real grant with event granted as a lock-state echo', async () => {
+    resolve.mockResolvedValue({
+      event: {
+        ...rawEvent(),
+        device_id: 'cloud-device-1',
+        actor: { user_id: 'user-1', role: 'tenant', name: 'Tester Two' },
+        metadata: {
+          source: 'gateway_lock_state',
+          lock: 'closed',
+          event: 'granted',
+          hardware_lock_id: 'hw-lock-1',
+        },
+      },
+      deviceType: 'blulok',
+    });
+
+    await service.ingestOne(rawEvent(), {
+      facilityId,
+      source: 'gateway_internal_api',
+    });
+
+    expect(attachLockStateEcho).not.toHaveBeenCalled();
+    expect(onGrantAccessEvent).toHaveBeenCalled();
   });
 });

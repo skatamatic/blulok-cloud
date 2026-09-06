@@ -15,6 +15,14 @@ import {
 import { DENIAL_REASON_MESSAGES } from '@/constants/access-history.constants';
 import { isOccupiedUnlockIntentAccessMethod } from '@/constants/occupied-unlock-intent.constants';
 import { coerceOptionalAccessId } from '@/utils/access-event-placeholder.utils';
+import {
+  isGatewayLockStateAccessEventEcho,
+  lockStateEchoPolarity,
+} from '@/utils/access-event-lock-state-echo.utils';
+import {
+  lockActivityTitle,
+  mapLockStatusToActivityType,
+} from '@/utils/lock-status-activity.utils';
 import { AccessSessionService } from '@/services/access/access-session.service';
 
 type IngestContext = {
@@ -116,6 +124,20 @@ export class AccessEventIngestionService {
       }
     }
 
+    const occurredAt = new Date(resolved.occurred_at);
+    const sessions = AccessSessionService.getInstance();
+
+    if (isGatewayLockStateAccessEventEcho(resolved)) {
+      return this.ingestLockStateEcho({
+        resolved,
+        context,
+        deviceType,
+        sanitizedMetadata,
+        occurredAt,
+        sessions,
+      });
+    }
+
     const title = this.buildTitle(resolved);
     let description = this.buildDescription(resolved);
     if (occupiedOverride?.reasonLabel) {
@@ -132,7 +154,6 @@ export class AccessEventIngestionService {
           ? 'system'
           : 'user';
     const actorRole = resolved.actor?.role || 'unknown';
-    const occurredAt = new Date(resolved.occurred_at);
     const result = resolved.success ? 'success' : 'failure';
     const resultMessage = resolved.success
       ? undefined
@@ -146,7 +167,6 @@ export class AccessEventIngestionService {
       role: actorRole,
     };
 
-    const sessions = AccessSessionService.getInstance();
     const session = resolved.success
       ? await sessions.onGrantAccessEvent({
           facilityId: context.facilityId,
@@ -194,6 +214,67 @@ export class AccessEventIngestionService {
       metadata: {
         ...sanitizedMetadata,
         actor_role: actorRole,
+        gateway_id: resolved.gateway_id || null,
+      },
+    });
+  }
+
+  private async ingestLockStateEcho(params: {
+    resolved: AccessEventPayload;
+    context: IngestContext;
+    deviceType: AccessEventDeviceType;
+    sanitizedMetadata: Record<string, unknown>;
+    occurredAt: Date;
+    sessions: AccessSessionService;
+  }): Promise<ActivityLogResponse | null> {
+    const { resolved, context, deviceType, sanitizedMetadata, occurredAt, sessions } = params;
+    const polarity = lockStateEchoPolarity(resolved);
+    const echoMeta = {
+      ...sanitizedMetadata,
+      lock_state_echo: true,
+      lock_state_echo_polarity: polarity,
+      original_action: resolved.action,
+      original_method: resolved.method,
+    };
+
+    const session = await sessions.attachLockStateEcho({
+      facilityId: context.facilityId,
+      deviceId: resolved.device_id,
+      unitId: resolved.unit_id,
+      gatewayId: resolved.gateway_id,
+      deviceType,
+      metadata: echoMeta,
+      occurredAt,
+      polarity,
+    });
+
+    const lockStatus = polarity === 'locked' ? 'locked' : polarity === 'unlocked' ? 'unlocked' : null;
+    const activityType = lockStatus ? mapLockStatusToActivityType(lockStatus) : 'access_attempt';
+    const title = lockStatus && activityType
+      ? lockActivityTitle(activityType)
+      : 'Lock state report';
+    const description = lockStatus
+      ? `Lock reported ${lockStatus} (gateway lock-state echo, not a new grant)`
+      : 'Lock-state report without a credential (not a new grant)';
+
+    return this.activityService.logActivity({
+      entityType: 'device',
+      entityId: resolved.device_id,
+      activityType: activityType || 'access_attempt',
+      title,
+      description,
+      actorType: 'gateway',
+      actorId: undefined,
+      actorName: undefined,
+      result: 'success',
+      facilityId: context.facilityId,
+      unitId: resolved.unit_id,
+      deviceId: resolved.device_id,
+      accessSessionId: session?.id,
+      occurredAt,
+      metadata: {
+        ...echoMeta,
+        actor_role: 'gateway',
         gateway_id: resolved.gateway_id || null,
       },
     });

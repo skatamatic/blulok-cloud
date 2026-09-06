@@ -14,6 +14,7 @@ export type CorrelatorHook =
   | 'unlock'
   | 'lock'
   | 'confirm_locked'
+  | 'lock_state_echo'
   | 'fail_or_timeout'
   | 'expire';
 

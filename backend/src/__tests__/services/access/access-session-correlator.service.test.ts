@@ -382,6 +382,68 @@ describe('AccessSessionCorrelator', () => {
     expect(noop).toBeNull();
   });
 
+  it('attachLockStateEcho locked settles a live pending grant and does not synthesize', async () => {
+    const pending = await correlator.onGrantAccessEvent({
+      facilityId: 'fac-1',
+      deviceId: 'dev-echo',
+      deviceType: 'blulok',
+      method: 'mobile_key',
+      actor: { type: 'user', id: 'u1', name: 'Tester Two', role: 'tenant' },
+    });
+    const attached = await correlator.attachLockStateEcho({
+      facilityId: 'fac-1',
+      deviceId: 'dev-echo',
+      deviceType: 'blulok',
+      polarity: 'locked',
+    });
+    expect(attached?.id).toBe(pending.id);
+    expect(attached?.state).toBe('closed');
+
+    const second = await correlator.attachLockStateEcho({
+      facilityId: 'fac-1',
+      deviceId: 'dev-echo',
+      deviceType: 'blulok',
+      polarity: 'locked',
+    });
+    expect(second?.id).toBe(pending.id);
+  });
+
+  it('attachLockStateEcho does not create a session when nothing is live', async () => {
+    const attached = await correlator.attachLockStateEcho({
+      facilityId: 'fac-1',
+      deviceId: 'dev-empty',
+      deviceType: 'blulok',
+      polarity: 'locked',
+    });
+    expect(attached).toBeNull();
+  });
+
+  it('attachLockStateEcho unlocked opens a live pending grant and does not synthesize', async () => {
+    const pending = await correlator.onGrantAccessEvent({
+      facilityId: 'fac-1',
+      deviceId: 'dev-echo-open',
+      deviceType: 'blulok',
+      method: 'mobile_key',
+      actor: { type: 'user', id: 'u1', name: 'Tester Three', role: 'tenant' },
+    });
+    const opened = await correlator.attachLockStateEcho({
+      facilityId: 'fac-1',
+      deviceId: 'dev-echo-open',
+      deviceType: 'blulok',
+      polarity: 'unlocked',
+    });
+    expect(opened?.id).toBe(pending.id);
+    expect(opened?.state).toBe('open');
+
+    const none = await correlator.attachLockStateEcho({
+      facilityId: 'fac-1',
+      deviceId: 'dev-echo-open-empty',
+      deviceType: 'blulok',
+      polarity: 'unlocked',
+    });
+    expect(none).toBeNull();
+  });
+
   it('prefers pending cloud_remote attach over absorbing a concurrent local open', async () => {
     const local = await correlator.onDeviceUnlocked({
       facilityId: 'fac-1',

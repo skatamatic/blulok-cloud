@@ -52,6 +52,7 @@ export function inferCorrelatorDecision(
   if (hook === 'denial') return 'create_denied';
   if (hook === 'cloud_remote_issued') return 'create_or_reuse_cloud_remote_pending';
   if (hook === 'confirm_locked') return `confirm_locked:${session.state}`;
+  if (hook === 'lock_state_echo') return `lock_state_echo:${session.state}`;
   if (hook === 'fail_or_timeout' || hook === 'expire') {
     return `${hook}:${session.state}:${session.denial_reason || 'none'}`;
   }
