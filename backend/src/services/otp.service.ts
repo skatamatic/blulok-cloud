@@ -48,10 +48,30 @@ export class OTPService {
       last_sent_at: this.db.raw('UTC_TIMESTAMP()'),
     });
 
+    let inviteExpiresAt: Date | undefined;
+    if (params.inviteId) {
+      try {
+        const invite = await this.db('user_invites').where({ id: params.inviteId }).first();
+        if (invite?.expires_at) {
+          inviteExpiresAt = new Date(invite.expires_at);
+        }
+      } catch (error) {
+        logger.warn(`OTP: failed to load invite expiry for ${params.inviteId}`, error);
+      }
+    }
+
+    const otpParams = {
+      code,
+      kind: params.kind,
+      templateId: params.templateId,
+      userId: params.userId,
+      inviteExpiresAt,
+    };
+
     if (params.delivery === 'sms' && params.toPhone) {
-      await this.notifications.sendOtp({ toPhone: params.toPhone, code, kind: params.kind, templateId: params.templateId });
+      await this.notifications.sendOtp({ ...otpParams, toPhone: params.toPhone });
     } else if (params.delivery === 'email' && params.toEmail) {
-      await this.notifications.sendOtp({ toEmail: params.toEmail, code, kind: params.kind, templateId: params.templateId });
+      await this.notifications.sendOtp({ ...otpParams, toEmail: params.toEmail });
     } else {
       throw new Error('Invalid OTP delivery parameters');
     }

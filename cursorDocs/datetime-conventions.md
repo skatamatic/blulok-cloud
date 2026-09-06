@@ -10,6 +10,7 @@ BluLok stores instants in UTC and displays them in each user's local timezone.
 | **Column types** | `TIMESTAMP` (majority) and `DATETIME` (gateway commands, notifications `read_at`, activity `occurred_at`, etc.). Both are treated as UTC at the application layer. |
 | **No unix columns** | Unix seconds/ms appear on the wire only (JWT claims, gateway liveness), not in MySQL. |
 | **Schedule windows** | `TIME` columns (`start_time`, `end_time`) are **facility-local time-of-day**, not UTC instants. |
+| **Facility timezone** | `facilities.timezone` is an IANA name set in facility setup. Outbound SMS/email `current_date` / `current_time` / `invite_expires_at` use it. Omitted / existing rows default to `America/Vancouver` (BC Pacific). Storage stays UTC. |
 | **Security TTL** | OTP, invites, password reset, denylist expiry use `UTC_TIMESTAMP()` in SQL. |
 
 No schema migration is required for timezone correctness when the app writes UTC consistently. Future migrations may align column types, but existing data is valid UTC.

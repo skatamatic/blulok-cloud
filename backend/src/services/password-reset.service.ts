@@ -135,6 +135,7 @@ export class PasswordResetService {
       token,
       toPhone: user.phone_number || undefined,
       toEmail: user.email || undefined,
+      userId: user.id,
     });
 
     const deliveryMethod: 'sms' | 'email' = outcome.delivered.includes('SMS') ? 'sms' : 'email';

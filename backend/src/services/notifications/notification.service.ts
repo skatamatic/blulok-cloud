@@ -10,10 +10,17 @@ import type { NotificationDebugEvent } from './notification-debug.service';
 import { NotificationConfigService } from './notification-config.service';
 import { renderTemplate } from './notification-template.renderer';
 import {
+  buildNotificationTemplateRender,
+  loadRecipientTemplateContext,
+  sampleRecipientTemplateContext,
+  templatesUseBrandingImage,
+  type RecipientTemplateContext,
+} from './notification-template-context';
+import {
   createEmailProvider,
   createSmsProvider,
 } from './providers/notification-provider.factory';
-import type { EmailProvider, SmsProvider } from './providers/provider.types';
+import type { EmailInlineImage, EmailProvider, SmsProvider } from './providers/provider.types';
 import {
   deliverAcrossChannels,
   normalizeChannelPreference,
@@ -29,6 +36,7 @@ interface NotificationMessageSpec {
   smsBody: string;
   emailSubject: string;
   emailHtml: string;
+  emailInlineImages?: EmailInlineImage[];
   meta: Record<string, string>;
 }
 
@@ -137,24 +145,53 @@ export class NotificationService {
             spec.emailSubject,
             spec.emailHtml,
             spec.emailHtml,
+            spec.emailInlineImages,
           );
         },
       },
     ];
   }
 
+  private async resolveRecipientContext(
+    userId: string | undefined,
+    includeBranding: boolean,
+  ): Promise<RecipientTemplateContext | null> {
+    if (!userId) return null;
+    try {
+      return await loadRecipientTemplateContext(userId, { includeBranding });
+    } catch (error) {
+      logger.warn(`Notifications: failed to load template context for user ${userId}`, error);
+      return null;
+    }
+  }
+
   public async sendInvite(params: SendInviteParams): Promise<NotificationDeliveryOutcome> {
     const config = await this.loadConfig();
-
     const smsTemplate =
       config.templates?.inviteSms ||
       'Welcome to BluLok. Tap to get started: {{deeplink}} Your verification code: {{code}}';
+    const emailSubjectTemplate = config.templates?.inviteEmailSubject || 'Your BluLok Invitation';
     const emailTemplate =
       config.templates?.inviteEmail ||
       'Welcome to BluLok. Open {{deeplink}}. Your verification code: {{code}}';
-
-    const apply = (template: string) =>
-      renderTemplate(template, { deeplink: params.deeplink, code: params.code });
+    const recipient = await this.resolveRecipientContext(
+      params.userId,
+      templatesUseBrandingImage(emailSubjectTemplate, emailTemplate),
+    );
+    const sms = buildNotificationTemplateRender({
+      channel: 'sms',
+      recipient,
+      deeplink: params.deeplink,
+      code: params.code,
+      inviteExpiresAt: params.inviteExpiresAt,
+    });
+    const email = buildNotificationTemplateRender({
+      channel: 'email',
+      recipient,
+      deeplink: params.deeplink,
+      code: params.code,
+      inviteExpiresAt: params.inviteExpiresAt,
+    });
 
     const meta: Record<string, string> = { deeplink: params.deeplink };
     if (params.code) meta.code = params.code;
@@ -165,9 +202,10 @@ export class NotificationService {
         kind: 'invite',
         toPhone: params.toPhone,
         toEmail: params.toEmail,
-        smsBody: apply(smsTemplate),
-        emailSubject: config.templates?.inviteEmailSubject || 'Your BluLok Invitation',
-        emailHtml: apply(emailTemplate),
+        smsBody: renderTemplate(smsTemplate, sms.vars),
+        emailSubject: renderTemplate(emailSubjectTemplate, email.vars),
+        emailHtml: renderTemplate(emailTemplate, email.vars),
+        emailInlineImages: email.emailInlineImages,
         meta,
       }),
       normalizeChannelPreference(config.channelPreference),
@@ -176,9 +214,25 @@ export class NotificationService {
 
   public async sendOtp(params: SendOtpParams): Promise<NotificationDeliveryOutcome> {
     const config = await this.loadConfig();
-
     const smsTemplate = config.templates?.otpSms || 'Your verification code is: {{code}}';
+    const emailSubjectTemplate = config.templates?.otpEmailSubject || 'Your Verification Code';
     const emailTemplate = config.templates?.otpEmail || 'Your verification code is: {{code}}';
+    const recipient = await this.resolveRecipientContext(
+      params.userId,
+      templatesUseBrandingImage(emailSubjectTemplate, emailTemplate),
+    );
+    const sms = buildNotificationTemplateRender({
+      channel: 'sms',
+      recipient,
+      code: params.code,
+      inviteExpiresAt: params.inviteExpiresAt,
+    });
+    const email = buildNotificationTemplateRender({
+      channel: 'email',
+      recipient,
+      code: params.code,
+      inviteExpiresAt: params.inviteExpiresAt,
+    });
 
     return deliverAcrossChannels(
       'OTP',
@@ -186,9 +240,10 @@ export class NotificationService {
         kind: 'otp',
         toPhone: params.toPhone,
         toEmail: params.toEmail,
-        smsBody: renderTemplate(smsTemplate, { code: params.code }),
-        emailSubject: config.templates?.otpEmailSubject || 'Your Verification Code',
-        emailHtml: renderTemplate(emailTemplate, { code: params.code }),
+        smsBody: renderTemplate(smsTemplate, sms.vars),
+        emailSubject: renderTemplate(emailSubjectTemplate, email.vars),
+        emailHtml: renderTemplate(emailTemplate, email.vars),
+        emailInlineImages: email.emailInlineImages,
         meta: { code: params.code },
       }),
       normalizeChannelPreference(config.channelPreference),
@@ -207,9 +262,25 @@ export class NotificationService {
 
     const smsTemplate =
       config.templates?.passwordResetSms || 'Reset your BluLok password: {{deeplink}}';
+    const emailSubjectTemplate =
+      config.templates?.passwordResetEmailSubject || 'Reset Your BluLok Password';
     const emailTemplate =
       config.templates?.passwordResetEmail ||
       '<p>Click to reset your password: <a href="{{deeplink}}">{{deeplink}}</a></p>';
+    const recipient = await this.resolveRecipientContext(
+      params.userId,
+      templatesUseBrandingImage(emailSubjectTemplate, emailTemplate),
+    );
+    const sms = buildNotificationTemplateRender({
+      channel: 'sms',
+      recipient,
+      deeplink,
+    });
+    const email = buildNotificationTemplateRender({
+      channel: 'email',
+      recipient,
+      deeplink,
+    });
 
     return deliverAcrossChannels(
       'password reset',
@@ -217,10 +288,10 @@ export class NotificationService {
         kind: 'password_reset',
         toPhone: params.toPhone,
         toEmail: params.toEmail,
-        smsBody: renderTemplate(smsTemplate, { deeplink }),
-        emailSubject:
-          config.templates?.passwordResetEmailSubject || 'Reset Your BluLok Password',
-        emailHtml: renderTemplate(emailTemplate, { deeplink }),
+        smsBody: renderTemplate(smsTemplate, sms.vars),
+        emailSubject: renderTemplate(emailSubjectTemplate, email.vars),
+        emailHtml: renderTemplate(emailTemplate, email.vars),
+        emailInlineImages: email.emailInlineImages,
         meta: { token: params.token, deeplink },
       }),
       normalizeChannelPreference(config.channelPreference),
@@ -261,10 +332,46 @@ export class NotificationService {
     const baseUrl = this.configService.normalizeDeeplinkBase(
       config.deeplinkBaseUrl || 'blulok://',
     );
-    // Sample values so {{code}} / {{deeplink}} substitute exactly like real sends.
+    // Sample values so placeholders substitute the same way real sends do.
     const testCode = '123456';
-    const inviteVars = { deeplink: `${baseUrl}invite?test=1`, code: testCode };
-    const resetVars = { deeplink: `${baseUrl}reset-password?token=TEST` };
+    const sample = sampleRecipientTemplateContext();
+    const inviteExpiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000);
+    const inviteSms = buildNotificationTemplateRender({
+      channel: 'sms',
+      recipient: sample,
+      deeplink: `${baseUrl}invite?test=1`,
+      code: testCode,
+      inviteExpiresAt,
+    });
+    const inviteEmail = buildNotificationTemplateRender({
+      channel: 'email',
+      recipient: sample,
+      deeplink: `${baseUrl}invite?test=1`,
+      code: testCode,
+      inviteExpiresAt,
+    });
+    const otpSms = buildNotificationTemplateRender({
+      channel: 'sms',
+      recipient: sample,
+      code: testCode,
+      inviteExpiresAt,
+    });
+    const otpEmail = buildNotificationTemplateRender({
+      channel: 'email',
+      recipient: sample,
+      code: testCode,
+      inviteExpiresAt,
+    });
+    const resetSms = buildNotificationTemplateRender({
+      channel: 'sms',
+      recipient: sample,
+      deeplink: `${baseUrl}reset-password?token=TEST`,
+    });
+    const resetEmail = buildNotificationTemplateRender({
+      channel: 'email',
+      recipient: sample,
+      deeplink: `${baseUrl}reset-password?token=TEST`,
+    });
 
     const messages = [
       {
@@ -272,39 +379,51 @@ export class NotificationService {
         smsBody: renderTemplate(
           config.templates?.inviteSms ||
             'Welcome to BluLok. Tap to get started: {{deeplink}} Your verification code: {{code}}',
-          inviteVars,
+          inviteSms.vars,
         ),
-        emailSubject: config.templates?.inviteEmailSubject || 'Your BluLok Invitation',
+        emailSubject: renderTemplate(
+          config.templates?.inviteEmailSubject || 'Your BluLok Invitation',
+          inviteEmail.vars,
+        ),
         emailHtml: renderTemplate(
           config.templates?.inviteEmail ||
             'Welcome to BluLok. Open {{deeplink}}. Your verification code: {{code}}',
-          inviteVars,
+          inviteEmail.vars,
         ),
+        emailInlineImages: inviteEmail.emailInlineImages,
       },
       {
         key: 'otp',
-        smsBody: renderTemplate(config.templates?.otpSms || 'Your verification code is: {{code}}', {
-          code: testCode,
-        }),
-        emailSubject: config.templates?.otpEmailSubject || 'Your Verification Code',
+        smsBody: renderTemplate(
+          config.templates?.otpSms || 'Your verification code is: {{code}}',
+          otpSms.vars,
+        ),
+        emailSubject: renderTemplate(
+          config.templates?.otpEmailSubject || 'Your Verification Code',
+          otpEmail.vars,
+        ),
         emailHtml: renderTemplate(
           config.templates?.otpEmail || 'Your verification code is: {{code}}',
-          { code: testCode },
+          otpEmail.vars,
         ),
+        emailInlineImages: otpEmail.emailInlineImages,
       },
       {
         key: 'password_reset',
         smsBody: renderTemplate(
           config.templates?.passwordResetSms || 'Reset your BluLok password: {{deeplink}}',
-          resetVars,
+          resetSms.vars,
         ),
-        emailSubject:
+        emailSubject: renderTemplate(
           config.templates?.passwordResetEmailSubject || 'Reset Your BluLok Password',
+          resetEmail.vars,
+        ),
         emailHtml: renderTemplate(
           config.templates?.passwordResetEmail ||
             '<p>Click to reset your password: <a href="{{deeplink}}">{{deeplink}}</a></p>',
-          resetVars,
+          resetEmail.vars,
         ),
+        emailInlineImages: resetEmail.emailInlineImages,
       },
     ];
 
@@ -328,6 +447,7 @@ export class NotificationService {
             `TEST - ${message.emailSubject}`,
             html,
             html,
+            message.emailInlineImages,
           );
           sent.push(channel);
         } catch (e: any) {

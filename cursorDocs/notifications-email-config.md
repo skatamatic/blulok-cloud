@@ -60,6 +60,24 @@ If a stored secret cannot be decrypted (wrong or missing `SETTINGS_ENCRYPTION_KE
 | POST | `/api/v1/system-settings/notifications/test` | Send TEST invite / OTP / password-reset messages |
 | POST | `/api/v1/system-settings/notifications/test-connection` | SMTP login **and** From-address probe (not auth-only `verify()`) |
 
+### Template variables
+
+`{{placeholder}}` tokens in SMS/email bodies and email subjects. Catalog: `backend/src/constants/notification-template-variables.ts` (mirrored on the frontend for the modal). Renderer: `notification-template.renderer.ts`. Context: `notification-template-context.ts`.
+
+| Token | Notes |
+|-------|--------|
+| `deeplink` | Invite or reset link |
+| `code` | 6-digit OTP; blank on password reset |
+| `facility_name` / `facility_address` / `facility_contact_email` | Recipient’s primary facility |
+| `facility_contact_phone` / `facility_contact_phone_e164` | Readable `1-403-555-0100` vs E.164 `+14035550100` |
+| `facility_branding_image` | Email only — inline CID `<img>`; blank in SMS |
+| `user_first_name` / `user_last_name` / `user_email` | Recipient profile |
+| `user_phone` / `user_phone_e164` | Readable `1-780-265-6992` vs E.164 `+17802656992` |
+| `user_unit_names` | Assigned unit numbers, comma-separated |
+| `current_date` / `current_time` / `invite_expires_at` | Facility IANA timezone (`facilities.timezone`); `America/Vancouver` if unset. Expiry blank on password reset |
+
+Invite/OTP/reset pass `userId` so context is loaded at send time. A load failure logs a warning and still delivers with blank optional fields.
+
 ### Deeplink base
 
 Prefer `notifications.config.deeplinkBaseUrl`. On save, the route also writes the legacy key `notifications.deeplink_base` so older readers stay consistent. `NotificationConfigService.resolveDeeplinkBase()` reads config first, then the legacy key.
@@ -68,9 +86,9 @@ Prefer `notifications.config.deeplinkBaseUrl`. On save, the route also writes th
 
 - **Channel hubs**: SMS and Email sit side-by-side. Each hub has an enable toggle and **Setup | Messages** tabs so provider credentials and templates never stack in one scroll.
 - Setup pane: provider selection + Twilio / SMTP fields (SMTP includes **Test connection**).
-- Messages pane: invite / OTP / password-reset copy for that channel only.
+- Messages pane: invite / OTP / password-reset copy for that channel only. An **(i)** button opens the template-variables modal (`{{key}}` tokens; click to copy). Missing values render blank. Facility fields use the recipient’s primary facility (most assigned units, else first facility assignment). Dates, times, and invite expiry use that facility’s IANA timezone (set in facility setup; `America/Vancouver` / BC Pacific if unset). Phone tokens are split: readable vs E.164. `{{facility_branding_image}}` is email-only and embeds the facility logo as a CID image.
 - Shared **deeplink base** strip below the hubs; compact credentials callout; sticky **Send test** / **Save**.
-- **Send test notifications** requires a recipient for each enabled channel (email and/or E.164 phone). It uses the live form as `configOverride` (including unsaved edits) and sends TEST invite, OTP **and password reset** on every enabled channel — six messages when both channels are on. Templates receive sample `{{code}}` / `{{deeplink}}` values the same way real sends do. A blank secret in the override resolves to the stored credential, so a test never fails for a secret the user simply did not retype.
+- **Send test notifications** requires a recipient for each enabled channel (email and/or E.164 phone). It uses the live form as `configOverride` (including unsaved edits) and sends TEST invite, OTP **and password reset** on every enabled channel — six messages when both channels are on. Templates receive sample values for every token (`{{code}}`, `{{deeplink}}`, facility/user/date fields) the same way real sends do. A blank secret in the override resolves to the stored credential, so a test never fails for a secret the user simply did not retype.
 - Clearing a secret field and clicking away restores the `••••••` sentinel, matching the API's "blank means unchanged" rule.
 - **Test SMTP connection** only probes login + From; it does not send a message.
 - Save is disabled until required provider fields are complete.
@@ -103,5 +121,7 @@ Prefer `notifications.config.deeplinkBaseUrl`. On save, the route also writes th
 | Settings route validation and merge behaviour | `backend/src/__tests__/routes/system-settings.routes.test.ts` |
 | Masked-secret input behaviour | `frontend/src/__tests__/pages/settings/SecretField.test.tsx` |
 | Channel preference UI | `frontend/src/__tests__/pages/settings/ChannelPreferenceSection.test.tsx` |
+| Template variable substitution | `backend/src/__tests__/services/notifications/notification-template-context.test.ts` |
+| Template variables modal | `frontend/src/__tests__/pages/settings/TemplateVariablesModal.test.tsx` |
 | Partial-delivery warnings in the admin UI | `frontend/src/__tests__/components/UserManagement/InviteActions.test.tsx` |
 | Live settings → invite → reset flow | `backend/npm run ws:e2e` — **Notification Delivery Stack** section |

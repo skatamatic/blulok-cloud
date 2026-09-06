@@ -1,6 +1,6 @@
 import type { Transporter } from 'nodemailer';
 import type { SmtpConfig } from '@/types/notification.types';
-import type { EmailProvider } from './provider.types';
+import type { EmailInlineImage, EmailProvider } from './provider.types';
 import {
   extractSmtpEmailAddress,
   isSmtpRecipientRejected,
@@ -61,7 +61,13 @@ export class SmtpEmailProvider implements EmailProvider {
     this.replyTo = smtp.replyTo;
   }
 
-  async sendEmail(to: string, subject: string, html: string, text?: string): Promise<void> {
+  async sendEmail(
+    to: string,
+    subject: string,
+    html: string,
+    text?: string,
+    inlineImages?: EmailInlineImage[],
+  ): Promise<void> {
     await this.transporter.sendMail({
       from: this.from,
       to,
@@ -69,6 +75,16 @@ export class SmtpEmailProvider implements EmailProvider {
       html,
       text: text || html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim(),
       ...(this.replyTo ? { replyTo: this.replyTo } : {}),
+      ...(inlineImages?.length
+        ? {
+            attachments: inlineImages.map((image) => ({
+              filename: image.filename,
+              content: image.content,
+              cid: image.cid,
+              contentType: image.contentType,
+            })),
+          }
+        : {}),
     });
   }
 

@@ -1,4 +1,7 @@
 import {
+  formatNotificationDate,
+  formatNotificationDateTime,
+  formatNotificationTime,
   parseQueryDateFrom,
   parseQueryDateTo,
   toIsoString,
@@ -35,6 +38,25 @@ describe('datetime.utils', () => {
       expect(parseQueryDateFrom(from).toISOString()).toBe(from);
       const to = '2026-06-17T03:59:59.999Z';
       expect(parseQueryDateTo(to).toISOString()).toBe(to);
+    });
+  });
+
+  describe('notification date formatting', () => {
+    const instant = new Date('2026-09-06T17:05:00.000Z');
+
+    it('defaults omitted timezone to America/Vancouver', () => {
+      expect(formatNotificationDate(instant)).toBe('September 6, 2026');
+      expect(formatNotificationTime(instant)).toMatch(/^10:05 AM /);
+      expect(formatNotificationDateTime(instant)).toMatch(/^September 6, 2026 at 10:05 AM /);
+    });
+
+    it('formats explicit UTC', () => {
+      expect(formatNotificationTime(instant, 'UTC')).toBe('5:05 PM UTC');
+      expect(formatNotificationDateTime(instant, 'UTC')).toBe('September 6, 2026 at 5:05 PM UTC');
+    });
+
+    it('formats in a facility timezone', () => {
+      expect(formatNotificationTime(instant, 'America/Edmonton')).toMatch(/^11:05 AM /);
     });
   });
 });

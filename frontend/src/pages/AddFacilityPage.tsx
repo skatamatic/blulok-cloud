@@ -13,6 +13,7 @@ import { MapCard } from '@/components/GoogleMaps/MapCard';
 import { useDetailsBackNavigation } from '@/hooks/useBackNavigation';
 import { useOpenCreatedFacility } from '@/hooks/useOpenCreatedFacility';
 import { DetailsPageHeader, DetailsPageShell } from '@/components/Common/DetailsPageLayout';
+import { TimezoneSelect } from '@/components/Facilities/TimezoneSelect';
 
 export default function AddFacilityPage() {
   const navigate = useNavigate();
@@ -28,6 +29,7 @@ export default function AddFacilityPage() {
     image_mime_type: '',
     contact_email: '',
     contact_phone: '',
+    timezone: '',
     status: 'active',
   });
   const [loading, setLoading] = useState(false);
@@ -37,6 +39,7 @@ export default function AddFacilityPage() {
     const newErrors: Record<string, string> = {};
     if (!formData.name.trim()) newErrors.name = 'Facility name is required';
     if (!formData.address.trim()) newErrors.address = 'Address is required';
+    if (!formData.timezone?.trim()) newErrors.timezone = 'Timezone is required';
     if (formData.contact_email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(formData.contact_email)) {
       newErrors.contact_email = 'Please enter a valid email address';
     }
@@ -151,6 +154,7 @@ export default function AddFacilityPage() {
                     Status
                   </label>
                   <select
+                    aria-label="Status"
                     value={formData.status}
                     onChange={(e) => handleInputChange('status', e.target.value)}
                     className="block w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg shadow-sm focus:outline-none focus:ring-1 focus:ring-primary-500 focus:border-primary-500 bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
@@ -204,6 +208,12 @@ export default function AddFacilityPage() {
                   />
                 </div>
               )}
+              <TimezoneSelect
+                value={formData.timezone || ''}
+                onChange={(value) => handleInputChange('timezone', value)}
+                required
+                error={errors.timezone}
+              />
             </div>
 
             <div className="space-y-5">

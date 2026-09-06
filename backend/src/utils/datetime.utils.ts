@@ -5,6 +5,8 @@
  * Wire: ISO-8601 UTC strings with Z suffix.
  */
 
+import { resolveFacilityTimeZone } from '@/constants/facility-timezones';
+
 const DATE_ONLY_RE = /^\d{4}-\d{2}-\d{2}$/;
 
 /** Normalize any instant to ISO-8601 UTC for API / WebSocket responses. */
@@ -55,3 +57,29 @@ export const parseAccessHistoryDateFrom = parseQueryDateFrom;
 
 /** @deprecated Use parseQueryDateTo — kept for existing imports. */
 export const parseAccessHistoryDateTo = parseQueryDateTo;
+
+/** Long date for notification templates in the facility timezone. */
+export function formatNotificationDate(date: Date, timeZone?: string | null): string {
+  return new Intl.DateTimeFormat('en-US', {
+    timeZone: resolveFacilityTimeZone(timeZone),
+    month: 'long',
+    day: 'numeric',
+    year: 'numeric',
+  }).format(date);
+}
+
+/** Clock time for notification templates (`11:05 AM MDT`). */
+export function formatNotificationTime(date: Date, timeZone?: string | null): string {
+  return new Intl.DateTimeFormat('en-US', {
+    timeZone: resolveFacilityTimeZone(timeZone),
+    hour: 'numeric',
+    minute: '2-digit',
+    hour12: true,
+    timeZoneName: 'short',
+  }).format(date).replace(/\u202f/g, ' ');
+}
+
+/** Combined instant for invite expiry (`September 6, 2026 at 11:05 AM MDT`). */
+export function formatNotificationDateTime(date: Date, timeZone?: string | null): string {
+  return `${formatNotificationDate(date, timeZone)} at ${formatNotificationTime(date, timeZone)}`;
+}

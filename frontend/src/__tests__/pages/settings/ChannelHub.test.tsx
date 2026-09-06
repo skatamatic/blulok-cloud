@@ -38,4 +38,31 @@ describe('ChannelHub', () => {
     expect(screen.getByText('Channel off')).toBeInTheDocument();
     expect(screen.queryByRole('tab', { name: 'Setup' })).not.toBeInTheDocument();
   });
+
+  it('shows the template variables button on the messages pane', async () => {
+    function HelpHub() {
+      const [enabled, setEnabled] = useState(true);
+      const [pane, setPane] = useState<'setup' | 'messages'>('setup');
+      return (
+        <ChannelHub
+          title="Email"
+          enabled={enabled}
+          onEnabledChange={setEnabled}
+          pane={pane}
+          onPaneChange={setPane}
+          offHint="Channel off"
+          setup={<div>Setup content</div>}
+          messages={<div>Messages content</div>}
+          templateChannel="email"
+        />
+      );
+    }
+
+    render(<HelpHub />);
+    expect(screen.queryByRole('button', { name: 'Template variables' })).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole('tab', { name: 'Messages' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Template variables' }));
+    expect(screen.getByText('Template variables')).toBeInTheDocument();
+    expect(screen.getByText(/Insert a token/i)).toBeInTheDocument();
+  });
 });

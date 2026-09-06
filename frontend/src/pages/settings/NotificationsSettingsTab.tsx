@@ -197,6 +197,7 @@ export default function NotificationsSettingsTab() {
           offHint="Channel off — enable to configure Twilio (or console) delivery and SMS copy."
           setup={<SmsSetupFields config={config} onChange={updateConfig} />}
           messages={<SmsMessageFields config={config} onChange={updateConfig} />}
+          templateChannel="sms"
         />
         <ChannelHub
           title="Email"
@@ -214,6 +215,7 @@ export default function NotificationsSettingsTab() {
             />
           }
           messages={<EmailMessageFields config={config} onChange={updateConfig} />}
+          templateChannel="email"
         />
       </div>
 

@@ -90,6 +90,7 @@ describe('AddFacilityPage', () => {
 
     expect(await screen.findByText(/Facility name is required/i)).toBeInTheDocument();
     expect(screen.getByText(/Address is required/i)).toBeInTheDocument();
+    expect(screen.getByText(/Timezone is required/i)).toBeInTheDocument();
     expect(mockCreate).not.toHaveBeenCalled();
   });
 
@@ -118,8 +119,11 @@ describe('AddFacilityPage', () => {
     fireEvent.change(screen.getByPlaceholderText('Enter facility description'), {
       target: { value: 'Main site' },
     });
-    fireEvent.change(screen.getByRole('combobox'), {
+    fireEvent.change(screen.getByLabelText('Status'), {
       target: { value: 'inactive' },
+    });
+    fireEvent.change(screen.getByLabelText('Timezone'), {
+      target: { value: 'America/Edmonton' },
     });
     fireEvent.click(screen.getByTestId('pick-address'));
 
@@ -135,6 +139,7 @@ describe('AddFacilityPage', () => {
           latitude: 40.1,
           longitude: -74.2,
           status: 'inactive',
+          timezone: 'America/Edmonton',
         })
       );
     });
@@ -150,6 +155,9 @@ describe('AddFacilityPage', () => {
       target: { value: 'North Yard' },
     });
     fireEvent.click(screen.getByTestId('pick-address'));
+    fireEvent.change(screen.getByLabelText('Timezone'), {
+      target: { value: 'America/Edmonton' },
+    });
     fireEvent.click(screen.getByRole('button', { name: /Create Facility/i }));
 
     expect(
@@ -166,6 +174,9 @@ describe('AddFacilityPage', () => {
       target: { value: 'North Yard' },
     });
     fireEvent.click(screen.getByTestId('pick-address'));
+    fireEvent.change(screen.getByLabelText('Timezone'), {
+      target: { value: 'America/Edmonton' },
+    });
     fireEvent.click(screen.getByRole('button', { name: /Create Facility/i }));
 
     expect(

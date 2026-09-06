@@ -65,6 +65,8 @@ export interface SendInviteParams {
   deeplink: string;
   code?: string; // OTP code to include in the invite notification
   templateId?: string; // reserved for future use
+  userId?: string;
+  inviteExpiresAt?: Date;
 }
 
 export interface SendOtpParams {
@@ -73,6 +75,8 @@ export interface SendOtpParams {
   code: string;
   kind?: OtpKind; // 'invite' (default)
   templateId?: string; // reserved for future use
+  userId?: string;
+  inviteExpiresAt?: Date;
 }
 
 export interface SendPasswordResetParams {
@@ -80,4 +84,5 @@ export interface SendPasswordResetParams {
   toEmail?: string;
   token: string;
   templateId?: string; // reserved for future use
+  userId?: string;
 }

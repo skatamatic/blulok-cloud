@@ -50,7 +50,7 @@ export class FirstTimeUserService {
       return { delivered: [], skipped: 'no_contact' };
     }
 
-    const { token, inviteId } = await this.invites.createInvite(user.id);
+    const { token, inviteId, expiresAt } = await this.invites.createInvite(user.id);
     const { NotificationConfigService } = await import(
       '@/services/notifications/notification-config.service'
     );
@@ -76,6 +76,8 @@ export class FirstTimeUserService {
       toEmail: user.email || undefined,
       deeplink,
       code,
+      userId: user.id,
+      inviteExpiresAt: expiresAt,
     });
 
     // Clear any FMS deferred-invite bookkeeping (manual/admin invite wins).

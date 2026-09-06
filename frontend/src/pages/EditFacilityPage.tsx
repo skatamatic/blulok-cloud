@@ -19,6 +19,7 @@ import {
   DetailsPageShell,
 } from '@/components/Common/DetailsPageLayout';
 import { UserRole } from '@/types/auth.types';
+import { TimezoneSelect } from '@/components/Facilities/TimezoneSelect';
 
 const statusOptions = [
   { value: 'active', label: 'Active' },
@@ -51,6 +52,7 @@ export default function EditFacilityPage() {
     zip_code: '',
     contact_email: '',
     contact_phone: '',
+    timezone: '',
     status: 'active' as 'active' | 'inactive' | 'maintenance',
     branding_image: null as File | null,
     image_mime_type: ''
@@ -82,6 +84,7 @@ export default function EditFacilityPage() {
           zip_code: facilityData.zip_code || '',
           contact_email: facilityData.contact_email || '',
           contact_phone: facilityData.contact_phone || '',
+          timezone: facilityData.timezone || '',
           status: facilityData.status || 'active',
           branding_image: null,
           image_mime_type: facilityData.image_mime_type || ''
@@ -155,6 +158,7 @@ export default function EditFacilityPage() {
       submitData.append('zip_code', formData.zip_code);
       submitData.append('contact_email', formData.contact_email);
       submitData.append('contact_phone', formData.contact_phone);
+      submitData.append('timezone', formData.timezone);
       submitData.append('status', formData.status);
       
       if (formData.branding_image) {
@@ -315,6 +319,12 @@ export default function EditFacilityPage() {
                   placeholder="Enter street address"
                 />
               </div>
+
+              <TimezoneSelect
+                value={formData.timezone}
+                onChange={(value) => setFormData((prev) => ({ ...prev, timezone: value }))}
+                required
+              />
 
               <div className="grid grid-cols-2 gap-4">
                 <div>

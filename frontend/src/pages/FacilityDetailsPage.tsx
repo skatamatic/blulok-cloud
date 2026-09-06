@@ -61,6 +61,7 @@ import { formatDateTime } from '@/utils/datetime.utils';
 import { lockHardwareFeedbackToasts } from '@/utils/lockHardwareFeedback.constants';
 import { useRemoteUnlockAction } from '@/hooks/useRemoteUnlockAction';
 import { requiresOccupiedUnitOverride } from '@/constants/tenantUnlockOverride.constants';
+import { facilityTimezoneLabel } from '@/constants/facility-timezones';
 import { resolveLockTimeoutMsForFacility } from '@/utils/facilityLockTimeout.utils';
 import { formatAccessDeviceListSubtitle } from '@/utils/accessDeviceDisplay.utils';
 import { formatNetworkInfraKindLabel } from '@/utils/device-icon.utils';
@@ -1030,6 +1031,13 @@ const normalizeFacilityTab = (value: string | null): FacilityTab | null => {
                   <dd className="mt-1 flex items-center text-gray-900 dark:text-white">
                     <MapPinIcon className="h-4 w-4 mr-2 flex-shrink-0 text-gray-400" />
                     {facility.address}
+                  </dd>
+                </div>
+                <div>
+                  <dt className="text-gray-500 dark:text-gray-400">Timezone</dt>
+                  <dd className="mt-1 flex items-center text-gray-900 dark:text-white">
+                    <ClockIcon className="mr-2 h-4 w-4 flex-shrink-0 text-gray-400" />
+                    {facilityTimezoneLabel(facility.timezone)}
                   </dd>
                 </div>
                 {facility.contact_email && (

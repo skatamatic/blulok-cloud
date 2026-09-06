@@ -50,6 +50,7 @@ CREATE TABLE facilities (
   branding_image_url VARCHAR(500),
   contact_email VARCHAR(255),
   contact_phone VARCHAR(50),
+  timezone VARCHAR(64) NOT NULL DEFAULT 'America/Vancouver', -- IANA; BC Pacific backfill
   status ENUM('active', 'inactive', 'maintenance') DEFAULT 'active',
   metadata JSON,
   created_at TIMESTAMP,

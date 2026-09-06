@@ -5,6 +5,21 @@ import {
   MAX_LOCK_COMMAND_TIMEOUT_SEC,
   MIN_LOCK_COMMAND_TIMEOUT_SEC,
 } from '@/constants/lock-command.constants';
+import { isValidIanaTimeZone } from '@/constants/facility-timezones';
+
+const timezoneField = Joi.string()
+  .trim()
+  .max(64)
+  .allow('')
+  .optional()
+  .custom((value, helpers) => {
+    if (!value) return value;
+    if (!isValidIanaTimeZone(value)) {
+      return helpers.error('any.invalid');
+    }
+    return value;
+  })
+  .messages({ 'any.invalid': 'Timezone must be a valid IANA name (e.g. America/Edmonton)' });
 
 export const facilitiesListQuerySchema = Joi.object({
   search: Joi.string().optional(),
@@ -30,6 +45,7 @@ export const createFacilitySchema = Joi.object({
   image_mime_type: Joi.string().allow('').max(100).optional(),
   contact_email: Joi.string().email().allow('').optional(),
   contact_phone: Joi.string().allow('').max(50).optional(),
+  timezone: timezoneField,
   status: Joi.string().valid('active', 'inactive', 'maintenance').optional(),
   lock_command_timeout_sec: Joi.number()
     .integer()
@@ -52,6 +68,7 @@ export const updateFacilitySchema = Joi.object({
   image_mime_type: Joi.string().allow('').max(100).optional(),
   contact_email: Joi.string().email().allow('').optional(),
   contact_phone: Joi.string().allow('').max(50).optional(),
+  timezone: timezoneField,
   status: Joi.string().valid('active', 'inactive', 'maintenance').optional(),
   lock_command_timeout_sec: Joi.number()
     .integer()

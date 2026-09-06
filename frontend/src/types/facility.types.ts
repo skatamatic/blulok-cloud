@@ -9,6 +9,7 @@ export interface Facility {
   image_mime_type?: string;
   contact_email?: string;
   contact_phone?: string;
+  timezone?: string;
   status: 'active' | 'inactive' | 'maintenance';
   /** Seconds to wait for remote lock/unlock gateway confirmation (default 10). */
   lock_command_timeout_sec?: number;
@@ -337,6 +338,7 @@ export interface CreateFacilityData {
   image_mime_type?: string;
   contact_email?: string;
   contact_phone?: string;
+  timezone?: string;
   status?: 'active' | 'inactive' | 'maintenance';
   metadata?: Record<string, unknown>;
 }

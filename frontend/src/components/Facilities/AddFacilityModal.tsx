@@ -11,6 +11,7 @@ import { CreateFacilityData } from '@/types/facility.types';
 import { AddressAutocomplete } from '@/components/GoogleMaps/AddressAutocomplete';
 import { MapCard } from '@/components/GoogleMaps/MapCard';
 import { useOpenCreatedFacility } from '@/hooks/useOpenCreatedFacility';
+import { TimezoneSelect } from '@/components/Facilities/TimezoneSelect';
 
 interface AddFacilityModalProps {
   isOpen: boolean;
@@ -29,6 +30,7 @@ const emptyForm = (): CreateFacilityData => ({
   image_mime_type: '',
   contact_email: '',
   contact_phone: '',
+  timezone: '',
   status: 'active',
 });
 
@@ -46,6 +48,9 @@ export function AddFacilityModal({ isOpen, onClose, onSuccess }: AddFacilityModa
     }
     if (!formData.address.trim()) {
       newErrors.address = 'Address is required';
+    }
+    if (!formData.timezone?.trim()) {
+      newErrors.timezone = 'Timezone is required';
     }
     if (formData.contact_email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(formData.contact_email)) {
       newErrors.contact_email = 'Please enter a valid email address';
@@ -236,6 +241,13 @@ export function AddFacilityModal({ isOpen, onClose, onSuccess }: AddFacilityModa
                 />
               </div>
             )}
+
+            <TimezoneSelect
+              value={formData.timezone || ''}
+              onChange={(value) => handleInputChange('timezone', value)}
+              required
+              error={errors.timezone}
+            />
 
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
               <div>

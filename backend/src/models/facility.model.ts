@@ -47,6 +47,8 @@ export interface Facility {
   contact_email?: string;
   /** Contact phone number for property management */
   contact_phone?: string;
+  /** IANA timezone for facility-local dates on outbound notifications */
+  timezone?: string;
   /** Operational status of the facility */
   status: 'active' | 'inactive' | 'maintenance';
   /** Seconds to wait for gateway lock/unlock confirmation before reverting (default 10). */
@@ -84,6 +86,8 @@ export interface CreateFacilityData {
   contact_email?: string;
   /** Contact phone number for property management */
   contact_phone?: string;
+  /** IANA timezone (e.g. America/Edmonton) */
+  timezone?: string;
   /** Initial operational status (defaults to 'active') */
   status?: 'active' | 'inactive' | 'maintenance';
   lock_command_timeout_sec?: number;
