@@ -19,7 +19,7 @@ Widgets live inside **react-grid-layout** cells with a fixed height. Follow this
 
 4. **Facility scope**: When the global facility selector is a **single facility**, pass **`facility_id` / `facilityId`** query params from dashboard widgets; when **“All facilities”** is selected, omit the filter and rely on backend role scope.
 
-**Units Manager tenant actions:** expanded Tenant column hosts Resend invite / Reset account (`InviteActions`); Device column Unlock matches its footer baseline. Resend stays primary; Reset and occupied-override Unlock use warning tone.
+**Units Manager tenant actions:** expanded Tenant column hosts Resend invite / Reset account (`InviteActions`); Device column Unlock matches its footer baseline. Both cards use `gap` (not `space-y`) plus a content/`mt-auto` footer split so Tailwind sibling margins cannot unstick the CTAs. Compact invite buttons use the same `md` chrome as Unlock (`px-4 py-2 text-sm`). Resend stays primary; Reset and occupied-override Unlock use warning tone. Confirmations must portal to `document.body` (`Modal` / `ConfirmDialog`) — grid items apply `transform`, which would otherwise trap `position: fixed` overlays inside the widget.
 
 ## Widget Interaction Design
 

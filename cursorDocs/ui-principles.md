@@ -34,6 +34,7 @@ BluLok Cloud's user interface follows a modern, minimalist design philosophy wit
 - Escape key and backdrop click to close
 - Focus management and keyboard navigation
 - Consistent styling across all modals
+- Portal overlays to `document.body` (`z-[100000]`, `bg-black/45`) so dashboard widget `transform` cannot clip or darken a local dimmer
 
 **Modal Structure:**
 ```jsx

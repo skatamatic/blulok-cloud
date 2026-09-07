@@ -30,7 +30,7 @@
 ## Units Manager · tenant invite actions
 
 - Expanded unit row **Tenant** column: **Resend invite** when the primary tenant has not completed setup (`last_login` empty); **Reset account** after invite acceptance. Both actions use a confirmation step. Placeholders show contact guidance; unassigned units omit the control.
-- Requires user-management roles (`canManageUsers`). Full-width control matches the Device column Unlock button; both CTAs sit in **aligned card footers** (`mt-auto`) so they share a baseline. **Unit details** lives in a shared meta row under the three columns.
+- Requires user-management roles (`canManageUsers`). Full-width control matches the Device column Unlock button (`md` height); both CTAs sit in **aligned card footers** (`mt-auto` + `gap`, not `space-y`) so they share a baseline. Confirm dialogs portal to `document.body` with the same `bg-black/45` overlay as occupied-unit unlock (`ConfirmDialog`). **Unit details** lives in a shared meta row under the three columns.
 - Button tones: **Resend** stays primary; **Reset** uses warning (`btn-warning`). **Unlock** uses warning when an occupied-unit override confirm is required (`requiresOccupiedUnitOverride`); otherwise primary.
 - See [auth.md](./auth.md) for the reset-account API.
 

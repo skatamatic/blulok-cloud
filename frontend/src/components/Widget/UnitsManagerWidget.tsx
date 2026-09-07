@@ -815,37 +815,39 @@ const ExpandedDetails: React.FC<{
                 ) : undefined
               }
             />
-            <div className={`${EXPAND_DETAIL_CARD_CLASS} flex flex-col space-y-2`}>
-              <div className={`flex items-center gap-2 ${TYPE.bodyStrong}`}>
-                <UserCircleIcon className="h-4 w-4 shrink-0 text-gray-400" />
-                <span className="truncate">{tenantName}</span>
-                {isPlaceholderTenant ? <PlaceholderUserBadge /> : null}
+            <div className={`${EXPAND_DETAIL_CARD_CLASS} flex flex-col gap-2`}>
+              <div className="flex min-h-0 flex-1 flex-col gap-2">
+                <div className={`flex items-center gap-2 ${TYPE.bodyStrong}`}>
+                  <UserCircleIcon className="h-4 w-4 shrink-0 text-gray-400" />
+                  <span className="truncate">{tenantName}</span>
+                  {isPlaceholderTenant ? <PlaceholderUserBadge /> : null}
+                </div>
+                {tenantEmail && (
+                  <a
+                    href={`mailto:${tenantEmail}`}
+                    className={`flex items-center gap-2 ${TYPE.meta} transition-colors hover:text-[#147FD4]`}
+                  >
+                    <EnvelopeIcon className="h-3.5 w-3.5 shrink-0" />
+                    <span className="truncate">{tenantEmail}</span>
+                  </a>
+                )}
+                {tenantPhone && (
+                  <a
+                    href={`tel:${tenantPhone}`}
+                    className={`flex items-center gap-2 ${TYPE.meta} transition-colors hover:text-[#147FD4]`}
+                  >
+                    <PhoneIcon className="h-3.5 w-3.5 shrink-0" />
+                    <span>{tenantPhone}</span>
+                  </a>
+                )}
+                {isPlaceholderTenant ? (
+                  <p className={TYPE.meta}>
+                    {formatUserContactSubtitle({ is_placeholder: true })}
+                  </p>
+                ) : !tenantEmail && !tenantPhone ? (
+                  <p className={TYPE.meta}>No contact details on file.</p>
+                ) : null}
               </div>
-              {tenantEmail && (
-                <a
-                  href={`mailto:${tenantEmail}`}
-                  className={`flex items-center gap-2 ${TYPE.meta} transition-colors hover:text-[#147FD4]`}
-                >
-                  <EnvelopeIcon className="h-3.5 w-3.5 shrink-0" />
-                  <span className="truncate">{tenantEmail}</span>
-                </a>
-              )}
-              {tenantPhone && (
-                <a
-                  href={`tel:${tenantPhone}`}
-                  className={`flex items-center gap-2 ${TYPE.meta} transition-colors hover:text-[#147FD4]`}
-                >
-                  <PhoneIcon className="h-3.5 w-3.5 shrink-0" />
-                  <span>{tenantPhone}</span>
-                </a>
-              )}
-              {isPlaceholderTenant ? (
-                <p className={TYPE.meta}>
-                  {formatUserContactSubtitle({ is_placeholder: true })}
-                </p>
-              ) : !tenantEmail && !tenantPhone ? (
-                <p className={TYPE.meta}>No contact details on file.</p>
-              ) : null}
 
               {canManageTenantInvites && tenantId ? (
                 <div className={actionFooterClass}>
@@ -877,45 +879,47 @@ const ExpandedDetails: React.FC<{
                 ) : undefined
               }
             />
-            <div className={`${EXPAND_DETAIL_CARD_CLASS} flex flex-col space-y-2.5`}>
-              {metrics.hasDevice ? (
-                <>
-                  {metrics.serial && (
-                    <p className={`truncate ${TYPE.meta}`} title={metrics.serial}>
-                      <span className="text-gray-400 dark:text-gray-500">Serial · </span>
-                      <span className="tabular-nums text-gray-700 dark:text-gray-300">
-                        {metrics.serial}
-                      </span>
-                    </p>
-                  )}
-                  <div className="grid grid-cols-2 gap-2">
-                    <div className="rounded-md bg-gray-50/80 px-2 py-1.5 dark:bg-gray-900/40">
-                      <p className={`mb-1 ${TYPE.meta}`}>Battery</p>
-                      <BatteryGauge
-                        level={metrics.battery}
-                        deviceStatus={metrics.status}
-                      />
+            <div className={`${EXPAND_DETAIL_CARD_CLASS} flex flex-col gap-2.5`}>
+              <div className="flex min-h-0 flex-1 flex-col gap-2.5">
+                {metrics.hasDevice ? (
+                  <>
+                    {metrics.serial && (
+                      <p className={`truncate ${TYPE.meta}`} title={metrics.serial}>
+                        <span className="text-gray-400 dark:text-gray-500">Serial · </span>
+                        <span className="tabular-nums text-gray-700 dark:text-gray-300">
+                          {metrics.serial}
+                        </span>
+                      </p>
+                    )}
+                    <div className="grid grid-cols-2 gap-2">
+                      <div className="rounded-md bg-gray-50/80 px-2 py-1.5 dark:bg-gray-900/40">
+                        <p className={`mb-1 ${TYPE.meta}`}>Battery</p>
+                        <BatteryGauge
+                          level={metrics.battery}
+                          deviceStatus={metrics.status}
+                        />
+                      </div>
+                      <div className="rounded-md bg-gray-50/80 px-2 py-1.5 dark:bg-gray-900/40">
+                        <p className={`mb-1 ${TYPE.meta}`}>Signal</p>
+                        <SignalGauge signal={metrics.signal} deviceStatus={metrics.status} />
+                        {metrics.signal != null && (
+                          <p className={`mt-1 tabular-nums ${TYPE.meta}`}>{metrics.signal} dBm</p>
+                        )}
+                      </div>
                     </div>
-                    <div className="rounded-md bg-gray-50/80 px-2 py-1.5 dark:bg-gray-900/40">
-                      <p className={`mb-1 ${TYPE.meta}`}>Signal</p>
-                      <SignalGauge signal={metrics.signal} deviceStatus={metrics.status} />
-                      {metrics.signal != null && (
-                        <p className={`mt-1 tabular-nums ${TYPE.meta}`}>{metrics.signal} dBm</p>
-                      )}
-                    </div>
-                  </div>
-                  {metrics.firmware && (
-                    <p className={TYPE.meta}>
-                      Firmware ·{' '}
-                      <span className="tabular-nums text-gray-700 dark:text-gray-300">
-                        {metrics.firmware}
-                      </span>
-                    </p>
-                  )}
-                </>
-              ) : (
-                <p className={TYPE.meta}>No BluLok device linked.</p>
-              )}
+                    {metrics.firmware && (
+                      <p className={TYPE.meta}>
+                        Firmware ·{' '}
+                        <span className="tabular-nums text-gray-700 dark:text-gray-300">
+                          {metrics.firmware}
+                        </span>
+                      </p>
+                    )}
+                  </>
+                ) : (
+                  <p className={TYPE.meta}>No BluLok device linked.</p>
+                )}
+              </div>
 
               <div className={actionFooterClass}>
                 <RemoteUnlockButton
@@ -926,7 +930,7 @@ const ExpandedDetails: React.FC<{
                   deviceStatus={metrics.status}
                   tone={unlockRequiresOverride ? 'warning' : 'primary'}
                   fullWidth
-                  size="sm"
+                  size="md"
                   stopPropagation
                   onUnlock={onUnlock}
                 />

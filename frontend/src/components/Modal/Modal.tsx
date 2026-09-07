@@ -1,4 +1,5 @@
 import React, { useEffect, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import { XMarkIcon } from '@heroicons/react/24/outline';
 
 interface ModalProps {
@@ -63,44 +64,44 @@ export const Modal: React.FC<ModalProps> = ({
     '3xl': 'max-w-7xl',
   };
 
-  const handleBackdropClick = (e: React.MouseEvent) => {
-    if (e.target === e.currentTarget) {
-      onClose();
-    }
-  };
+  // Portal to document.body so transformed ancestors (react-grid-layout
+  // widgets) cannot trap `position: fixed`. Overlay matches ConfirmDialog.
+  return createPortal(
+    <div
+      className="fixed inset-0 z-[100000] flex items-center justify-center overflow-y-auto bg-black/45 backdrop-blur-sm p-4"
+      role="presentation"
+      data-testid="modal-overlay"
+      onMouseDown={(event) => {
+        event.stopPropagation();
+        if (event.target === event.currentTarget) {
+          onClose();
+        }
+      }}
+    >
+      <div
+        ref={modalRef}
+        role="dialog"
+        aria-modal="true"
+        className={`relative w-full ${sizeClasses[size]} overflow-hidden rounded-lg bg-white dark:bg-gray-800 shadow-xl transition-all duration-300`}
+        onMouseDown={(event) => event.stopPropagation()}
+      >
+        {showCloseButton && (
+          <button
+            onClick={onClose}
+            className="absolute top-3 right-3 rounded-md text-gray-400 hover:text-gray-500 dark:hover:text-gray-300 focus:outline-none focus:ring-2 focus:ring-primary-500 transition-colors duration-200"
+            aria-label="Close"
+          >
+            <XMarkIcon className="h-6 w-6" />
+          </button>
+        )}
 
-  return (
-    <div className="fixed inset-0 z-50 overflow-y-auto">
-      {/* Backdrop */}
-      <div 
-        className="fixed inset-0 bg-black bg-opacity-50 backdrop-blur-sm transition-opacity duration-300"
-        onClick={handleBackdropClick}
-      />
-      
-      {/* Modal */}
-      <div className="flex min-h-full items-center justify-center p-4">
-        <div
-          ref={modalRef}
-          className={`relative w-full ${sizeClasses[size]} transform overflow-hidden rounded-lg bg-white dark:bg-gray-800 shadow-xl transition-all duration-300 scale-100`}
-        >
-          {showCloseButton && (
-            <button
-              onClick={onClose}
-              className="absolute top-3 right-3 rounded-md text-gray-400 hover:text-gray-500 dark:hover:text-gray-300 focus:outline-none focus:ring-2 focus:ring-primary-500 transition-colors duration-200"
-              aria-label="Close"
-            >
-              <XMarkIcon className="h-6 w-6" />
-            </button>
-          )}
-
-          {/* Content */}
-          <div className="px-6 py-4">
-            {title ? <h2 className="mb-4 text-lg font-semibold text-gray-900 dark:text-white">{title}</h2> : null}
-            {children}
-          </div>
+        <div className="px-6 py-4">
+          {title ? <h2 className="mb-4 text-lg font-semibold text-gray-900 dark:text-white">{title}</h2> : null}
+          {children}
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 };
 

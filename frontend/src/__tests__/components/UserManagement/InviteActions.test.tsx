@@ -83,7 +83,11 @@ describe('InviteActions', () => {
         }}
       />,
     );
-    expect(screen.getByRole('button', { name: /Reset account/i })).toBeInTheDocument();
+    const reset = screen.getByRole('button', { name: /Reset account/i });
+    expect(reset).toBeInTheDocument();
+    expect(reset.className).toMatch(/px-4/);
+    expect(reset.className).toMatch(/py-2/);
+    expect(reset.className).toMatch(/text-sm/);
   });
 
   it('warns instead of celebrating when only one invite channel delivered', async () => {

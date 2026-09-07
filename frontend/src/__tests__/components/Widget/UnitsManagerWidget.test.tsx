@@ -86,6 +86,7 @@ const sampleUnits = {
         last_name: 'Tenant',
         email: 'casey@example.com',
         phone_number: '+15551234567',
+        last_login: '2024-01-01T00:00:00.000Z',
       },
       tenant_name: 'Casey Tenant',
       tenant_email: 'casey@example.com',
@@ -206,6 +207,25 @@ describe('UnitsManagerWidget', () => {
       expect(screen.getByRole('button', { name: /^Unlock$/i })).toBeInTheDocument();
     });
     expect(mockGetAccessSessions).toHaveBeenCalledWith({ unit_id: 'unit-1', limit: 5 });
+  });
+
+  it('aligns reset and unlock footers and portals the reset overlay', async () => {
+    renderWidget();
+    await waitFor(() => screen.getByText(/Unit A-101/));
+    fireEvent.click(screen.getByRole('button', { name: /Unit A-101/ }));
+
+    const reset = await screen.findByRole('button', { name: /Reset account/i });
+    const unlock = screen.getByRole('button', { name: /^Unlock$/i });
+    expect(reset.className).toMatch(/py-2/);
+    expect(reset.className).toMatch(/text-sm/);
+    expect(unlock.className).toMatch(/py-2/);
+    expect(unlock.className).toMatch(/text-sm/);
+
+    fireEvent.click(reset);
+    const overlay = await screen.findByTestId('modal-overlay');
+    expect(overlay.parentElement).toBe(document.body);
+    expect(overlay.className).toMatch(/bg-black\/45/);
+    expect(screen.getByRole('dialog')).toHaveTextContent(/Reset account/i);
   });
 
   it('shows disabled unlock when unit has no device', async () => {
