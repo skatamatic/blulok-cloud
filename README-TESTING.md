@@ -160,7 +160,7 @@ The test orchestration is designed for CI/CD pipelines:
    ```
 
 2. **Backend server won't start**:
-   - Check if port 3000 is available
+   - Check if the backend port from `backend/.env` (`PORT`, typically `3000` for local dev) is available
    - Verify backend dependencies are installed
    - Check for missing environment variables
 

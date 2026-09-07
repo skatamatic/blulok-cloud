@@ -1,94 +1,67 @@
 import { DatabaseService } from './database.service';
 import { UserRole } from '@/types/auth.types';
-// Dynamic import to avoid circular dependency
 import { logger } from '@/utils/logger';
+import { AuthService } from '@/services/auth.service';
+import { FacilityAccessService } from '@/services/facility-access.service';
+import { AccessDeniedError } from '@/middleware/error.middleware';
+import { DeviceModel } from '@/models/device.model';
+import { DeviceReachabilityEnrichmentService } from '@/services/device-reachability-enrichment.service';
+import { effectiveStatusFromEnrichedRow } from '@/types/device-reachability.types';
 
 /**
  * General Statistics Data Interface
- *
- * Comprehensive dashboard statistics for system monitoring and management.
- * Provides aggregated metrics across facilities, devices, and users.
  */
 export interface GeneralStatsData {
-  /** Facility statistics across the system or scoped facilities */
   facilities: {
-    /** Total number of facilities */
     total: number;
-    /** Number of active facilities */
     active: number;
-    /** Number of inactive facilities */
     inactive: number;
-    /** Number of facilities under maintenance */
     maintenance: number;
   };
-  /** Device connectivity and status statistics */
   devices: {
-    /** Total number of devices */
     total: number;
-    /** Number of online devices */
     online: number;
-    /** Number of offline devices */
     offline: number;
-    /** Number of devices in error state */
     error: number;
-    /** Number of devices under maintenance */
     maintenance: number;
   };
-  /** User account statistics */
   users: {
-    /** Total number of users */
     total: number;
-    /** Number of active user accounts */
     active: number;
-    /** Number of inactive/deactivated accounts */
     inactive: number;
-    /** User count broken down by role */
     byRole: Record<UserRole, number>;
   };
-  /** ISO timestamp when statistics were last calculated */
+  /** Unread high/urgent notifications relevant to the user's scope (dashboard “alerts”) */
+  alerts: {
+    open: number;
+  };
   lastUpdated: string;
 }
 
-/**
- * Scoped General Statistics Data Interface
- *
- * Extends GeneralStatsData with scope information for role-based access control.
- * Indicates whether statistics are global or limited to specific facilities.
- */
 export interface ScopedGeneralStatsData extends GeneralStatsData {
-  /** Access scope information for the requesting user */
   scope: {
-    /** Type of access scope */
     type: 'all' | 'facility_limited';
-    /** Specific facility IDs if scope is limited */
     facilityIds?: string[];
   };
 }
 
-/**
- * General Stats Service
- *
- * Provides comprehensive system statistics for dashboards and monitoring.
- * Aggregates data across facilities, devices, and users with role-based scoping.
- *
- * Key Features:
- * - Role-based data scoping (global vs facility-limited)
- * - Real-time statistics calculation
- * - Efficient database aggregation queries
- * - Comprehensive system health metrics
- * - Performance-optimized for dashboard displays
- *
- * Data Provided:
- * - Facility status breakdown (active/inactive/maintenance)
- * - Device connectivity statistics (online/offline/error/maintenance)
- * - User account metrics by role and status
- * - System-wide operational statistics
- *
- * Access Control:
- * - DEV_ADMIN, ADMIN: Full system statistics
- * - FACILITY_ADMIN: Statistics limited to assigned facilities
- * - Other roles: Access denied
- */
+function firstRowFromMysqlRaw(result: unknown): Record<string, any> {
+  if (result == null) return {};
+  const r = result as any[];
+  const rows = r[0];
+  if (Array.isArray(rows) && rows[0] !== undefined && typeof rows[0] === 'object') {
+    return rows[0] as Record<string, any>;
+  }
+  return {};
+}
+
+function rowsFromMysqlRaw(result: unknown): any[] {
+  if (result == null) return [];
+  const r = result as any[];
+  const rows = r[0];
+  return Array.isArray(rows) ? rows : [];
+}
+
 export class GeneralStatsService {
   private static instance: GeneralStatsService;
   private db = DatabaseService.getInstance();
@@ -101,19 +74,29 @@ export class GeneralStatsService {
   }
 
   /**
-   * Get general statistics scoped by user role and facility access
+   * @param facilityId When set (e.g. global facility selector), stats are limited to that facility.
+   *                    Caller must enforce access; use {@link AuthService.canAccessFacility} first or rely on route.
    */
-  public async getScopedStats(userId: string, userRole: UserRole): Promise<ScopedGeneralStatsData> {
+  public async getScopedStats(
+    userId: string,
+    userRole: UserRole,
+    options?: { facilityId?: string }
+  ): Promise<ScopedGeneralStatsData> {
     try {
-      // Determine scope based on role
-      const scope = await this.determineScope(userId, userRole);
-      
-      // Get scoped statistics
-      const stats = await this.calculateStats(scope);
-      
+      let scope = await this.determineScope(userId, userRole);
+
+      if (options?.facilityId) {
+        const ok = await AuthService.canAccessFacility(userId, userRole, options.facilityId);
+        if (!ok) {
+          throw new AccessDeniedError('Not allowed to view statistics for this facility');
+        }
+        scope = { type: 'facility_limited', facilityIds: [options.facilityId] };
+      }
+
+      const stats = await this.calculateStats(scope, userId);
       return {
         ...stats,
-        scope
+        scope,
       };
     } catch (error) {
       logger.error('Error getting scoped stats:', error);
@@ -121,101 +104,130 @@ export class GeneralStatsService {
     }
   }
 
-  /**
-   * Determine the scope of data access based on user role
-   */
   private async determineScope(userId: string, userRole: UserRole): Promise<{ type: 'all' | 'facility_limited'; facilityIds?: string[] }> {
-    // Admin and Dev Admin see all data
     if (userRole === UserRole.ADMIN || userRole === UserRole.DEV_ADMIN) {
       return { type: 'all' };
     }
 
-    // Facility Admin sees only their associated facilities
-    if (userRole === UserRole.FACILITY_ADMIN) {
-      const { UserFacilityAssociationModel } = await import('@/models/user-facility-association.model') as any;
-      const facilityIds = await UserFacilityAssociationModel.getUserFacilityIds(userId);
+    if (userRole === UserRole.FACILITY_ADMIN || userRole === UserRole.MAINTENANCE) {
+      const facilityIds = await FacilityAccessService.getUserFacilityIds(userId, userRole);
       return { type: 'facility_limited', facilityIds };
     }
 
-    // Other roles cannot access general stats
-    throw new Error('Access denied: General stats subscription requires ADMIN, DEV_ADMIN, or FACILITY_ADMIN role');
+    throw new Error('Access denied: General stats subscription requires ADMIN, DEV_ADMIN, FACILITY_ADMIN, or MAINTENANCE role');
+  }
+
+  private emptyStats(): Omit<GeneralStatsData, 'lastUpdated'> {
+    const byRole: Record<UserRole, number> = {
+      [UserRole.TENANT]: 0,
+      [UserRole.FACILITY_ADMIN]: 0,
+      [UserRole.MAINTENANCE]: 0,
+      [UserRole.BLULOK_TECHNICIAN]: 0,
+      [UserRole.ADMIN]: 0,
+      [UserRole.DEV_ADMIN]: 0,
+    };
+    return {
+      facilities: { total: 0, active: 0, inactive: 0, maintenance: 0 },
+      devices: { total: 0, online: 0, offline: 0, error: 0, maintenance: 0 },
+      users: { total: 0, active: 0, inactive: 0, byRole },
+      alerts: { open: 0 },
+    };
   }
 
   /**
-   * Calculate statistics based on scope
+   * Unread notifications with priority high/urgent, optionally scoped to facilities the user cares about.
    */
-  private async calculateStats(scope: { type: 'all' | 'facility_limited'; facilityIds?: string[] }): Promise<GeneralStatsData> {
+  private async countAlertNotifications(
+    userId: string,
+    scope: { type: 'all' | 'facility_limited'; facilityIds?: string[] }
+  ): Promise<number> {
     const knex = this.db.connection;
+    try {
+      const q = knex('notifications')
+        .where({ user_id: userId, is_read: false, is_deleted: false })
+        .whereIn('priority', ['high', 'urgent']);
 
-    // Build facility filter
-    let facilityFilter = '';
-    let facilityParams: string[] = [];
-    if (scope.type === 'facility_limited' && scope.facilityIds && scope.facilityIds.length > 0) {
-      facilityFilter = 'AND f.id IN (?)';
-      facilityParams = [scope.facilityIds.join(',')];
+      if (scope.type === 'facility_limited' && scope.facilityIds && scope.facilityIds.length > 0) {
+        q.andWhere(function () {
+          this.whereNull('facility_id').orWhereIn('facility_id', scope.facilityIds!);
+        });
+      }
+
+      const rows = await q.count('* as c');
+      const raw = (rows[0] as { c?: string | number })?.c;
+      return parseInt(String(raw ?? 0), 10) || 0;
+    } catch (e) {
+      logger.warn('countAlertNotifications failed:', e);
+      return 0;
+    }
+  }
+
+  private async calculateStats(
+    scope: { type: 'all' | 'facility_limited'; facilityIds?: string[] },
+    userId: string
+  ): Promise<GeneralStatsData> {
+    const knex = this.db.connection;
+    const ids = scope.type === 'facility_limited' ? scope.facilityIds?.filter(Boolean) ?? [] : [];
+
+    if (scope.type === 'facility_limited' && ids.length === 0) {
+      const open = await this.countAlertNotifications(userId, scope);
+      return {
+        ...this.emptyStats(),
+        alerts: { open },
+        lastUpdated: new Date().toISOString(),
+      };
     }
 
-    // Get facility statistics
-    const facilityStats = await knex.raw(`
+    const inList = ids.length ? ids.map(() => '?').join(',') : '';
+    const facilityFilter = ids.length ? `AND f.id IN (${inList})` : '';
+    const facilityParams = ids;
+
+    const deviceParams = ids.length ? [...ids, ...ids] : [];
+
+    const facilityStats = await knex.raw(
+      `
       SELECT 
         COUNT(*) as total,
-        SUM(CASE WHEN status = 'active' THEN 1 ELSE 0 END) as active,
-        SUM(CASE WHEN status = 'inactive' THEN 1 ELSE 0 END) as inactive,
-        SUM(CASE WHEN status = 'maintenance' THEN 1 ELSE 0 END) as maintenance
+        SUM(CASE WHEN f.status = 'active' THEN 1 ELSE 0 END) as active,
+        SUM(CASE WHEN f.status = 'inactive' THEN 1 ELSE 0 END) as inactive,
+        SUM(CASE WHEN f.status = 'maintenance' THEN 1 ELSE 0 END) as maintenance
       FROM facilities f
       WHERE 1=1 ${facilityFilter}
-    `, facilityParams);
+    `,
+      facilityParams
+    );
 
-    // Get device statistics (both access control and blulok devices)
-    const deviceStats = await knex.raw(`
+    const deviceCounts = await this.countEffectiveDeviceStats(ids);
+
+    const userJoin = ids.length
+      ? `JOIN user_facility_associations ufa ON u.id = ufa.user_id 
+           WHERE ufa.facility_id IN (${ids.map(() => '?').join(',')})`
+      : 'WHERE 1=1';
+
+    const userStats = await knex.raw(
+      `
       SELECT 
         COUNT(*) as total,
-        SUM(CASE WHEN devices.status = 'online' THEN 1 ELSE 0 END) as online,
-        SUM(CASE WHEN devices.status = 'offline' THEN 1 ELSE 0 END) as offline,
-        SUM(CASE WHEN devices.status = 'error' THEN 1 ELSE 0 END) as error,
-        SUM(CASE WHEN devices.status = 'maintenance' THEN 1 ELSE 0 END) as maintenance
-      FROM (
-        SELECT acd.status FROM access_control_devices acd
-        JOIN gateways g ON acd.gateway_id = g.id
-        JOIN facilities f ON g.facility_id = f.id
-        WHERE 1=1 ${facilityFilter}
-        UNION ALL
-        SELECT bd.device_status as status FROM blulok_devices bd
-        JOIN units u ON bd.unit_id = u.id
-        JOIN facilities f ON u.facility_id = f.id
-        WHERE 1=1 ${facilityFilter}
-      ) devices
-    `, facilityParams);
-
-    // Get user statistics
-    const userStats = await knex.raw(`
-      SELECT 
-        COUNT(*) as total,
-        SUM(CASE WHEN is_active = 1 THEN 1 ELSE 0 END) as active,
-        SUM(CASE WHEN is_active = 0 THEN 1 ELSE 0 END) as inactive
+        SUM(CASE WHEN u.is_active = 1 THEN 1 ELSE 0 END) as active,
+        SUM(CASE WHEN u.is_active = 0 THEN 1 ELSE 0 END) as inactive
       FROM users u
-      ${scope.type === 'facility_limited' && scope.facilityIds && scope.facilityIds.length > 0 
-        ? `JOIN user_facility_associations ufa ON u.id = ufa.user_id 
-           WHERE ufa.facility_id IN (?)` 
-        : 'WHERE 1=1'
-      }
-    `, scope.type === 'facility_limited' && scope.facilityIds ? [scope.facilityIds] : []);
+      ${userJoin}
+    `,
+      ids.length ? ids : []
+    );
 
-    // Get user role statistics
-    const roleStats = await knex.raw(`
+    const roleStats = await knex.raw(
+      `
       SELECT 
-        role,
+        u.role,
         COUNT(*) as count
       FROM users u
-      ${scope.type === 'facility_limited' && scope.facilityIds && scope.facilityIds.length > 0 
-        ? `JOIN user_facility_associations ufa ON u.id = ufa.user_id 
-           WHERE ufa.facility_id IN (?)` 
-        : 'WHERE 1=1'
-      }
-      GROUP BY role
-    `, scope.type === 'facility_limited' && scope.facilityIds ? [scope.facilityIds] : []);
+      ${userJoin}
+      GROUP BY u.role
+    `,
+      ids.length ? ids : []
+    );
 
-    // Process role statistics
     const byRole: Record<UserRole, number> = {
       [UserRole.TENANT]: 0,
       [UserRole.FACILITY_ADMIN]: 0,
@@ -225,49 +237,75 @@ export class GeneralStatsService {
       [UserRole.DEV_ADMIN]: 0,
     };
 
-    if (Array.isArray(roleStats)) {
-      roleStats.forEach((row: any) => {
-        if (row.role in byRole) {
-          byRole[row.role as UserRole] = parseInt(row.count) || 0;
-        }
-      });
+    for (const row of rowsFromMysqlRaw(roleStats)) {
+      if (row && row.role in byRole) {
+        byRole[row.role as UserRole] = parseInt(String(row.count), 10) || 0;
+      }
     }
 
-    // Extract data from the wrapped format
-    const facilityData = facilityStats[0]?.[0] || facilityStats[0] || {};
-    const deviceData = deviceStats[0]?.[0] || deviceStats[0] || {};
-    const userData = userStats[0]?.[0] || userStats[0] || {};
+    const facilityData = firstRowFromMysqlRaw(facilityStats);
+    const userData = firstRowFromMysqlRaw(userStats);
+
+    const openAlerts = await this.countAlertNotifications(userId, scope);
 
     return {
       facilities: {
-        total: parseInt(facilityData.total) || 0,
-        active: parseInt(facilityData.active) || 0,
-        inactive: parseInt(facilityData.inactive) || 0,
-        maintenance: parseInt(facilityData.maintenance) || 0,
+        total: parseInt(facilityData.total, 10) || 0,
+        active: parseInt(facilityData.active, 10) || 0,
+        inactive: parseInt(facilityData.inactive, 10) || 0,
+        maintenance: parseInt(facilityData.maintenance, 10) || 0,
       },
-      devices: {
-        total: parseInt(deviceData.total) || 0,
-        online: parseInt(deviceData.online) || 0,
-        offline: parseInt(deviceData.offline) || 0,
-        error: parseInt(deviceData.error) || 0,
-        maintenance: parseInt(deviceData.maintenance) || 0,
-      },
+      devices: deviceCounts,
       users: {
-        total: parseInt(userData.total) || 0,
-        active: parseInt(userData.active) || 0,
-        inactive: parseInt(userData.inactive) || 0,
+        total: parseInt(userData.total, 10) || 0,
+        active: parseInt(userData.active, 10) || 0,
+        inactive: parseInt(userData.inactive, 10) || 0,
         byRole,
       },
+      alerts: { open: openAlerts },
       lastUpdated: new Date().toISOString(),
     };
   }
 
-  /**
-   * Check if user can subscribe to general stats
-   */
   public canSubscribeToGeneralStats(userRole: UserRole): boolean {
-    return userRole === UserRole.ADMIN || 
-           userRole === UserRole.DEV_ADMIN || 
-           userRole === UserRole.FACILITY_ADMIN;
+    return (
+      userRole === UserRole.ADMIN ||
+      userRole === UserRole.DEV_ADMIN ||
+      userRole === UserRole.FACILITY_ADMIN ||
+      userRole === UserRole.MAINTENANCE
+    );
+  }
+
+  private async countEffectiveDeviceStats(facilityIds: string[]): Promise<GeneralStatsData['devices']> {
+    const deviceModel = new DeviceModel();
+    const enricher = DeviceReachabilityEnrichmentService.getInstance();
+    const scopeFilters =
+      facilityIds.length > 0 ? { facility_ids: facilityIds } : ({} as { facility_ids?: string[] });
+
+    const [blulokRows, accessRows] = await Promise.all([
+      deviceModel.findBluLokDevices(scopeFilters),
+      deviceModel.findAccessControlDevices(scopeFilters),
+    ]);
+
+    const enriched = [
+      ...(await enricher.enrichBluLokList(blulokRows)),
+      ...(await enricher.enrichAccessControlList(accessRows)),
+    ];
+
+    const counts = { total: 0, online: 0, offline: 0, error: 0, maintenance: 0 };
+    for (const row of enriched) {
+      counts.total += 1;
+      const status = effectiveStatusFromEnrichedRow(row);
+      if (status === 'online' || status === 'low_battery') {
+        counts.online += 1;
+      } else if (status === 'offline') {
+        counts.offline += 1;
+      } else if (status === 'error') {
+        counts.error += 1;
+      } else if (status === 'maintenance') {
+        counts.maintenance += 1;
+      }
+    }
+    return counts;
   }
 }

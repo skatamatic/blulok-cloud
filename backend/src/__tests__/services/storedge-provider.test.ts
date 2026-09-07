@@ -10,6 +10,11 @@ import { FMSProviderType, FMSAuthType } from '@/types/fms.types';
 // Mock fetch globally
 global.fetch = jest.fn();
 
+const emptyPagedUnits = () => ({
+  units: [] as unknown[],
+  meta: { pagination: { next_page: null as number | null } },
+});
+
 describe('StoredgeProvider', () => {
   let provider: StoredgeProvider;
   const facilityId = 'test-facility-123';
@@ -57,8 +62,8 @@ describe('StoredgeProvider', () => {
       
       expect(capabilities.supportsTenantSync).toBe(true);
       expect(capabilities.supportsUnitSync).toBe(true);
-      expect(capabilities.supportsWebhooks).toBe(false);
-      expect(capabilities.supportsRealtime).toBe(false);
+      expect(capabilities.supportsWebhooks).toBe(true);
+      expect(capabilities.supportsRealtime).toBe(true);
       expect(capabilities.supportsLeaseManagement).toBe(true);
       expect(capabilities.supportsPaymentIntegration).toBe(false);
       expect(capabilities.supportsBulkOperations).toBe(false);
@@ -76,7 +81,9 @@ describe('StoredgeProvider', () => {
       
       expect(result).toBe(true);
       expect(global.fetch).toHaveBeenCalledWith(
-        `${baseUrl}/v1/${facilityId}/units`,
+        expect.stringMatching(
+          new RegExp(`${baseUrl.replace(/\//g, '\\/')}/v1/${facilityId}/units\\?[^#]*page=1[^#]*per_page=1`)
+        ),
         expect.objectContaining({
           method: 'GET',
           headers: expect.objectContaining({
@@ -151,14 +158,15 @@ describe('StoredgeProvider', () => {
         ],
       };
 
+      const paginateNull = { meta: { pagination: { next_page: null as number | null } } };
       (global.fetch as jest.Mock)
         .mockResolvedValueOnce({
           ok: true,
-          json: async () => mockLedgersResponse,
+          json: async () => ({ ...mockLedgersResponse, ...paginateNull }),
         })
         .mockResolvedValueOnce({
           ok: true,
-          json: async () => mockTenantsResponse,
+          json: async () => ({ ...mockTenantsResponse, ...paginateNull }),
         });
 
       const tenants = await provider.fetchTenants();
@@ -188,20 +196,21 @@ describe('StoredgeProvider', () => {
       // Verify both API calls were made
       expect(global.fetch).toHaveBeenCalledTimes(2);
       expect(global.fetch).toHaveBeenCalledWith(
-        `${baseUrl}/v1/${facilityId}/ledgers/current`,
+        expect.stringContaining(`${baseUrl}/v1/${facilityId}/ledgers/current`),
         expect.any(Object)
       );
       expect(global.fetch).toHaveBeenCalledWith(
-        `${baseUrl}/v1/${facilityId}/tenants/current`,
+        expect.stringContaining(`${baseUrl}/v1/${facilityId}/tenants/current`),
         expect.any(Object)
       );
     });
 
     it('should handle tenant with no primary phone', async () => {
+      const endPage = { meta: { pagination: { next_page: null as number | null } } };
       (global.fetch as jest.Mock)
         .mockResolvedValueOnce({
           ok: true,
-          json: async () => ({ ledgers: [] }),
+          json: async () => ({ ledgers: [], ...endPage }),
         })
         .mockResolvedValueOnce({
           ok: true,
@@ -214,6 +223,7 @@ describe('StoredgeProvider', () => {
               phone_numbers: [],
               active: true,
             }],
+            ...endPage,
           }),
         });
 
@@ -224,10 +234,11 @@ describe('StoredgeProvider', () => {
     });
 
     it('should handle inactive tenants', async () => {
+      const endPage = { meta: { pagination: { next_page: null as number | null } } };
       (global.fetch as jest.Mock)
         .mockResolvedValueOnce({
           ok: true,
-          json: async () => ({ ledgers: [] }),
+          json: async () => ({ ledgers: [], ...endPage }),
         })
         .mockResolvedValueOnce({
           ok: true,
@@ -240,6 +251,7 @@ describe('StoredgeProvider', () => {
               phone_numbers: [],
               active: false,
             }],
+            ...endPage,
           }),
         });
 
@@ -247,6 +259,40 @@ describe('StoredgeProvider', () => {
 
       expect(tenants).toHaveLength(1);
       expect(tenants[0]?.status).toBe('inactive');
+    });
+
+    it('skips incomplete ledgers instead of throwing', async () => {
+      const endPage = { meta: { pagination: { next_page: null as number | null } } };
+      (global.fetch as jest.Mock)
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({
+            ledgers: [
+              { tenant: null, unit: { id: 'unit-orphan' } },
+              { tenant: { id: 'tenant-1' }, unit: null },
+              { tenant: { id: 'tenant-1' }, unit: { id: 'unit-101' } },
+            ],
+            ...endPage,
+          }),
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({
+            tenants: [{
+              id: 'tenant-1',
+              email: 'john@example.com',
+              first_name: 'John',
+              last_name: 'Smith',
+              phone_numbers: [],
+              active: true,
+            }],
+            ...endPage,
+          }),
+        });
+
+      const tenants = await provider.fetchTenants();
+      expect(tenants).toHaveLength(1);
+      expect(tenants[0]?.unitIds).toEqual(['unit-101']);
     });
   });
 
@@ -277,7 +323,10 @@ describe('StoredgeProvider', () => {
 
       (global.fetch as jest.Mock).mockResolvedValueOnce({
         ok: true,
-        json: async () => mockUnitsResponse,
+        json: async () => ({
+          ...mockUnitsResponse,
+          meta: { pagination: { next_page: null as number | null } },
+        }),
       });
 
       const units = await provider.fetchUnits();
@@ -309,15 +358,40 @@ describe('StoredgeProvider', () => {
     it('should call correct API endpoint', async () => {
       (global.fetch as jest.Mock).mockResolvedValueOnce({
         ok: true,
-        json: async () => ({ units: [] }),
+        json: async () => ({
+          units: [],
+          meta: { pagination: { next_page: null as number | null } },
+        }),
       });
 
       await provider.fetchUnits();
 
       expect(global.fetch).toHaveBeenCalledWith(
-        `${baseUrl}/v1/${facilityId}/units`,
+        expect.stringContaining(`${baseUrl}/v1/${facilityId}/units`),
         expect.any(Object)
       );
+    });
+
+    it('should merge multiple pages of units', async () => {
+      (global.fetch as jest.Mock)
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({
+            units: [{ id: 'u1', name: '1', unit_type: { name: 't' }, size: '', status: 'vacant', price: 0 }],
+            meta: { pagination: { next_page: 2 } },
+          }),
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({
+            units: [{ id: 'u2', name: '2', unit_type: { name: 't' }, size: '', status: 'vacant', price: 0 }],
+            meta: { pagination: { next_page: null } },
+          }),
+        });
+
+      const units = await provider.fetchUnits();
+      expect(units).toHaveLength(2);
+      expect(units.map((u) => u.externalId)).toEqual(['u1', 'u2']);
     });
   });
 
@@ -346,7 +420,10 @@ describe('StoredgeProvider', () => {
         })
         .mockResolvedValueOnce({
           ok: true,
-          json: async () => mockLedgers,
+          json: async () => ({
+            ...mockLedgers,
+            meta: { pagination: { next_page: null as number | null } },
+          }),
         });
 
       const tenant = await provider.fetchTenant('tenant-1');
@@ -374,6 +451,39 @@ describe('StoredgeProvider', () => {
       const tenant = await provider.fetchTenant('nonexistent');
 
       expect(tenant).toBeNull();
+    });
+
+    it('unwraps a Storable { tenant } envelope', async () => {
+      (global.fetch as jest.Mock)
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({
+            tenant: {
+              id: 'tenant-1',
+              email: 'john@example.com',
+              first_name: 'John',
+              last_name: 'Smith',
+              phone_numbers: [{ number: '555-1234', primary: true }],
+              active: true,
+            },
+          }),
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({
+            ledgers: [{ tenant: { id: 'tenant-1' }, unit: { id: 'unit-101' } }],
+            meta: { pagination: { next_page: null as number | null } },
+          }),
+        });
+
+      const tenant = await provider.fetchTenant('tenant-1');
+
+      expect(tenant).toMatchObject({
+        externalId: 'tenant-1',
+        email: 'john@example.com',
+        firstName: 'John',
+        lastName: 'Smith',
+      });
     });
   });
 
@@ -421,6 +531,41 @@ describe('StoredgeProvider', () => {
       expect(unit).toBeNull();
     });
 
+    it('unwraps a Storable { unit } envelope', async () => {
+      (global.fetch as jest.Mock).mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          unit: {
+            id: 'f1c0acb8-3cd8-49ac-8cf7-102eaac7633a',
+            name: 'WS-01',
+            unit_type: { name: 'Wine Storage' },
+            size: '5x5',
+            status: 'occupied',
+            current_tenant_id: 'tenant-1',
+            price: 75,
+          },
+        }),
+      });
+
+      const unit = await provider.fetchUnit('f1c0acb8-3cd8-49ac-8cf7-102eaac7633a');
+
+      expect(unit).toMatchObject({
+        externalId: 'f1c0acb8-3cd8-49ac-8cf7-102eaac7633a',
+        unitNumber: 'WS-01',
+        unitType: 'Wine Storage',
+        status: 'occupied',
+      });
+    });
+
+    it('returns null when the unit payload has no id', async () => {
+      (global.fetch as jest.Mock).mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ unit: { unit_type: { name: '' } } }),
+      });
+
+      await expect(provider.fetchUnit('unit-101')).resolves.toBeNull();
+    });
+
     it('should map vacant status to available', async () => {
       const mockUnit = {
         id: 'unit-102',
@@ -443,32 +588,11 @@ describe('StoredgeProvider', () => {
     });
   });
 
-  describe('Webhook Support', () => {
-    it('should return false for webhook validation (not supported)', async () => {
-      const payload: any = { event_type: 'lease.started', data: {} };
-      const signature = 'test-signature';
-
-      const isValid = await provider.validateWebhook(payload, signature);
-
-      expect(isValid).toBe(false);
-    });
-
-    it('should return placeholder webhook payload', async () => {
-      const rawPayload = { event_type: 'tenant.created', data: {} };
-
-      const parsed = await provider.parseWebhookPayload(rawPayload);
-
-      expect(parsed.event_type).toBe('lease.started');
-      expect(parsed.timestamp).toBeDefined();
-      expect(parsed.data).toEqual(rawPayload);
-    });
-  });
-
   describe('OAuth 1.0a Authentication', () => {
     it('should include OAuth Authorization header in all requests', async () => {
       (global.fetch as jest.Mock).mockResolvedValueOnce({
         ok: true,
-        json: async () => ({ units: [] }),
+        json: async () => emptyPagedUnits(),
       });
 
       await provider.fetchUnits();
@@ -487,7 +611,7 @@ describe('StoredgeProvider', () => {
     it('should use HMAC-SHA1 signature method', async () => {
       (global.fetch as jest.Mock).mockResolvedValueOnce({
         ok: true,
-        json: async () => ({ units: [] }),
+        json: async () => emptyPagedUnits(),
       });
 
       await provider.fetchUnits();
@@ -502,11 +626,11 @@ describe('StoredgeProvider', () => {
       (global.fetch as jest.Mock)
         .mockResolvedValueOnce({
           ok: true,
-          json: async () => ({ units: [] }),
+          json: async () => emptyPagedUnits(),
         })
         .mockResolvedValueOnce({
           ok: true,
-          json: async () => ({ units: [] }),
+          json: async () => emptyPagedUnits(),
         });
 
       await provider.fetchUnits();
@@ -531,9 +655,11 @@ describe('StoredgeProvider', () => {
         ok: false,
         status: 401,
         statusText: 'Unauthorized',
+        text: jest.fn().mockResolvedValue('Unauthorized'),
+        json: jest.fn().mockResolvedValue({}),
       });
 
-      await expect(provider.fetchUnits()).rejects.toThrow('HTTP 401');
+      await expect(provider.fetchUnits()).rejects.toThrow('HTTP 401: Unauthorized');
     });
 
     it('should handle network errors', async () => {
@@ -558,13 +684,13 @@ describe('StoredgeProvider', () => {
     it('should use correct facility ID in API paths', async () => {
       (global.fetch as jest.Mock).mockResolvedValueOnce({
         ok: true,
-        json: async () => ({ units: [] }),
+        json: async () => emptyPagedUnits(),
       });
 
       await provider.fetchUnits();
 
       expect(global.fetch).toHaveBeenCalledWith(
-        `${baseUrl}/v1/${facilityId}/units`,
+        expect.stringContaining(`${baseUrl}/v1/${facilityId}/units`),
         expect.any(Object)
       );
     });
@@ -577,7 +703,10 @@ describe('StoredgeProvider', () => {
         })
         .mockResolvedValueOnce({
           ok: true,
-          json: async () => ({ ledgers: [] }),
+          json: async () => ({
+            ledgers: [],
+            meta: { pagination: { next_page: null as number | null } },
+          }),
         });
 
       await provider.fetchTenant('tenant-123');
@@ -586,6 +715,109 @@ describe('StoredgeProvider', () => {
         `${baseUrl}/v1/${facilityId}/tenants/tenant-123`,
         expect.any(Object)
       );
+    });
+  });
+
+  describe('Webhook parsing and validation', () => {
+    const webhookSecret = 'test-webhook-secret';
+
+    beforeEach(() => {
+      const config = {
+        providerType: FMSProviderType.STOREDGE,
+        baseUrl,
+        auth: {
+          type: FMSAuthType.OAUTH1,
+          credentials: { consumerKey, consumerSecret },
+        },
+        features: {
+          supportsTenantSync: true,
+          supportsUnitSync: true,
+          supportsWebhooks: true,
+          supportsRealtime: true,
+        },
+        syncSettings: {
+          autoAcceptChanges: false,
+          webhookSecret,
+        },
+        customSettings: { facilityId },
+      };
+      provider = new StoredgeProvider(facilityId, config);
+    });
+
+    it('parses tenant.created CloudEvent envelope', async () => {
+      const envelope = {
+        id: 'evt-1',
+        time: '2024-01-16T19:10:07Z',
+        type: 'com.storedge.tenant.created.v1',
+        body: {
+          facility_id: facilityId,
+          tenant_id: 'tenant-abc',
+          first_name: 'Jane',
+          last_name: 'Doe',
+          email: 'jane@example.com',
+        },
+      };
+
+      const parsed = await provider.parseWebhookPayload(envelope);
+      expect(parsed.externalEventId).toBe('evt-1');
+      expect(parsed.event_type).toBe('tenant.created');
+      expect(parsed.data.tenant_id).toBe('tenant-abc');
+    });
+
+    it('applies lead.moved-in as ledger.moved-in while keeping the original event type', async () => {
+      const parsed = await provider.parseWebhookPayload({
+        id: 'evt-lead-in',
+        time: '2024-01-18T22:18:40Z',
+        type: 'com.storedge.lead.moved-in.v1',
+        body: {
+          facility_id: facilityId,
+          tenant_id: 'tenant-abc',
+          unit_id: 'unit-xyz',
+          lead_id: 'lead-1',
+          ledger_id: null,
+        },
+      });
+
+      expect(parsed.event_type).toBe('lead.moved-in');
+      expect(parsed.applyAs).toBe('ledger.moved-in');
+      expect(parsed.disposition).toBe('apply');
+      expect(parsed.data.tenant_id).toBe('tenant-abc');
+    });
+
+    it('records unknown catalog events as ignored instead of throwing', async () => {
+      const parsed = await provider.parseWebhookPayload({
+        id: 'evt-contact',
+        type: 'com.storedge.contact.created.v1',
+        body: { facility_id: facilityId, tenant_id: 't1' },
+      });
+
+      expect(parsed.event_type).toBe('contact.created');
+      expect(parsed.disposition).toBe('ignored');
+      expect(parsed.applyAs).toBeUndefined();
+    });
+
+    it('rejects facility_id mismatch', async () => {
+      await expect(
+        provider.parseWebhookPayload({
+          id: 'evt-2',
+          type: 'com.storedge.tenant.created.v1',
+          body: { facility_id: 'other-facility', tenant_id: 't1' },
+        })
+      ).rejects.toThrow('Facility ID mismatch');
+    });
+
+    it('validates HMAC signature on raw body', () => {
+      const crypto = require('crypto');
+      const body = JSON.stringify({
+        id: 'evt-3',
+        type: 'com.storedge.unit.overlock-applied.v1',
+        body: { facility_id: facilityId, unit_id: 'u1' },
+      });
+      const raw = Buffer.from(body);
+      const sig = crypto.createHmac('sha256', webhookSecret).update(raw).digest('hex');
+
+      expect(provider.validateWebhookRawBody(raw, sig)).toBe(true);
+      expect(provider.validateWebhookRawBody(raw, 'bad-signature')).toBe(false);
     });
   });
 });

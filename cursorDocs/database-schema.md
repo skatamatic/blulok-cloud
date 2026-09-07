@@ -29,28 +29,55 @@ BluLok Cloud uses MySQL as the primary database with Knex.js as the query builde
 ```sql
 CREATE TABLE users (
   id VARCHAR(36) PRIMARY KEY DEFAULT (UUID()),
-  email VARCHAR(255) NOT NULL UNIQUE,
+  email VARCHAR(255) NULL,
+  login_identifier VARCHAR(255) NOT NULL UNIQUE,
+  phone_number VARCHAR(32) NULL,
   password_hash VARCHAR(255) NOT NULL,
   first_name VARCHAR(100) NOT NULL,
   last_name VARCHAR(100) NOT NULL,
   role ENUM('tenant', 'admin', 'facility_admin', 'maintenance', 'blulok_technician', 'dev_admin') NOT NULL DEFAULT 'tenant',
   is_active BOOLEAN NOT NULL DEFAULT true,
+  simplified_ui BOOLEAN NOT NULL DEFAULT false,
+  is_placeholder BOOLEAN NOT NULL DEFAULT false,
   last_login TIMESTAMP NULL,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   
   INDEX idx_email (email),
   INDEX idx_role (role),
-  INDEX idx_is_active (is_active)
+  INDEX idx_is_active (is_active),
+  INDEX idx_users_is_placeholder (is_placeholder)
 );
 ```
 
 **Purpose**: Store user authentication and profile information  
 **Key Features**: 
-- Email-based authentication
+- Unique `login_identifier` (exclusive email or exclusive phone). Email and phone are shareable contacts (migration `105_drop_user_contact_uniques`)
 - Role-based access control
 - Soft delete capability
 - Login tracking
+- Optional presentation-only `simplified_ui` for facility admins (not an API permission boundary; see [auth.md](./auth.md))
+- `is_placeholder` for FMS tenants synced without email/phone (non-loginable until upgraded; see [fms-webhooks.md](./fms-webhooks.md))
+
+### Deferred User Invites Table
+
+```sql
+CREATE TABLE deferred_user_invites (
+  id VARCHAR(36) PRIMARY KEY DEFAULT (UUID()),
+  user_id VARCHAR(36) NOT NULL UNIQUE,
+  facility_id VARCHAR(36) NOT NULL,
+  reason ENUM('policy_none', 'awaiting_blulok_device') NOT NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  resolved_at TIMESTAMP NULL,
+  resolved_reason VARCHAR(64) NULL,
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+  FOREIGN KEY (facility_id) REFERENCES facilities(id) ON DELETE CASCADE,
+  INDEX idx_deferred_invites_facility (facility_id),
+  INDEX idx_deferred_invites_pending (reason, resolved_at)
+);
+```
+
+**Purpose**: Track FMS tenants not invited at creation because of `invitePolicy=none` or awaiting a BluLok device (`invitePolicy=device_equipped`). Migration `102_create_deferred_user_invites.ts`. See [fms-webhooks.md](./fms-webhooks.md).
 
 ### Facilities Table
 
@@ -188,12 +215,32 @@ CREATE TABLE access_logs (
 - Supports system and user actions
 - Optimized for time-based queries
 
+### User Dashboard Pages Table
+
+```sql
+CREATE TABLE user_dashboard_pages (
+  id VARCHAR(36) PRIMARY KEY DEFAULT (UUID()),
+  user_id VARCHAR(36) NOT NULL,
+  name VARCHAR(100) NOT NULL DEFAULT 'Main',
+  page_order INTEGER NOT NULL DEFAULT 0,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+  INDEX idx_user_id (user_id),
+  INDEX idx_user_page_order (user_id, page_order)
+);
+```
+
+**Purpose**: Multi-page dashboard tabs per user (staff: up to 5 pages; tenants: single page via API).
+
 ### User Widget Layouts Table
 
 ```sql
 CREATE TABLE user_widget_layouts (
   id VARCHAR(36) PRIMARY KEY DEFAULT (UUID()),
   user_id VARCHAR(36) NOT NULL,
+  page_id VARCHAR(36) NOT NULL,
   widget_id VARCHAR(100) NOT NULL,
   widget_type VARCHAR(50) NOT NULL,
   layout_config JSON NOT NULL,
@@ -203,20 +250,21 @@ CREATE TABLE user_widget_layouts (
   updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   
   FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
-  UNIQUE KEY unique_user_widget (user_id, widget_id),
+  FOREIGN KEY (page_id) REFERENCES user_dashboard_pages(id) ON DELETE CASCADE,
+  UNIQUE KEY unique_user_page_widget (user_id, page_id, widget_id),
   INDEX idx_user_id (user_id),
+  INDEX idx_user_page_display_order (user_id, page_id, display_order),
   INDEX idx_widget_type (widget_type),
-  INDEX idx_is_visible (is_visible),
-  INDEX idx_display_order (display_order)
+  INDEX idx_is_visible (is_visible)
 );
 ```
 
-**Purpose**: Store personalized widget layouts for each user  
+**Purpose**: Store personalized widget layouts per dashboard page  
 **Key Features**:
-- Per-user dashboard customization
-- Widget position and size persistence
+- Per-page widget instances (same widget type allowed on different pages with distinct `widget_id`)
+- Widget position and size persistence (`layout_config` includes `size` enum and grid `position`)
 - Visibility control for individual widgets
-- Display order management
+- Display order within a page
 
 ### Default Widget Templates Table
 
@@ -243,6 +291,267 @@ CREATE TABLE default_widget_templates (
 - Role-based widget availability
 - Default layout configurations
 - Size constraint definitions
+
+### Saved Dashboards Table
+
+```sql
+CREATE TABLE saved_dashboards (
+  id VARCHAR(36) PRIMARY KEY DEFAULT (UUID()),
+  name VARCHAR(100) NOT NULL UNIQUE,
+  description TEXT NULL,
+  snapshot JSON NOT NULL,
+  page_count INT NOT NULL DEFAULT 0,
+  widget_count INT NOT NULL DEFAULT 0,
+  created_by VARCHAR(36) NOT NULL,
+  updated_by VARCHAR(36) NOT NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+
+  FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE RESTRICT,
+  FOREIGN KEY (updated_by) REFERENCES users(id) ON DELETE RESTRICT,
+  INDEX idx_name (name),
+  INDEX idx_created_by (created_by),
+  INDEX idx_updated_at (updated_at)
+);
+```
+
+**Purpose**: Org-wide named dashboard templates (admin/dev_admin library).  
+**Snapshot shape**: `{ version: 1, pages: DashboardPagePayload[] }` — same structure as `POST /widget-layouts`.
+
+### Dashboard Assignments Table
+
+```sql
+CREATE TABLE dashboard_assignments (
+  id VARCHAR(36) PRIMARY KEY DEFAULT (UUID()),
+  saved_dashboard_id VARCHAR(36) NOT NULL,
+  scope ENUM('global', 'facility', 'user') NOT NULL,
+  facility_id VARCHAR(36) NULL,
+  user_id VARCHAR(36) NULL,
+  target_role ENUM('tenant','admin','facility_admin','maintenance','blulok_technician','dev_admin') NOT NULL,
+  priority INT NOT NULL DEFAULT 0,
+  created_by VARCHAR(36) NOT NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+
+  FOREIGN KEY (saved_dashboard_id) REFERENCES saved_dashboards(id) ON DELETE CASCADE,
+  FOREIGN KEY (facility_id) REFERENCES facilities(id) ON DELETE CASCADE,
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+  FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE RESTRICT
+);
+
+-- Scope consistency (MySQL 8+ CHECK, migration 065)
+-- global: facility_id and user_id NULL
+-- facility: user_id NULL; facility_id may be NULL (= all-facilities aggregate view)
+-- user: user_id required; facility_id NULL
+-- Dedup via generated scope_entity_id + UNIQUE(saved_dashboard_id, target_role, scope, scope_entity_id)
+-- scope_entity_id for facility scope uses COALESCE(facility_id, '00000000-0000-0000-0000-000000000000')
+```
+
+**Purpose**: Role/scope dashboard template assignments (user > facility > global hierarchy). Managed in System Settings → Dashboards → Assignments.
+
+### Notifications Table
+
+```sql
+CREATE TABLE notifications (
+  id VARCHAR(36) PRIMARY KEY,
+  user_id VARCHAR(36) NOT NULL,
+  notification_type ENUM('access_granted', 'access_denied', 'device_registered', 
+    'password_reset', 'unit_assigned', 'unit_unassigned', 'system_alert', 
+    'maintenance_alert', 'security_alert', 'general') NOT NULL,
+  title VARCHAR(255) NOT NULL,
+  message TEXT NOT NULL,
+  priority ENUM('low', 'normal', 'high', 'urgent') DEFAULT 'normal',
+  is_read BOOLEAN DEFAULT FALSE,
+  read_at DATETIME,
+  reference_type VARCHAR(50),
+  reference_id VARCHAR(36),
+  facility_id VARCHAR(36),
+  metadata JSON,
+  expires_at DATETIME,
+  is_deleted BOOLEAN DEFAULT FALSE,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+  FOREIGN KEY (facility_id) REFERENCES facilities(id) ON DELETE SET NULL,
+  
+  INDEX idx_notifications_user_unread (user_id, is_read, is_deleted),
+  INDEX idx_notifications_user_type (user_id, notification_type),
+  INDEX idx_notifications_user_created (user_id, created_at),
+  INDEX idx_notifications_facility (facility_id),
+  INDEX idx_notifications_expires (expires_at),
+  INDEX idx_notifications_reference (reference_type, reference_id)
+);
+```
+
+**Purpose**: Store user notifications with read receipt support  
+**Key Features**:
+- Flexible notification types for various system events
+- Read receipt tracking with timestamp
+- Priority levels for UI treatment
+- Reference linking to related entities (units, devices, etc.)
+- Facility-scoped notifications
+- Soft delete support
+- Automatic expiration support
+
+**Query Efficiency**:
+- Model enforces `DEFAULT_LIMIT=50`, `MAX_LIMIT=100` on all `find()` queries as a safety net
+- `markAsRead()` accepts pre-fetched notification to avoid redundant SELECT after UPDATE (2 queries instead of 3)
+- `markMultipleAsRead()` uses single `WHERE IN` UPDATE -- no per-row queries
+- `markAllAsRead()` uses single filtered UPDATE -- no per-row queries
+- `findByIds()` uses single `WHERE IN` SELECT for batch lookups (avoids N+1 in mark-multiple flow)
+- `count()` strips pagination/sort params before executing
+- `getUserNotifications()` runs `find`, `count`, `getUnreadCount` in parallel via `Promise.all`
+- All queries default to `ORDER BY created_at DESC` (newest first)
+
+### Activity Logs Table
+
+```sql
+CREATE TABLE activity_logs (
+  id VARCHAR(36) PRIMARY KEY,
+  entity_type ENUM('unit', 'device', 'facility', 'user', 'gateway') NOT NULL,
+  entity_id VARCHAR(36) NOT NULL,
+  activity_type ENUM('lock', 'unlock', 'locking', 'unlocking', 'access_attempt',
+    'status_change', 'error', 'maintenance_start', 'maintenance_end',
+    'assignment_change', 'configuration_change', 'connection_change', 'general') NOT NULL,
+  title VARCHAR(255) NOT NULL,
+  description TEXT,
+  actor_type ENUM('user', 'system', 'device', 'gateway') NOT NULL,
+  actor_id VARCHAR(36),
+  actor_name VARCHAR(255),
+  result ENUM('success', 'failure', 'pending', 'unknown') DEFAULT 'success',
+  result_message VARCHAR(500),
+  facility_id VARCHAR(36),
+  unit_id VARCHAR(36),
+  device_id VARCHAR(36),
+  metadata JSON,
+  ip_address VARCHAR(45),
+  occurred_at DATETIME NOT NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  
+  FOREIGN KEY (facility_id) REFERENCES facilities(id) ON DELETE SET NULL,
+  FOREIGN KEY (unit_id) REFERENCES units(id) ON DELETE SET NULL,
+  
+  INDEX idx_activity_logs_entity (entity_type, entity_id),
+  INDEX idx_activity_logs_facility_time (facility_id, occurred_at),
+  INDEX idx_activity_logs_unit_time (unit_id, occurred_at),
+  INDEX idx_activity_logs_device_time (device_id, occurred_at),
+  INDEX idx_activity_logs_type (activity_type),
+  INDEX idx_activity_logs_actor (actor_type, actor_id),
+  INDEX idx_activity_logs_occurred (occurred_at),
+  INDEX idx_activity_logs_result (result)
+);
+```
+
+**Purpose**: Historical record of unit and device state changes  
+**Key Features**:
+- Comprehensive activity tracking for devices and units
+- Lock/unlock event logging
+- Access attempt tracking (granted/denied)
+- Actor tracking (who/what performed the action)
+- Result tracking for success/failure auditing
+- Facility, unit, and device scoping
+
+**Query Efficiency**:
+- Model enforces `DEFAULT_LIMIT=50`, `MAX_LIMIT=100` on all `find()` and `findWithContext()` queries
+- `findWithContext()` uses LEFT JOINs to enrich data in a single query (avoids N+1 for unit/device/facility names)
+- `count()` strips pagination/sort params before executing
+- Service layer runs `findWithContext` + `count` in parallel via `Promise.all`
+- Device activity lookup checks both BluLok and access control device types in parallel
+- All queries default to `ORDER BY occurred_at DESC` (newest first)
+- Rich context with metadata support
+- IP address logging for security audits
+
+### Access Code & Device Group Tables
+
+```sql
+CREATE TABLE device_groups (
+  id VARCHAR(36) PRIMARY KEY DEFAULT (UUID()),
+  facility_id VARCHAR(36) NOT NULL,
+  group_type ENUM('zone', 'access_code') NOT NULL DEFAULT 'zone', -- deprecated; unified access groups
+  is_default BOOLEAN NOT NULL DEFAULT false,
+  access_code_current_code VARCHAR(8) NULL,
+  access_code_current_valid_from DATETIME NULL,
+  access_code_current_valid_until DATETIME NULL,
+  name VARCHAR(255) NOT NULL,
+  description TEXT,
+  settings JSON,
+  metadata JSON,
+  is_active BOOLEAN NOT NULL DEFAULT true,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  FOREIGN KEY (facility_id) REFERENCES facilities(id) ON DELETE CASCADE,
+  INDEX idx_device_groups_facility_id (facility_id),
+  INDEX idx_device_groups_facility_default (facility_id, is_default),
+  INDEX idx_device_groups_facility_type_active (facility_id, group_type, is_active),
+  INDEX idx_device_groups_access_code_current_state (facility_id, group_type, is_active, access_code_current_valid_until)
+);
+
+CREATE TABLE device_group_members (
+  id VARCHAR(36) PRIMARY KEY DEFAULT (UUID()),
+  group_id VARCHAR(36) NOT NULL,
+  device_id VARCHAR(36) NOT NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (group_id) REFERENCES device_groups(id) ON DELETE CASCADE,
+  FOREIGN KEY (device_id) REFERENCES access_control_devices(id) ON DELETE CASCADE,
+  UNIQUE KEY uniq_device_group_member (group_id, device_id),
+  INDEX idx_device_group_members_device (device_id)
+);
+
+CREATE TABLE access_code_configs (
+  id VARCHAR(36) PRIMARY KEY DEFAULT (UUID()),
+  facility_id VARCHAR(36) NOT NULL,
+  is_enabled BOOLEAN NOT NULL DEFAULT false,
+  digit_count INT NOT NULL DEFAULT 6,
+  rotation_interval_hours INT NOT NULL DEFAULT 24,
+  rotation_hour INT NOT NULL DEFAULT 0,
+  rotation_minute INT NOT NULL DEFAULT 0,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  FOREIGN KEY (facility_id) REFERENCES facilities(id) ON DELETE CASCADE,
+  UNIQUE KEY uniq_access_code_config_facility (facility_id)
+);
+
+CREATE TABLE access_codes (
+  id VARCHAR(36) PRIMARY KEY DEFAULT (UUID()),
+  facility_id VARCHAR(36) NOT NULL,
+  scope_type ENUM('device_group', 'device') NOT NULL,
+  scope_id VARCHAR(36) NULL,
+  schedule_id VARCHAR(36) NULL,
+  code VARCHAR(8) NOT NULL,
+  valid_from DATETIME NOT NULL,
+  valid_until DATETIME NOT NULL,
+  is_active BOOLEAN NOT NULL DEFAULT true,
+  generated_by ENUM('system', 'admin') NOT NULL DEFAULT 'system',
+  set_by_user_id VARCHAR(36) NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  FOREIGN KEY (facility_id) REFERENCES facilities(id) ON DELETE CASCADE,
+  FOREIGN KEY (schedule_id) REFERENCES schedules(id) ON DELETE SET NULL,
+  FOREIGN KEY (set_by_user_id) REFERENCES users(id) ON DELETE SET NULL,
+  INDEX idx_access_codes_active_lookup (facility_id, scope_type, is_active, valid_until),
+  INDEX idx_access_codes_scope (scope_type, scope_id),
+  INDEX idx_access_codes_scope_schedule_active_valid (facility_id, scope_type, scope_id, schedule_id, is_active, valid_until)
+);
+```
+
+**Access-code invariants**:
+- Group code is first-class group state (`device_groups.access_code_current_*`) and is updated whenever a group-scoped code is created/rotated/manual-set.
+- Each facility has exactly one protected default access group (`is_default=true`). New access-control devices are auto-assigned there until placed in a specific group.
+- Access-control devices in an active `access_code` group cannot receive device-scoped manual overrides.
+- Effective resolution always prefers active group-scoped code(s) for grouped devices to keep members code-synchronized.
+- Schedule-scoped and unscheduled codes can coexist for the same group/device scope; active uniqueness is enforced per `(facility_id, scope_type, scope_id, schedule_id)`.
+- User-facing access-code retrieval filters by the caller's assigned `user_facility_schedules.schedule_id` (with unscheduled fallback for backward compatibility).
+
+**Access-control extension**:
+
+```sql
+ALTER TABLE access_control_devices
+  ADD COLUMN access_methods JSON NOT NULL;
+```
+
+`access_methods` stores allowed methods per access control device (`app`, `keypad`, `fob`), enabling feature-based hardware behavior and RBAC-scoped UI management.
 
 ## Migration Best Practices
 

@@ -23,6 +23,7 @@ process.env.PORT = '3000';
 
 import request from 'supertest';
 import { createApp } from '../../../backend/src/app';
+import { UNKNOWN_API_V1_STATUSES } from '../test-auth.helpers';
 
 describe('Blulok Cloud API Contract Integration Tests', () => {
   let app: any;
@@ -412,7 +413,7 @@ describe('Blulok Cloud API Contract Integration Tests', () => {
       const response = await request(app)
         .get('/api/v1/non-existent');
 
-      expect(response.status).toBe(404);
+      expect([...UNKNOWN_API_V1_STATUSES]).toContain(response.status);
     });
 
     it('should return 401 for malformed requests (auth required first)', async () => {

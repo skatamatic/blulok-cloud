@@ -107,6 +107,67 @@ describe('FMS RBAC Security Tests', () => {
       });
     });
 
+    describe('GET /api/v1/fms/config - List Configurations', () => {
+      it('should allow ADMIN to list FMS configs', async () => {
+        const response = await request(app)
+          .get('/api/v1/fms/config')
+          .set('Authorization', `Bearer ${testData.users.admin.token}`);
+
+        expect(response.status).toBe(200);
+        expect(response.body).toHaveProperty('success', true);
+        expect(Array.isArray(response.body.configs)).toBe(true);
+      });
+
+      it('should allow DEV_ADMIN to list FMS configs', async () => {
+        const response = await request(app)
+          .get('/api/v1/fms/config')
+          .set('Authorization', `Bearer ${testData.users.devAdmin.token}`);
+
+        expect(response.status).toBe(200);
+        expect(response.body).toHaveProperty('success', true);
+        expect(Array.isArray(response.body.configs)).toBe(true);
+      });
+
+      it('should allow FACILITY_ADMIN to list FMS configs for their facilities', async () => {
+        const response = await request(app)
+          .get('/api/v1/fms/config')
+          .set('Authorization', `Bearer ${testData.users.facilityAdmin.token}`);
+
+        expect(response.status).toBe(200);
+        expect(response.body).toHaveProperty('success', true);
+        expect(Array.isArray(response.body.configs)).toBe(true);
+        for (const config of response.body.configs) {
+          expect(testData.users.facilityAdmin.facilityIds).toContain(config.facility_id);
+        }
+      });
+
+      it('should accept webhooks_only query param', async () => {
+        const response = await request(app)
+          .get('/api/v1/fms/config?webhooks_only=true')
+          .set('Authorization', `Bearer ${testData.users.admin.token}`);
+
+        expect(response.status).toBe(200);
+        for (const config of response.body.configs) {
+          expect(config.config?.features?.supportsWebhooks).toBe(true);
+        }
+      });
+
+      it('should deny TENANT from listing FMS configs', async () => {
+        const response = await request(app)
+          .get('/api/v1/fms/config')
+          .set('Authorization', `Bearer ${testData.users.tenant.token}`);
+
+        expect(response.status).toBe(403);
+        expect(response.body).toHaveProperty('success', false);
+      });
+
+      it('should deny unauthenticated requests', async () => {
+        const response = await request(app).get('/api/v1/fms/config');
+
+        expect(response.status).toBe(401);
+      });
+    });
+
     describe('GET /api/v1/fms/config/:facilityId - Get Configuration', () => {
       it('should allow ADMIN to get FMS config for any facility', async () => {
         const response = await request(app)

@@ -11,7 +11,9 @@ describe('Battery Widget Integration Tests', () => {
   let webSocketService: WebSocketService;
   let mockUnitsService: jest.Mocked<UnitsService>;
 
-  beforeAll(() => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+
     // Set up mocks
     mockUnitsService = {
       getUnits: jest.fn(),
@@ -27,10 +29,6 @@ describe('Battery Widget Integration Tests', () => {
     
     batteryManager = new BatterySubscriptionManager();
     webSocketService = WebSocketService.getInstance();
-  });
-
-  beforeEach(() => {
-    jest.clearAllMocks();
   });
 
   describe('Battery Subscription Manager Integration', () => {
@@ -58,7 +56,6 @@ describe('Battery Widget Integration Tests', () => {
       ];
 
       mockUnitsService.getUnits
-        .mockResolvedValueOnce({ units: mockUnits, total: 1 })
         .mockResolvedValueOnce({ units: mockUnits, total: 1 });
 
       // Test subscription
@@ -145,8 +142,7 @@ describe('Battery Widget Integration Tests', () => {
       ];
 
       mockUnitsService.getUnits
-        .mockResolvedValueOnce({ units: mockUnits, total: 4 })
-        .mockResolvedValueOnce({ units: [mockUnits[0], mockUnits[1]], total: 2 });
+        .mockResolvedValueOnce({ units: mockUnits, total: 4 });
 
       const mockWs = { send: jest.fn(), readyState: 1 } as any;
       const mockClient = { 
@@ -168,7 +164,6 @@ describe('Battery Widget Integration Tests', () => {
 
     it('should handle empty battery data gracefully', async () => {
       mockUnitsService.getUnits
-        .mockResolvedValueOnce({ units: [], total: 0 })
         .mockResolvedValueOnce({ units: [], total: 0 });
 
       const mockWs = { send: jest.fn(), readyState: 1 } as any;
@@ -202,9 +197,8 @@ describe('Battery Widget Integration Tests', () => {
 
       await (batteryManager as any).sendInitialData(mockWs, 'test-sub', mockClient);
 
-      expect(mockWs.send).toHaveBeenCalledWith(
-        expect.stringContaining('error')
-      );
+      const sentData = JSON.parse(mockWs.send.mock.calls[0][0]);
+      expect(sentData.type).toBe('error');
     });
 
     it('should handle WebSocket connection issues', async () => {

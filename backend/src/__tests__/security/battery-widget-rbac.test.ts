@@ -9,7 +9,9 @@ describe('Battery Widget RBAC Security Tests', () => {
   let batteryManager: BatterySubscriptionManager;
   let mockUnitsService: jest.Mocked<UnitsService>;
 
-  beforeAll(() => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+
     // Set up mocks
     mockUnitsService = {
       getUnits: jest.fn(),
@@ -24,10 +26,6 @@ describe('Battery Widget RBAC Security Tests', () => {
     (UnitsService.getInstance as jest.Mock).mockReturnValue(mockUnitsService);
     
     batteryManager = new BatterySubscriptionManager();
-  });
-
-  beforeEach(() => {
-    jest.clearAllMocks();
   });
 
   describe('Battery Widget Data Access Control - Positive Tests', () => {
@@ -287,9 +285,8 @@ describe('Battery Widget RBAC Security Tests', () => {
       await (batteryManager as any).sendInitialData(mockWs, 'test-sub', mockClient);
 
       // Should send error message
-      expect(mockWs.send).toHaveBeenCalledWith(
-        expect.stringContaining('error')
-      );
+      const sentData = JSON.parse(mockWs.send.mock.calls[0][0]);
+      expect(sentData.type).toBe('error');
     });
   });
 
@@ -318,9 +315,6 @@ describe('Battery Widget RBAC Security Tests', () => {
 
       // Verify UnitsService was called with tenant role
       expect(mockUnitsService.getUnits).toHaveBeenCalledWith(tenantId, UserRole.TENANT);
-      expect(mockUnitsService.getUnits).toHaveBeenCalledWith(tenantId, UserRole.TENANT, { 
-        battery_threshold: 20 
-      });
 
       // Verify only assigned units are in the response
       const sentData = JSON.parse(mockWs.send.mock.calls[0][0]);
@@ -352,9 +346,6 @@ describe('Battery Widget RBAC Security Tests', () => {
 
       // Verify UnitsService was called with facility admin role
       expect(mockUnitsService.getUnits).toHaveBeenCalledWith(facilityAdminId, UserRole.FACILITY_ADMIN);
-      expect(mockUnitsService.getUnits).toHaveBeenCalledWith(facilityAdminId, UserRole.FACILITY_ADMIN, { 
-        battery_threshold: 20 
-      });
 
       // Verify only facility A units are in the response
       const sentData = JSON.parse(mockWs.send.mock.calls[0][0]);
@@ -385,9 +376,6 @@ describe('Battery Widget RBAC Security Tests', () => {
 
       // Verify UnitsService was called with maintenance role
       expect(mockUnitsService.getUnits).toHaveBeenCalledWith(maintenanceId, UserRole.MAINTENANCE);
-      expect(mockUnitsService.getUnits).toHaveBeenCalledWith(maintenanceId, UserRole.MAINTENANCE, { 
-        battery_threshold: 20 
-      });
 
       // Verify only assigned units are in the response
       const sentData = JSON.parse(mockWs.send.mock.calls[0][0]);
@@ -422,9 +410,6 @@ describe('Battery Widget RBAC Security Tests', () => {
 
         // Verify UnitsService was called with admin role
         expect(mockUnitsService.getUnits).toHaveBeenCalledWith(`${role}-user`, role);
-        expect(mockUnitsService.getUnits).toHaveBeenCalledWith(`${role}-user`, role, { 
-          battery_threshold: 20 
-        });
 
         // Verify all units are in the response
         const sentData = JSON.parse(mockWs.send.mock.calls[0][0]);
@@ -466,7 +451,7 @@ describe('Battery Widget RBAC Security Tests', () => {
       expect(sentData1.data.lowBatteryUnits[0].id).toBe('unit-1');
 
       // Test tenant 2 access
-      jest.clearAllMocks();
+      mockUnitsService.getUnits.mockReset();
       mockUnitsService.getUnits
         .mockResolvedValueOnce({ units: tenant2Units, total: 1 })
         .mockResolvedValueOnce({ units: tenant2Units.filter(u => u.battery_level <= 20), total: 1 });
@@ -520,7 +505,7 @@ describe('Battery Widget RBAC Security Tests', () => {
       expect(sentData1.data.lowBatteryUnits[0].facility_name).toBe('Facility A');
 
       // Test facility admin 2 access
-      jest.clearAllMocks();
+      mockUnitsService.getUnits.mockReset();
       mockUnitsService.getUnits
         .mockResolvedValueOnce({ units: facility2Units, total: 1 })
         .mockResolvedValueOnce({ units: facility2Units.filter(u => u.battery_level <= 20), total: 1 });
@@ -581,9 +566,8 @@ describe('Battery Widget RBAC Security Tests', () => {
       }, mockClient);
 
       // Should send error message
-      expect(mockWs.send).toHaveBeenCalledWith(
-        expect.stringContaining('error')
-      );
+      const sentData = JSON.parse(mockWs.send.mock.calls[0][0]);
+      expect(sentData.type).toBe('error');
 
       canSubscribeSpy.mockRestore();
     });
@@ -720,9 +704,6 @@ describe('Battery Widget RBAC Security Tests', () => {
       await (batteryManager as any).sendInitialData(mockWs, 'test-sub', mockClient);
 
       expect(mockUnitsService.getUnits).toHaveBeenCalledWith('user-1', UserRole.ADMIN);
-      expect(mockUnitsService.getUnits).toHaveBeenCalledWith('user-1', UserRole.ADMIN, { 
-        battery_threshold: 20 
-      });
     });
 
     it('should handle different battery thresholds correctly', async () => {
@@ -751,9 +732,7 @@ describe('Battery Widget RBAC Security Tests', () => {
 
         await (batteryManager as any).sendInitialData(mockWs, 'test-sub', mockClient);
 
-        expect(mockUnitsService.getUnits).toHaveBeenCalledWith('user-1', UserRole.ADMIN, { 
-          battery_threshold: 20 // The manager uses a fixed threshold of 20
-        });
+        expect(mockUnitsService.getUnits).toHaveBeenCalledWith('user-1', UserRole.ADMIN);
       }
     });
   });

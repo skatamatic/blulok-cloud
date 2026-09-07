@@ -1,5 +1,22 @@
 import { randomUUID } from 'crypto';
 import { Ed25519Service } from '@/services/crypto/ed25519.service';
+import type { RoutePassFacilitySchedule } from '@/services/passes/route-pass-schedules';
+import type { UserRole } from '@/types/auth.types';
+
+/**
+ * Canonical role string embedded in route pass JWTs: lowercase, underscore-separated
+ * (e.g. facility_admin, dev_admin). Matches {@link UserRole} enum values and normalizes
+ * legacy string forms from storage.
+ */
+export function normalizeRoutePassUserRole(role: UserRole | string): string {
+  const raw = typeof role === 'string' ? role : String(role);
+  return raw
+    .trim()
+    .toLowerCase()
+    .replace(/[\s-]+/g, '_')
+    .replace(/_+/g, '_')
+    .replace(/^_|_$/g, '');
+}
 
 /**
  * Route Pass Claims Interface
@@ -20,7 +37,12 @@ export interface RoutePassClaims {
   iss: 'BluCloud:Root';
   /** Subject claim - user ID this pass is issued for */
   sub: string;
-  /** Audience claim - array of lock/zone IDs this pass grants access to */
+  /**
+   * Audience claim - array of audience-scoped targets this pass grants access to
+   * Formats:
+   * - Direct access to a lock:         lock:{lockSerial}
+   * - Shared access via owner user:    shared_key:{primaryTenantId}:{lockSerial}
+   */
   aud: string[];
   /** Issued at timestamp (JWT standard claim) */
   iat?: number;
@@ -30,6 +52,15 @@ export interface RoutePassClaims {
   jti: string;
   /** Device-bound public key for challenge-response verification */
   device_pubkey: string;
+  /**
+   * User role for device-side policy (lowercase, underscore-separated; e.g. facility_admin).
+   */
+  user_role: string;
+  /**
+   * Per-facility compact schedules for time-based access (see route-pass-schedules).
+   * Omitted for global admin roles and when no enforceable windows exist.
+   */
+  schedules?: RoutePassFacilitySchedule[];
 }
 
 /**
@@ -63,7 +94,9 @@ export class PassesService {
    * @param params - Route pass issuance parameters
    * @param params.userId - ID of the user requesting access
    * @param params.devicePublicKey - Public key of the user's registered device
-   * @param params.audiences - Array of lock/zone IDs the user can access
+   * @param params.audiences - Array of access audiences (e.g. lock:{device_serial})
+   * @param params.schedules - Optional per-facility compact schedules (omitted for global admins)
+   * @param params.userRole - User role; embedded as normalized `user_role` claim for device policy
    * @returns Promise resolving to the signed Route Pass JWT string
    *
    * @throws Error if JWT signing fails or parameters are invalid
@@ -71,15 +104,27 @@ export class PassesService {
   public static async issueRoutePass(params: {
     userId: string;
     devicePublicKey: string;
-    audiences: string[]
+    audiences: string[];
+    schedules?: RoutePassFacilitySchedule[];
+    userRole: UserRole | string;
   }): Promise<string> {
+    const user_role = normalizeRoutePassUserRole(params.userRole);
+    if (!user_role) {
+      throw new Error('Route pass requires a non-empty user_role');
+    }
+
     const claims: RoutePassClaims = {
       iss: 'BluCloud:Root',
       sub: params.userId,
       aud: params.audiences,
       jti: randomUUID(),
       device_pubkey: params.devicePublicKey,
-    } as RoutePassClaims;
+      user_role,
+    };
+
+    if (params.schedules && params.schedules.length > 0) {
+      claims.schedules = params.schedules;
+    }
 
     return await Ed25519Service.signJwt(claims as any);
   }

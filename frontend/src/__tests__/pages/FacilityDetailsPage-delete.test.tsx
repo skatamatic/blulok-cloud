@@ -1,0 +1,201 @@
+import React from 'react';
+import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { BrowserRouter, Route, Routes } from 'react-router-dom';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import FacilityDetailsPage from '@/pages/FacilityDetailsPage';
+import { apiService } from '@/services/api.service';
+
+jest.mock('@/services/api.service');
+jest.mock('@/components/GoogleMaps/MapCard', () => ({
+  MapCard: () => <div data-testid="map-card" />,
+}));
+jest.mock('@/contexts/WebSocketContext', () => ({
+  useWebSocket: () => ({
+    subscribe: jest.fn(() => 'sub-id'),
+    unsubscribe: jest.fn(),
+  }),
+  WebSocketProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+}));
+jest.mock('@/contexts/AuthContext', () => ({
+  ...jest.requireActual('@/contexts/AuthContext'),
+  useAuth: () => ({
+    authState: {
+      user: { id: 'admin-1', role: 'admin', email: 'a@b.c', facilities: [] },
+      isAuthenticated: true,
+      isLoading: false,
+    },
+    login: jest.fn(),
+    logout: jest.fn(),
+  }),
+  AuthProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+}));
+
+jest.mock('@/contexts/ToastContext', () => ({
+  ...jest.requireActual('@/contexts/ToastContext'),
+  useToast: () => ({ addToast: jest.fn() }),
+}));
+
+const mockRefresh = jest.fn().mockResolvedValue(undefined);
+
+jest.mock('@/contexts/GlobalFacilityContext', () => ({
+  GlobalFacilityProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+  useGlobalFacility: () => ({
+    facilities: [],
+    selectedFacilityId: null,
+    selectedFacility: null,
+    setSelectedFacilityId: jest.fn(),
+    isLoading: false,
+    hasMultipleFacilities: false,
+    isAllFacilitiesSelected: false,
+    refresh: mockRefresh,
+  }),
+}));
+
+const mockApi = apiService as jest.Mocked<typeof apiService>;
+
+const renderWithProviders = (ui: React.ReactElement, initialPath = '/facilities/fac-1') => {
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  window.history.pushState({}, 'Test', initialPath);
+  return render(
+    <QueryClientProvider client={queryClient}>
+      <BrowserRouter>
+        <Routes>
+          <Route path="/facilities/:id" element={ui} />
+          <Route path="/dashboard" element={<div>Dashboard</div>} />
+        </Routes>
+      </BrowserRouter>
+    </QueryClientProvider>
+  );
+};
+
+describe('FacilityDetailsPage - Delete flow', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    mockApi.getFacility.mockResolvedValue({
+      facility: { id: 'fac-1', name: 'Test Facility', address: '123 St', stats: { totalUnits: 0, occupiedUnits: 0, devicesOnline: 0, devicesTotal: 0 } },
+      deviceHierarchy: {},
+    } as any);
+    mockApi.getUnits.mockResolvedValue({ units: [] } as any);
+    mockApi.getFacilityDeleteImpact.mockResolvedValue({ units: 2, devices: 3, gateways: 1 } as any);
+    mockApi.deleteFacility.mockResolvedValue({ success: true } as any);
+  });
+
+  it('shows Delete button for admin, loads impact, and deletes on confirm', async () => {
+    renderWithProviders(<FacilityDetailsPage />, '/facilities/fac-1?tab=facility');
+
+    await waitFor(() =>
+      expect(screen.getByRole('heading', { level: 1, name: 'Test Facility' })).toBeInTheDocument()
+    );
+
+    const deleteBtn = screen.getByRole('button', { name: /^delete facility$/i });
+    expect(deleteBtn).toBeInTheDocument();
+
+    fireEvent.click(deleteBtn);
+
+    await waitFor(() => expect(mockApi.getFacilityDeleteImpact).toHaveBeenCalledWith('fac-1'));
+
+    // Confirm modal content rendered
+    await waitFor(() => expect(screen.getByText(/This will permanently delete this facility/i)).toBeInTheDocument());
+
+    const confirmButtons = screen.getAllByRole('button', { name: /delete facility/i });
+    fireEvent.click(confirmButtons[confirmButtons.length - 1]);
+
+    await waitFor(() => expect(mockApi.deleteFacility).toHaveBeenCalledWith('fac-1'));
+    await waitFor(() => expect(mockRefresh).toHaveBeenCalled());
+    await waitFor(() => expect(screen.getByText('Dashboard')).toBeInTheDocument());
+  });
+});
+
+describe('FacilityDetailsPage - Devices and Units tabs', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    mockApi.getFacility.mockResolvedValue({
+      facility: {
+        id: 'fac-1',
+        name: 'Test Facility',
+        address: '123 St',
+        stats: { totalUnits: 10, occupiedUnits: 6, devicesOnline: 3, devicesTotal: 5 },
+      },
+      deviceHierarchy: { accessControlDevices: [], blulokDevices: [] },
+    } as any);
+    mockApi.getUnits.mockResolvedValue({ units: [], total: 0 } as any);
+    mockApi.getDevices.mockResolvedValue({ devices: [], total: 0 } as any);
+  });
+
+  it('loads paginated devices when Devices tab is opened', async () => {
+    mockApi.getDevices.mockResolvedValue({
+      devices: [
+        {
+          id: 'device-1',
+          device_category: 'blulok',
+          facility_id: 'fac-1',
+          unit_id: 'unit-1',
+          unit_number: '101',
+          device_serial: 'ABC123',
+          lock_status: 'locked',
+          device_status: 'online',
+        },
+      ],
+      total: 1,
+    } as any);
+
+    // Render with the Devices tab active via URL
+    renderWithProviders(<FacilityDetailsPage />, '/facilities/fac-1?tab=devices');
+
+    await waitFor(() => expect(screen.getByText('Test Facility')).toBeInTheDocument());
+
+    // Wait for API call and data to load
+    await waitFor(() => {
+      expect(mockApi.getDevices).toHaveBeenCalledWith(expect.objectContaining({
+        facility_id: 'fac-1',
+        limit: 30,
+        offset: 0,
+      }));
+    });
+
+    // Wait for search input
+    await waitFor(() => {
+      expect(screen.getByPlaceholderText('Search devices...')).toBeInTheDocument();
+    });
+
+    expect(await screen.findByText(/Showing 1 of 1 devices/i)).toBeInTheDocument();
+  });
+
+  it('loads paginated units when Units tab is opened', async () => {
+    const pagedUnits = [{
+      id: 'unit-1',
+      facility_id: 'fac-1',
+      unit_number: '101',
+      unit_type: 'Large',
+      status: 'available',
+    }];
+
+    mockApi.getUnits
+      .mockResolvedValueOnce({ units: [], total: 0 } as any) // initial facility load
+      .mockResolvedValueOnce({ units: pagedUnits, total: 4 } as any); // units tab load
+
+    // Render with the Units tab active via URL
+    renderWithProviders(<FacilityDetailsPage />, '/facilities/fac-1?tab=units');
+
+    await waitFor(() => expect(screen.getByText('Test Facility')).toBeInTheDocument());
+
+    // Wait for the Units tab API call - it should be the second call to getUnits
+    await waitFor(() => {
+      expect(mockApi.getUnits).toHaveBeenCalledTimes(2);
+      expect(mockApi.getUnits).toHaveBeenLastCalledWith(expect.objectContaining({
+        facility_id: 'fac-1',
+        limit: 20,
+        offset: 0,
+      }));
+    });
+
+    // Wait for the search input to appear
+    await waitFor(() => {
+      expect(screen.getByPlaceholderText('Search units...')).toBeInTheDocument();
+    });
+
+    expect(await screen.findByText(/Showing 1 of 4 units/i)).toBeInTheDocument();
+  });
+});
+
+

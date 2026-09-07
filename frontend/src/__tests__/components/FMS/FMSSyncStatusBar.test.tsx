@@ -1,5 +1,6 @@
 import React from 'react';
 import { render, screen, fireEvent, act } from '@testing-library/react';
+import '@/__tests__/mocks/websocket-provider-deps';
 import { FMSSyncStatusBar } from '@/components/FMS/FMSSyncStatusBar';
 import { FMSSyncProvider, SyncStep } from '@/contexts/FMSSyncContext';
 import { ThemeProvider } from '@/contexts/ThemeContext';
@@ -335,7 +336,7 @@ describe('Completed Sync State', () => {
 
     it('handles requestAnimationFrame errors gracefully', () => {
       const originalRAF = global.requestAnimationFrame;
-      global.requestAnimationFrame = jest.fn((_cb) => 0) as any;
+      global.requestAnimationFrame = jest.fn(() => 0) as any;
 
       mockUseFMSSyncReturn.syncState.currentStep = 'fetching';
       mockUseFMSSyncReturn.syncState.progressPercentage = 50;

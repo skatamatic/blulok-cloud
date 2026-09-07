@@ -50,6 +50,7 @@ A comprehensive facility management system with beautiful, intuitive interfaces 
 **Features:**
 - **Device type selection**: Access Control vs BluLok
 - **Facility integration** with gateway auto-assignment
+- **Admin/Dev Admin gateway assignment** for facilities without a gateway
 - **Access Control devices**: Gates, elevators, doors
 - **BluLok devices**: Smart lock assignment to units
 - **Real-time unit availability** based on facility selection
@@ -96,7 +97,7 @@ A comprehensive facility management system with beautiful, intuitive interfaces 
 ```
 Facility
 ├── Users (Facility Admins, Tenants)
-├── Gateway (Auto-created)
+├── Gateway (One per facility)
 ├── Access Control Devices
 │   ├── Gates, Elevators, Doors
 │   └── Relay Channel Assignment
@@ -110,7 +111,8 @@ Facility
 ### User Assignment Flow
 1. **Facility Creation** → Assign facility admins and tenants
 2. **Unit Creation** → Optional primary tenant assignment
-3. **Device Creation** → Automatic facility/gateway association
+3. **Gateway Assignment/Reassignment** → Admin/Dev Admin can assign an unassigned online gateway, or replace an existing facility gateway (previous gateway is moved back to unassigned pool)
+4. **Device Creation** → Automatic facility/gateway association
 4. **Tenant Management** → Add/remove primary/shared access
 
 ## Form Validation
@@ -152,7 +154,8 @@ Facility
 ### Smart Defaults
 - **Pre-filled facility** when creating from facility page
 - **Intelligent user filtering** based on roles
-- **Automatic gateway assignment** based on facility
+- **Facility-scoped gateway session** (mesh uses facility UUID in `AUTH`); **DB binding** of a gateway row to a facility is via **Swap / Recovery** (first install or RMA), auto-registration on connect, or admin `POST /gateways` — not a separate manual dropdown
+- **Swap / Recovery tab** in the Facility Gateway view: bind first-install hardware or run phased recovery when a replacement connects
 - **Status defaults** appropriate for entity type
 
 ## API Integration
@@ -165,11 +168,55 @@ Facility
 - `POST /api/v1/units` - Create unit
 - `POST /api/v1/units/:unitId/assign` - Assign tenant
 - `DELETE /api/v1/units/:unitId/assign/:tenantId` - Remove tenant
+- Unit Details tenant tab supports manual primary tenant assignment/change plus shared-access grant/revoke for `admin`, `dev_admin`, and `facility_admin` users (with facility scope enforced for facility admins)
 
 ### Device Management
 - `POST /api/v1/devices/access-control` - Create access control device
 - `POST /api/v1/devices/blulok` - Create BluLok device
 - `GET /api/v1/units?facility_id=:id` - Get facility units
+
+### Gateway Management
+- `GET /api/v1/gateways/facility/:facilityId/recovery/candidates` - Live swap candidates + active recovery summary (Swap / Recovery UI)
+- `POST /api/v1/gateways/:gatewayId/recovery/initiate` - Start phased swap recovery (and related recovery routes — see [Gateway Swap / Recovery — Operator Guide](./gateway-swap-recovery-operators-guide.md))
+- `POST /api/v1/internal/gateway/access-events` - Canonical gateway/app/keypad access-event ingestion path via WS `PROXY_REQUEST`
+
+#### Why mesh “facility id” ≠ automatic DB assignment
+
+- **Gateway app / inbound WebSocket**: Operators enter the facility UUID so `AUTH` on `/ws/gateway` uses a JWT scoped to that facility. That only establishes **which facility the session is allowed to represent** for realtime commands and proxy.
+- **Database**: Device sync, firmware, and internal routes resolve the **gateway row** with `GatewayModel.findByFacilityId` — i.e. **`gateways.facility_id`** must point at that facility. That link is **inventory**: which physical gateway **record** is bound to the facility.
+
+**Binding paths (no manual “replace gateway” dropdown):**
+
+1. **First install** — Unknown `AUTH.gatewayId` on a facility with **no** bound gateway can auto-register and bind (see [Gateway auto-registration](./gateway-auto-registration-design.md)). Operators complete binding via **Swap / Recovery** (bypass or full recovery as appropriate).
+2. **Replacement / RMA** — A second gateway connects as a **swap candidate** (live WS transport). Operators run **Swap / Recovery**; `finalizeRecovery` / bypass rebinds devices, sets the new gateway’s `facility_id`, and unbinds the old row.
+3. **Admin seed** — `POST /gateways` still creates rows directly when needed.
+
+**Summary:** Facility UUID in the mesh config handles **auth + routing** for the session; **Swap / Recovery finalize** (or first-install auto-bind) handles **which gateway row owns** that facility in the DB for devices and APIs.
+
+**Inbound WebSocket does not assign `gateways.facility_id` on every connect.** `AUTH` with `facilityId` scopes the socket. Auto-registration may create an **unbound** row (`facility_id = null`) as a swap candidate; binding happens only through recovery finalize/bypass or first-install auto-bind.
+
+**What *does* happen on connect (when a bound row already exists):** after `AUTH`, the backend runs `findByFacilityId(facilityId)` and, if it finds a gateway for that facility, updates **`status`** to **`online`** and **`last_seen`**. That is why the Gateway tab often flips to **online immediately** after you connect — you are seeing **liveness**, not first-time **inventory linking**. If no row is bound yet, use **Swap / Recovery** even when the WS session is authenticated.
+
+### Access Event Ingestion Contract (Canonical)
+
+Gateways/apps submit one or more events in a single request:
+
+- top-level: `facility_id`, `events[]`
+- each event: `event_id`, `occurred_at`, `facility_id`, `device_id`, `action`, `method`, `success`
+- optional context: `unit_id`, `actor`, `route_pass`, `keypad`, `metadata`, `denial_reason`, `reason_message`
+
+Representative event classes:
+
+- `access_granted` (app/mobile key success)
+- `access_denied` (explicit denial reason)
+- `admin_remote_open` (remote open initiated by admin/facility admin)
+- `keypad_attempt` (includes schedule/zone and redacted code context)
+
+### Canonical History Source
+
+- Access history APIs and realtime activity feeds now use `activity_logs` as canonical source for access events (`activity_type=access_attempt`).
+- Existing response shape is preserved for frontend/mobile compatibility (`logs`, `occurred_at`, `action`, `method`, `success`, `denial_reason`, contextual names).
+- Metadata remains additive and extensible for future credential and denial categories.
 
 ## Security Features
 

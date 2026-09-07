@@ -33,8 +33,8 @@ describe('SubscriptionRegistry', () => {
     } as any;
 
     // Replace the managers with mocks
-    (GeneralStatsSubscriptionManager as jest.Mock).mockImplementation(() => mockGeneralStatsManager);
-    (DashboardLayoutSubscriptionManager as jest.Mock).mockImplementation(() => mockDashboardLayoutManager);
+    (GeneralStatsSubscriptionManager as unknown as jest.Mock).mockImplementation(() => mockGeneralStatsManager);
+    (DashboardLayoutSubscriptionManager as unknown as jest.Mock).mockImplementation(() => mockDashboardLayoutManager);
     
     // Create the registry after mocking
     registry = new SubscriptionRegistry();

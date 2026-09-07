@@ -12,17 +12,28 @@ jest.mock('@/services/gateway/gateway-events.service', () => ({
 
 jest.mock('@/services/denylist.service', () => ({
   DenylistService: {
-    buildDenylistAdd: jest.fn().mockResolvedValue([{ cmd_type: 'DENYLIST_ADD', denylist_add: [] }, 'sig']),
-    buildDenylistRemove: jest.fn().mockResolvedValue([{ cmd_type: 'DENYLIST_REMOVE', denylist_remove: [] }, 'sig']),
+    // Mock JWT strings for denylist commands (inline to avoid hoisting issues)
+    buildDenylistAdd: jest.fn().mockResolvedValue('eyJhbGciOiJFZERTQSIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJCbHVDbG91ZDpSb290IiwiY21kX3R5cGUiOiJERU5ZTElTVF9BREQiLCJkZW55bGlzdF9hZGQiOltdfQ.mock-sig'),
+    buildDenylistRemove: jest.fn().mockResolvedValue('eyJhbGciOiJFZERTQSIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJCbHVDbG91ZDpSb290IiwiY21kX3R5cGUiOiJERU5ZTElTVF9SRU1PVkUiLCJkZW55bGlzdF9yZW1vdmUiOltdfQ.mock-sig'),
   },
 }));
 
 jest.mock('@/models/denylist-entry.model', () => ({
   DenylistEntryModel: jest.fn().mockImplementation(() => ({
     create: jest.fn().mockResolvedValue({}),
-    findByUnitsAndUser: jest.fn().mockResolvedValue([]),
+    bulkCreate: jest.fn().mockResolvedValue(undefined),
+    findByUser: jest.fn().mockResolvedValue([]),
     remove: jest.fn().mockResolvedValue(true),
-      })),
+    bulkRemove: jest.fn().mockResolvedValue(1),
+  })),
+}));
+jest.mock('@/services/access-control-zone-access.service', () => ({
+  AccessControlZoneAccessService: {
+    getDenylistTargetsForUserRevocation: jest.fn().mockResolvedValue([{ device_id: 'dev-123', device_type: 'blulok' }]),
+    getDenylistRemovalTargetsForUserGrant: jest.fn().mockResolvedValue([{ device_id: 'dev-123', device_type: 'blulok' }]),
+    getDenylistDeviceIdsForUnits: jest.fn().mockResolvedValue(['dev-123']),
+    getDeviceFacilityIds: jest.fn().mockResolvedValue(new Map([['dev-123', 'fac-1']])),
+  },
 }));
 
 const mockHandlers: any = {};
@@ -69,6 +80,7 @@ describe('AccessRevocationListenerService', () => {
         first: jest.fn().mockResolvedValue(null),
       };
     });
+    mockDb.raw = jest.fn((sql: string, bindings?: any[]) => ({ sql, bindings }));
 
     jest.mock('@/services/database.service', () => ({
       DatabaseService: {
@@ -80,8 +92,10 @@ describe('AccessRevocationListenerService', () => {
 
     mockDenylistModel = {
       create: jest.fn().mockResolvedValue({}),
-      findByUnitsAndUser: jest.fn().mockResolvedValue([]),
+      bulkCreate: jest.fn().mockResolvedValue(undefined),
+      findByUser: jest.fn().mockResolvedValue([]),
       remove: jest.fn().mockResolvedValue(true),
+      bulkRemove: jest.fn().mockResolvedValue(1),
     } as any;
 
     (DenylistEntryModel as jest.MockedClass<typeof DenylistEntryModel>).mockImplementation(() => mockDenylistModel);
@@ -110,13 +124,17 @@ describe('AccessRevocationListenerService', () => {
         metadata: { source: 'api', performedBy: 'admin-1' },
       });
 
-      expect(mockDenylistModel.create).toHaveBeenCalled();
+      // Now uses bulkCreate for efficiency
+      expect(mockDenylistModel.bulkCreate).toHaveBeenCalled();
     const { GatewayEventsService } = await import('@/services/gateway/gateway-events.service');
     const gw = GatewayEventsService.getInstance() as any;
     expect(gw.unicastToFacility).toHaveBeenCalled();
     });
 
     it('skips denylist if no devices found for unit', async () => {
+      const { AccessControlZoneAccessService } = await import('@/services/access-control-zone-access.service');
+      (AccessControlZoneAccessService.getDenylistTargetsForUserRevocation as jest.Mock).mockResolvedValueOnce([]);
+
       mockDb.mockImplementation((table: string) => {
         if (table === 'blulok_devices') {
           return {
@@ -140,7 +158,7 @@ describe('AccessRevocationListenerService', () => {
         facilityId: 'fac-1',
       });
 
-      expect(mockDenylistModel.create).not.toHaveBeenCalled();
+      expect(mockDenylistModel.bulkCreate).not.toHaveBeenCalled();
     });
 
     it('skips sending DENYLIST_ADD command if user route pass is expired', async () => {
@@ -167,7 +185,7 @@ describe('AccessRevocationListenerService', () => {
       });
 
       // Ensure denylistModel mock is fresh
-      mockDenylistModel.create.mockClear();
+      mockDenylistModel.bulkCreate.mockClear();
       (DenylistEntryModel as jest.MockedClass<typeof DenylistEntryModel>).mockImplementation(() => mockDenylistModel);
 
       AccessRevocationListenerService.getInstance();
@@ -182,8 +200,8 @@ describe('AccessRevocationListenerService', () => {
       // Wait a bit for async operations
       await new Promise(resolve => setTimeout(resolve, 100));
 
-      // Should still create DB entries for audit trail
-      expect(mockDenylistModel.create).toHaveBeenCalled();
+      // Should still create DB entries for audit trail (using bulkCreate now)
+      expect(mockDenylistModel.bulkCreate).toHaveBeenCalled();
       
       // But should not send gateway command
       const { GatewayEventsService } = await import('@/services/gateway/gateway-events.service');
@@ -205,6 +223,7 @@ describe('AccessRevocationListenerService', () => {
         {
           id: 'entry-1',
           device_id: 'dev-123',
+          device_type: 'blulok' as const,
           user_id: 'user-1',
           expires_at: new Date('2024-12-31'),
           created_at: new Date(),
@@ -214,23 +233,19 @@ describe('AccessRevocationListenerService', () => {
         },
       ];
 
-      mockDenylistModel.findByUnitsAndUser.mockResolvedValue(mockEntries);
-      mockDenylistModel.remove.mockClear();
+      mockDenylistModel.findByUser.mockResolvedValue(mockEntries);
+      mockDenylistModel.bulkRemove.mockClear();
 
-      // Create proper mock for blulok_devices join query to get facility_id
-      const deviceFacilityQuery = {
-        where: jest.fn().mockReturnThis(),
-        select: jest.fn().mockReturnThis(),
-        first: jest.fn().mockResolvedValue({ facility_id: 'fac-1' }),
-      };
-      const deviceJoinMock = jest.fn().mockReturnValue(deviceFacilityQuery);
-
+      // Mock for both initial device query AND batch facility lookup
       mockDb.mockImplementation((table: string) => {
         if (table === 'blulok_devices') {
           return {
             where: jest.fn().mockReturnThis(),
             select: jest.fn().mockResolvedValue([{ id: 'dev-123' }]),
-            join: deviceJoinMock,
+            join: jest.fn().mockReturnValue({
+              whereIn: jest.fn().mockReturnThis(),
+              select: jest.fn().mockResolvedValue([{ device_id: 'dev-123', facility_id: 'fac-1' }]),
+            }),
           };
         }
         return {};
@@ -258,11 +273,12 @@ describe('AccessRevocationListenerService', () => {
 
       const { DenylistService } = await import('@/services/denylist.service');
       expect(DenylistService.buildDenylistRemove).toHaveBeenCalled();
-      expect(mockDenylistModel.remove).toHaveBeenCalled();
+      // Now uses bulkRemove for efficiency
+      expect(mockDenylistModel.bulkRemove).toHaveBeenCalled();
     });
 
     it('does nothing if no denylist entries exist', async () => {
-      mockDenylistModel.findByUnitsAndUser.mockResolvedValue([]);
+      mockDenylistModel.findByUser.mockResolvedValue([]);
 
       mockDb.mockImplementation((table: string) => {
         if (table === 'blulok_devices') {
@@ -303,6 +319,7 @@ describe('AccessRevocationListenerService', () => {
         {
           id: 'entry-1',
           device_id: 'dev-123',
+          device_type: 'blulok' as const,
           user_id: 'user-1',
           expires_at: pastDate,
           created_at: new Date(),
@@ -312,31 +329,20 @@ describe('AccessRevocationListenerService', () => {
         },
       ];
 
-      mockDenylistModel.findByUnitsAndUser.mockResolvedValue(mockEntries);
-      mockDenylistModel.remove.mockClear();
+      mockDenylistModel.findByUser.mockResolvedValue(mockEntries);
+      mockDenylistModel.bulkRemove.mockClear();
 
-      // Mock for initial device query (for the onTenantAssigned handler)
-      const deviceSelectMock = jest.fn().mockResolvedValue([{ id: 'dev-123' }]);
-      const deviceWhereMock = jest.fn().mockReturnThis();
-      
-      // Mock for facility lookup per entry - needs to be chainable
-      const facilityFirstMock = jest.fn().mockResolvedValue({ facility_id: 'fac-1' });
-      const joinBuilder = {
-        where: jest.fn().mockReturnThis(),
-        select: jest.fn().mockReturnThis(),
-        first: facilityFirstMock,
-      };
-      const joinMock = jest.fn().mockReturnValue(joinBuilder);
-
+      // Mock for both initial device query AND batch facility lookup
       mockDb.mockImplementation((table: string) => {
         if (table === 'blulok_devices') {
-          const builder: any = {
-            where: deviceWhereMock,
-            select: deviceSelectMock,
-            join: joinMock,
+          return {
+            where: jest.fn().mockReturnThis(),
+            select: jest.fn().mockResolvedValue([{ id: 'dev-123' }]),
+            join: jest.fn().mockReturnValue({
+              whereIn: jest.fn().mockReturnThis(),
+              select: jest.fn().mockResolvedValue([{ device_id: 'dev-123', facility_id: 'fac-1' }]),
+            }),
           };
-          deviceWhereMock.mockReturnValue(builder);
-          return builder;
         }
         return {};
       });
@@ -361,12 +367,75 @@ describe('AccessRevocationListenerService', () => {
       // Wait a bit for async operations
       await new Promise(resolve => setTimeout(resolve, 150));
 
-      // Should still remove from DB for cleanup
-      expect(mockDenylistModel.remove).toHaveBeenCalledWith('dev-123', 'user-1');
+      // Should still remove from DB for cleanup (using bulkRemove now)
+      expect(mockDenylistModel.bulkRemove).toHaveBeenCalledWith(['dev-123'], 'user-1');
       
       // But should not send gateway command
       const { DenylistService } = await import('@/services/denylist.service');
       expect(DenylistService.buildDenylistRemove).not.toHaveBeenCalled();
+    });
+
+    it('sends DENYLIST_REMOVE only for non-expired entry devices', async () => {
+      (AccessRevocationListenerService as any).instance = undefined;
+
+      const { DenylistOptimizationService } = await import('@/services/denylist-optimization.service');
+      (DenylistOptimizationService.shouldSkipDenylistRemove as jest.Mock).mockImplementation(
+        (entry: any) => entry?.id === 'entry-expired',
+      );
+      const { AccessControlZoneAccessService } = await import('@/services/access-control-zone-access.service');
+      (AccessControlZoneAccessService.getDenylistRemovalTargetsForUserGrant as jest.Mock).mockResolvedValueOnce([
+        { device_id: 'dev-123', device_type: 'blulok' },
+        { device_id: 'dev-456', device_type: 'blulok' },
+      ]);
+      (AccessControlZoneAccessService.getDeviceFacilityIds as jest.Mock).mockResolvedValueOnce(
+        new Map([
+          ['dev-123', 'fac-1'],
+          ['dev-456', 'fac-1'],
+        ]),
+      );
+
+      mockDenylistModel.findByUser.mockResolvedValue([
+        {
+          id: 'entry-active',
+          device_id: 'dev-123',
+          device_type: 'blulok' as const,
+          user_id: 'user-1',
+          expires_at: new Date(Date.now() + 3600_000),
+          created_at: new Date(),
+          updated_at: new Date(),
+          created_by: 'admin-1',
+          source: 'unit_unassignment' as const,
+        },
+        {
+          id: 'entry-expired',
+          device_id: 'dev-456',
+          device_type: 'blulok' as const,
+          user_id: 'user-1',
+          expires_at: new Date(Date.now() - 3600_000),
+          created_at: new Date(),
+          updated_at: new Date(),
+          created_by: 'admin-1',
+          source: 'unit_unassignment' as const,
+        },
+      ]);
+
+      const { DatabaseService } = await import('@/services/database.service');
+      (DatabaseService.getInstance as jest.Mock).mockReturnValue({
+        connection: mockDb,
+      });
+
+      AccessRevocationListenerService.getInstance();
+      await mockHandlers.assigned({
+        tenantId: 'user-1',
+        unitId: 'unit-1',
+        facilityId: 'fac-1',
+      });
+
+      const { DenylistService } = await import('@/services/denylist.service');
+      expect(DenylistService.buildDenylistRemove).toHaveBeenCalledWith(
+        [{ sub: 'user-1', exp: 0 }],
+        ['dev-123'],
+      );
     });
   });
 });

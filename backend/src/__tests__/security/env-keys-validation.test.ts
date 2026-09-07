@@ -1,38 +1,31 @@
+import { config } from '@/config/environment';
+import { validateEd25519Env } from '@/utils/security-env';
+
 describe('Security Env Validation', () => {
-  it('throws when keys are not base64url length 32 bytes', () => {
-    jest.isolateModules(() => {
-      jest.doMock('@/config/environment', () => ({
-        config: {
-          nodeEnv: 'production',
-          security: {
-            opsPrivateKeyB64: 'not-valid!@#',
-            opsPublicKeyB64: 'short',
-            rootPublicKeyB64: 'also_invalid',
-          },
-        },
-      }));
-      const { validateEd25519Env: validate } = require('@/utils/security-env');
-      expect(() => validate()).toThrow(/Security configuration error/);
-    });
+  const originalNodeEnv = config.nodeEnv;
+  const originalSecurity = { ...config.security };
+
+  afterEach(() => {
+    config.nodeEnv = originalNodeEnv;
+    Object.assign(config.security, originalSecurity);
   });
 
-  it('passes with valid-looking base64url 32-byte strings', () => {
-    jest.isolateModules(() => {
-      const good = 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA'; // 43 chars -> 32 bytes
-      jest.doMock('@/config/environment', () => ({
-        config: {
-          nodeEnv: 'production',
-          security: {
-            opsPrivateKeyB64: good,
-            opsPublicKeyB64: good,
-            rootPublicKeyB64: good,
-          },
-        },
-      }));
-      const { validateEd25519Env: validate } = require('@/utils/security-env');
-      expect(() => validate()).not.toThrow();
-    });
+  it('throws when keys are not base64url length 32 bytes', () => {
+    config.nodeEnv = 'production';
+    config.security.opsPrivateKeyB64 = 'not-valid!@#';
+    config.security.opsPublicKeyB64 = 'short';
+    config.security.rootPublicKeyB64 = 'also_invalid';
+
+    expect(() => validateEd25519Env()).toThrow(/Security configuration error/);
+  });
+
+  it('passes with valid base64url 32-byte strings', () => {
+    const good = Buffer.alloc(32, 1).toString('base64url');
+    config.nodeEnv = 'production';
+    config.security.opsPrivateKeyB64 = good;
+    config.security.opsPublicKeyB64 = good;
+    config.security.rootPublicKeyB64 = good;
+
+    expect(() => validateEd25519Env()).not.toThrow();
   });
 });
-
-

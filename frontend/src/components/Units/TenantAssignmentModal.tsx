@@ -9,9 +9,11 @@ import {
 } from '@heroicons/react/24/outline';
 import { Modal } from '@/components/Modal/Modal';
 import { ConfirmModal } from '@/components/Modal/ConfirmModal';
+import { PlaceholderUserBadge } from '@/components/UserManagement/PlaceholderUserBadge';
 import { apiService } from '@/services/api.service';
 import { User } from '@/types/auth.types';
 import { Unit } from '@/types/facility.types';
+import { formatUserContactSubtitle } from '@/utils/userDisplay.utils';
 
 interface TenantAssignmentModalProps {
   isOpen: boolean;
@@ -139,9 +141,13 @@ export function TenantAssignmentModal({ isOpen, onClose, onSuccess, unit }: Tena
                           </p>
                           <StarIcon className="h-4 w-4 text-yellow-500" />
                           <span className="text-xs text-blue-600 dark:text-blue-400 font-medium">Primary</span>
+                          {unit.primary_tenant.is_placeholder ? <PlaceholderUserBadge /> : null}
                         </div>
                         <p className="text-xs text-gray-500 dark:text-gray-400">
-                          {unit.primary_tenant.email}
+                          {formatUserContactSubtitle({
+                            email: unit.primary_tenant.email,
+                            is_placeholder: unit.primary_tenant.is_placeholder,
+                          })}
                         </p>
                       </div>
                     </div>

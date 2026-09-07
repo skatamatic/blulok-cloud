@@ -24,6 +24,7 @@
 import { randomUUID } from 'crypto';
 import { DatabaseService } from '@/services/database.service';
 import { logger } from '@/utils/logger';
+import { DenylistDeviceType } from '@/types/denylist.types';
 
 export type DenylistSource = 'user_deactivation' | 'unit_unassignment' | 'fms_sync' | 'key_sharing_revocation';
 
@@ -32,6 +33,8 @@ export interface DeviceDenylistEntry {
   id: string;
   /** Device this entry applies to */
   device_id: string;
+  /** Cloud inventory type for device_id */
+  device_type: DenylistDeviceType;
   /** User denied access on this device */
   user_id: string;
   /** When this entry expires (NULL for permanent) */
@@ -58,8 +61,9 @@ export class DenylistEntryModel {
    */
   async create(data: {
     device_id: string;
+    device_type?: DenylistDeviceType;
     user_id: string;
-    expires_at?: Date | null;
+    expires_at?: Date | string | any | null;
     source: DenylistSource;
     created_by?: string | null;
   }): Promise<DeviceDenylistEntry> {
@@ -75,11 +79,12 @@ export class DenylistEntryModel {
       const insertData: any = {
         id,
         device_id: data.device_id,
+        device_type: data.device_type ?? 'blulok',
         user_id: data.user_id,
         source: data.source,
         created_by: data.created_by || null,
-        created_at: this.db.fn.now(),
-        updated_at: this.db.fn.now(),
+        created_at: this.db.raw('UTC_TIMESTAMP()'),
+        updated_at: this.db.raw('UTC_TIMESTAMP()'),
       };
 
       if (data.expires_at !== undefined) {
@@ -104,15 +109,36 @@ export class DenylistEntryModel {
   }
 
   /**
+   * Get all active entries for the given devices (not expired).
+   */
+  async findActiveByDeviceIds(deviceIds: string[]): Promise<DeviceDenylistEntry[]> {
+    const uniqueIds = [...new Set(deviceIds.filter(Boolean))];
+    if (uniqueIds.length === 0) {
+      return [];
+    }
+
+    try {
+      return await this.db('device_denylist_entries')
+        .whereIn('device_id', uniqueIds)
+        .where((builder: any) => {
+          builder.whereNull('expires_at').orWhere('expires_at', '>', this.db.raw('UTC_TIMESTAMP()'));
+        })
+        .orderBy('created_at', 'desc');
+    } catch (error) {
+      logger.error('Error finding active denylist entries by device ids:', error);
+      throw error;
+    }
+  }
+
+  /**
    * Get all active entries for a device (not expired)
    */
   async findByDevice(deviceId: string): Promise<DeviceDenylistEntry[]> {
     try {
-      const now = new Date();
       return await this.db('device_denylist_entries')
         .where({ device_id: deviceId })
         .where((builder: any) => {
-          builder.whereNull('expires_at').orWhere('expires_at', '>', now);
+          builder.whereNull('expires_at').orWhere('expires_at', '>', this.db.raw('UTC_TIMESTAMP()'));
         })
         .orderBy('created_at', 'desc');
     } catch (error) {
@@ -126,11 +152,10 @@ export class DenylistEntryModel {
    */
   async findByUser(userId: string): Promise<DeviceDenylistEntry[]> {
     try {
-      const now = new Date();
       return await this.db('device_denylist_entries')
         .where({ user_id: userId })
         .where((builder: any) => {
-          builder.whereNull('expires_at').orWhere('expires_at', '>', now);
+          builder.whereNull('expires_at').orWhere('expires_at', '>', this.db.raw('UTC_TIMESTAMP()'));
         })
         .orderBy('created_at', 'desc');
     } catch (error) {
@@ -144,11 +169,10 @@ export class DenylistEntryModel {
    */
   async findByDeviceAndUser(deviceId: string, userId: string): Promise<DeviceDenylistEntry | null> {
     try {
-      const now = new Date();
       const entry = await this.db('device_denylist_entries')
         .where({ device_id: deviceId, user_id: userId })
         .where((builder: any) => {
-          builder.whereNull('expires_at').orWhere('expires_at', '>', now);
+          builder.whereNull('expires_at').orWhere('expires_at', '>', this.db.raw('UTC_TIMESTAMP()'));
         })
         .first();
 
@@ -208,10 +232,9 @@ export class DenylistEntryModel {
    */
   async pruneExpired(): Promise<number> {
     try {
-      const now = new Date();
       return await this.db('device_denylist_entries')
         .whereNotNull('expires_at')
-        .where('expires_at', '<=', now)
+        .where('expires_at', '<=', this.db.raw('UTC_TIMESTAMP()'))
         .del();
     } catch (error) {
       logger.error('Error pruning expired denylist entries:', error);
@@ -224,16 +247,13 @@ export class DenylistEntryModel {
    */
   async removeForUnits(unitIds: string[], userId: string): Promise<number> {
     try {
-      // Get device IDs for these units
-      const devices = await this.db('blulok_devices')
-        .whereIn('unit_id', unitIds)
-        .select('id');
-
-      if (devices.length === 0) {
+      const { AccessControlZoneAccessService } = await import('@/services/access-control-zone-access.service');
+      const targets = await AccessControlZoneAccessService.getDenylistRemovalTargetsForUserGrant(unitIds, userId);
+      if (targets.length === 0) {
         return 0;
       }
 
-      const deviceIds = devices.map((d: any) => d.id);
+      const deviceIds = targets.map((target) => target.device_id);
 
       return await this.db('device_denylist_entries')
         .where({ user_id: userId })
@@ -250,26 +270,94 @@ export class DenylistEntryModel {
    */
   async findByUnitsAndUser(unitIds: string[], userId: string): Promise<DeviceDenylistEntry[]> {
     try {
-      // Get device IDs for these units
-      const devices = await this.db('blulok_devices')
-        .whereIn('unit_id', unitIds)
-        .select('id');
-
-      if (devices.length === 0) {
+      const { AccessControlZoneAccessService } = await import('@/services/access-control-zone-access.service');
+      const targets = await AccessControlZoneAccessService.getDenylistRemovalTargetsForUserGrant(unitIds, userId);
+      if (targets.length === 0) {
         return [];
       }
 
-      const deviceIds = devices.map((d: any) => d.id);
-      const now = new Date();
-
+      const deviceIds = targets.map((target) => target.device_id);
       return await this.db('device_denylist_entries')
         .where({ user_id: userId })
         .whereIn('device_id', deviceIds)
         .where((builder: any) => {
-          builder.whereNull('expires_at').orWhere('expires_at', '>', now);
+          builder.whereNull('expires_at').orWhere('expires_at', '>', this.db.raw('UTC_TIMESTAMP()'));
         });
     } catch (error) {
       logger.error('Error finding denylist entries for units:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Bulk create denylist entries for multiple devices (single INSERT query)
+   * More efficient than calling create() in a loop - avoids N+1 writes.
+   */
+  async bulkCreate(entries: Array<{
+    device_id: string;
+    device_type?: DenylistDeviceType;
+    user_id: string;
+    expires_at?: Date | string | any | null;
+    source: DenylistSource;
+    created_by?: string | null;
+  }>): Promise<void> {
+    if (entries.length === 0) return;
+
+    try {
+      // Get unique device-user pairs to delete existing entries
+      const deviceUserPairs = entries.map(e => ({ device_id: e.device_id, user_id: e.user_id }));
+      
+      // Delete existing entries for these device-user pairs (one query)
+      // Build OR conditions for each pair
+      await this.db('device_denylist_entries')
+        .where((builder: any) => {
+          for (const pair of deviceUserPairs) {
+            builder.orWhere({ device_id: pair.device_id, user_id: pair.user_id });
+          }
+        })
+        .del();
+
+      // Prepare insert data
+      const now = this.db.raw('UTC_TIMESTAMP()');
+      const insertData = entries.map(data => ({
+        id: randomUUID(),
+        device_id: data.device_id,
+        device_type: data.device_type ?? 'blulok',
+        user_id: data.user_id,
+        source: data.source,
+        created_by: data.created_by || null,
+        expires_at: data.expires_at !== undefined ? data.expires_at : null,
+        created_at: now,
+        updated_at: now,
+      }));
+
+      // Bulk insert (single query)
+      await this.db('device_denylist_entries').insert(insertData);
+
+      logger.debug(`Bulk created ${entries.length} denylist entries`);
+    } catch (error) {
+      logger.error('Error bulk creating denylist entries:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Bulk remove denylist entries for multiple devices and a user (single DELETE query)
+   * More efficient than calling remove() in a loop - avoids N+1 writes.
+   */
+  async bulkRemove(deviceIds: string[], userId: string): Promise<number> {
+    if (deviceIds.length === 0) return 0;
+
+    try {
+      const deleted = await this.db('device_denylist_entries')
+        .whereIn('device_id', deviceIds)
+        .where({ user_id: userId })
+        .del();
+
+      logger.debug(`Bulk removed ${deleted} denylist entries for user ${userId}`);
+      return deleted;
+    } catch (error) {
+      logger.error('Error bulk removing denylist entries:', error);
       throw error;
     }
   }

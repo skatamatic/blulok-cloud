@@ -1,0 +1,1338 @@
+PASS src/__tests__/services/simulated-fms-provider.test.ts (21.205 s)
+PASS src/__tests__/services/gateway/simulated-gateway.test.ts (5.329 s)
+  ΓùÅ Console
+
+    console.log
+      [SIMULATED] Device test-device registered with gateway test-gateway
+
+      at SimulatedGateway.sendDeviceRegistration (src/services/gateway/gateways/simulated.gateway.ts:107:13)
+
+    console.log
+      [SIMULATED] Device test-device registered with gateway test-gateway
+
+      at SimulatedGateway.sendDeviceRegistration (src/services/gateway/gateways/simulated.gateway.ts:107:13)
+
+    console.log
+      [SIMULATED] Device test-device unregistered from gateway test-gateway
+
+      at SimulatedGateway.sendDeviceUnregistration (src/services/gateway/gateways/simulated.gateway.ts:120:13)
+
+    console.log
+      [SIMULATED] Device test-device registered with gateway test-gateway
+
+      at SimulatedGateway.sendDeviceRegistration (src/services/gateway/gateways/simulated.gateway.ts:107:13)
+
+    console.log
+      [SIMULATED] Device test-device registered with gateway test-gateway
+
+      at SimulatedGateway.sendDeviceRegistration (src/services/gateway/gateways/simulated.gateway.ts:107:13)
+
+    console.log
+      [SIMULATED] Command "lock" succeeded on device test-device
+
+      at SimulatedGateway.executeDeviceCommand (src/services/gateway/gateways/simulated.gateway.ts:182:13)
+
+    console.log
+      [SIMULATED] Device sim-device-1 registered with gateway test-gateway
+
+      at SimulatedGateway.sendDeviceRegistration (src/services/gateway/gateways/simulated.gateway.ts:107:13)
+
+    console.log
+      [SIMULATED] Performing sync for gateway test-gateway
+
+      at SimulatedGateway.sync (src/services/gateway/gateways/simulated.gateway.ts:228:15)
+
+    console.log
+      [SIMULATED] Sync completed for gateway test-gateway (1 devices)
+
+      at SimulatedGateway.sync (src/services/gateway/gateways/simulated.gateway.ts:265:15)
+
+    console.log
+      [SIMULATED] Performing sync for gateway test-gateway
+
+      at SimulatedGateway.sync (src/services/gateway/gateways/simulated.gateway.ts:228:15)
+
+    console.log
+      [SIMULATED] Sync completed for gateway test-gateway (0 devices)
+
+      at SimulatedGateway.sync (src/services/gateway/gateways/simulated.gateway.ts:265:15)
+
+PASS src/__tests__/routes/gateway.test.ts
+  ΓùÅ Console
+
+    console.log
+      Gateway gateway-1 initialized successfully
+
+      at GatewayService.initializeGateway (src/services/gateway/gateway.service.ts:119:15)
+
+    console.log
+      Gateway gateway-1 connected and polling started
+
+      at GatewayService.initializeGateway (src/services/gateway/gateway.service.ts:124:17)
+
+    console.log
+      Gateway gateway-1 initialized successfully
+
+      at GatewayService.initializeGateway (src/services/gateway/gateway.service.ts:119:15)
+
+    console.log
+      Gateway gateway-1 connected and polling started
+
+      at GatewayService.initializeGateway (src/services/gateway/gateway.service.ts:124:17)
+
+    console.log
+      Gateway gateway-3 initialized successfully
+
+      at GatewayService.initializeGateway (src/services/gateway/gateway.service.ts:119:15)
+
+    console.log
+      Gateway gateway-3 connected and polling started
+
+      at GatewayService.initializeGateway (src/services/gateway/gateway.service.ts:124:17)
+
+    console.log
+      Gateway gateway-3 initialized successfully
+
+      at GatewayService.initializeGateway (src/services/gateway/gateway.service.ts:119:15)
+
+    console.log
+      Gateway gateway-3 connected and polling started
+
+      at GatewayService.initializeGateway (src/services/gateway/gateway.service.ts:124:17)
+
+    console.log
+      Gateway gateway-1 initialized successfully
+
+      at GatewayService.initializeGateway (src/services/gateway/gateway.service.ts:119:15)
+
+    console.log
+      Gateway gateway-1 connected and polling started
+
+      at GatewayService.initializeGateway (src/services/gateway/gateway.service.ts:124:17)
+
+    console.log
+      [SIMULATED] Performing sync for gateway gateway-1
+
+      at SimulatedGateway.sync (src/services/gateway/gateways/simulated.gateway.ts:228:15)
+
+    console.log
+      [SIMULATED] Sync completed for gateway gateway-1 (0 devices)
+
+      at SimulatedGateway.sync (src/services/gateway/gateways/simulated.gateway.ts:265:15)
+
+    console.log
+      [SIMULATED] Performing sync for gateway gateway-1
+
+      at SimulatedGateway.sync (src/services/gateway/gateways/simulated.gateway.ts:228:15)
+
+    console.log
+      [SIMULATED] Sync completed for gateway gateway-1 (0 devices)
+
+      at SimulatedGateway.sync (src/services/gateway/gateways/simulated.gateway.ts:265:15)
+
+    console.log
+      [SIMULATED] Performing sync for gateway gateway-1
+
+      at SimulatedGateway.sync (src/services/gateway/gateways/simulated.gateway.ts:228:15)
+
+    console.log
+      [SIMULATED] Sync completed for gateway gateway-1 (0 devices)
+
+      at SimulatedGateway.sync (src/services/gateway/gateways/simulated.gateway.ts:265:15)
+
+    console.log
+      [SIMULATED] Performing sync for gateway gateway-1
+
+      at SimulatedGateway.sync (src/services/gateway/gateways/simulated.gateway.ts:228:15)
+
+    console.log
+      [SIMULATED] Sync completed for gateway gateway-1 (0 devices)
+
+      at SimulatedGateway.sync (src/services/gateway/gateways/simulated.gateway.ts:265:15)
+
+    console.log
+      [SIMULATED] Performing sync for gateway gateway-1
+
+      at SimulatedGateway.sync (src/services/gateway/gateways/simulated.gateway.ts:228:15)
+
+    console.log
+      [SIMULATED] Sync completed for gateway gateway-1 (0 devices)
+
+      at SimulatedGateway.sync (src/services/gateway/gateways/simulated.gateway.ts:265:15)
+
+    console.log
+      [SIMULATED] Performing sync for gateway gateway-1
+
+      at SimulatedGateway.sync (src/services/gateway/gateways/simulated.gateway.ts:228:15)
+
+    console.log
+      [SIMULATED] Sync completed for gateway gateway-1 (0 devices)
+
+      at SimulatedGateway.sync (src/services/gateway/gateways/simulated.gateway.ts:265:15)
+
+PASS src/__tests__/services/ws-gateway.transport.test.ts
+PASS src/__tests__/services/firmware.service.test.ts
+PASS src/__tests__/routes/auth.test.ts
+PASS src/__tests__/routes/devices.test.ts
+PASS src/__tests__/routes/access-history.test.ts
+PASS src/__tests__/routes/users.test.ts
+PASS src/__tests__/routes/widget-layouts.test.ts
+PASS src/__tests__/routes/key-sharing.test.ts
+PASS src/__tests__/routes/units.test.ts
+PASS src/__tests__/routes/user-devices.test.ts
+PASS src/__tests__/routes/notifications.routes.test.ts
+PASS src/__tests__/routes/denylist.routes.test.ts
+PASS src/__tests__/routes/bludesign-themes.routes.test.ts
+PASS src/__tests__/routes/access-history-stats.test.ts
+PASS src/__tests__/routes/internal-gateway.routes.test.ts
+PASS src/__tests__/routes/firmware.routes.test.ts
+PASS src/__tests__/routes/facilities.test.ts
+PASS src/__tests__/routes/dashboard.routes.test.ts
+PASS src/__tests__/security/fms-rbac.test.ts
+PASS src/__tests__/routes/user-facilities.test.ts
+PASS src/__tests__/services/subscriptions/activity-subscription-manager.test.ts
+PASS src/__tests__/routes/activity.routes.test.ts
+PASS src/__tests__/routes/units-update.test.ts
+PASS src/__tests__/services/access-revocation-listener.service.test.ts
+PASS src/__tests__/routes/device-groups.routes.test.ts
+PASS src/__tests__/routes/system-settings.routes.test.ts
+PASS src/__tests__/routes/admin.routes.test.ts
+PASS src/__tests__/routes/access-control.routes.test.ts
+PASS src/__tests__/routes/access-codes.routes.test.ts
+PASS src/__tests__/routes/gateway.status.routes.test.ts
+PASS src/__tests__/routes/ops-key-rotation.test.ts
+PASS src/__tests__/routes/storage.routes.test.ts
+PASS src/__tests__/routes/units-creation.test.ts
+PASS src/__tests__/routes/key-sharing.invite.routes.test.ts
+PASS src/__tests__/routes/schedules.routes.test.ts
+PASS src/__tests__/routes/devices-validation.test.ts
+PASS src/__tests__/routes/commands.routes.test.ts
+PASS src/__tests__/health.test.ts
+PASS src/__tests__/routes/fms.routes.critical.test.ts
+PASS src/__tests__/routes/dev.routes.test.ts
+PASS src/__tests__/routes/bludesign-assets-locker.routes.test.ts
+PASS src/__tests__/routes/facilities.delete-impact.routes.test.ts
+PASS src/__tests__/routes/route-passes.test.ts
+PASS src/__tests__/routes/bludesign-projects-assets.routes.test.ts
+PASS src/__tests__/routes/passes.routes.test.ts
+PASS src/__tests__/services/gateway/gateway-factory.test.ts
+PASS src/__tests__/integration/route-pass-flow.test.ts
+PASS src/__tests__/services/data-pruning.service.test.ts
+PASS src/__tests__/security/fms-tenant-role-enforcement.test.ts
+PASS src/__tests__/services/storage/gdrive.provider.test.ts
+PASS src/__tests__/routes/key-sharing.regrant-remove.test.ts
+PASS src/__tests__/services/subscriptions/dashboard-layout-subscription-manager.test.ts
+PASS src/__tests__/services/gateway/base-gateway.test.ts
+  ΓùÅ Console
+
+    console.error
+      Failed to sync device inventory for gateway test-gateway: Error: Database connection failed
+          at Object.<anonymous> (C:\Users\kylew\blulok-cloud\backend\src\__tests__\services\gateway\base-gateway.test.ts:137:9)
+          at Promise.then.completed (C:\Users\kylew\blulok-cloud\backend\node_modules\jest-circus\build\utils.js:298:28)
+          at new Promise (<anonymous>)
+          at callAsyncCircusFn (C:\Users\kylew\blulok-cloud\backend\node_modules\jest-circus\build\utils.js:231:10)
+          at _callCircusTest (C:\Users\kylew\blulok-cloud\backend\node_modules\jest-circus\build\run.js:316:40)
+          at _runTest (C:\Users\kylew\blulok-cloud\backend\node_modules\jest-circus\build\run.js:252:3)
+          at _runTestsForDescribeBlock (C:\Users\kylew\blulok-cloud\backend\node_modules\jest-circus\build\run.js:126:9)
+          at _runTestsForDescribeBlock (C:\Users\kylew\blulok-cloud\backend\node_modules\jest-circus\build\run.js:121:9)
+          at _runTestsForDescribeBlock (C:\Users\kylew\blulok-cloud\backend\node_modules\jest-circus\build\run.js:121:9)
+          at run (C:\Users\kylew\blulok-cloud\backend\node_modules\jest-circus\build\run.js:71:3)
+          at runAndTransformResultsToJestFormat (C:\Users\kylew\blulok-cloud\backend\node_modules\jest-circus\build\legacy-code-todo-rewrite\jestAdapterInit.js:122:21)
+          at jestAdapter (C:\Users\kylew\blulok-cloud\backend\node_modules\jest-circus\build\legacy-code-todo-rewrite\jestAdapter.js:79:19)
+          at runTestInternal (C:\Users\kylew\blulok-cloud\backend\node_modules\jest-runner\build\runTest.js:367:16)
+          at runTest (C:\Users\kylew\blulok-cloud\backend\node_modules\jest-runner\build\runTest.js:444:34)
+
+      610 |       await deviceSyncService.syncGatewayDevices(this.id, gatewayDevices);
+      611 |     } catch (error) {
+    > 612 |       console.error(`Failed to sync device inventory for gateway ${this.id}:`, error);
+          |               ^
+      613 |     }
+      614 |
+      615 |     try {
+
+      at TestGateway.syncDeviceData (src/services/gateway/gateways/base.gateway.ts:612:15)
+      at Object.<anonymous> (src/__tests__/services/gateway/base-gateway.test.ts:141:7)
+
+    console.error
+      Failed to update device statuses for gateway test-gateway: Error: Status update failed
+          at Object.<anonymous> (C:\Users\kylew\blulok-cloud\backend\src\__tests__\services\gateway\base-gateway.test.ts:162:9)
+          at Promise.then.completed (C:\Users\kylew\blulok-cloud\backend\node_modules\jest-circus\build\utils.js:298:28)
+          at new Promise (<anonymous>)
+          at callAsyncCircusFn (C:\Users\kylew\blulok-cloud\backend\node_modules\jest-circus\build\utils.js:231:10)
+          at _callCircusTest (C:\Users\kylew\blulok-cloud\backend\node_modules\jest-circus\build\run.js:316:40)
+          at _runTest (C:\Users\kylew\blulok-cloud\backend\node_modules\jest-circus\build\run.js:252:3)
+          at _runTestsForDescribeBlock (C:\Users\kylew\blulok-cloud\backend\node_modules\jest-circus\build\run.js:126:9)
+          at _runTestsForDescribeBlock (C:\Users\kylew\blulok-cloud\backend\node_modules\jest-circus\build\run.js:121:9)
+          at _runTestsForDescribeBlock (C:\Users\kylew\blulok-cloud\backend\node_modules\jest-circus\build\run.js:121:9)
+          at run (C:\Users\kylew\blulok-cloud\backend\node_modules\jest-circus\build\run.js:71:3)
+          at runAndTransformResultsToJestFormat (C:\Users\kylew\blulok-cloud\backend\node_modules\jest-circus\build\legacy-code-todo-rewrite\jestAdapterInit.js:122:21)
+          at jestAdapter (C:\Users\kylew\blulok-cloud\backend\node_modules\jest-circus\build\legacy-code-todo-rewrite\jestAdapter.js:79:19)
+          at runTestInternal (C:\Users\kylew\blulok-cloud\backend\node_modules\jest-runner\build\runTest.js:367:16)
+          at runTest (C:\Users\kylew\blulok-cloud\backend\node_modules\jest-runner\build\runTest.js:444:34)
+
+      617 |       await deviceSyncService.updateDeviceStatuses(this.id, gatewayDevices);
+      618 |     } catch (error) {
+    > 619 |       console.error(`Failed to update device statuses for gateway ${this.id}:`, error);
+          |               ^
+      620 |     }
+      621 |   }
+      622 |
+
+      at TestGateway.syncDeviceData (src/services/gateway/gateways/base.gateway.ts:619:15)
+      at Object.<anonymous> (src/__tests__/services/gateway/base-gateway.test.ts:166:7)
+
+    console.error
+      Failed to sync device inventory for gateway test-gateway: Error: Sync failed
+          at Object.<anonymous> (C:\Users\kylew\blulok-cloud\backend\src\__tests__\services\gateway\base-gateway.test.ts:187:9)
+          at Promise.then.completed (C:\Users\kylew\blulok-cloud\backend\node_modules\jest-circus\build\utils.js:298:28)
+          at new Promise (<anonymous>)
+          at callAsyncCircusFn (C:\Users\kylew\blulok-cloud\backend\node_modules\jest-circus\build\utils.js:231:10)
+          at _callCircusTest (C:\Users\kylew\blulok-cloud\backend\node_modules\jest-circus\build\run.js:316:40)
+          at _runTest (C:\Users\kylew\blulok-cloud\backend\node_modules\jest-circus\build\run.js:252:3)
+          at _runTestsForDescribeBlock (C:\Users\kylew\blulok-cloud\backend\node_modules\jest-circus\build\run.js:126:9)
+          at _runTestsForDescribeBlock (C:\Users\kylew\blulok-cloud\backend\node_modules\jest-circus\build\run.js:121:9)
+          at _runTestsForDescribeBlock (C:\Users\kylew\blulok-cloud\backend\node_modules\jest-circus\build\run.js:121:9)
+          at run (C:\Users\kylew\blulok-cloud\backend\node_modules\jest-circus\build\run.js:71:3)
+          at runAndTransformResultsToJestFormat (C:\Users\kylew\blulok-cloud\backend\node_modules\jest-circus\build\legacy-code-todo-rewrite\jestAdapterInit.js:122:21)
+          at jestAdapter (C:\Users\kylew\blulok-cloud\backend\node_modules\jest-circus\build\legacy-code-todo-rewrite\jestAdapter.js:79:19)
+          at runTestInternal (C:\Users\kylew\blulok-cloud\backend\node_modules\jest-runner\build\runTest.js:367:16)
+          at runTest (C:\Users\kylew\blulok-cloud\backend\node_modules\jest-runner\build\runTest.js:444:34)
+
+      610 |       await deviceSyncService.syncGatewayDevices(this.id, gatewayDevices);
+      611 |     } catch (error) {
+    > 612 |       console.error(`Failed to sync device inventory for gateway ${this.id}:`, error);
+          |               ^
+      613 |     }
+      614 |
+      615 |     try {
+
+      at TestGateway.syncDeviceData (src/services/gateway/gateways/base.gateway.ts:612:15)
+      at Object.<anonymous> (src/__tests__/services/gateway/base-gateway.test.ts:194:7)
+
+    console.error
+      Failed to update device statuses for gateway test-gateway: Error: Status update failed
+          at Object.<anonymous> (C:\Users\kylew\blulok-cloud\backend\src\__tests__\services\gateway\base-gateway.test.ts:190:9)
+          at Promise.then.completed (C:\Users\kylew\blulok-cloud\backend\node_modules\jest-circus\build\utils.js:298:28)
+          at new Promise (<anonymous>)
+          at callAsyncCircusFn (C:\Users\kylew\blulok-cloud\backend\node_modules\jest-circus\build\utils.js:231:10)
+          at _callCircusTest (C:\Users\kylew\blulok-cloud\backend\node_modules\jest-circus\build\run.js:316:40)
+          at _runTest (C:\Users\kylew\blulok-cloud\backend\node_modules\jest-circus\build\run.js:252:3)
+          at _runTestsForDescribeBlock (C:\Users\kylew\blulok-cloud\backend\node_modules\jest-circus\build\run.js:126:9)
+          at _runTestsForDescribeBlock (C:\Users\kylew\blulok-cloud\backend\node_modules\jest-circus\build\run.js:121:9)
+          at _runTestsForDescribeBlock (C:\Users\kylew\blulok-cloud\backend\node_modules\jest-circus\build\run.js:121:9)
+          at run (C:\Users\kylew\blulok-cloud\backend\node_modules\jest-circus\build\run.js:71:3)
+          at runAndTransformResultsToJestFormat (C:\Users\kylew\blulok-cloud\backend\node_modules\jest-circus\build\legacy-code-todo-rewrite\jestAdapterInit.js:122:21)
+          at jestAdapter (C:\Users\kylew\blulok-cloud\backend\node_modules\jest-circus\build\legacy-code-todo-rewrite\jestAdapter.js:79:19)
+          at runTestInternal (C:\Users\kylew\blulok-cloud\backend\node_modules\jest-runner\build\runTest.js:367:16)
+          at runTest (C:\Users\kylew\blulok-cloud\backend\node_modules\jest-runner\build\runTest.js:444:34)
+
+      617 |       await deviceSyncService.updateDeviceStatuses(this.id, gatewayDevices);
+      618 |     } catch (error) {
+    > 619 |       console.error(`Failed to update device statuses for gateway ${this.id}:`, error);
+          |               ^
+      620 |     }
+      621 |   }
+      622 |
+
+      at TestGateway.syncDeviceData (src/services/gateway/gateways/base.gateway.ts:619:15)
+      at Object.<anonymous> (src/__tests__/services/gateway/base-gateway.test.ts:194:7)
+
+PASS src/__tests__/integration/user-deactivation-cascade.test.ts
+PASS src/__tests__/models/activity-log.model.test.ts
+PASS src/__tests__/services/storage/gcs.provider.test.ts
+PASS src/__tests__/services/storage/local-base.provider.test.ts
+PASS src/__tests__/services/auth.service.login-key-generation.test.ts
+PASS src/__tests__/services/otp.service.test.ts
+PASS src/__tests__/integration/user-reactivation-restore.test.ts
+PASS src/__tests__/services/gateway/simulated-protocol.test.ts
+PASS src/__tests__/services/device-sync.service.test.ts
+  ΓùÅ Console
+
+    console.log
+      [DEVICE-SYNC] Bulk added 1 devices from gateway gateway-123
+
+      at DeviceSyncService.syncGatewayDevices (src/services/device-sync.service.ts:254:21)
+
+    console.log
+      [DEVICE-SYNC] Bulk removed 1 devices from gateway gateway-123
+
+      at DeviceSyncService.syncGatewayDevices (src/services/device-sync.service.ts:270:19)
+
+    console.log
+      [DEVICE-SYNC] Bulk added 1 devices from gateway gateway-123
+
+      at DeviceSyncService.syncGatewayDevices (src/services/device-sync.service.ts:254:21)
+
+    console.log
+      [DEVICE-SYNC] Bulk removed 1 devices from gateway gateway-123
+
+      at DeviceSyncService.syncGatewayDevices (src/services/device-sync.service.ts:270:19)
+
+    console.log
+      [DEVICE-SYNC] Bulk added 3 devices from gateway gateway-123
+
+      at DeviceSyncService.syncGatewayDevices (src/services/device-sync.service.ts:254:21)
+
+    console.log
+      [DEVICE-SYNC] Bulk added 1 devices from gateway gateway-123
+
+      at DeviceSyncService.syncGatewayDevices (src/services/device-sync.service.ts:254:21)
+
+    console.log
+      [DEVICE-SYNC] Updated device ABC123: status=online, lock=unlocked, battery=75%
+
+      at DeviceSyncService.updateDeviceFromGatewayData (src/services/device-sync.service.ts:433:15)
+
+    console.log
+      [DEVICE-SYNC] Updated device ABC123: status=online, lock=locked, battery=undefined%
+
+      at DeviceSyncService.updateDeviceFromGatewayData (src/services/device-sync.service.ts:433:15)
+
+    console.log
+      [DEVICE-SYNC] Updated device ABC123: status=offline, lock=locked, battery=75%
+
+      at DeviceSyncService.updateDeviceFromGatewayData (src/services/device-sync.service.ts:433:15)
+
+    console.log
+      [DEVICE-SYNC] Updated device DEF456: status=online, lock=unlocked, battery=60%
+
+      at DeviceSyncService.updateDeviceFromGatewayData (src/services/device-sync.service.ts:433:15)
+
+    console.error
+      Failed to bulk add devices for gateway gateway-123: Error: Bulk insert error
+          at Object.<anonymous> (C:\Users\kylew\blulok-cloud\backend\src\__tests__\services\device-sync.service.test.ts:424:65)
+          at Promise.then.completed (C:\Users\kylew\blulok-cloud\backend\node_modules\jest-circus\build\utils.js:298:28)
+          at new Promise (<anonymous>)
+          at callAsyncCircusFn (C:\Users\kylew\blulok-cloud\backend\node_modules\jest-circus\build\utils.js:231:10)
+          at _callCircusTest (C:\Users\kylew\blulok-cloud\backend\node_modules\jest-circus\build\run.js:316:40)
+          at _runTest (C:\Users\kylew\blulok-cloud\backend\node_modules\jest-circus\build\run.js:252:3)
+          at _runTestsForDescribeBlock (C:\Users\kylew\blulok-cloud\backend\node_modules\jest-circus\build\run.js:126:9)
+          at _runTestsForDescribeBlock (C:\Users\kylew\blulok-cloud\backend\node_modules\jest-circus\build\run.js:121:9)
+          at _runTestsForDescribeBlock (C:\Users\kylew\blulok-cloud\backend\node_modules\jest-circus\build\run.js:121:9)
+          at run (C:\Users\kylew\blulok-cloud\backend\node_modules\jest-circus\build\run.js:71:3)
+          at runAndTransformResultsToJestFormat (C:\Users\kylew\blulok-cloud\backend\node_modules\jest-circus\build\legacy-code-todo-rewrite\jestAdapterInit.js:122:21)
+          at jestAdapter (C:\Users\kylew\blulok-cloud\backend\node_modules\jest-circus\build\legacy-code-todo-rewrite\jestAdapter.js:79:19)
+          at runTestInternal (C:\Users\kylew\blulok-cloud\backend\node_modules\jest-runner\build\runTest.js:367:16)
+          at runTest (C:\Users\kylew\blulok-cloud\backend\node_modules\jest-runner\build\runTest.js:444:34)
+
+      254 |             console.log(`[DEVICE-SYNC] Bulk added ${count} devices from gateway ${gatewayId}`);
+      255 |           } catch (error) {
+    > 256 |             console.error(`Failed to bulk add devices for gateway ${gatewayId}:`, error);
+          |                     ^
+      257 |             // Fall back to individual inserts on bulk failure
+      258 |             for (const gatewayDevice of devicesToAdd) {
+      259 |               await this.addGatewayDevice(gatewayId, gatewayDevice);
+
+      at DeviceSyncService.syncGatewayDevices (src/services/device-sync.service.ts:256:21)
+      at Object.<anonymous> (src/__tests__/services/device-sync.service.test.ts:428:7)
+
+    console.log
+      [DEVICE-SYNC] Adding new device ABC123 from gateway gateway-123
+
+      at DeviceSyncService.addGatewayDevice (src/services/device-sync.service.ts:305:15)
+
+    console.error
+      Failed to add device lock-1: Error: Database error
+          at Object.<anonymous> (C:\Users\kylew\blulok-cloud\backend\src\__tests__\services\device-sync.service.test.ts:425:60)
+          at Promise.then.completed (C:\Users\kylew\blulok-cloud\backend\node_modules\jest-circus\build\utils.js:298:28)
+          at new Promise (<anonymous>)
+          at callAsyncCircusFn (C:\Users\kylew\blulok-cloud\backend\node_modules\jest-circus\build\utils.js:231:10)
+          at _callCircusTest (C:\Users\kylew\blulok-cloud\backend\node_modules\jest-circus\build\run.js:316:40)
+          at _runTest (C:\Users\kylew\blulok-cloud\backend\node_modules\jest-circus\build\run.js:252:3)
+          at _runTestsForDescribeBlock (C:\Users\kylew\blulok-cloud\backend\node_modules\jest-circus\build\run.js:126:9)
+          at _runTestsForDescribeBlock (C:\Users\kylew\blulok-cloud\backend\node_modules\jest-circus\build\run.js:121:9)
+          at _runTestsForDescribeBlock (C:\Users\kylew\blulok-cloud\backend\node_modules\jest-circus\build\run.js:121:9)
+          at run (C:\Users\kylew\blulok-cloud\backend\node_modules\jest-circus\build\run.js:71:3)
+          at runAndTransformResultsToJestFormat (C:\Users\kylew\blulok-cloud\backend\node_modules\jest-circus\build\legacy-code-todo-rewrite\jestAdapterInit.js:122:21)
+          at jestAdapter (C:\Users\kylew\blulok-cloud\backend\node_modules\jest-circus\build\legacy-code-todo-rewrite\jestAdapter.js:79:19)
+          at runTestInternal (C:\Users\kylew\blulok-cloud\backend\node_modules\jest-runner\build\runTest.js:367:16)
+          at runTest (C:\Users\kylew\blulok-cloud\backend\node_modules\jest-runner\build\runTest.js:444:34)
+
+      327 |
+      328 |     } catch (error) {
+    > 329 |       console.error(`Failed to add device ${gatewayDevice.id || gatewayDevice.lockId}:`, error);
+          |               ^
+      330 |     }
+      331 |   }
+      332 |
+
+      at DeviceSyncService.addGatewayDevice (src/services/device-sync.service.ts:329:15)
+      at DeviceSyncService.syncGatewayDevices (src/services/device-sync.service.ts:259:15)
+      at Object.<anonymous> (src/__tests__/services/device-sync.service.test.ts:428:7)
+
+    console.error
+      Failed to bulk remove devices for gateway gateway-123: Error: Bulk delete error
+          at Object.<anonymous> (C:\Users\kylew\blulok-cloud\backend\src\__tests__\services\device-sync.service.test.ts:448:65)
+          at Promise.then.completed (C:\Users\kylew\blulok-cloud\backend\node_modules\jest-circus\build\utils.js:298:28)
+          at new Promise (<anonymous>)
+          at callAsyncCircusFn (C:\Users\kylew\blulok-cloud\backend\node_modules\jest-circus\build\utils.js:231:10)
+          at _callCircusTest (C:\Users\kylew\blulok-cloud\backend\node_modules\jest-circus\build\run.js:316:40)
+          at _runTest (C:\Users\kylew\blulok-cloud\backend\node_modules\jest-circus\build\run.js:252:3)
+          at _runTestsForDescribeBlock (C:\Users\kylew\blulok-cloud\backend\node_modules\jest-circus\build\run.js:126:9)
+          at _runTestsForDescribeBlock (C:\Users\kylew\blulok-cloud\backend\node_modules\jest-circus\build\run.js:121:9)
+          at _runTestsForDescribeBlock (C:\Users\kylew\blulok-cloud\backend\node_modules\jest-circus\build\run.js:121:9)
+          at run (C:\Users\kylew\blulok-cloud\backend\node_modules\jest-circus\build\run.js:71:3)
+          at runAndTransformResultsToJestFormat (C:\Users\kylew\blulok-cloud\backend\node_modules\jest-circus\build\legacy-code-todo-rewrite\jestAdapterInit.js:122:21)
+          at jestAdapter (C:\Users\kylew\blulok-cloud\backend\node_modules\jest-circus\build\legacy-code-todo-rewrite\jestAdapter.js:79:19)
+          at runTestInternal (C:\Users\kylew\blulok-cloud\backend\node_modules\jest-runner\build\runTest.js:367:16)
+          at runTest (C:\Users\kylew\blulok-cloud\backend\node_modules\jest-runner\build\runTest.js:444:34)
+
+      279 |           }
+      280 |         } catch (error) {
+    > 281 |           console.error(`Failed to bulk remove devices for gateway ${gatewayId}:`, error);
+          |                   ^
+      282 |           // Fall back to individual deletes on bulk failure
+      283 |           for (const device of devicesToRemove) {
+      284 |             await this.removeGatewayDevice(device);
+
+      at DeviceSyncService.syncGatewayDevices (src/services/device-sync.service.ts:281:19)
+      at Object.<anonymous> (src/__tests__/services/device-sync.service.test.ts:452:7)
+
+    console.log
+      [DEVICE-SYNC] Device ABC123 (assigned to unit unit-1) no longer exists on gateway gateway-123, removing from database
+
+      at DeviceSyncService.removeGatewayDevice (src/services/device-sync.service.ts:342:15)
+
+    console.error
+      Failed to remove device ABC123: Error: Database error
+          at Object.<anonymous> (C:\Users\kylew\blulok-cloud\backend\src\__tests__\services\device-sync.service.test.ts:449:60)
+          at Promise.then.completed (C:\Users\kylew\blulok-cloud\backend\node_modules\jest-circus\build\utils.js:298:28)
+          at new Promise (<anonymous>)
+          at callAsyncCircusFn (C:\Users\kylew\blulok-cloud\backend\node_modules\jest-circus\build\utils.js:231:10)
+          at _callCircusTest (C:\Users\kylew\blulok-cloud\backend\node_modules\jest-circus\build\run.js:316:40)
+          at _runTest (C:\Users\kylew\blulok-cloud\backend\node_modules\jest-circus\build\run.js:252:3)
+          at _runTestsForDescribeBlock (C:\Users\kylew\blulok-cloud\backend\node_modules\jest-circus\build\run.js:126:9)
+          at _runTestsForDescribeBlock (C:\Users\kylew\blulok-cloud\backend\node_modules\jest-circus\build\run.js:121:9)
+          at _runTestsForDescribeBlock (C:\Users\kylew\blulok-cloud\backend\node_modules\jest-circus\build\run.js:121:9)
+          at run (C:\Users\kylew\blulok-cloud\backend\node_modules\jest-circus\build\run.js:71:3)
+          at runAndTransformResultsToJestFormat (C:\Users\kylew\blulok-cloud\backend\node_modules\jest-circus\build\legacy-code-todo-rewrite\jestAdapterInit.js:122:21)
+          at jestAdapter (C:\Users\kylew\blulok-cloud\backend\node_modules\jest-circus\build\legacy-code-todo-rewrite\jestAdapter.js:79:19)
+          at runTestInternal (C:\Users\kylew\blulok-cloud\backend\node_modules\jest-runner\build\runTest.js:367:16)
+          at runTest (C:\Users\kylew\blulok-cloud\backend\node_modules\jest-runner\build\runTest.js:444:34)
+
+      357 |       }
+      358 |     } catch (error) {
+    > 359 |       console.error(`Failed to remove device ${device.device_serial}:`, error);
+          |               ^
+      360 |     }
+      361 |   }
+      362 |
+
+      at DeviceSyncService.removeGatewayDevice (src/services/device-sync.service.ts:359:15)
+      at DeviceSyncService.syncGatewayDevices (src/services/device-sync.service.ts:284:13)
+      at Object.<anonymous> (src/__tests__/services/device-sync.service.test.ts:452:7)
+
+    console.error
+      Failed to update device ABC123: Error: Database error
+          at Object.<anonymous> (C:\Users\kylew\blulok-cloud\backend\src\__tests__\services\device-sync.service.test.ts:476:60)
+          at Promise.then.completed (C:\Users\kylew\blulok-cloud\backend\node_modules\jest-circus\build\utils.js:298:28)
+          at new Promise (<anonymous>)
+          at callAsyncCircusFn (C:\Users\kylew\blulok-cloud\backend\node_modules\jest-circus\build\utils.js:231:10)
+          at _callCircusTest (C:\Users\kylew\blulok-cloud\backend\node_modules\jest-circus\build\run.js:316:40)
+          at _runTest (C:\Users\kylew\blulok-cloud\backend\node_modules\jest-circus\build\run.js:252:3)
+          at _runTestsForDescribeBlock (C:\Users\kylew\blulok-cloud\backend\node_modules\jest-circus\build\run.js:126:9)
+          at _runTestsForDescribeBlock (C:\Users\kylew\blulok-cloud\backend\node_modules\jest-circus\build\run.js:121:9)
+          at _runTestsForDescribeBlock (C:\Users\kylew\blulok-cloud\backend\node_modules\jest-circus\build\run.js:121:9)
+          at run (C:\Users\kylew\blulok-cloud\backend\node_modules\jest-circus\build\run.js:71:3)
+          at runAndTransformResultsToJestFormat (C:\Users\kylew\blulok-cloud\backend\node_modules\jest-circus\build\legacy-code-todo-rewrite\jestAdapterInit.js:122:21)
+          at jestAdapter (C:\Users\kylew\blulok-cloud\backend\node_modules\jest-circus\build\legacy-code-todo-rewrite\jestAdapter.js:79:19)
+          at runTestInternal (C:\Users\kylew\blulok-cloud\backend\node_modules\jest-runner\build\runTest.js:367:16)
+          at runTest (C:\Users\kylew\blulok-cloud\backend\node_modules\jest-runner\build\runTest.js:444:34)
+
+      391 |           }
+      392 |         } catch (error) {
+    > 393 |           console.error(`Failed to update device ${deviceSerial}:`, error);
+          |                   ^
+      394 |         }
+      395 |       }
+      396 |
+
+      at DeviceSyncService.updateDeviceStatuses (src/services/device-sync.service.ts:393:19)
+      at Object.<anonymous> (src/__tests__/services/device-sync.service.test.ts:479:7)
+
+    console.log
+      [DEVICE-SYNC] Bulk added 1 devices from inventory sync
+
+      at DeviceSyncService.syncDeviceInventory (src/services/device-sync.service.ts:517:19)
+
+    console.log
+      [DEVICE-SYNC] Inventory sync complete: added=1, removed=0, unchanged=0
+
+      at DeviceSyncService.syncDeviceInventory (src/services/device-sync.service.ts:581:15)
+
+    console.log
+      [DEVICE-SYNC] Bulk removed 1 devices from inventory sync
+
+      at DeviceSyncService.syncDeviceInventory (src/services/device-sync.service.ts:557:19)
+
+    console.log
+      [DEVICE-SYNC] Inventory sync complete: added=0, removed=1, unchanged=1
+
+      at DeviceSyncService.syncDeviceInventory (src/services/device-sync.service.ts:581:15)
+
+    console.log
+      [DEVICE-SYNC] Inventory sync complete: added=0, removed=0, unchanged=1
+
+      at DeviceSyncService.syncDeviceInventory (src/services/device-sync.service.ts:581:15)
+
+    console.log
+      [DEVICE-SYNC] Inventory sync complete: added=0, removed=0, unchanged=1
+
+      at DeviceSyncService.syncDeviceInventory (src/services/device-sync.service.ts:581:15)
+
+    console.log
+      [DEVICE-SYNC] Bulk removed 1 devices from inventory sync
+
+      at DeviceSyncService.syncDeviceInventory (src/services/device-sync.service.ts:557:19)
+
+    console.log
+      [DEVICE-SYNC] Inventory sync complete: added=0, removed=1, unchanged=0
+
+      at DeviceSyncService.syncDeviceInventory (src/services/device-sync.service.ts:581:15)
+
+    console.log
+      [DEVICE-SYNC] Bulk removed 1 devices from inventory sync
+
+      at DeviceSyncService.syncDeviceInventory (src/services/device-sync.service.ts:557:19)
+
+    console.log
+      [DEVICE-SYNC] Inventory sync complete: added=0, removed=1, unchanged=0
+
+      at DeviceSyncService.syncDeviceInventory (src/services/device-sync.service.ts:581:15)
+
+    console.log
+      [DEVICE-SYNC] Bulk removed 2 devices from inventory sync
+
+      at DeviceSyncService.syncDeviceInventory (src/services/device-sync.service.ts:557:19)
+
+    console.log
+      [DEVICE-SYNC] Inventory sync complete: added=0, removed=2, unchanged=1
+
+      at DeviceSyncService.syncDeviceInventory (src/services/device-sync.service.ts:581:15)
+
+    console.log
+      [DEVICE-SYNC] Updated state for device LOCK-1
+
+      at DeviceSyncService.updateDeviceStates (src/services/device-sync.service.ts:763:19)
+
+    console.log
+      [DEVICE-SYNC] State update complete: updated=1, not_found=0, errors=0
+
+      at DeviceSyncService.updateDeviceStates (src/services/device-sync.service.ts:772:13)
+
+    console.log
+      [DEVICE-SYNC] Updated state for device LOCK-1
+
+      at DeviceSyncService.updateDeviceStates (src/services/device-sync.service.ts:763:19)
+
+    console.log
+      [DEVICE-SYNC] State update complete: updated=1, not_found=0, errors=0
+
+      at DeviceSyncService.updateDeviceStates (src/services/device-sync.service.ts:772:13)
+
+    console.log
+      [DEVICE-SYNC] Updated state for device LOCK-1
+
+      at DeviceSyncService.updateDeviceStates (src/services/device-sync.service.ts:763:19)
+
+    console.log
+      [DEVICE-SYNC] State update complete: updated=1, not_found=0, errors=0
+
+      at DeviceSyncService.updateDeviceStates (src/services/device-sync.service.ts:772:13)
+
+    console.log
+      [DEVICE-SYNC] State update complete: updated=0, not_found=1, errors=0
+
+      at DeviceSyncService.updateDeviceStates (src/services/device-sync.service.ts:772:13)
+
+    console.log
+      [DEVICE-SYNC] Updated state for device LOCK-1
+
+      at DeviceSyncService.updateDeviceStates (src/services/device-sync.service.ts:763:19)
+
+    console.log
+      [DEVICE-SYNC] Updated state for device LOCK-2
+
+      at DeviceSyncService.updateDeviceStates (src/services/device-sync.service.ts:763:19)
+
+    console.log
+      [DEVICE-SYNC] State update complete: updated=2, not_found=1, errors=0
+
+      at DeviceSyncService.updateDeviceStates (src/services/device-sync.service.ts:772:13)
+
+    console.log
+      [DEVICE-SYNC] Updated state for device LOCK-1
+
+      at DeviceSyncService.updateDeviceStates (src/services/device-sync.service.ts:763:19)
+
+    console.log
+      [DEVICE-SYNC] State update complete: updated=1, not_found=0, errors=0
+
+      at DeviceSyncService.updateDeviceStates (src/services/device-sync.service.ts:772:13)
+
+    console.log
+      [DEVICE-SYNC] Updated state for device LOCK-1
+
+      at DeviceSyncService.updateDeviceStates (src/services/device-sync.service.ts:763:19)
+
+    console.log
+      [DEVICE-SYNC] State update complete: updated=1, not_found=0, errors=0
+
+      at DeviceSyncService.updateDeviceStates (src/services/device-sync.service.ts:772:13)
+
+    console.log
+      [DEVICE-SYNC] State update complete: updated=0, not_found=0, errors=0
+
+      at DeviceSyncService.updateDeviceStates (src/services/device-sync.service.ts:772:13)
+
+PASS src/__tests__/services/bludesign-asset-locker.service.test.ts
+PASS src/__tests__/services/facility.service.test.ts
+PASS src/__tests__/models/firmware-push.model.test.ts
+PASS src/__tests__/routes/system-storage.routes.test.ts
+PASS src/__tests__/services/subscriptions/device-status-subscription-manager.test.ts
+PASS src/__tests__/models/access-code.model.test.ts
+PASS src/__tests__/services/schedule-serialization.service.test.ts
+PASS src/__tests__/integration/storage-providers.integration.test.ts
+PASS src/__tests__/services/devices.service.unit.test.ts
+PASS src/__tests__/services/facility-access.service.test.ts
+PASS src/__tests__/services/access-code-scheduler.service.test.ts
+PASS src/__tests__/models/user-device.model.test.ts
+PASS src/__tests__/models/firmware.model.test.ts
+PASS src/__tests__/services/device-telemetry-event.test.ts
+PASS src/__tests__/models/denylist-entry.model.test.ts
+PASS src/__tests__/services/facility-storage.test.ts
+PASS src/__tests__/services/subscriptions/notification-subscription-manager.test.ts
+PASS src/__tests__/services/logger-interceptor-security.test.ts
+  ΓùÅ Console
+
+    console.error
+      Error in logger interceptor: Error: Broadcast error
+          at Object.<anonymous> (C:\Users\kylew\blulok-cloud\backend\src\__tests__\services\logger-interceptor-security.test.ts:112:15)
+          at C:\Users\kylew\blulok-cloud\backend\node_modules\jest-mock\build\index.js:397:39
+          at Object.<anonymous> (C:\Users\kylew\blulok-cloud\backend\node_modules\jest-mock\build\index.js:404:13)
+          at Object.mockConstructor [as broadcastLogUpdate] (C:\Users\kylew\blulok-cloud\backend\node_modules\jest-mock\build\index.js:148:19)
+          at LoggerInterceptorService.broadcastLogEntry (C:\Users\kylew\blulok-cloud\backend\src\services\logger-interceptor.service.ts:121:22)
+          at C:\Users\kylew\blulok-cloud\backend\src\__tests__\services\logger-interceptor-security.test.ts:117:30
+          at Object.<anonymous> (C:\Users\kylew\blulok-cloud\backend\node_modules\expect\build\toThrowMatchers.js:74:11)
+          at Object.throwingMatcher [as toThrow] (C:\Users\kylew\blulok-cloud\backend\node_modules\expect\build\index.js:320:21)
+          at Object.<anonymous> (C:\Users\kylew\blulok-cloud\backend\src\__tests__\services\logger-interceptor-security.test.ts:118:14)
+          at Promise.then.completed (C:\Users\kylew\blulok-cloud\backend\node_modules\jest-circus\build\utils.js:298:28)
+          at new Promise (<anonymous>)
+          at callAsyncCircusFn (C:\Users\kylew\blulok-cloud\backend\node_modules\jest-circus\build\utils.js:231:10)
+          at _callCircusTest (C:\Users\kylew\blulok-cloud\backend\node_modules\jest-circus\build\run.js:316:40)
+          at _runTest (C:\Users\kylew\blulok-cloud\backend\node_modules\jest-circus\build\run.js:252:3)
+          at _runTestsForDescribeBlock (C:\Users\kylew\blulok-cloud\backend\node_modules\jest-circus\build\run.js:126:9)
+          at _runTestsForDescribeBlock (C:\Users\kylew\blulok-cloud\backend\node_modules\jest-circus\build\run.js:121:9)
+          at _runTestsForDescribeBlock (C:\Users\kylew\blulok-cloud\backend\node_modules\jest-circus\build\run.js:121:9)
+          at run (C:\Users\kylew\blulok-cloud\backend\node_modules\jest-circus\build\run.js:71:3)
+          at runAndTransformResultsToJestFormat (C:\Users\kylew\blulok-cloud\backend\node_modules\jest-circus\build\legacy-code-todo-rewrite\jestAdapterInit.js:122:21)
+          at jestAdapter (C:\Users\kylew\blulok-cloud\backend\node_modules\jest-circus\build\legacy-code-todo-rewrite\jestAdapter.js:79:19)
+          at runTestInternal (C:\Users\kylew\blulok-cloud\backend\node_modules\jest-runner\build\runTest.js:367:16)
+          at runTest (C:\Users\kylew\blulok-cloud\backend\node_modules\jest-runner\build\runTest.js:444:34)
+
+      122 |     } catch (error) {
+      123 |       // Don't log anything in the interceptor - just use console.error to avoid circular reference
+    > 124 |       console.error('Error in logger interceptor:', error);
+          |               ^
+      125 |     } finally {
+      126 |       this.isIntercepting = false;
+      127 |     }
+
+      at LoggerInterceptorService.broadcastLogEntry (src/services/logger-interceptor.service.ts:124:15)
+      at src/__tests__/services/logger-interceptor-security.test.ts:117:30
+      at Object.<anonymous> (node_modules/expect/build/toThrowMatchers.js:74:11)
+      at Object.throwingMatcher [as toThrow] (node_modules/expect/build/index.js:320:21)
+      at Object.<anonymous> (src/__tests__/services/logger-interceptor-security.test.ts:118:14)
+
+    console.error
+      Error in logger interceptor: Error: WebSocket service unavailable
+          at Object.<anonymous> (C:\Users\kylew\blulok-cloud\backend\src\__tests__\services\logger-interceptor-security.test.ts:183:15)
+          at C:\Users\kylew\blulok-cloud\backend\node_modules\jest-mock\build\index.js:397:39
+          at Object.<anonymous> (C:\Users\kylew\blulok-cloud\backend\node_modules\jest-mock\build\index.js:404:13)
+          at Object.mockConstructor [as broadcastLogUpdate] (C:\Users\kylew\blulok-cloud\backend\node_modules\jest-mock\build\index.js:148:19)
+          at LoggerInterceptorService.broadcastLogEntry (C:\Users\kylew\blulok-cloud\backend\src\services\logger-interceptor.service.ts:121:22)
+          at C:\Users\kylew\blulok-cloud\backend\src\__tests__\services\logger-interceptor-security.test.ts:192:30
+          at Object.<anonymous> (C:\Users\kylew\blulok-cloud\backend\node_modules\expect\build\toThrowMatchers.js:74:11)
+          at Object.throwingMatcher [as toThrow] (C:\Users\kylew\blulok-cloud\backend\node_modules\expect\build\index.js:320:21)
+          at Object.<anonymous> (C:\Users\kylew\blulok-cloud\backend\src\__tests__\services\logger-interceptor-security.test.ts:193:14)
+          at Promise.then.completed (C:\Users\kylew\blulok-cloud\backend\node_modules\jest-circus\build\utils.js:298:28)
+          at new Promise (<anonymous>)
+          at callAsyncCircusFn (C:\Users\kylew\blulok-cloud\backend\node_modules\jest-circus\build\utils.js:231:10)
+          at _callCircusTest (C:\Users\kylew\blulok-cloud\backend\node_modules\jest-circus\build\run.js:316:40)
+          at _runTest (C:\Users\kylew\blulok-cloud\backend\node_modules\jest-circus\build\run.js:252:3)
+          at _runTestsForDescribeBlock (C:\Users\kylew\blulok-cloud\backend\node_modules\jest-circus\build\run.js:126:9)
+          at _runTestsForDescribeBlock (C:\Users\kylew\blulok-cloud\backend\node_modules\jest-circus\build\run.js:121:9)
+          at _runTestsForDescribeBlock (C:\Users\kylew\blulok-cloud\backend\node_modules\jest-circus\build\run.js:121:9)
+          at run (C:\Users\kylew\blulok-cloud\backend\node_modules\jest-circus\build\run.js:71:3)
+          at runAndTransformResultsToJestFormat (C:\Users\kylew\blulok-cloud\backend\node_modules\jest-circus\build\legacy-code-todo-rewrite\jestAdapterInit.js:122:21)
+          at jestAdapter (C:\Users\kylew\blulok-cloud\backend\node_modules\jest-circus\build\legacy-code-todo-rewrite\jestAdapter.js:79:19)
+          at runTestInternal (C:\Users\kylew\blulok-cloud\backend\node_modules\jest-runner\build\runTest.js:367:16)
+          at runTest (C:\Users\kylew\blulok-cloud\backend\node_modules\jest-runner\build\runTest.js:444:34)
+
+      122 |     } catch (error) {
+      123 |       // Don't log anything in the interceptor - just use console.error to avoid circular reference
+    > 124 |       console.error('Error in logger interceptor:', error);
+          |               ^
+      125 |     } finally {
+      126 |       this.isIntercepting = false;
+      127 |     }
+
+      at LoggerInterceptorService.broadcastLogEntry (src/services/logger-interceptor.service.ts:124:15)
+      at src/__tests__/services/logger-interceptor-security.test.ts:192:30
+      at Object.<anonymous> (node_modules/expect/build/toThrowMatchers.js:74:11)
+      at Object.throwingMatcher [as toThrow] (node_modules/expect/build/index.js:320:21)
+      at Object.<anonymous> (src/__tests__/services/logger-interceptor-security.test.ts:193:14)
+
+PASS src/__tests__/models/user-widget-layout.model.test.ts
+PASS src/__tests__/integration/denylist-flow.test.ts
+PASS src/__tests__/services/firmware-storage.test.ts
+PASS src/__tests__/integration/fms-integration-boundary.test.ts
+PASS src/__tests__/services/fms.applyTenantRemoved.test.ts
+PASS src/__tests__/security/fms-cross-facility-attack.test.ts
+PASS src/__tests__/services/key-sharing.invite-denylist-remove.test.ts
+PASS src/__tests__/security/battery-widget-rbac.test.ts
+PASS src/__tests__/users-rbac.util.test.ts
+PASS src/__tests__/services/rate-limit-bypass.service.test.ts
+PASS src/__tests__/services/activity.service.test.ts
+PASS src/__tests__/services/notification.service.test.ts
+PASS src/__tests__/services/crypto/ed25519.service.test.ts
+PASS src/__tests__/services/gateway/base-connection.test.ts
+PASS src/__tests__/services/device-group.service.test.ts
+PASS src/__tests__/services/subscriptions/subscription-registry.test.ts
+PASS src/__tests__/services/websocket-security.test.ts
+PASS src/__tests__/services/websocket-battery-integration.test.ts
+PASS src/__tests__/services/gateway/http-gateway.test.ts
+  ΓùÅ Console
+
+    console.log
+      [HTTP-GATEWAY] Device test-lock registered (via key management)
+
+      at HttpGateway.sendDeviceRegistration (src/services/gateway/gateways/http.gateway.ts:297:13)
+
+    console.log
+      [HTTP-GATEWAY] Device test-lock registered (via key management)
+
+      at HttpGateway.sendDeviceRegistration (src/services/gateway/gateways/http.gateway.ts:297:13)
+
+    console.log
+      [HTTP-GATEWAY] Device test-lock unregistered
+
+      at HttpGateway.sendDeviceUnregistration (src/services/gateway/gateways/http.gateway.ts:306:13)
+
+    console.log
+      [HttpConnection] Making GET request to: undefined/keys/get-lock-state
+
+      at HttpConnection.makeRequest (src/services/gateway/connections/http.connection.ts:111:15)
+
+    console.log
+      [HttpConnection] Making POST request to: undefined/locks/send-lock-command
+
+      at HttpConnection.makeRequest (src/services/gateway/connections/http.connection.ts:111:15)
+
+    console.log
+      Started polling for gateway test-http-gateway every 30000ms
+
+      at HttpGateway.startPolling (src/services/gateway/gateways/http.gateway.ts:146:13)
+
+    console.log
+      Stopped polling for gateway test-http-gateway
+
+      at HttpGateway.stopPolling (src/services/gateway/gateways/http.gateway.ts:156:15)
+
+    console.log
+      Started polling for gateway test-http-gateway every 30000ms
+
+      at HttpGateway.startPolling (src/services/gateway/gateways/http.gateway.ts:146:13)
+
+    console.log
+      Stopped polling for gateway test-http-gateway
+
+      at HttpGateway.stopPolling (src/services/gateway/gateways/http.gateway.ts:156:15)
+
+    console.log
+      Started polling for gateway test-http-gateway every 30000ms
+
+      at HttpGateway.startPolling (src/services/gateway/gateways/http.gateway.ts:146:13)
+
+    console.log
+      [HTTP-GATEWAY] Performing sync for gateway test-http-gateway
+
+      at HttpGateway.sync (src/services/gateway/gateways/http.gateway.ts:554:15)
+
+    console.log
+      [HTTP-GATEWAY] Sync completed for gateway test-http-gateway
+
+      at HttpGateway.sync (src/services/gateway/gateways/http.gateway.ts:652:15)
+
+    console.log
+      [HTTP-GATEWAY] Polling sync successful for gateway test-http-gateway
+
+      at HttpGateway.pollAndSyncDevices (src/services/gateway/gateways/http.gateway.ts:187:15)
+
+    console.log
+      Stopped polling for gateway test-http-gateway
+
+      at HttpGateway.stopPolling (src/services/gateway/gateways/http.gateway.ts:156:15)
+
+    console.log
+      Started polling for gateway test-http-gateway every 30000ms
+
+      at HttpGateway.startPolling (src/services/gateway/gateways/http.gateway.ts:146:13)
+
+    console.log
+      [HTTP-GATEWAY] Performing sync for gateway test-http-gateway
+
+      at HttpGateway.sync (src/services/gateway/gateways/http.gateway.ts:554:15)
+
+    console.error
+      Failed to get all locks: Error: Network error
+          at Object.<anonymous> (C:\Users\kylew\blulok-cloud\backend\src\__tests__\services\gateway\http-gateway.test.ts:287:67)
+
+      515 |       }
+      516 |     } catch (error: any) {
+    > 517 |       console.error('Failed to get all locks:', error);
+          |               ^
+      518 |
+      519 |       // Provide more specific error messages for common issues
+      520 |       if (error?.response?.status === 404) {
+
+      at HttpGateway.getAllLocks (src/services/gateway/gateways/http.gateway.ts:517:15)
+      at HttpGateway.sync (src/services/gateway/gateways/http.gateway.ts:559:24)
+      at HttpGateway.pollAndSyncDevices (src/services/gateway/gateways/http.gateway.ts:182:7)
+      at src/services/gateway/gateways/http.gateway.ts:142:7
+
+    console.log
+      Stopped polling for gateway test-http-gateway
+
+      at HttpGateway.stopPolling (src/services/gateway/gateways/http.gateway.ts:156:15)
+
+    console.error
+      [HTTP-GATEWAY] Sync failed for gateway test-http-gateway: Error: Network error
+          at Object.<anonymous> (C:\Users\kylew\blulok-cloud\backend\src\__tests__\services\gateway\http-gateway.test.ts:287:67)
+
+      562 |         const errorMessage = `Failed to get device list: ${error}`;
+      563 |         syncResults.errors.push(errorMessage);
+    > 564 |         console.error(`[HTTP-GATEWAY] Sync failed for gateway ${this.id}:`, error);
+          |                 ^
+      565 |
+      566 |         // Check if this is a critical configuration error that should mark gateway offline
+      567 |         const isCriticalError = error?.message?.includes('API endpoint not found') ||
+
+      at HttpGateway.sync (src/services/gateway/gateways/http.gateway.ts:564:17)
+      at HttpGateway.pollAndSyncDevices (src/services/gateway/gateways/http.gateway.ts:182:7)
+      at src/services/gateway/gateways/http.gateway.ts:142:7
+
+    console.log
+      [HTTP-GATEWAY] Polling sync successful for gateway test-http-gateway
+
+      at HttpGateway.pollAndSyncDevices (src/services/gateway/gateways/http.gateway.ts:187:15)
+
+    console.log
+      Started polling for gateway test-http-gateway every 30000ms
+
+      at HttpGateway.startPolling (src/services/gateway/gateways/http.gateway.ts:146:13)
+
+    console.log
+      [HTTP-GATEWAY] Performing sync for gateway test-http-gateway
+
+      at HttpGateway.sync (src/services/gateway/gateways/http.gateway.ts:554:15)
+
+    console.log
+      [HTTP-GATEWAY] Sync completed for gateway test-http-gateway
+
+      at HttpGateway.sync (src/services/gateway/gateways/http.gateway.ts:652:15)
+
+    console.log
+      [HTTP-GATEWAY] Polling sync successful for gateway test-http-gateway
+
+      at HttpGateway.pollAndSyncDevices (src/services/gateway/gateways/http.gateway.ts:187:15)
+
+    console.log
+      Stopped polling for gateway test-http-gateway
+
+      at HttpGateway.stopPolling (src/services/gateway/gateways/http.gateway.ts:156:15)
+
+    console.log
+      Started polling for gateway test-http-gateway every 30000ms
+
+      at HttpGateway.startPolling (src/services/gateway/gateways/http.gateway.ts:146:13)
+
+    console.log
+      [HTTP-GATEWAY] Performing sync for gateway test-http-gateway
+
+      at HttpGateway.sync (src/services/gateway/gateways/http.gateway.ts:554:15)
+
+    console.log
+      [HTTP-GATEWAY] Sync completed for gateway test-http-gateway
+
+      at HttpGateway.sync (src/services/gateway/gateways/http.gateway.ts:652:15)
+
+    console.log
+      [HTTP-GATEWAY] Polling sync successful for gateway test-http-gateway
+
+      at HttpGateway.pollAndSyncDevices (src/services/gateway/gateways/http.gateway.ts:187:15)
+
+    console.log
+      Stopped polling for gateway test-http-gateway
+
+      at HttpGateway.stopPolling (src/services/gateway/gateways/http.gateway.ts:156:15)
+
+    console.log
+      [HTTP-GATEWAY] Performing sync for gateway test-http-gateway
+
+      at HttpGateway.sync (src/services/gateway/gateways/http.gateway.ts:554:15)
+
+    console.log
+      [HTTP-GATEWAY] Sync completed for gateway test-http-gateway
+
+      at HttpGateway.sync (src/services/gateway/gateways/http.gateway.ts:652:15)
+
+PASS src/__tests__/services/gateway-status-subscription-manager.test.ts
+PASS src/__tests__/services/denylist-optimization.service.test.ts
+PASS src/__tests__/services/storage/gdrive-base.provider.test.ts
+PASS src/__tests__/services/fms-sync-subscription.test.ts
+PASS src/__tests__/services/denylist-pruning.service.test.ts
+PASS src/__tests__/services/auth.service.login-app-device.test.ts
+PASS src/__tests__/services/facilities.service.test.ts
+PASS src/__tests__/security/units-rbac-audit.test.ts
+PASS src/__tests__/services/storedge-provider.test.ts
+PASS src/__tests__/services/auth.service.test.ts
+PASS src/__tests__/services/notification.service.dev-mode.test.ts
+PASS src/__tests__/services/passes.service.test.ts
+PASS src/__tests__/services/gateway/protocol-v1.test.ts
+PASS src/__tests__/models/unit.model.test.ts
+PASS src/__tests__/services/fms.apply-changes.unit-updated.test.ts
+PASS src/__tests__/services/units-assignment.service.test.ts
+PASS src/__tests__/services/model-hooks.service.test.ts
+PASS src/__tests__/services/access-code.service.test.ts
+PASS src/__tests__/services/subscriptions/general-stats-subscription-manager.test.ts
+PASS src/__tests__/services/gateway/http-connection.test.ts
+  ΓùÅ Console
+
+    console.log
+      [HttpConnection] Making GET request to: undefined/locks
+
+      at HttpConnection.makeRequest (src/services/gateway/connections/http.connection.ts:111:15)
+
+    console.log
+      [HttpConnection] Making POST request to: undefined/locks/send-command
+
+      at HttpConnection.makeRequest (src/services/gateway/connections/http.connection.ts:111:15)
+
+    console.log
+      [HttpConnection] Making GET request to: undefined/status
+
+      at HttpConnection.makeRequest (src/services/gateway/connections/http.connection.ts:111:15)
+
+    console.log
+      [HttpConnection] Making GET request to: undefined/status
+
+      at HttpConnection.makeRequest (src/services/gateway/connections/http.connection.ts:111:15)
+
+    console.log
+      [HttpConnection] Making GET request to: undefined/status
+
+      at HttpConnection.makeRequest (src/services/gateway/connections/http.connection.ts:111:15)
+
+    console.log
+      [HttpConnection] Making GET request to: undefined/api/data
+
+      at HttpConnection.makeRequest (src/services/gateway/connections/http.connection.ts:111:15)
+
+    console.log
+      [HttpConnection] Making GET request to: undefined/api/data
+
+      at HttpConnection.makeRequest (src/services/gateway/connections/http.connection.ts:111:15)
+
+    console.log
+      [HttpConnection] Making GET request to: undefined/test
+
+      at HttpConnection.makeRequest (src/services/gateway/connections/http.connection.ts:111:15)
+
+    console.log
+      [HttpConnection] Making POST request to: undefined/test
+
+      at HttpConnection.makeRequest (src/services/gateway/connections/http.connection.ts:111:15)
+
+    console.log
+      [HttpConnection] Making PUT request to: undefined/test
+
+      at HttpConnection.makeRequest (src/services/gateway/connections/http.connection.ts:111:15)
+
+    console.log
+      [HttpConnection] Making DELETE request to: undefined/test
+
+      at HttpConnection.makeRequest (src/services/gateway/connections/http.connection.ts:111:15)
+
+    console.log
+      [HttpConnection] Making GET request to: undefined/test
+
+      at HttpConnection.makeRequest (src/services/gateway/connections/http.connection.ts:111:15)
+
+    console.log
+      [HttpConnection] Making GET request to: undefined/empty
+
+      at HttpConnection.makeRequest (src/services/gateway/connections/http.connection.ts:111:15)
+
+    console.log
+      [HttpConnection] Making GET request to: undefined/timeout
+
+      at HttpConnection.makeRequest (src/services/gateway/connections/http.connection.ts:111:15)
+
+PASS src/__tests__/services/storage/gcs-base.provider.test.ts
+PASS src/__tests__/services/subscriptions/battery-subscription-manager.test.ts
+PASS src/__tests__/services/ed25519-firmware.test.ts
+PASS src/__tests__/types/widget-type-helper.extract.test.ts
+PASS src/__tests__/services/units.service.test.ts
+PASS src/__tests__/models/fms-change.model.test.ts
+PASS src/__tests__/services/key-sharing.invite-sms.test.ts
+PASS src/__tests__/services/denylist.service.test.ts
+PASS src/__tests__/services/route-pass-pruning.service.test.ts
+PASS src/__tests__/services/app-entry-access.service.test.ts
+PASS src/__tests__/services/firmware-push-subscription-manager.test.ts
+PASS src/__tests__/services/access-control.service.test.ts
+PASS src/__tests__/services/fms.service.facility-access.test.ts
+PASS src/__tests__/services/storage/base-storage.factory.test.ts
+PASS src/__tests__/services/fallback.service.test.ts
+PASS src/__tests__/services/access-control-zone-access.service.test.ts
+PASS src/__tests__/services/schedules.service.test.ts
+PASS src/__tests__/models/route-pass-issuance.model.test.ts
+PASS src/__tests__/services/gateway-events.service.status.test.ts
+PASS src/__tests__/services/notification-debug.service.test.ts
+PASS src/__tests__/services/gateway-events.service.inbound-db-sync.test.ts
+PASS src/__tests__/services/audience-resolver.service.test.ts
+PASS src/__tests__/integration/external-route-pass-verification.test.ts
+PASS src/__tests__/services/password-reset.service.test.ts
+PASS src/__tests__/services/general-stats.service.test.ts
+PASS src/__tests__/services/time-sync.service.test.ts
+PASS src/__tests__/integration/battery-widget-integration.test.ts
+PASS src/__tests__/services/storage/storage.factory.test.ts
+PASS src/__tests__/services/gateway/lock-command-jwt-device-claim.test.ts
+PASS src/__tests__/models/notification.model.test.ts
+PASS src/__tests__/models/user.model.test.ts
+PASS src/__tests__/services/gateway/gateway-service.test.ts
+  ΓùÅ Console
+
+    console.log
+      Gateway gw-1 initialized successfully
+
+      at GatewayService.initializeGateway (src/services/gateway/gateway.service.ts:119:15)
+          at async Promise.allSettled (index 0)
+
+    console.log
+      Gateway gw-1 connected and polling started
+
+      at GatewayService.initializeGateway (src/services/gateway/gateway.service.ts:124:17)
+          at async Promise.allSettled (index 0)
+
+    console.log
+      Initialized 1 gateways
+
+      at GatewayService.initializeAllGateways (src/services/gateway/gateway.service.ts:79:17)
+
+    console.error
+      Failed to initialize gateway x: Error: Gateway x is unassigned and cannot be initialized
+          at GatewayService.initializeGateway (C:\Users\kylew\blulok-cloud\backend\src\services\gateway\gateway.service.ts:93:15)
+          at Object.<anonymous> (C:\Users\kylew\blulok-cloud\backend\src\__tests__\services\gateway\gateway-service.test.ts:109:17)
+          at Promise.then.completed (C:\Users\kylew\blulok-cloud\backend\node_modules\jest-circus\build\utils.js:298:28)
+          at new Promise (<anonymous>)
+          at callAsyncCircusFn (C:\Users\kylew\blulok-cloud\backend\node_modules\jest-circus\build\utils.js:231:10)
+          at _callCircusTest (C:\Users\kylew\blulok-cloud\backend\node_modules\jest-circus\build\run.js:316:40)
+          at _runTest (C:\Users\kylew\blulok-cloud\backend\node_modules\jest-circus\build\run.js:252:3)
+          at _runTestsForDescribeBlock (C:\Users\kylew\blulok-cloud\backend\node_modules\jest-circus\build\run.js:126:9)
+          at _runTestsForDescribeBlock (C:\Users\kylew\blulok-cloud\backend\node_modules\jest-circus\build\run.js:121:9)
+          at _runTestsForDescribeBlock (C:\Users\kylew\blulok-cloud\backend\node_modules\jest-circus\build\run.js:121:9)
+          at run (C:\Users\kylew\blulok-cloud\backend\node_modules\jest-circus\build\run.js:71:3)
+          at runAndTransformResultsToJestFormat (C:\Users\kylew\blulok-cloud\backend\node_modules\jest-circus\build\legacy-code-todo-rewrite\jestAdapterInit.js:122:21)
+          at jestAdapter (C:\Users\kylew\blulok-cloud\backend\node_modules\jest-circus\build\legacy-code-todo-rewrite\jestAdapter.js:79:19)
+          at runTestInternal (C:\Users\kylew\blulok-cloud\backend\node_modules\jest-runner\build\runTest.js:367:16)
+          at runTest (C:\Users\kylew\blulok-cloud\backend\node_modules\jest-runner\build\runTest.js:444:34)
+
+      130 |       return gateway;
+      131 |     } catch (error) {
+    > 132 |       console.error(`Failed to initialize gateway ${gatewayConfig.id}:`, error);
+          |               ^
+      133 |       throw error;
+      134 |     }
+      135 |   }
+
+      at GatewayService.initializeGateway (src/services/gateway/gateway.service.ts:132:15)
+      at Object.<anonymous> (src/__tests__/services/gateway/gateway-service.test.ts:109:17)
+
+    console.log
+      Gateway gw-1 initialized successfully
+
+      at GatewayService.initializeGateway (src/services/gateway/gateway.service.ts:119:15)
+          at async Promise.allSettled (index 0)
+
+    console.log
+      Gateway gw-1 connected and polling started
+
+      at GatewayService.initializeGateway (src/services/gateway/gateway.service.ts:124:17)
+          at async Promise.allSettled (index 0)
+
+    console.log
+      Initialized 1 gateways
+
+      at GatewayService.initializeAllGateways (src/services/gateway/gateway.service.ts:79:17)
+
+    console.log
+      Gateway gw-1 initialized successfully
+
+      at GatewayService.initializeGateway (src/services/gateway/gateway.service.ts:119:15)
+          at async Promise.allSettled (index 0)
+
+    console.log
+      Gateway gw-1 connected and polling started
+
+      at GatewayService.initializeGateway (src/services/gateway/gateway.service.ts:124:17)
+          at async Promise.allSettled (index 0)
+
+    console.log
+      Initialized 1 gateways
+
+      at GatewayService.initializeAllGateways (src/services/gateway/gateway.service.ts:79:17)
+
+    console.log
+      Gateway gw-1 initialized successfully
+
+      at GatewayService.initializeGateway (src/services/gateway/gateway.service.ts:119:15)
+          at async Promise.allSettled (index 0)
+
+    console.log
+      Gateway gw-1 connected and polling started
+
+      at GatewayService.initializeGateway (src/services/gateway/gateway.service.ts:124:17)
+          at async Promise.allSettled (index 0)
+
+    console.log
+      Initialized 1 gateways
+
+      at GatewayService.initializeAllGateways (src/services/gateway/gateway.service.ts:79:17)
+
+    console.log
+      Gateway gw-1 initialized successfully
+
+      at GatewayService.initializeGateway (src/services/gateway/gateway.service.ts:119:15)
+          at async Promise.allSettled (index 0)
+
+    console.log
+      Gateway gw-1 connected and polling started
+
+      at GatewayService.initializeGateway (src/services/gateway/gateway.service.ts:124:17)
+          at async Promise.allSettled (index 0)
+
+    console.log
+      Initialized 1 gateways
+
+      at GatewayService.initializeAllGateways (src/services/gateway/gateway.service.ts:79:17)
+
+    console.log
+      Gateway gw-1 initialized successfully
+
+      at GatewayService.initializeGateway (src/services/gateway/gateway.service.ts:119:15)
+          at async Promise.allSettled (index 0)
+
+    console.log
+      Gateway gw-1 connected and polling started
+
+      at GatewayService.initializeGateway (src/services/gateway/gateway.service.ts:124:17)
+          at async Promise.allSettled (index 0)
+
+    console.log
+      Initialized 1 gateways
+
+      at GatewayService.initializeAllGateways (src/services/gateway/gateway.service.ts:79:17)
+
+    console.log
+      Gateway gw-1 initialized successfully
+
+      at GatewayService.initializeGateway (src/services/gateway/gateway.service.ts:119:15)
+          at async Promise.allSettled (index 0)
+
+    console.log
+      Gateway gw-1 connected and polling started
+
+      at GatewayService.initializeGateway (src/services/gateway/gateway.service.ts:124:17)
+          at async Promise.allSettled (index 0)
+
+    console.log
+      Initialized 1 gateways
+
+      at GatewayService.initializeAllGateways (src/services/gateway/gateway.service.ts:79:17)
+
+    console.log
+      Gateway gw-1 initialized successfully
+
+      at GatewayService.initializeGateway (src/services/gateway/gateway.service.ts:119:15)
+          at async Promise.allSettled (index 0)
+
+    console.log
+      Gateway gw-1 connected and polling started
+
+      at GatewayService.initializeGateway (src/services/gateway/gateway.service.ts:124:17)
+          at async Promise.allSettled (index 0)
+
+    console.log
+      Initialized 1 gateways
+
+      at GatewayService.initializeAllGateways (src/services/gateway/gateway.service.ts:79:17)
+
+    console.log
+      Gateway gw-1 initialized successfully
+
+      at GatewayService.initializeGateway (src/services/gateway/gateway.service.ts:119:15)
+          at async Promise.allSettled (index 0)
+
+    console.log
+      Gateway gw-1 connected and polling started
+
+      at GatewayService.initializeGateway (src/services/gateway/gateway.service.ts:124:17)
+          at async Promise.allSettled (index 0)
+
+    console.log
+      Initialized 1 gateways
+
+      at GatewayService.initializeAllGateways (src/services/gateway/gateway.service.ts:79:17)
+
+    console.log
+      Gateway gw-1 initialized successfully
+
+      at GatewayService.initializeGateway (src/services/gateway/gateway.service.ts:119:15)
+
+    console.log
+      Gateway gw-1 connected and polling started
+
+      at GatewayService.initializeGateway (src/services/gateway/gateway.service.ts:124:17)
+
+    console.log
+      Gateway gw-1 initialized successfully
+
+      at GatewayService.initializeGateway (src/services/gateway/gateway.service.ts:119:15)
+          at async Promise.allSettled (index 0)
+
+    console.log
+      Gateway gw-1 connected and polling started
+
+      at GatewayService.initializeGateway (src/services/gateway/gateway.service.ts:124:17)
+          at async Promise.allSettled (index 0)
+
+    console.log
+      Initialized 1 gateways
+
+      at GatewayService.initializeAllGateways (src/services/gateway/gateway.service.ts:79:17)
+
+PASS src/__tests__/services/fms-sync-progress-subscription.test.ts
+PASS src/__tests__/services/lock-command.service.test.ts
+PASS src/__tests__/services/route-pass.orchestrator.test.ts
+PASS src/__tests__/services/notifications/channel-notification.service.test.ts
+PASS src/__tests__/security/env-keys-validation.test.ts
+PASS src/__tests__/services/base-fms-provider-oauth1.test.ts
+PASS src/__tests__/services/first-time-user.service.test.ts
+PASS src/__tests__/services/device-event.service.broadcast.test.ts
+
+Test Suites: 162 passed, 162 total
+Tests:       2 skipped, 2552 passed, 2554 total
+Snapshots:   0 total
+Time:        111.488 s
+Ran all test suites.

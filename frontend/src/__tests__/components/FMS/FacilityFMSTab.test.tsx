@@ -3,6 +3,7 @@
  */
 
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import '@/__tests__/mocks/websocket-provider-deps';
 import { FacilityFMSTab } from '@/components/FMS/FacilityFMSTab';
 import { fmsService } from '@/services/fms.service';
 import { FMSProviderType, FMSSyncStatus } from '@/types/fms.types';
@@ -25,6 +26,7 @@ describe('FacilityFMSTab', () => {
     // Default mocks
     mockFmsService.getConfig.mockResolvedValue(null);
     mockFmsService.getSyncHistory.mockResolvedValue({ logs: [], total: 0 });
+    mockFmsService.getWebhookEvents.mockResolvedValue({ events: [] });
   });
 
   const renderComponent = (isDevMode = false, canEditFMS = true) => {
@@ -59,6 +61,43 @@ describe('FacilityFMSTab', () => {
       
       await waitFor(() => {
         expect(mockFmsService.getSyncHistory).toHaveBeenCalledWith(facilityId, { limit: 10 });
+      });
+    });
+
+    it('should show pending banner when sync history has open review log', async () => {
+      mockFmsService.getConfig.mockResolvedValue({
+        id: 'config-1',
+        facility_id: facilityId,
+        provider_type: FMSProviderType.SIMULATED,
+        is_enabled: true,
+        config: {} as any,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      });
+      mockFmsService.getSyncHistory.mockResolvedValue({
+        logs: [
+          {
+            id: 'sync-open',
+            facility_id: facilityId,
+            fms_config_id: 'config-1',
+            sync_status: FMSSyncStatus.PENDING_REVIEW,
+            started_at: new Date().toISOString(),
+            triggered_by: 'webhook',
+            changes_detected: 2,
+            changes_applied: 0,
+            changes_pending: 2,
+            changes_rejected: 0,
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+          },
+        ],
+        total: 1,
+      });
+
+      renderComponent();
+
+      await waitFor(() => {
+        expect(screen.getByText(/2 changes pending review \(from webhook\)/i)).toBeInTheDocument();
       });
     });
   });
@@ -193,9 +232,37 @@ describe('FacilityFMSTab', () => {
       await waitFor(() => {
         expect(mockFmsService.triggerSync).toHaveBeenCalledWith(facilityId);
       });
+
+      await waitFor(() => {
+        expect(
+          screen.getByText(/No changes detected - system is in sync with FMS/i)
+        ).toBeInTheDocument();
+      });
     });
 
     it('should show pending changes alert when changes detected', async () => {
+      mockFmsService.getSyncHistory
+        .mockResolvedValueOnce({ logs: [], total: 0 })
+        .mockResolvedValue({
+          logs: [
+            {
+              id: 'sync-1',
+              facility_id: facilityId,
+              fms_config_id: 'config-1',
+              sync_status: FMSSyncStatus.PENDING_REVIEW,
+              started_at: new Date().toISOString(),
+              triggered_by: 'manual',
+              changes_detected: 1,
+              changes_applied: 0,
+              changes_pending: 1,
+              changes_rejected: 0,
+              created_at: new Date().toISOString(),
+              updated_at: new Date().toISOString(),
+            },
+          ],
+          total: 1,
+        });
+
       mockFmsService.triggerSync.mockResolvedValue({
         success: true,
         syncLogId: 'sync-1',
@@ -235,7 +302,7 @@ describe('FacilityFMSTab', () => {
 
       await waitFor(() => {
         // Check for pending changes alert
-        expect(screen.getByText('1 changes pending review')).toBeInTheDocument();
+        expect(screen.getByText(/1 change pending review/i)).toBeInTheDocument();
       });
     });
   });
@@ -257,18 +324,47 @@ describe('FacilityFMSTab', () => {
       mockFmsService.testConnection.mockResolvedValue(true);
 
       renderComponent();
-      
-      // Expand configuration
-      await waitFor(() => screen.getByLabelText('Expand configuration'));
-      fireEvent.click(screen.getByLabelText('Expand configuration'));
 
-      await waitFor(() => screen.getByText('Test Connection'));
-      
-      const testButton = screen.getByText('Test Connection');
-      fireEvent.click(testButton);
+      await waitFor(() => {
+        expect(screen.getByText('Test Connection')).toBeInTheDocument();
+      });
+
+      fireEvent.click(screen.getByText('Test Connection'));
 
       await waitFor(() => {
         expect(mockFmsService.testConnection).toHaveBeenCalledWith('config-1');
+      });
+    });
+
+    it('should show collapsed configuration summary when config exists', async () => {
+      mockFmsService.getConfig.mockResolvedValue({
+        id: 'config-1',
+        facility_id: facilityId,
+        provider_type: FMSProviderType.SIMULATED,
+        is_enabled: true,
+        config: {
+          auth: { type: 'api_key' as const, credentials: {} },
+          features: {
+            supportsTenantSync: true,
+            supportsUnitSync: true,
+            supportsWebhooks: true,
+            supportsRealtime: false,
+          },
+          syncSettings: { autoAcceptChanges: false },
+        } as any,
+        last_sync_at: new Date().toISOString(),
+        last_sync_status: FMSSyncStatus.COMPLETED,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      });
+
+      renderComponent(true);
+
+      await waitFor(() => {
+        expect(screen.getByText('No credentials needed')).toBeInTheDocument();
+        expect(screen.getByText('Test Connection')).toBeInTheDocument();
+        expect(screen.getByLabelText('Expand configuration')).toBeInTheDocument();
+        expect(screen.queryByText('Authentication')).not.toBeInTheDocument();
       });
     });
   });
@@ -358,7 +454,7 @@ describe('FacilityFMSTab', () => {
         expect(screen.getByText('FMS Configuration')).toBeInTheDocument();
         expect(screen.getByText('Simulated Provider')).toBeInTheDocument();
         expect(screen.getAllByText('Enabled').length).toBeGreaterThan(0);
-        expect(screen.getByText('Configuration managed by administrators')).toBeInTheDocument();
+        expect(screen.getByText(/Configuration managed by administrators/i)).toBeInTheDocument();
         // No expand/collapse button should be present
         expect(screen.queryByLabelText('Expand configuration')).not.toBeInTheDocument();
         expect(screen.queryByLabelText('Collapse configuration')).not.toBeInTheDocument();

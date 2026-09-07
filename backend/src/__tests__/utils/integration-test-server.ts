@@ -7,6 +7,7 @@
 
 import express, { Application } from 'express';
 import cors from 'cors';
+import { CORS_ALLOWED_HEADERS } from '@/config/cors';
 import helmet from 'helmet';
 import compression from 'compression';
 import rateLimit from 'express-rate-limit';
@@ -23,20 +24,117 @@ import { gatewayRouter } from '@/routes/gateway.routes';
 import { devicesRouter } from '@/routes/devices.routes';
 import { unitsRouter } from '@/routes/units.routes';
 import accessHistoryRouter from '@/routes/access-history.routes';
+import accessSessionsRouter from '@/routes/access-sessions.routes';
 import keySharingRouter from '@/routes/key-sharing.routes';
 
 // Mock the database service before importing routes
-jest.mock('../services/database.service', () => ({
-  DatabaseService: {
-    getInstance: jest.fn(() => ({
-      connection: createMockKnex(),
-      healthCheck: jest.fn().mockResolvedValue(true),
-    })),
-  },
-}));
+jest.mock('@/services/database.service', () => {
+  const createMockKnex = (): jest.Mock => {
+    const mockQueryBuilder = {
+      select: jest.fn().mockReturnThis(),
+      from: jest.fn().mockReturnThis(),
+      where: jest.fn().mockReturnThis(),
+      whereIn: jest.fn().mockReturnThis(),
+      whereNotIn: jest.fn().mockReturnThis(),
+      whereNull: jest.fn().mockReturnThis(),
+      whereNotNull: jest.fn().mockReturnThis(),
+      whereBetween: jest.fn().mockReturnThis(),
+      whereNotBetween: jest.fn().mockReturnThis(),
+      whereExists: jest.fn().mockReturnThis(),
+      whereNotExists: jest.fn().mockReturnThis(),
+      whereRaw: jest.fn().mockReturnThis(),
+      orWhere: jest.fn().mockReturnThis(),
+      orWhereIn: jest.fn().mockReturnThis(),
+      orWhereNotIn: jest.fn().mockReturnThis(),
+      orWhereNull: jest.fn().mockReturnThis(),
+      orWhereNotNull: jest.fn().mockReturnThis(),
+      orWhereBetween: jest.fn().mockReturnThis(),
+      orWhereNotBetween: jest.fn().mockReturnThis(),
+      orWhereExists: jest.fn().mockReturnThis(),
+      orWhereNotExists: jest.fn().mockReturnThis(),
+      orWhereRaw: jest.fn().mockReturnThis(),
+      join: jest.fn().mockReturnThis(),
+      leftJoin: jest.fn().mockReturnThis(),
+      rightJoin: jest.fn().mockReturnThis(),
+      innerJoin: jest.fn().mockReturnThis(),
+      outerJoin: jest.fn().mockReturnThis(),
+      crossJoin: jest.fn().mockReturnThis(),
+      joinRaw: jest.fn().mockReturnThis(),
+      groupBy: jest.fn().mockReturnThis(),
+      groupByRaw: jest.fn().mockReturnThis(),
+      orderBy: jest.fn().mockReturnThis(),
+      orderByRaw: jest.fn().mockReturnThis(),
+      having: jest.fn().mockReturnThis(),
+      havingIn: jest.fn().mockReturnThis(),
+      havingNotIn: jest.fn().mockReturnThis(),
+      havingNull: jest.fn().mockReturnThis(),
+      havingNotNull: jest.fn().mockReturnThis(),
+      havingBetween: jest.fn().mockReturnThis(),
+      havingNotBetween: jest.fn().mockReturnThis(),
+      havingExists: jest.fn().mockReturnThis(),
+      havingNotExists: jest.fn().mockReturnThis(),
+      havingRaw: jest.fn().mockReturnThis(),
+      orHaving: jest.fn().mockReturnThis(),
+      orHavingIn: jest.fn().mockReturnThis(),
+      orHavingNotIn: jest.fn().mockReturnThis(),
+      orHavingNull: jest.fn().mockReturnThis(),
+      orHavingNotNull: jest.fn().mockReturnThis(),
+      orHavingBetween: jest.fn().mockReturnThis(),
+      orHavingNotBetween: jest.fn().mockReturnThis(),
+      orHavingExists: jest.fn().mockReturnThis(),
+      orHavingNotExists: jest.fn().mockReturnThis(),
+      orHavingRaw: jest.fn().mockReturnThis(),
+      offset: jest.fn().mockReturnThis(),
+      limit: jest.fn().mockReturnThis(),
+      union: jest.fn().mockReturnThis(),
+      unionAll: jest.fn().mockReturnThis(),
+      intersect: jest.fn().mockReturnThis(),
+      insert: jest.fn().mockReturnThis(),
+      update: jest.fn().mockReturnThis(),
+      del: jest.fn().mockReturnThis(),
+      first: jest.fn().mockResolvedValue({}),
+      then: jest.fn().mockResolvedValue([]),
+      catch: jest.fn().mockResolvedValue([]),
+      finally: jest.fn().mockResolvedValue([]),
+      raw: jest.fn().mockResolvedValue([]),
+      fn: {
+        now: jest.fn().mockReturnValue('NOW()'),
+      },
+    };
+
+    const mockKnex = jest.fn((_tableName: string) => mockQueryBuilder) as jest.Mock;
+
+    Object.assign(mockKnex, {
+      transaction: jest.fn().mockImplementation((callback: (trx: jest.Mock) => unknown) => {
+        const mockTrx = createMockKnex();
+        return callback(mockTrx);
+      }),
+      migrate: {
+        latest: jest.fn().mockResolvedValue([]),
+        rollback: jest.fn().mockResolvedValue([]),
+        status: jest.fn().mockResolvedValue([]),
+      },
+      seed: {
+        run: jest.fn().mockResolvedValue([]),
+      },
+      destroy: jest.fn().mockResolvedValue(undefined),
+    });
+
+    return mockKnex;
+  };
+
+  return {
+    DatabaseService: {
+      getInstance: jest.fn(() => ({
+        connection: createMockKnex(),
+        healthCheck: jest.fn().mockResolvedValue(true),
+      })),
+    },
+  };
+});
 
 // Mock all the models
-jest.mock('../models/user.model', () => ({
+jest.mock('@/models/user.model', () => ({
   UserModel: {
     findById: jest.fn().mockImplementation((id) => {
       if (id === 'non-existent-user') return Promise.resolve(null);
@@ -48,6 +146,8 @@ jest.mock('../models/user.model', () => ({
         role: 'TENANT'
       });
     }),
+    deactivateUser: jest.fn().mockResolvedValue((id: string) => ({ id, is_active: false })),
+    activateUser: jest.fn().mockResolvedValue((id: string) => ({ id, is_active: true })),
     findAll: jest.fn().mockResolvedValue({
       users: [
         { id: 'user-1', firstName: 'John', lastName: 'Doe', email: 'john@example.com', role: 'ADMIN' },
@@ -61,7 +161,7 @@ jest.mock('../models/user.model', () => ({
   }
 }));
 
-jest.mock('../models/facility.model', () => ({
+jest.mock('@/models/facility.model', () => ({
   FacilityModel: jest.fn().mockImplementation(() => ({
     findAll: jest.fn().mockResolvedValue({
       facilities: [
@@ -81,19 +181,21 @@ jest.mock('../models/facility.model', () => ({
   }))
 }));
 
-jest.mock('../models/key-sharing.model', () => ({
+jest.mock('@/models/key-sharing.model', () => ({
   KeySharingModel: jest.fn().mockImplementation(() => ({
     findAll: jest.fn().mockResolvedValue({
       sharings: [
-        { id: 'sharing-1', userId: 'user-1', unitId: 'unit-1', status: 'active' }
+        { id: 'sharing-1', primary_tenant_id: 'owner-1', shared_with_user_id: 'user-1', unit_id: 'unit-1', is_active: true, expires_at: null }
       ],
       total: 1
     }),
     findById: jest.fn().mockImplementation((id) => Promise.resolve({
       id,
-      userId: 'user-1',
-      unitId: 'unit-1',
-      status: 'active'
+      primary_tenant_id: 'owner-1',
+      shared_with_user_id: 'invitee-1',
+      unit_id: 'unit-1',
+      is_active: false,
+      expires_at: null
     })),
     create: jest.fn().mockResolvedValue({ id: 'new-sharing-id' }),
     updateById: jest.fn().mockResolvedValue(true),
@@ -101,13 +203,13 @@ jest.mock('../models/key-sharing.model', () => ({
     getExpiredSharings: jest.fn().mockResolvedValue([]),
     getUserOwnedKeys: jest.fn().mockResolvedValue({
       sharings: [
-        { id: 'sharing-1', userId: 'user-1', unitId: 'unit-1', status: 'active' }
+        { id: 'sharing-1', primary_tenant_id: 'owner-1', shared_with_user_id: 'user-1', unit_id: 'unit-1', is_active: true, expires_at: null }
       ],
       total: 1
     }),
     getUserSharedKeys: jest.fn().mockResolvedValue({
       sharings: [
-        { id: 'sharing-2', userId: 'user-2', unitId: 'unit-1', status: 'active' }
+        { id: 'sharing-2', primary_tenant_id: 'owner-2', shared_with_user_id: 'user-2', unit_id: 'unit-1', is_active: true, expires_at: null }
       ],
       total: 1
     }),
@@ -115,12 +217,19 @@ jest.mock('../models/key-sharing.model', () => ({
       sharings: [],
       total: 0
     }),
-    update: jest.fn().mockResolvedValue(true),
+    update: jest.fn().mockImplementation((_id, data) => Promise.resolve({
+      id: _id,
+      primary_tenant_id: 'owner-1',
+      shared_with_user_id: 'invitee-1',
+      unit_id: 'unit-1',
+      is_active: data?.is_active ?? true,
+      expires_at: data?.expires_at ?? null,
+    })),
     revokeSharing: jest.fn().mockResolvedValue(true)
   }))
 }));
 
-jest.mock('../services/auth.service', () => ({
+jest.mock('@/services/auth.service', () => ({
   AuthService: {
     login: jest.fn().mockResolvedValue({
       success: true,
@@ -136,10 +245,21 @@ jest.mock('../services/auth.service', () => ({
     generateToken: jest.fn().mockReturnValue('mock-jwt-token'),
     verifyToken: jest.fn().mockImplementation((token) => {
       if (token === 'mock-jwt-token') {
-        return { userId: 'test-user-id', role: 'admin' };
+        return { userId: 'test-user-id', role: 'admin', email: 'admin@example.com' };
       }
       return null;
     }),
+    getSessionDenialReason: jest.fn().mockImplementation((user: { is_active?: boolean; requires_password_reset?: boolean }) => {
+      if (user && user.is_active === false) return 'Account is deactivated';
+      if (user && user.requires_password_reset) return 'Account requires re-authentication';
+      return null;
+    }),
+    isFacilityScoped: jest.fn().mockImplementation((role: string) => {
+      return !['admin', 'dev_admin'].includes(role);
+    }),
+    isFacilityAdmin: jest.fn().mockImplementation((role: string) => role === 'facility_admin'),
+    isAdmin: jest.fn().mockImplementation((role: string) => ['admin', 'dev_admin'].includes(role)),
+    canAccessFacility: jest.fn().mockResolvedValue(true),
     hashPassword: jest.fn().mockResolvedValue('hashed-password'),
     comparePassword: jest.fn().mockResolvedValue(true),
     createUser: jest.fn().mockResolvedValue({ success: true, id: 'new-user-id' }),
@@ -159,109 +279,6 @@ jest.mock('../services/auth.service', () => ({
   }
 }));
 
-// Mock Knex for database operations
-const createMockKnex = () => {
-  const mockQueryBuilder = {
-    select: jest.fn().mockReturnThis(),
-    from: jest.fn().mockReturnThis(),
-    where: jest.fn().mockReturnThis(),
-    whereIn: jest.fn().mockReturnThis(),
-    whereNotIn: jest.fn().mockReturnThis(),
-    whereNull: jest.fn().mockReturnThis(),
-    whereNotNull: jest.fn().mockReturnThis(),
-    whereBetween: jest.fn().mockReturnThis(),
-    whereNotBetween: jest.fn().mockReturnThis(),
-    whereExists: jest.fn().mockReturnThis(),
-    whereNotExists: jest.fn().mockReturnThis(),
-    whereRaw: jest.fn().mockReturnThis(),
-    orWhere: jest.fn().mockReturnThis(),
-    orWhereIn: jest.fn().mockReturnThis(),
-    orWhereNotIn: jest.fn().mockReturnThis(),
-    orWhereNull: jest.fn().mockReturnThis(),
-    orWhereNotNull: jest.fn().mockReturnThis(),
-    orWhereBetween: jest.fn().mockReturnThis(),
-    orWhereNotBetween: jest.fn().mockReturnThis(),
-    orWhereExists: jest.fn().mockReturnThis(),
-    orWhereNotExists: jest.fn().mockReturnThis(),
-    orWhereRaw: jest.fn().mockReturnThis(),
-    join: jest.fn().mockReturnThis(),
-    leftJoin: jest.fn().mockReturnThis(),
-    rightJoin: jest.fn().mockReturnThis(),
-    innerJoin: jest.fn().mockReturnThis(),
-    outerJoin: jest.fn().mockReturnThis(),
-    crossJoin: jest.fn().mockReturnThis(),
-    joinRaw: jest.fn().mockReturnThis(),
-    groupBy: jest.fn().mockReturnThis(),
-    groupByRaw: jest.fn().mockReturnThis(),
-    orderBy: jest.fn().mockReturnThis(),
-    orderByRaw: jest.fn().mockReturnThis(),
-    having: jest.fn().mockReturnThis(),
-    havingIn: jest.fn().mockReturnThis(),
-    havingNotIn: jest.fn().mockReturnThis(),
-    havingNull: jest.fn().mockReturnThis(),
-    havingNotNull: jest.fn().mockReturnThis(),
-    havingBetween: jest.fn().mockReturnThis(),
-    havingNotBetween: jest.fn().mockReturnThis(),
-    havingExists: jest.fn().mockReturnThis(),
-    havingNotExists: jest.fn().mockReturnThis(),
-    havingRaw: jest.fn().mockReturnThis(),
-    orHaving: jest.fn().mockReturnThis(),
-    orHavingIn: jest.fn().mockReturnThis(),
-    orHavingNotIn: jest.fn().mockReturnThis(),
-    orHavingNull: jest.fn().mockReturnThis(),
-    orHavingNotNull: jest.fn().mockReturnThis(),
-    orHavingBetween: jest.fn().mockReturnThis(),
-    orHavingNotBetween: jest.fn().mockReturnThis(),
-    orHavingExists: jest.fn().mockReturnThis(),
-    orHavingNotExists: jest.fn().mockReturnThis(),
-    orHavingRaw: jest.fn().mockReturnThis(),
-    offset: jest.fn().mockReturnThis(),
-    limit: jest.fn().mockReturnThis(),
-    union: jest.fn().mockReturnThis(),
-    unionAll: jest.fn().mockReturnThis(),
-    intersect: jest.fn().mockReturnThis(),
-    insert: jest.fn().mockReturnThis(),
-    update: jest.fn().mockReturnThis(),
-    del: jest.fn().mockReturnThis(),
-    first: jest.fn().mockResolvedValue({}),
-    then: jest.fn().mockResolvedValue([]),
-    catch: jest.fn().mockResolvedValue([]),
-    finally: jest.fn().mockResolvedValue([]),
-    raw: jest.fn().mockResolvedValue([]),
-    fn: {
-      now: jest.fn().mockReturnValue('NOW()'),
-    },
-  };
-
-  const mockKnex = jest.fn((_tableName: string) => mockQueryBuilder) as any;
-  
-  // Add properties to the mock function
-  Object.assign(mockKnex, {
-    // Transaction support
-    transaction: jest.fn().mockImplementation((callback) => {
-      const mockTrx = createMockKnex();
-      return callback(mockTrx);
-    }),
-    
-    // Migration support
-    migrate: {
-      latest: jest.fn().mockResolvedValue([]),
-      rollback: jest.fn().mockResolvedValue([]),
-      status: jest.fn().mockResolvedValue([]),
-    },
-    
-    // Seed support
-    seed: {
-      run: jest.fn().mockResolvedValue([]),
-    },
-    
-    // Connection management
-    destroy: jest.fn().mockResolvedValue(undefined),
-  });
-  
-  return mockKnex;
-};
-
 export function createIntegrationTestApp(): Application {
   const app = express();
 
@@ -272,7 +289,7 @@ export function createIntegrationTestApp(): Application {
         defaultSrc: ["'self'"],
         styleSrc: ["'self'", "'unsafe-inline'"],
         scriptSrc: ["'self'"],
-        imgSrc: ["'self'", "data:", "https:"],
+        imgSrc: ["'self'", "data:", "blob:", "https:"],
       },
     },
     hsts: {
@@ -282,12 +299,12 @@ export function createIntegrationTestApp(): Application {
     },
   }));
 
-  // CORS configuration
+  // CORS: typical dev origins; 3020 kept for local setups that still set PORT=3020
   app.use(cors({
-    origin: ['http://localhost:3000', 'http://localhost:3001', 'http://localhost:3002'],
+    origin: ['http://localhost:3020', 'http://localhost:3000', 'http://localhost:3001', 'http://localhost:3002', 'http://localhost:5173'],
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH'],
-    allowedHeaders: ['Content-Type', 'Authorization'],
+    allowedHeaders: [...CORS_ALLOWED_HEADERS],
   }));
 
   // Rate limiting
@@ -321,6 +338,7 @@ export function createIntegrationTestApp(): Application {
   app.use('/api/v1/devices', devicesRouter);
   app.use('/api/v1/units', unitsRouter);
   app.use('/api/v1/access-history', accessHistoryRouter);
+  app.use('/api/v1/access-sessions', accessSessionsRouter);
   app.use('/api/v1/key-sharing', keySharingRouter);
 
   // Error handling middleware (must be last)

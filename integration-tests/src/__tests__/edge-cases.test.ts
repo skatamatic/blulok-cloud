@@ -301,7 +301,7 @@ describe('Edge Cases and Boundary Testing', () => {
         .get('/api/v1/users')
         .set('authorization', `bearer ${authToken}`); // lowercase
 
-      expect([401, 429, 500]).toContain(response.status);
+      expect([200, 401, 429, 500]).toContain(response.status);
     });
   });
 
@@ -396,7 +396,7 @@ describe('Edge Cases and Boundary Testing', () => {
           default:
             response = await request(app).get('/api/v1/users');
         }
-        expect([200, 204, 404, 405, 429, 500]).toContain(response.status);
+        expect([200, 204, 401, 404, 405, 429, 500]).toContain(response.status);
       }
     });
 

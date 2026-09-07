@@ -42,389 +42,651 @@
  */
 
 import { Router, Response } from 'express';
-import { AccessLogModel } from '../models/access-log.model';
-import { UnitModel } from '../models/unit.model';
-import { KeySharingModel } from '../models/key-sharing.model';
-import { UserFacilityAssociationModel } from '../models/user-facility-association.model';
-import { authenticateToken, requireRoles } from '../middleware/auth.middleware';
-import { UserRole, AuthenticatedRequest } from '../types/auth.types';
-import { AuthService } from '../services/auth.service';
+import { authenticateToken } from '../middleware/auth.middleware';
+import { AuthenticatedRequest, UserRole } from '../types/auth.types';
+import { registerGet } from '@/openapi/register-route';
+import {
+  accessHistoryQuerySchema,
+  accessHistoryUserIdParamSchema,
+  accessHistoryFacilityIdParamSchema,
+  accessHistoryUnitIdParamSchema,
+  accessHistoryIdParamSchema,
+  accessHistoryExportQuerySchema,
+  accessHistoryStatsQuerySchema,
+  accessHistoryResponseSchema,
+} from '@/schemas/access-history.schemas';
+import { AccessHistoryReadService, AccessHistoryRecord, QueryFilters } from '@/services/access/access-history-read.service';
+import {
+  AccessSessionReadService,
+  AccessSessionRecord,
+  SessionQueryFilters,
+} from '@/services/access/access-session-read.service';
+import { AccessLogModel } from '@/models/access-log.model';
+import { KeySharingModel } from '@/models/key-sharing.model';
+import { UnitModel } from '@/models/unit.model';
+import { MAX_HISTOGRAM_FACILITIES } from '@/constants/access-history.constants';
+import { ActivityLogModel } from '@/models/activity-log.model';
+import { AccessEventScopeService } from '@/services/access/access-event-scope.service';
+import { UserFacilityAssociationModel } from '@/models/user-facility-association.model';
+import { AuthService } from '@/services/auth.service';
+import {
+  parseQueryBoolean,
+  queryString,
+  queryDateString,
+  queryStringArray,
+} from '@/utils/query-boolean.util';
+import { resolveBluLokDeviceDisplayName } from '@/utils/blulok-device-display.utils';
+import type { AccessSessionState } from '@/models/access-session.model';
 
 const router = Router();
-const accessLogModel = new AccessLogModel();
-const unitModel = new UnitModel();
-const keySharingModel = new KeySharingModel();
+const MOUNT = '/api/v1/access-history';
+let accessHistoryReadService: AccessHistoryReadService | null = null;
+let accessSessionReadService: AccessSessionReadService | null = null;
+let legacyAccessLogModel: AccessLogModel | null = null;
+let keySharingModel: KeySharingModel | null = null;
+let unitModel: UnitModel | null = null;
+let activityLogModel: ActivityLogModel | null = null;
+let scopeService: AccessEventScopeService | null = null;
 
-// Apply authentication middleware to all routes
+const getAccessHistoryReadService = (): AccessHistoryReadService => {
+  if (!accessHistoryReadService) {
+    accessHistoryReadService = new AccessHistoryReadService();
+  }
+  return accessHistoryReadService;
+};
+
+const getAccessSessionReadService = (): AccessSessionReadService => {
+  if (!accessSessionReadService) {
+    accessSessionReadService = new AccessSessionReadService();
+  }
+  return accessSessionReadService;
+};
+
+const getLegacyAccessLogModel = (): AccessLogModel => {
+  if (!legacyAccessLogModel) {
+    legacyAccessLogModel = new AccessLogModel();
+  }
+  return legacyAccessLogModel;
+};
+
+const getKeySharingModel = (): KeySharingModel => {
+  if (!keySharingModel) {
+    keySharingModel = new KeySharingModel();
+  }
+  return keySharingModel;
+};
+
+const getUnitModel = (): UnitModel => {
+  if (!unitModel) {
+    unitModel = new UnitModel();
+  }
+  return unitModel;
+};
+
+const getActivityLogModel = (): ActivityLogModel => {
+  if (!activityLogModel) {
+    activityLogModel = new ActivityLogModel();
+  }
+  return activityLogModel;
+};
+
+const getScopeService = (): AccessEventScopeService => {
+  if (!scopeService) {
+    scopeService = new AccessEventScopeService();
+  }
+  return scopeService;
+};
+
 router.use(authenticateToken);
 
-// Get access history with role-based filtering
-router.get('/', async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+const normalizeFilters = (query: AuthenticatedRequest['query']): SessionQueryFilters => {
+  const stateRaw = queryString(query.state);
+  const validStates = new Set([
+    'pending', 'open', 'closed', 'timed_out', 'denied', 'failed',
+  ]);
+  return {
+    facility_id: queryString(query.facility_id),
+    unit_id: queryString(query.unit_id),
+    user_id: queryString(query.user_id),
+    device_id: queryString(query.device_id),
+    action: queryString(query.action) ?? queryString(query.action_type),
+    method: queryString(query.method),
+    denial_reason: queryString(query.denial_reason),
+    date_from: queryDateString(query.date_from) ?? queryDateString(query.start_date),
+    date_to: queryDateString(query.date_to) ?? queryDateString(query.end_date),
+    success: parseQueryBoolean(query.success),
+    limit: Number(query.limit) || 50,
+    offset: Number(query.offset) || 0,
+    sort_by: queryString(query.sort_by) ?? 'occurred_at',
+    sort_order: query.sort_order === 'asc' ? 'asc' : 'desc',
+    state: stateRaw && validStates.has(stateRaw) ? (stateRaw as AccessSessionState) : undefined,
+    // Legacy default is raw event rows; opt into sessions with view=sessions (prefer GET /access-sessions).
+    view: queryString(query.view) === 'sessions' ? 'sessions' : 'raw',
+  };
+};
+
+/** Sessions only when explicitly requested; omitted/other values stay on raw event history. */
+const isSessionsView = (query: AuthenticatedRequest['query']): boolean =>
+  queryString(query.view) === 'sessions';
+
+registerGet(
+  router,
+  '/',
+  {
+    openApiPath: MOUNT,
+    tags: ['AccessHistory'],
+    summary: 'Query access history event rows (raw by default; view=sessions or GET /access-sessions for session aggregates)',
+    security: 'bearer',
+    query: accessHistoryQuerySchema,
+    responses: {
+      200: accessHistoryResponseSchema,
+    },
+  },
+  async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   try {
     const user = req.user!;
-    const {
-      facility_id,
-      unit_id,
-      user_id,
-      device_id,
-      device_type,
-      action,
-      method,
-      success,
-      denial_reason,
-      credential_type,
-      date_from,
-      date_to,
-      limit = 50,
-      offset = 0,
-      sort_by = 'occurred_at',
-      sort_order = 'desc'
-    } = req.query;
-
-    // Build filters based on user role
-    let filters: any = {
-      limit: parseInt(limit as string),
-      offset: parseInt(offset as string),
-      sort_by: sort_by as string,
-      sort_order: sort_order as string
-    };
-
-    // Apply role-based filtering
-    if (user.role === UserRole.TENANT) {
-      // Tenants can only see their own logs and logs for units they have access to
-      const userUnits = await unitModel.findByPrimaryTenant(user.userId);
-      const sharedUnits = await keySharingModel.getUserSharedUnits(user.userId);
-      const accessibleUnits = [...userUnits.map((u: any) => u.id), ...sharedUnits.map((s: any) => s.unit_id)];
-      filters.user_accessible_units = accessibleUnits;
-    } else if (AuthService.isFacilityAdmin(user.role)) {
-      // Facility admins can only see logs for their assigned facilities
-      if (!user.facilityIds || user.facilityIds.length === 0) {
-        res.status(403).json({ success: false, message: 'No facilities assigned' });
-        return;
-      }
-      filters.facility_ids = user.facilityIds;
-    } else if (user.role === UserRole.MAINTENANCE) {
-      // Maintenance users can only see their own logs
-      filters.user_id = user.userId;
+    const facilityId = queryString(req.query.facility_id);
+    if (facilityId && user.role === UserRole.FACILITY_ADMIN && !user.facilityIds?.includes(facilityId)) {
+      res.status(403).json({ success: false, message: 'Access denied to this facility' });
+      return;
     }
-    // DEV_ADMIN and ADMIN can see all logs (no additional filters)
-
-    // Apply query filters
-    if (facility_id) {
-      const requestedFacilityId = facility_id as string;
-      // Check if user has access to this facility
-      if (AuthService.isFacilityAdmin(user.role) && !user.facilityIds?.includes(requestedFacilityId)) {
-        res.status(403).json({ success: false, message: 'Access denied to this facility' });
-        return;
-      }
-      filters.facility_id = requestedFacilityId;
+    const filters = normalizeFilters(req.query);
+    if (isSessionsView(req.query)) {
+      const result = await getAccessSessionReadService().query(
+        user.userId, user.role, user.facilityIds, filters,
+      );
+      res.json({
+        success: true,
+        sessions: result.sessions,
+        logs: result.sessions,
+        total: result.total,
+        currently_open: result.currently_open,
+        limit: result.limit,
+        offset: result.offset,
+        view: 'sessions',
+      });
+      return;
     }
-    if (unit_id) filters.unit_id = unit_id as string;
-    if (user_id) filters.user_id = user_id as string;
-    if (device_id) filters.device_id = device_id as string;
-    if (device_type) filters.device_type = device_type as string;
-    if (action) filters.action = action as string;
-    if (method) filters.method = method as string;
-    if (success !== undefined) filters.success = success === 'true';
-    if (denial_reason) filters.denial_reason = denial_reason as string;
-    if (credential_type) filters.credential_type = credential_type as string;
-    if (date_from) filters.date_from = date_from as string;
-    if (date_to) filters.date_to = date_to as string;
-
-    const result = await accessLogModel.findAll(filters);
-    
-    res.json({
-      success: true,
-      logs: result.logs,
-      total: result.total,
-      limit: filters.limit,
-      offset: filters.offset
-    });
+    const result = await getAccessHistoryReadService().query(
+      user.userId, user.role, user.facilityIds, filters,
+    );
+    res.json({ success: true, ...result, view: 'raw' });
   } catch (error) {
-    console.error('Error fetching access history:', error);
     res.status(500).json({ success: false, message: 'Failed to fetch access history' });
   }
 });
 
-// Get access history for a specific user
-router.get('/user/:userId', async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+registerGet(
+  router,
+  '/user/:userId',
+  {
+    openApiPath: `${MOUNT}/user/{userId}`,
+    tags: ['AccessHistory'],
+    summary: 'Get access history for a user',
+    security: 'bearer',
+    params: accessHistoryUserIdParamSchema,
+    query: accessHistoryQuerySchema,
+    responses: {
+      200: accessHistoryResponseSchema,
+    },
+  },
+  async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   try {
     const user = req.user!;
-    const { userId } = req.params;
-    
-    // Check permissions
-    if (user.role === UserRole.TENANT && user.userId !== userId) {
+    const targetUserId = req.params.userId;
+
+    if ((user.role === UserRole.TENANT || user.role === UserRole.MAINTENANCE) && user.userId !== targetUserId) {
       res.status(403).json({ success: false, message: 'Insufficient permissions' });
       return;
     }
-    
-    if (AuthService.isFacilityAdmin(user.role)) {
-      // Check if the user is in one of their facilities
-      const userFacilities = await UserFacilityAssociationModel.getUserFacilityIds(userId as string);
-      const hasAccess = userFacilities.some(facilityId => user.facilityIds?.includes(facilityId));
-      if (!hasAccess) {
+    if (user.role === UserRole.FACILITY_ADMIN) {
+      const targetFacilities = await UserFacilityAssociationModel.getUserFacilityIds(targetUserId);
+      const hasSharedFacility = targetFacilities.some((id) => user.facilityIds?.includes(id));
+      if (!hasSharedFacility) {
         res.status(403).json({ success: false, message: 'Access denied to this user' });
         return;
       }
     }
-    
-    if (user.role === UserRole.MAINTENANCE && user.userId !== userId) {
-      res.status(403).json({ success: false, message: 'Insufficient permissions' });
+
+    const filters = {
+      ...normalizeFilters(req.query),
+      user_id: targetUserId,
+    };
+    if (isSessionsView(req.query)) {
+      const result = await getAccessSessionReadService().query(
+        user.userId, user.role, user.facilityIds, filters,
+      );
+      res.json({
+        success: true,
+        sessions: result.sessions,
+        logs: result.sessions,
+        total: result.total,
+        currently_open: result.currently_open,
+        limit: result.limit,
+        offset: result.offset,
+        view: 'sessions',
+      });
       return;
     }
-
-    const result = await accessLogModel.getUserAccessHistory(userId as string, req.query);
-    
-    res.json({
-      success: true,
-      logs: result.logs,
-      total: result.total
-    });
-  } catch (error) {
-    console.error('Error fetching user access history:', error);
+    const result = await getAccessHistoryReadService().query(
+      user.userId, user.role, user.facilityIds, filters,
+    );
+    res.json({ success: true, logs: result.logs, total: result.total, limit: result.limit, offset: result.offset, view: 'raw' });
+  } catch {
     res.status(500).json({ success: false, message: 'Failed to fetch user access history' });
   }
 });
 
-// Get access history for a specific facility
-router.get('/facility/:facilityId', requireRoles([UserRole.ADMIN, UserRole.DEV_ADMIN, UserRole.FACILITY_ADMIN]), async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+registerGet(
+  router,
+  '/facility/:facilityId',
+  {
+    openApiPath: `${MOUNT}/facility/{facilityId}`,
+    tags: ['AccessHistory'],
+    summary: 'Get access history for a facility',
+    security: 'bearer',
+    params: accessHistoryFacilityIdParamSchema,
+    query: accessHistoryQuerySchema,
+    responses: {
+      200: accessHistoryResponseSchema,
+    },
+  },
+  async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   try {
     const user = req.user!;
-    const { facilityId } = req.params;
-    
-    if (AuthService.isFacilityAdmin(user.role)) {
-      if (!user.facilityIds?.includes(facilityId as string)) {
-        res.status(403).json({ success: false, message: 'Access denied to this facility' });
-        return;
-      }
+    if (user.role === UserRole.TENANT || user.role === UserRole.MAINTENANCE) {
+      res.status(403).json({ success: false, message: 'Insufficient permissions' });
+      return;
     }
-
-    const result = await accessLogModel.getFacilityAccessHistory(facilityId as string, req.query);
-    
-    res.json({
-      logs: result.logs,
-      total: result.total
-    });
-  } catch (error) {
-    console.error('Error fetching facility access history:', error);
-    res.status(500).json({ error: 'Failed to fetch facility access history' });
+    if (user.role === UserRole.FACILITY_ADMIN && !user.facilityIds?.includes(req.params.facilityId)) {
+      res.status(403).json({ success: false, message: 'Access denied to this facility' });
+      return;
+    }
+    const filters = {
+      ...normalizeFilters(req.query),
+      facility_id: req.params.facilityId,
+    };
+    if (isSessionsView(req.query)) {
+      const result = await getAccessSessionReadService().query(
+        user.userId, user.role, user.facilityIds, filters,
+      );
+      res.json({
+        success: true,
+        sessions: result.sessions,
+        logs: result.sessions,
+        total: result.total,
+        currently_open: result.currently_open,
+        limit: result.limit,
+        offset: result.offset,
+        view: 'sessions',
+      });
+      return;
+    }
+    const result = await getAccessHistoryReadService().query(
+      user.userId, user.role, user.facilityIds, filters,
+    );
+    res.json({ success: true, logs: result.logs, total: result.total, limit: result.limit, offset: result.offset, view: 'raw' });
+  } catch {
+    res.status(500).json({ success: false, message: 'Failed to fetch facility access history' });
   }
 });
 
-// Get access history for a specific unit
-router.get('/unit/:unitId', async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+registerGet(
+  router,
+  '/unit/:unitId',
+  {
+    openApiPath: `${MOUNT}/unit/{unitId}`,
+    tags: ['AccessHistory'],
+    summary: 'Get access history for a unit',
+    security: 'bearer',
+    params: accessHistoryUnitIdParamSchema,
+    query: accessHistoryQuerySchema,
+    responses: {
+      200: accessHistoryResponseSchema,
+    },
+  },
+  async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   try {
     const user = req.user!;
-    const { unitId } = req.params;
-    
-    // Check permissions
     if (user.role === UserRole.TENANT) {
-      // Check if user has access to this unit
-      const hasAccess = await keySharingModel.checkUserHasAccess(user.userId, unitId as string);
+      const hasAccess = await getKeySharingModel().checkUserHasAccess(user.userId, req.params.unitId);
       if (!hasAccess) {
         res.status(403).json({ success: false, message: 'Access denied to this unit' });
         return;
       }
-    } else if (AuthService.isFacilityAdmin(user.role)) {
-      // Check if unit belongs to one of their facilities
-      const unit = await unitModel.findById(unitId as string);
+    }
+    if (user.role === UserRole.FACILITY_ADMIN) {
+      const unit = await getUnitModel().findById(req.params.unitId);
       if (!unit || !user.facilityIds?.includes(unit.facility_id)) {
         res.status(403).json({ success: false, message: 'Access denied to this unit' });
         return;
       }
-    } else if (user.role === UserRole.MAINTENANCE) {
+    }
+    if (user.role === UserRole.MAINTENANCE) {
       res.status(403).json({ success: false, message: 'Access denied to this unit' });
       return;
     }
-
-    const result = await accessLogModel.getUnitAccessHistory(unitId as string, req.query);
-    
-    res.json({
-      logs: result.logs,
-      total: result.total
-    });
-  } catch (error) {
-    console.error('Error fetching unit access history:', error);
-    res.status(500).json({ error: 'Failed to fetch unit access history' });
+    const filters = {
+      ...normalizeFilters(req.query),
+      unit_id: req.params.unitId,
+    };
+    if (isSessionsView(req.query)) {
+      const result = await getAccessSessionReadService().query(
+        user.userId, user.role, user.facilityIds, filters,
+      );
+      res.json({
+        success: true,
+        sessions: result.sessions,
+        logs: result.sessions,
+        total: result.total,
+        currently_open: result.currently_open,
+        limit: result.limit,
+        offset: result.offset,
+        view: 'sessions',
+      });
+      return;
+    }
+    const result = await getAccessHistoryReadService().query(
+      user.userId, user.role, user.facilityIds, filters,
+    );
+    res.json({ success: true, logs: result.logs, total: result.total, limit: result.limit, offset: result.offset, view: 'raw' });
+  } catch {
+    res.status(500).json({ success: false, message: 'Failed to fetch unit access history' });
   }
 });
 
-// Export access history as CSV
-router.get('/export', async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+registerGet(
+  router,
+  '/export',
+  {
+    openApiPath: `${MOUNT}/export`,
+    tags: ['AccessHistory'],
+    summary: 'Export access history as CSV (raw by default; view=sessions for session CSV)',
+    security: 'bearer',
+    query: accessHistoryExportQuerySchema,
+    responses: {
+      200: accessHistoryResponseSchema,
+    },
+  },
+  async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   try {
     const user = req.user!;
-    const {
-      facility_id,
-      unit_id,
-      user_id,
-      device_id,
-      device_type,
-      action,
-      method,
-      success,
-      denial_reason,
-      credential_type,
-      date_from,
-      date_to,
-      limit = 1000,
-      offset = 0,
-      sort_by = 'occurred_at',
-      sort_order = 'desc'
-    } = req.query;
-
-    // Build filters based on user role
-    let filters: any = {
-      limit: parseInt(limit as string),
-      offset: parseInt(offset as string),
-      sort_by: sort_by as string,
-      sort_order: sort_order as string
+    const facilityId = queryString(req.query.facility_id);
+    if (facilityId && user.role === UserRole.FACILITY_ADMIN && !user.facilityIds?.includes(facilityId)) {
+      res.status(403).json({ success: false, message: 'Access denied to this facility' });
+      return;
+    }
+    const filters = {
+      ...normalizeFilters(req.query),
+      limit: Math.min(Number(req.query.limit) || 1000, 5000),
     };
-
-    // Apply role-based filtering
-    if (user.role === UserRole.TENANT) {
-      // Tenants can only see their own logs and logs for units they have access to
-      const userUnits = await unitModel.findByPrimaryTenant(user.userId);
-      const sharedUnits = await keySharingModel.getUserSharedUnits(user.userId);
-      const accessibleUnits = [...userUnits.map((u: any) => u.id), ...sharedUnits.map((s: any) => s.unit_id)];
-      filters.user_accessible_units = accessibleUnits;
-    } else if (AuthService.isFacilityAdmin(user.role)) {
-      // Facility admins can only see logs for their assigned facilities
-      filters.facility_ids = user.facilityIds;
-    } else if (user.role === UserRole.MAINTENANCE) {
-      // Maintenance users can only see their own logs
-      filters.user_id = user.userId;
+    if (isSessionsView(req.query)) {
+      const data = await getAccessSessionReadService().exportQuery(
+        user.userId, user.role, user.facilityIds, filters,
+      );
+      const csv = generateSessionCSV(data);
+      res.setHeader('Content-Type', 'text/csv');
+      res.setHeader('Content-Disposition', 'attachment; filename="access-history.csv"');
+      res.send(csv);
+      return;
     }
-    // DEV_ADMIN and ADMIN can see all logs (no additional filters)
-
-    // Apply query filters
-    if (facility_id) {
-      const requestedFacilityId = facility_id as string;
-      // Check if user has access to this facility
-      if (AuthService.isFacilityAdmin(user.role) && !user.facilityIds?.includes(requestedFacilityId)) {
-        res.status(403).json({ success: false, message: 'Access denied to this facility' });
-        return;
-      }
-      filters.facility_id = requestedFacilityId;
-    }
-    if (unit_id) filters.unit_id = unit_id as string;
-    if (user_id) filters.user_id = user_id as string;
-    if (device_id) filters.device_id = device_id as string;
-    if (device_type) filters.device_type = device_type as string;
-    if (action) filters.action = action as string;
-    if (method) filters.method = method as string;
-    if (success !== undefined) filters.success = success === 'true';
-    if (denial_reason) filters.denial_reason = denial_reason as string;
-    if (credential_type) filters.credential_type = credential_type as string;
-    if (date_from) filters.date_from = date_from as string;
-    if (date_to) filters.date_to = date_to as string;
-
-    const result = await accessLogModel.findAll(filters);
-    
-    // Generate CSV
-    const csv = generateCSV(result.logs);
-    
+    const data = await getAccessHistoryReadService().exportQuery(
+      user.userId, user.role, user.facilityIds, filters,
+    );
+    const csv = generateCSV(data);
     res.setHeader('Content-Type', 'text/csv');
     res.setHeader('Content-Disposition', 'attachment; filename="access-history.csv"');
     res.send(csv);
-  } catch (error) {
-    console.error('Error exporting access history:', error);
-    res.status(500).json({ error: 'Failed to export access history' });
+  } catch {
+    res.status(500).json({ success: false, message: 'Failed to export access history' });
   }
 });
 
-// Get a specific access log entry
-router.get('/:id', async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+registerGet(
+  router,
+  '/stats/activity',
+  {
+    openApiPath: `${MOUNT}/stats/activity`,
+    tags: ['AccessHistory'],
+    summary: 'Get access activity statistics',
+    security: 'bearer',
+    query: accessHistoryStatsQuerySchema,
+    responses: {
+      200: accessHistoryResponseSchema,
+    },
+  },
+  async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   try {
     const user = req.user!;
-    const { id } = req.params;
-    
-    if (!id) {
-      res.status(400).json({ error: 'Log ID is required' });
+    if (user.role === UserRole.TENANT || user.role === UserRole.MAINTENANCE) {
+      res.json({ success: true, data: [], period: req.query.period || 'month' });
       return;
     }
-    const log = await accessLogModel.findById(id);
-    if (!log) {
-      res.status(404).json({ success: false, message: 'Access log not found' });
+
+    const period = queryString(req.query.period) ?? 'month';
+    if (period !== 'day' && period !== 'week' && period !== 'month' && period !== 'year') {
+      res.status(400).json({ success: false, message: 'Invalid period. Must be one of: day, week, month, year' });
       return;
     }
-    
-    // Check permissions based on the log's data
-    if (user.role === UserRole.TENANT) {
-      // Tenants can only see their own logs or logs for units they have access to
-      if (log.user_id !== user.userId && log.unit_id) {
-        const hasAccess = await keySharingModel.checkUserHasAccess(user.userId, log.unit_id);
-        if (!hasAccess) {
+    const now = new Date();
+    let startDate = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+    let groupBy: 'hour' | 'day' | 'week' = 'day';
+
+    if (period === 'day') {
+      startDate = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+      groupBy = 'hour';
+    } else if (period === 'week') {
+      startDate = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+      groupBy = 'day';
+    } else if (period === 'year') {
+      startDate = new Date(now.getTime() - 365 * 24 * 60 * 60 * 1000);
+      groupBy = 'week';
+    }
+
+    const requestedFacilityIds = queryStringArray(req.query.facility_ids);
+
+    let allowedFacilityIds: string[] | undefined;
+
+    if (user.role === UserRole.FACILITY_ADMIN) {
+      allowedFacilityIds = requestedFacilityIds.length > 0
+        ? requestedFacilityIds.filter((id) => user.facilityIds?.includes(id))
+        : user.facilityIds;
+    } else if (AuthService.canAccessAllFacilities(user.role)) {
+      allowedFacilityIds = requestedFacilityIds.length > 0 ? requestedFacilityIds : undefined;
+    } else {
+      allowedFacilityIds = requestedFacilityIds.length > 0
+        ? requestedFacilityIds
+        : user.facilityIds;
+    }
+
+    const cappedFacilityIds =
+      allowedFacilityIds && allowedFacilityIds.length > MAX_HISTOGRAM_FACILITIES
+        ? allowedFacilityIds.slice(0, MAX_HISTOGRAM_FACILITIES)
+        : allowedFacilityIds && allowedFacilityIds.length > 0
+          ? allowedFacilityIds
+          : undefined;
+
+    const result = await getActivityLogModel().getActivityStats({
+      startDate,
+      endDate: now,
+      facilityIds: cappedFacilityIds && cappedFacilityIds.length > 0 ? cappedFacilityIds : undefined,
+      groupBy,
+    });
+
+    res.json({
+      success: true,
+      data: result,
+      period,
+      startDate: startDate.toISOString(),
+      endDate: now.toISOString(),
+    });
+  } catch {
+    res.status(500).json({ success: false, message: 'Failed to fetch activity stats' });
+  }
+});
+
+registerGet(
+  router,
+  '/:id',
+  {
+    openApiPath: `${MOUNT}/{id}`,
+    tags: ['AccessHistory'],
+    summary: 'Get access history entry by ID',
+    security: 'bearer',
+    params: accessHistoryIdParamSchema,
+    responses: {
+      200: accessHistoryResponseSchema,
+    },
+  },
+  async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  try {
+    const user = req.user!;
+
+    // Prefer access session detail (includes events[] timeline).
+    const sessionDetail = await getAccessSessionReadService().findById(
+      req.params.id, user.userId, user.role, user.facilityIds,
+    );
+    if (sessionDetail) {
+      res.json({
+        success: true,
+        session: sessionDetail.session,
+        events: sessionDetail.events,
+        log: sessionDetail.session,
+      });
+      return;
+    }
+
+    const raw = await getActivityLogModel().findById(req.params.id);
+    if (raw && AccessHistoryReadService.ACCESS_HISTORY_ACTIVITY_TYPES.includes(raw.activity_type)) {
+      const scope = await getScopeService().buildScope(user.userId, user.role, user.facilityIds);
+      if (scope.allowedFacilityIds && raw.facility_id && !scope.allowedFacilityIds.includes(raw.facility_id)) {
+        res.status(403).json({ success: false, message: 'Access denied to this facility' });
+        return;
+      }
+      if (scope.allowedUnitIds) {
+        const canViewUnit = !!raw.unit_id && scope.allowedUnitIds.includes(raw.unit_id);
+        const canViewOwn = raw.actor_id === user.userId;
+        if (!canViewUnit && !canViewOwn) {
           res.status(403).json({ success: false, message: 'Access denied' });
           return;
         }
       }
-    } else if (AuthService.isFacilityAdmin(user.role) && log.facility_id) {
-      // Facility admins can only see logs for their facilities
-      if (!user.facilityIds?.includes(log.facility_id)) {
+      if (scope.ownUserId && !scope.allowedUnitIds && raw.actor_id !== scope.ownUserId) {
+        res.status(403).json({ success: false, message: 'Access denied' });
+        return;
+      }
+    } else {
+      const legacy = await getLegacyAccessLogModel().findById(req.params.id);
+      if (!legacy) {
+        res.status(404).json({ success: false, message: 'Access log not found' });
+        return;
+      }
+      if (user.role === UserRole.FACILITY_ADMIN && legacy.facility_id && !user.facilityIds?.includes(legacy.facility_id)) {
         res.status(403).json({ success: false, message: 'Access denied to this facility' });
         return;
       }
-    } else if (user.role === UserRole.MAINTENANCE) {
-      // Maintenance users can only see their own logs
-      if (log.user_id !== user.userId) {
+      if (user.role === UserRole.TENANT && legacy.user_id !== user.userId && legacy.unit_id) {
+        const hasUnitAccess = await getKeySharingModel().checkUserHasAccess(user.userId, legacy.unit_id);
+        if (!hasUnitAccess) {
+          res.status(403).json({ success: false, message: 'Access denied' });
+          return;
+        }
+      }
+      if (user.role === UserRole.MAINTENANCE && legacy.user_id !== user.userId) {
         res.status(403).json({ success: false, message: 'Access denied' });
         return;
       }
     }
-    
+
+    const log = await getAccessHistoryReadService().findById(req.params.id, user.userId, user.role, user.facilityIds);
+    if (!log) {
+      res.status(404).json({ success: false, message: 'Access log not found' });
+      return;
+    }
     res.json({ success: true, log });
-  } catch (error) {
-    console.error('Error fetching access log:', error);
+  } catch {
     res.status(500).json({ success: false, message: 'Failed to fetch access log' });
   }
 });
 
-// Helper function to generate CSV
-function generateCSV(logs: any[]): string {
+function generateCSV(logs: AccessHistoryRecord[]): string {
   if (logs.length === 0) {
     return 'No data available';
   }
-
   const headers = [
-    'ID',
-    'User ID',
-    'Facility ID',
-    'Unit ID',
-    'Device ID',
+    'User',
+    'Facility',
+    'Unit',
+    'Device',
     'Device Type',
     'Action',
     'Method',
-    'Success',
-    'Denial Reason',
-    'Credential Type',
+    'Status',
+    'Failure Reason',
     'Occurred At',
-    'IP Address',
-    'User Agent'
   ];
+  const rows = logs.map((log) => [
+    log.user_name || '',
+    log.facility_name || '',
+    log.unit_number ? `Unit ${log.unit_number}` : '',
+    log.device_name
+      || (log.device_type === 'blulok'
+        ? resolveBluLokDeviceDisplayName({
+          device_serial: log.device_serial,
+          unit_number: log.unit_number,
+        })
+        : (log.device_serial || '')),
+    log.device_type || '',
+    log.action || '',
+    log.method || '',
+    log.success ? 'Success' : 'Failed',
+    log.metadata && typeof log.metadata === 'object' && log.metadata !== null && 'failure_summary' in log.metadata
+      ? String((log.metadata as Record<string, unknown>).failure_summary ?? '')
+      : log.denial_reason || log.reason || '',
+    log.occurred_at || '',
+  ]);
+  return [headers.join(','), ...rows.map((row) => row.map((field) => `"${String(field).replace(/"/g, '""')}"`).join(','))].join('\n');
+}
 
-  const csvRows = [headers.join(',')];
-
-  logs.forEach(log => {
-    const row = [
-      log.id || '',
-      log.user_id || '',
-      log.facility_id || '',
-      log.unit_id || '',
-      log.device_id || '',
-      log.device_type || '',
-      log.action || '',
-      log.method || '',
-      log.success ? 'true' : 'false',
-      log.denial_reason || '',
-      log.credential_type || '',
-      log.occurred_at || '',
-      log.ip_address || '',
-      log.user_agent || ''
-    ];
-    csvRows.push(row.map(field => `"${field}"`).join(','));
-  });
-
-  return csvRows.join('\n');
+function generateSessionCSV(sessions: AccessSessionRecord[]): string {
+  if (sessions.length === 0) {
+    return 'No data available';
+  }
+  const headers = [
+    'User',
+    'Facility',
+    'Unit',
+    'Device',
+    'Device Type',
+    'Method',
+    'Origin',
+    'State',
+    'Outcome',
+    'Attempts',
+    'Open Duration (sec)',
+    'Denial Reason',
+    'Started At',
+    'Opened At',
+    'Closed At',
+  ];
+  const rows = sessions.map((s) => [
+    s.user_name || '',
+    s.facility_name || '',
+    s.unit_number ? `Unit ${s.unit_number}` : '',
+    s.device_name || s.device_serial || '',
+    s.device_type || '',
+    s.method || '',
+    s.origin || '',
+    s.state || '',
+    s.outcome || '',
+    String(s.attempt_count ?? 1),
+    s.open_duration_sec != null ? String(s.open_duration_sec) : '',
+    s.denial_reason || s.reason || '',
+    s.started_at || '',
+    s.opened_at || '',
+    s.closed_at || '',
+  ]);
+  return [headers.join(','), ...rows.map((row) => row.map((field) => `"${String(field).replace(/"/g, '""')}"`).join(','))].join('\n');
 }
 
 export default router;

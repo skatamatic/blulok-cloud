@@ -3,11 +3,18 @@ import { UserRole } from '@/types/auth.types';
 import { WebSocket } from 'ws';
 
 // Mock the GeneralStatsService
-jest.mock('../../../services/general-stats.service', () => ({
-  GeneralStatsService: {
-    getInstance: jest.fn()
-  }
-}));
+jest.mock('../../../services/general-stats.service', () => {
+  const { UserRole } = require('@/types/auth.types');
+  return {
+    GeneralStatsService: {
+      getInstance: jest.fn().mockReturnValue({
+        getScopedStats: jest.fn(),
+        canSubscribeToGeneralStats: (role: typeof UserRole[keyof typeof UserRole]) =>
+          [UserRole.ADMIN, UserRole.DEV_ADMIN, UserRole.FACILITY_ADMIN, UserRole.MAINTENANCE].includes(role),
+      }),
+    },
+  };
+});
 
 describe('GeneralStatsSubscriptionManager', () => {
   let manager: GeneralStatsSubscriptionManager;
@@ -52,6 +59,10 @@ describe('GeneralStatsSubscriptionManager', () => {
     it('should deny TENANT from subscribing', () => {
       expect(manager.canSubscribe(UserRole.TENANT)).toBe(false);
     });
+
+    it('should allow MAINTENANCE to subscribe', () => {
+      expect(manager.canSubscribe(UserRole.MAINTENANCE)).toBe(true);
+    });
   });
 
   describe('handleSubscription', () => {
@@ -91,7 +102,8 @@ describe('GeneralStatsSubscriptionManager', () => {
       };
       
       (GeneralStatsService.getInstance as jest.Mock).mockReturnValue({
-        getScopedStats: jest.fn().mockResolvedValue(mockStats)
+        getScopedStats: jest.fn().mockResolvedValue(mockStats),
+        canSubscribeToGeneralStats: jest.fn().mockReturnValue(true),
       });
 
       // Create a new manager instance after mocking
@@ -115,7 +127,8 @@ describe('GeneralStatsSubscriptionManager', () => {
       // Mock the GeneralStatsService to throw an error
       const { GeneralStatsService } = require('../../../services/general-stats.service');
       (GeneralStatsService.getInstance as jest.Mock).mockReturnValue({
-        getScopedStats: jest.fn().mockRejectedValue(new Error('Database error'))
+        getScopedStats: jest.fn().mockRejectedValue(new Error('Database error')),
+        canSubscribeToGeneralStats: jest.fn().mockReturnValue(true),
       });
 
       // Create a new manager instance after mocking

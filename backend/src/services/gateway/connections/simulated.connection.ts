@@ -113,6 +113,8 @@ export class SimulatedConnection extends BaseConnection {
         this.emit('heartbeat');
       }
     }, this.heartbeatInterval);
+    // Do not keep the Node process (or Jest workers) alive solely for this timer
+    this.heartbeatTimer.unref();
   }
 
   /**
@@ -167,6 +169,7 @@ export class SimulatedConnection extends BaseConnection {
             break;
         }
       }, Math.random() * 100 + 50); // 50-150ms response time
+      this.responseTimer.unref();
 
     } catch (error) {
       // Ignore invalid messages in simulation

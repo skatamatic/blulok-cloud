@@ -426,10 +426,11 @@ describe('Full API Integration Tests with Database Mocking', () => {
 
     it('should create access control device', async () => {
       const newDevice = {
-        facility_id: 'facility-1',
-        unit_id: 'unit-1',
-        device_name: 'New Access Control',
-        device_type: 'access_control',
+        gateway_id: 'gateway-1',
+        device_serial: 'INT-AC-FULL-001',
+        name: 'New Access Control',
+        device_type: 'door',
+        location_description: 'Main entrance',
         relay_channel: 1
       };
 

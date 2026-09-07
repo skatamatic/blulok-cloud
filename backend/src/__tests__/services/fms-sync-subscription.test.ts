@@ -342,6 +342,76 @@ describe('FMSSyncSubscriptionManager', () => {
       expect(sentData1.data.updatedFacilityId).toBe('facility-1');
     });
 
+    it('scopes webhookEvent payloads to facilities the subscriber can access', async () => {
+      const adminClient: SubscriptionClient = {
+        userId: 'admin-1',
+        userRole: UserRole.ADMIN,
+        facilityIds: [],
+        subscriptions: new Map(),
+      };
+      const facilityAdminA: SubscriptionClient = {
+        userId: 'fa-a',
+        userRole: UserRole.FACILITY_ADMIN,
+        facilityIds: ['facility-1'],
+        subscriptions: new Map(),
+      };
+      const facilityAdminB: SubscriptionClient = {
+        userId: 'fa-b',
+        userRole: UserRole.FACILITY_ADMIN,
+        facilityIds: ['facility-2'],
+        subscriptions: new Map(),
+      };
+
+      const mockWsAdmin = { send: jest.fn(), readyState: WebSocket.OPEN } as any;
+      const mockWsA = { send: jest.fn(), readyState: WebSocket.OPEN } as any;
+      const mockWsB = { send: jest.fn(), readyState: WebSocket.OPEN } as any;
+
+      (manager as any).watchers.set('sub-admin', new Set<WebSocket>([mockWsAdmin]));
+      (manager as any).watchers.set('sub-a', new Set<WebSocket>([mockWsA]));
+      (manager as any).watchers.set('sub-b', new Set<WebSocket>([mockWsB]));
+      (manager as any).clientContext.set('sub-admin', adminClient);
+      (manager as any).clientContext.set('sub-a', facilityAdminA);
+      (manager as any).clientContext.set('sub-b', facilityAdminB);
+
+      mockFacilityModel.findAll.mockResolvedValue({
+        facilities: [
+          { id: 'facility-1', name: 'Facility 1' } as any,
+          { id: 'facility-2', name: 'Facility 2' } as any,
+        ],
+        total: 2,
+      });
+      mockConfigModel.findByFacilityId.mockResolvedValue({
+        id: 'config-1',
+        is_enabled: true,
+      } as any);
+      mockSyncLogModel.findLatestByFacilityId.mockResolvedValue(null);
+
+      const webhookEvent = {
+        id: 'wh-1',
+        facilityId: 'facility-1',
+        eventType: 'tenant.updated',
+        externalEventId: 'evt-1',
+        receivedAt: new Date().toISOString(),
+        summary: {},
+        summaryText: 'Tenant Updated · secret@example.com',
+        changesDetected: 1,
+        changesApplied: 0,
+        autoApplied: false,
+        requiresReview: true,
+        syncLogId: 'sync-1',
+      };
+
+      await manager.broadcastUpdate('facility-1', webhookEvent);
+
+      const adminPayload = JSON.parse(mockWsAdmin.send.mock.calls[0][0]);
+      const aPayload = JSON.parse(mockWsA.send.mock.calls[0][0]);
+      const bPayload = JSON.parse(mockWsB.send.mock.calls[0][0]);
+
+      expect(adminPayload.data.webhookEvent?.facilityId).toBe('facility-1');
+      expect(aPayload.data.webhookEvent?.facilityId).toBe('facility-1');
+      expect(bPayload.data.webhookEvent).toBeUndefined();
+    });
+
     it('should remove closed WebSocket connections during broadcast', async () => {
       const client: SubscriptionClient = {
         userId: 'admin-1',

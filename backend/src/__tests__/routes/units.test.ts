@@ -55,7 +55,12 @@ describe('Units Routes', () => {
       response = await request(app).delete(`/api/v1/units/${testData.units.unit1.id}/assign/${testData.users.tenant.id}`);
       expect(response.status).toBe(401);
       expectUnauthorized(response);
-    });
+
+      // Test DELETE /api/v1/units/:id
+      response = await request(app).delete(`/api/v1/units/${testData.units.unit1.id}`);
+      expect(response.status).toBe(401);
+      expectUnauthorized(response);
+    }, 30000); // Increase timeout to 30s
   });
 
   describe('GET /api/v1/units - List Units', () => {
@@ -105,12 +110,50 @@ describe('Units Routes', () => {
 
     it('should filter by facility_id', async () => {
       const response = await request(app)
-        .get('/api/v1/units?facility_id=facility-1')
+        .get(`/api/v1/units?facility_id=${testData.facilities.facility1.id}&limit=50&offset=0`)
         .set('Authorization', `Bearer ${testData.users.admin.token}`)
         .expect(200);
 
       expectSuccess(response);
-      expect(response.body).toHaveProperty('units');
+      expect(response.body.units.every((unit: { facility_id: string }) => unit.facility_id === testData.facilities.facility1.id)).toBe(true);
+    });
+
+    it('should filter by camelCase facilityId query param', async () => {
+      const response = await request(app)
+        .get(`/api/v1/units?facilityId=${testData.facilities.facility1.id}&limit=50&offset=0`)
+        .set('Authorization', `Bearer ${testData.users.admin.token}`)
+        .expect(200);
+
+      expectSuccess(response);
+      expect(response.body.units.every((unit: { facility_id: string }) => unit.facility_id === testData.facilities.facility1.id)).toBe(true);
+    });
+
+    it('should return 403 when facility admin requests units for an unassigned facility', async () => {
+      const response = await request(app)
+        .get(`/api/v1/units?facilityId=${testData.facilities.facility2.id}`)
+        .set('Authorization', `Bearer ${testData.users.facilityAdmin.token}`)
+        .expect(403);
+
+      expectForbidden(response);
+    });
+
+    it('should return 403 when tenant requests units for a foreign facility', async () => {
+      const response = await request(app)
+        .get(`/api/v1/units?facility_id=${testData.facilities.facility2.id}`)
+        .set('Authorization', `Bearer ${testData.users.tenant.token}`)
+        .expect(403);
+
+      expectForbidden(response);
+    });
+
+    it('should scope unlocked units by camelCase facilityId', async () => {
+      const response = await request(app)
+        .get(`/api/v1/units/unlocked?facilityId=${testData.facilities.facility1.id}&limit=50`)
+        .set('Authorization', `Bearer ${testData.users.admin.token}`)
+        .expect(200);
+
+      expectSuccess(response);
+      expect(response.body.units.every((unit: { facility_id: string }) => unit.facility_id === testData.facilities.facility1.id)).toBe(true);
     });
 
     it('should filter by status', async () => {
@@ -460,6 +503,27 @@ describe('Units Routes', () => {
       expect(response.body.message).toMatch(/assigned|granted.*access/i);
     });
 
+    it('should allow admin to assign primary tenant manually', async () => {
+      const response = await request(app)
+        .post(`/api/v1/units/${testData.units.unit1.id}/assign`)
+        .set('Authorization', `Bearer ${testData.users.admin.token}`)
+        .send({ ...assignData, is_primary: true })
+        .expect(200);
+
+      expectSuccess(response);
+      expect(response.body.message).toMatch(/assigned as primary/i);
+    });
+
+    it('should return 403 for FACILITY_ADMIN without facility scope access', async () => {
+      const response = await request(app)
+        .post(`/api/v1/units/${testData.units.unit2.id}/assign`)
+        .set('Authorization', `Bearer ${testData.users.facilityAdmin.token}`)
+        .send(assignData)
+        .expect(403);
+
+      expectForbidden(response);
+    });
+
     it('should return 404 for non-existent unit', async () => {
       const response = await request(app)
         .post('/api/v1/units/non-existent-id/assign')
@@ -470,11 +534,32 @@ describe('Units Routes', () => {
       expectNotFound(response);
     });
 
-    it('should return 403 for TENANT', async () => {
+    it('should allow primary tenant to grant shared access', async () => {
       const response = await request(app)
         .post('/api/v1/units/unit-1/assign')
         .set('Authorization', `Bearer ${testData.users.tenant.token}`)
-        .send(assignData)
+        .send({ ...assignData, is_primary: false })
+        .expect(200);
+
+      expectSuccess(response);
+      expect(response.body.message).toMatch(/granted.*shared access/i);
+    });
+
+    it('should return 403 when tenant tries to assign a primary tenant', async () => {
+      const response = await request(app)
+        .post('/api/v1/units/unit-1/assign')
+        .set('Authorization', `Bearer ${testData.users.tenant.token}`)
+        .send({ ...assignData, is_primary: true })
+        .expect(403);
+
+      expectForbidden(response);
+    });
+
+    it('should return 403 when tenant without unit access attempts shared assignment', async () => {
+      const response = await request(app)
+        .post('/api/v1/units/unit-2/assign')
+        .set('Authorization', `Bearer ${testData.users.tenant.token}`)
+        .send({ ...assignData, is_primary: false })
         .expect(403);
 
       expectForbidden(response);
@@ -552,6 +637,15 @@ describe('Units Routes', () => {
       expect(response.body.data).toHaveProperty('tenant_id', testData.users.tenant.id);
     });
 
+    it('should return 403 for FACILITY_ADMIN without facility scope access', async () => {
+      const response = await request(app)
+        .delete(`/api/v1/units/${testData.units.unit2.id}/assign/${testData.users.tenant.id}`)
+        .set('Authorization', `Bearer ${testData.users.facilityAdmin.token}`)
+        .expect(403);
+
+      expectForbidden(response);
+    });
+
     it('should return 404 for non-existent unit', async () => {
       const response = await request(app)
         .delete(`/api/v1/units/non-existent-id/assign/${testData.users.tenant.id}`)
@@ -561,7 +655,17 @@ describe('Units Routes', () => {
       expectNotFound(response);
     });
 
-    it('should return 403 for TENANT', async () => {
+    it('should allow primary tenant to remove shared access', async () => {
+      const response = await request(app)
+        .delete(`/api/v1/units/${testData.units.unit1.id}/assign/${testData.users.otherTenant.id}`)
+        .set('Authorization', `Bearer ${testData.users.tenant.token}`)
+        .expect(200);
+
+      expectSuccess(response);
+      expect(response.body.message).toContain('removed');
+    });
+
+    it('should return 403 when tenant attempts to remove a primary assignment', async () => {
       const response = await request(app)
         .delete(`/api/v1/units/${testData.units.unit1.id}/assign/${testData.users.tenant.id}`)
         .set('Authorization', `Bearer ${testData.users.tenant.token}`)

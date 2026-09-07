@@ -12,6 +12,7 @@ import {
   FMSChange,
   FMSSyncLog,
   FMSChangeApplicationResult,
+  FMSWebhookFeedItem,
 } from '@/types/fms.types';
 
 class FMSService {
@@ -87,13 +88,24 @@ class FMSService {
    * Trigger manual sync
    */
   async triggerSync(facilityId: string): Promise<FMSSyncResult> {
-    const data = await apiService.post(`/fms/sync/${facilityId}`);
-    
-    if (!data.result) {
-      throw new Error('Failed to trigger sync');
+    try {
+      const data = await apiService.post(`/fms/sync/${facilityId}`);
+
+      if (!data.result) {
+        throw new Error('Failed to trigger sync');
+      }
+
+      return data.result;
+    } catch (error: unknown) {
+      const { FMSSyncInProgressError, isFMSSyncInProgressError } = await import('@/utils/fms-sync.utils');
+      if (isFMSSyncInProgressError(error)) {
+        const message =
+          (error as { response?: { data?: { message?: string } } }).response?.data?.message ??
+          'A sync operation is already in progress for this facility';
+        throw new FMSSyncInProgressError(message);
+      }
+      throw error;
     }
-    
-    return data.result;
   }
 
   /**
@@ -112,6 +124,21 @@ class FMSService {
     return {
       logs: data.logs || [],
       total: data.total || 0,
+    };
+  }
+
+  /**
+   * Get recent webhook events for the facility FMS feed
+   */
+  async getWebhookEvents(
+    facilityId: string,
+    options?: { limit?: number },
+  ): Promise<{ events: FMSWebhookFeedItem[] }> {
+    const params = new URLSearchParams();
+    if (options?.limit) params.append('limit', options.limit.toString());
+    const data = await apiService.get(`/fms/webhooks/${facilityId}/events?${params.toString()}`);
+    return {
+      events: data.events || [],
     };
   }
 
@@ -166,12 +193,27 @@ class FMSService {
     syncLogId: string,
     changeIds: string[]
   ): Promise<FMSChangeApplicationResult> {
-    const data = await apiService.post('/fms/changes/apply', {
-      syncLogId,
-      changeIds,
-    });
+    const data = await apiService.post(
+      '/fms/changes/apply',
+      { syncLogId, changeIds },
+      { timeout: 300_000 },
+    );
     
     return data.result;
+  }
+
+  /**
+   * Dismiss pending changes (invalid or failed apply). Omit changeIds to dismiss all dismissible pending.
+   */
+  async dismissChanges(
+    syncLogId: string,
+    changeIds?: string[],
+  ): Promise<{ dismissed: number }> {
+    const data = await apiService.post('/fms/changes/dismiss', {
+      syncLogId,
+      ...(changeIds && changeIds.length > 0 ? { changeIds } : {}),
+    });
+    return { dismissed: data.dismissed ?? 0 };
   }
 }
 

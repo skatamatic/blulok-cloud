@@ -1,5 +1,6 @@
 import { config } from './src/config/environment';
 import type { Knex } from 'knex';
+import path from 'path';
 
 const knexConfig: { [key: string]: Knex.Config } = {
   development: {
@@ -10,18 +11,19 @@ const knexConfig: { [key: string]: Knex.Config } = {
       user: config.database.user,
       password: config.database.password,
       database: config.database.name,
+      timezone: 'Z',
     },
     pool: {
       min: 2,
       max: 10,
     },
     migrations: {
-      directory: './src/database/migrations',
+      directory: path.resolve(__dirname, 'src', 'database', 'migrations'),
       extension: 'ts',
       tableName: 'knex_migrations'
     },
     seeds: {
-      directory: './src/database/seeds',
+      directory: path.resolve(__dirname, 'src', 'database', 'seeds'),
       extension: 'ts',
     },
   },
@@ -34,18 +36,19 @@ const knexConfig: { [key: string]: Knex.Config } = {
       user: config.database.user,
       password: config.database.password,
       database: `${config.database.name}_test`,
+      timezone: 'Z',
     },
     pool: {
       min: 1,
       max: 5,
     },
     migrations: {
-      directory: './src/database/migrations',
+      directory: path.resolve(__dirname, 'src', 'database', 'migrations'),
       extension: 'ts',
       tableName: 'knex_migrations'
     },
     seeds: {
-      directory: './src/database/seeds',
+      directory: path.resolve(__dirname, 'src', 'database', 'seeds'),
       extension: 'ts',
     },
   },
@@ -59,19 +62,20 @@ const knexConfig: { [key: string]: Knex.Config } = {
       password: config.database.password,
       database: config.database.name,
       ssl: { rejectUnauthorized: false },
+      timezone: 'Z',
     },
     pool: {
       min: 2,
       max: 20,
     },
     migrations: {
-      directory: './src/database/migrations',
-      extension: 'ts',
+      directory: path.resolve(__dirname, 'src', 'database', 'migrations'),
+      extension: 'js',
       tableName: 'knex_migrations'
     },
     seeds: {
-      directory: './src/database/seeds',
-      extension: 'ts',
+      directory: path.resolve(__dirname, 'src', 'database', 'seeds'),
+      extension: 'js',
     },
   },
 };

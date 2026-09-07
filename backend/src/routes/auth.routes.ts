@@ -1,17 +1,27 @@
 import { Router, Request, Response } from 'express';
 import rateLimit from 'express-rate-limit';
 import { loginLimiter } from '@/middleware/security-limits';
-import Joi from 'joi';
 import { AuthService } from '@/services/auth.service';
+import { Ed25519Service } from '@/services/crypto/ed25519.service';
 import { LoginRequest, AuthenticatedRequest, UserRole } from '@/types/auth.types';
 import { asyncHandler } from '@/middleware/error.middleware';
 import { authenticateToken } from '@/middleware/auth.middleware';
-import { InviteService } from '@/services/invite.service';
-import { OTPService } from '@/services/otp.service';
 import { UserModel, User } from '@/models/user.model';
-import { UserFacilityAssociationModel } from '@/models/user-facility-association.model';
+import { FacilityAccessService } from '@/services/facility-access.service';
 import { logger } from '@/utils/logger';
-import bcrypt from 'bcrypt';
+import { RateLimitBypassService } from '@/services/rate-limit-bypass.service';
+import { registerGet, registerPost } from '@/openapi/register-route';
+import {
+  loginSchema,
+  changePasswordSchema,
+  inviteAcceptSchema,
+  inviteRequestOtpSchema,
+  inviteVerifyOtpSchema,
+  inviteSetPasswordSchema,
+  forgotPasswordRequestSchema,
+  forgotPasswordVerifySchema,
+  forgotPasswordResetSchema,
+} from '@/schemas/auth.schemas';
 
 /**
  * Authentication Routes
@@ -53,275 +63,499 @@ import bcrypt from 'bcrypt';
  */
 
 const router = Router();
-// Strict rate limiters for invite/OTP endpoints
-const inviteRequestLimiter = rateLimit({
+const MOUNT = '/api/v1/auth';
+
+// Strict rate limiters for invite/OTP endpoints (wrapped so dev bypass can opt out)
+const inviteRequestLimiterRaw = rateLimit({
   windowMs: 60 * 1000,
   max: 5,
   standardHeaders: true,
   legacyHeaders: false,
 });
 
-const inviteVerifyLimiter = rateLimit({
+const inviteVerifyLimiterRaw = rateLimit({
   windowMs: 60 * 1000,
   max: 10,
   standardHeaders: true,
   legacyHeaders: false,
 });
 
-// Input validation schemas with security constraints
-const loginSchema = Joi.object({
-  email: Joi.string().email().required(),
-  password: Joi.string().min(6).required()
-});
+const bypassSvc = RateLimitBypassService.getInstance();
 
-const changePasswordSchema = Joi.object({
-  currentPassword: Joi.string().required(),
-  newPassword: Joi.string()
-    .min(8)
-    .pattern(new RegExp('^(?=.*[a-z])(?=.*[A-Z])(?=.*\\d)(?=.*[^A-Za-z0-9]).+$'))
-    .required()
-    .messages({
-      'string.pattern.base': 'Password must include uppercase, lowercase, number, and special character'
-    })
-});
+function profileUserPayload(
+  req: AuthenticatedRequest,
+  extras?: { simplifiedUi?: boolean },
+) {
+  const user = req.user!;
+  const facilityIds = AuthService.canAccessAllFacilities(user.role)
+    ? []
+    : (user.facilityIds ?? []);
+  return {
+    id: user.userId,
+    email: user.email,
+    firstName: user.firstName,
+    lastName: user.lastName,
+    role: user.role,
+    facilityIds,
+    simplifiedUi: Boolean(extras?.simplifiedUi),
+  };
+}
 
-// POST /auth/login - User authentication endpoint
-router.post('/login', loginLimiter, asyncHandler(async (req: Request, res: Response): Promise<void> => {
-  const { error, value } = loginSchema.validate(req.body);
-  if (error) {
-    res.status(400).json({
-      success: false,
-      message: error.details[0]?.message || 'Validation error'
-    });
-    return;
-  }
-
-  const loginData: LoginRequest = value;
-  // Extract app device headers if provided
-  const appDeviceId = (req.headers['x-app-device-id'] as string | undefined)?.trim();
-  const appPlatform = (req.headers['x-app-platform'] as string | undefined)?.trim();
-
-  const result = await AuthService.login(loginData, {
-    appDeviceId: appDeviceId || undefined,
-    appPlatform: appPlatform || undefined
-  });
-
-  const statusCode = result.success ? 200 : 401;
-  if (result.success) {
-    // Compute isDeviceRegistered: check if the provided appDeviceId exists
-    let isDeviceRegistered = false;
-    try {
-      const appDeviceId = (req.headers['x-app-device-id'] as string | undefined)?.trim();
-      if (appDeviceId) {
-        const { UserDeviceModel } = await import('@/models/user-device.model');
-        const udm = new UserDeviceModel();
-        const device = await udm.findByUserAndAppDeviceId(result.user!.id, appDeviceId);
-        isDeviceRegistered = !!device;
-      }
-    } catch (_e) {}
-    res.status(statusCode).json({ ...result, isDeviceRegistered });
-  } else {
-    res.status(statusCode).json(result);
-  }
-}));
-
-// POST /auth/change-password
-router.post('/change-password', authenticateToken as any, asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
-  const { error, value } = changePasswordSchema.validate(req.body);
-  if (error) {
-    logger.error('Change password validation failed', {
-      requester: req.user?.userId,
-      role: req.user?.role,
-      message: error.details[0]?.message,
-    });
-    res.status(400).json({
-      success: false,
-      message: error.details[0]?.message || 'Validation error'
-    });
-    return;
-  }
-
-  const { currentPassword, newPassword } = value;
-  const result = await AuthService.changePassword(req.user!.userId, currentPassword, newPassword);
-
-  const statusCode = result.success ? 200 : 400;
-  if (!result.success) {
-    logger.error('Change password failed', {
-      requester: req.user?.userId,
-      role: req.user?.role,
-      reason: result.message,
-    });
-  } else {
-    logger.info('Password changed', {
-      requester: req.user?.userId,
-      role: req.user?.role,
-    });
-  }
-  res.status(statusCode).json(result);
-}));
-
-// GET /auth/profile
-router.get('/profile', authenticateToken as any, asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
-  res.json({
-    success: true,
-    user: {
-      id: req.user!.userId,
-      email: req.user!.email,
-      firstName: req.user!.firstName,
-      lastName: req.user!.lastName,
-      role: req.user!.role
-    }
-  });
-}));
-
-// POST /auth/logout
-router.post('/logout', authenticateToken as any, asyncHandler(async (_req: AuthenticatedRequest, res: Response): Promise<void> => {
-  // In a more sophisticated setup, you might want to blacklist the token
-  // For now, we'll just return success and let the client handle token removal
-  res.json({
-    success: true,
-    message: 'Logout successful'
-  });
-}));
-
-// GET /auth/verify-token
-router.get('/verify-token', authenticateToken as any, asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
-  res.json({
-    success: true,
-    message: 'Token is valid',
-    user: {
-      id: req.user!.userId,
-      email: req.user!.email,
-      firstName: req.user!.firstName,
-      lastName: req.user!.lastName,
-      role: req.user!.role
-    }
-  });
-}));
-
-// POST /auth/refresh-token - Refresh user's JWT token
-router.post('/refresh-token', authenticateToken as any, asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+async function loadSimplifiedUiFlag(userId: string): Promise<boolean> {
   try {
-    const userId = req.user!.userId;
-    
-    // Fetch fresh user data from database
-    const user = await UserModel.findById(userId) as User | undefined;
-    if (!user) {
-      res.status(404).json({
-        success: false,
-        message: 'User not found'
+    const row = await UserModel.findById(userId) as User | undefined;
+    return Boolean(row?.simplified_ui);
+  } catch {
+    return false;
+  }
+}
+
+const inviteRequestLimiter: typeof inviteRequestLimiterRaw = ((req: Request, res: Response, next: any) => {
+  if (bypassSvc.shouldBypass(req)) return next();
+  return inviteRequestLimiterRaw(req, res, next);
+}) as any;
+
+const inviteVerifyLimiter: typeof inviteVerifyLimiterRaw = ((req: Request, res: Response, next: any) => {
+  if (bypassSvc.shouldBypass(req)) return next();
+  return inviteVerifyLimiterRaw(req, res, next);
+}) as any;
+
+registerPost(
+  router,
+  '/login',
+  {
+    openApiPath: `${MOUNT}/login`,
+    tags: ['Auth'],
+    summary: 'User authentication',
+    security: 'none',
+    body: loginSchema,
+  },
+  loginLimiter,
+  asyncHandler(async (req: Request, res: Response): Promise<void> => {
+    const loginData: LoginRequest = req.body;
+    const appDeviceId = (req.headers['x-app-device-id'] as string | undefined)?.trim();
+    const appPlatform = (req.headers['x-app-platform'] as string | undefined)?.trim();
+
+    const result = await AuthService.login(loginData, {
+      appDeviceId: appDeviceId || undefined,
+      appPlatform: appPlatform || undefined,
+    });
+
+    const statusCode = result.success ? 200 : 401;
+    if (result.success) {
+      let isDeviceRegistered = false;
+      try {
+        const headerAppDeviceId = (req.headers['x-app-device-id'] as string | undefined)?.trim();
+        if (headerAppDeviceId) {
+          const { UserDeviceModel } = await import('@/models/user-device.model');
+          const udm = new UserDeviceModel();
+          const device = await udm.findActiveByUserAndAppDeviceId(result.user!.id, headerAppDeviceId);
+          isDeviceRegistered = !!device;
+        }
+      } catch (_e) {}
+      let ops_public_key: string | undefined;
+      let ops_public_key_jwk: { kty: string; crv: string; x: string } | undefined;
+      let ops_public_key_pem: string | undefined;
+      try {
+        ops_public_key_pem = await Ed25519Service.getOpsPublicKeyPem();
+        ops_public_key = Ed25519Service.getOpsPublicKeyB64();
+        ops_public_key_jwk = Ed25519Service.getOpsPublicKeyJwk();
+      } catch (_e) {}
+      res.status(statusCode).json({ ...result, isDeviceRegistered, ops_public_key, ops_public_key_jwk, ops_public_key_pem });
+    } else {
+      res.status(statusCode).json(result);
+    }
+  }),
+);
+
+registerPost(
+  router,
+  '/change-password',
+  {
+    openApiPath: `${MOUNT}/change-password`,
+    tags: ['Auth'],
+    summary: 'Change password for authenticated user',
+    security: 'bearer',
+    body: changePasswordSchema,
+  },
+  authenticateToken as any,
+  asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+    const { currentPassword, newPassword } = req.body;
+    const result = await AuthService.changePassword(req.user!.userId, currentPassword, newPassword);
+
+    const statusCode = result.success ? 200 : 400;
+    if (!result.success) {
+      logger.error('Change password failed', {
+        requester: req.user?.userId,
+        role: req.user?.role,
+        reason: result.message,
       });
-      return;
-    }
-
-    // Check if user is still active
-    if (!user.is_active) {
-      res.status(403).json({
-        success: false,
-        message: 'Account is deactivated'
+    } else {
+      logger.info('Password changed', {
+        requester: req.user?.userId,
+        role: req.user?.role,
       });
-      return;
     }
+    res.status(statusCode).json(result);
+  }),
+);
 
-    // Get fresh facility associations if user is facility-scoped
-    let facilityIds: string[] = [];
-    if (AuthService.isFacilityScoped(user.role as UserRole)) {
-      facilityIds = await UserFacilityAssociationModel.getUserFacilityIds(user.id);
-    }
-
-    // Generate new token with fresh user data
-    const newToken = AuthService.generateToken(user, facilityIds);
-
+registerGet(
+  router,
+  '/profile',
+  {
+    openApiPath: `${MOUNT}/profile`,
+    tags: ['Auth'],
+    summary: 'Get current user profile',
+    security: 'bearer',
+  },
+  authenticateToken as any,
+  asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+    const simplifiedUi = await loadSimplifiedUiFlag(req.user!.userId);
     res.json({
       success: true,
-      message: 'Token refreshed successfully',
-      token: newToken,
-      user: {
-        id: user.id,
-        email: user.email,
-        firstName: user.first_name,
-        lastName: user.last_name,
-        role: user.role as UserRole
-      }
+      user: profileUserPayload(req, { simplifiedUi }),
     });
-  } catch (error) {
-    logger.error('Error refreshing token:', error);
-    res.status(500).json({
-      success: false,
-      message: 'An error occurred while refreshing token'
-    });
-  }
-}));
+  }),
+);
 
-export { router as authRouter };
+registerPost(
+  router,
+  '/logout',
+  {
+    openApiPath: `${MOUNT}/logout`,
+    tags: ['Auth'],
+    summary: 'Terminate current session',
+    security: 'bearer',
+  },
+  authenticateToken as any,
+  asyncHandler(async (_req: AuthenticatedRequest, res: Response): Promise<void> => {
+    res.json({
+      success: true,
+      message: 'Logout successful',
+    });
+  }),
+);
+
+registerGet(
+  router,
+  '/verify-token',
+  {
+    openApiPath: `${MOUNT}/verify-token`,
+    tags: ['Auth'],
+    summary: 'Verify JWT token validity',
+    security: 'bearer',
+  },
+  authenticateToken as any,
+  asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+    const simplifiedUi = await loadSimplifiedUiFlag(req.user!.userId);
+    res.json({
+      success: true,
+      message: 'Token is valid',
+      user: profileUserPayload(req, { simplifiedUi }),
+    });
+  }),
+);
+
+registerPost(
+  router,
+  '/refresh-token',
+  {
+    openApiPath: `${MOUNT}/refresh-token`,
+    tags: ['Auth'],
+    summary: 'Refresh JWT token with fresh user data',
+    security: 'bearer',
+  },
+  authenticateToken as any,
+  asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+    try {
+      const userId = req.user!.userId;
+
+      const user = await UserModel.findById(userId) as User | undefined;
+      if (!user) {
+        res.status(404).json({
+          success: false,
+          message: 'User not found',
+        });
+        return;
+      }
+
+      if (!user.is_active) {
+        res.status(403).json({
+          success: false,
+          message: 'Account is deactivated',
+        });
+        return;
+      }
+
+      if (user.requires_password_reset) {
+        res.status(401).json({
+          success: false,
+          message: 'Account requires re-authentication',
+        });
+        return;
+      }
+
+      let facilityIds: string[] = [];
+      if (AuthService.isFacilityScoped(user.role as UserRole)) {
+        facilityIds = await FacilityAccessService.getUserFacilityIds(user.id, user.role as UserRole);
+      }
+
+      const newToken = AuthService.generateToken(user, facilityIds);
+
+      res.json({
+        success: true,
+        message: 'Token refreshed successfully',
+        token: newToken,
+        user: {
+          id: user.id,
+          email: user.email,
+          firstName: user.first_name,
+          lastName: user.last_name,
+          role: user.role as UserRole,
+          facilityIds,
+          simplifiedUi: Boolean(user.simplified_ui),
+        },
+      });
+    } catch (error) {
+      logger.error('Error refreshing token:', error);
+      res.status(500).json({
+        success: false,
+        message: 'An error occurred while refreshing token',
+      });
+    }
+  }),
+);
 
 // ----- First-time Invite Flow Endpoints -----
 
-// POST /auth/invite/request-otp { token, phone? | email? }
-router.post('/invite/request-otp', inviteRequestLimiter, asyncHandler(async (req: Request, res: Response): Promise<void> => {
-  const schema = Joi.object({
-    token: Joi.string().required(),
-    phone: Joi.string().optional(),
-    email: Joi.string().email().optional(),
-  }).xor('phone', 'email');
-  const { error, value } = schema.validate(req.body);
-  if (error) {
-    res.status(400).json({ success: false, message: error.details[0]?.message || 'Validation error' });
-    return;
-  }
+registerPost(
+  router,
+  '/invite/accept',
+  {
+    openApiPath: `${MOUNT}/invite/accept`,
+    tags: ['Auth'],
+    summary: 'Validate invite token and return profile info (name, email, phone)',
+    security: 'none',
+    body: inviteAcceptSchema,
+  },
+  inviteVerifyLimiter,
+  asyncHandler(async (req: Request, res: Response): Promise<void> => {
+    const { FirstTimeUserService } = await import('@/services/first-time-user.service');
+    const svc = FirstTimeUserService.getInstance();
+    try {
+      const result = await svc.acceptInvite({ token: req.body.token });
+      res.json({
+        success: true,
+        needs_profile: result.needs_profile,
+        profile: result.profile,
+        missing_fields: result.missing_fields,
+      });
+    } catch (e: any) {
+      res.status(400).json({ success: false, message: e?.message || 'Invalid invite token' });
+    }
+  }),
+);
 
-  const { FirstTimeUserService } = await import('@/services/first-time-user.service');
-  const svc = FirstTimeUserService.getInstance();
-  try {
-    const result = await svc.requestOtp({ token: value.token, phone: value.phone, email: value.email });
-    res.json({ success: true, expiresAt: result.expiresAt });
-  } catch (e: any) {
-    res.status(400).json({ success: false, message: e?.message || 'Unable to send OTP' });
-  }
-}));
+registerPost(
+  router,
+  '/invite/request-otp',
+  {
+    openApiPath: `${MOUNT}/invite/request-otp`,
+    tags: ['Auth'],
+    summary: 'Request OTP for first-time invite login',
+    security: 'none',
+    body: inviteRequestOtpSchema,
+  },
+  inviteRequestLimiter,
+  asyncHandler(async (req: Request, res: Response): Promise<void> => {
+    const { FirstTimeUserService } = await import('@/services/first-time-user.service');
+    const svc = FirstTimeUserService.getInstance();
+    try {
+      const result = await svc.requestOtp({
+        token: req.body.token,
+        phone: req.body.phone,
+        email: req.body.email,
+        firstName: req.body.firstName,
+        lastName: req.body.lastName,
+      });
+      res.json({
+        success: true,
+        expiresAt: result.expiresAt,
+        userId: result.userId,
+        inviteId: result.inviteId,
+      });
+    } catch (e: any) {
+      res.status(400).json({ success: false, message: e?.message || 'Unable to request OTP' });
+    }
+  }),
+);
 
-// POST /auth/invite/verify-otp { token, otp }
-router.post('/invite/verify-otp', inviteVerifyLimiter, asyncHandler(async (req: Request, res: Response): Promise<void> => {
-  const schema = Joi.object({ token: Joi.string().required(), otp: Joi.string().pattern(/^\d{6}$/).required() });
-  const { error, value } = schema.validate(req.body);
-  if (error) {
-    res.status(400).json({ success: false, message: error.details[0]?.message || 'Validation error' });
-    return;
-  }
+registerPost(
+  router,
+  '/invite/verify-otp',
+  {
+    openApiPath: `${MOUNT}/invite/verify-otp`,
+    tags: ['Auth'],
+    summary: 'Verify OTP for invite flow',
+    security: 'none',
+    body: inviteVerifyOtpSchema,
+  },
+  inviteVerifyLimiter,
+  asyncHandler(async (req: Request, res: Response): Promise<void> => {
+    const { FirstTimeUserService } = await import('@/services/first-time-user.service');
+    const svc = FirstTimeUserService.getInstance();
+    try {
+      const valid = await svc.verifyOtp({ token: req.body.token, otp: req.body.otp });
+      res.json({ success: valid });
+    } catch (e: any) {
+      res.status(400).json({ success: false, message: e?.message || 'Invalid OTP' });
+    }
+  }),
+);
 
-  const { FirstTimeUserService } = await import('@/services/first-time-user.service');
-  const svc = FirstTimeUserService.getInstance();
-  try {
-    const valid = await svc.verifyOtp({ token: value.token, otp: value.otp });
-    res.json({ success: valid });
-  } catch (e: any) {
-    res.status(400).json({ success: false, message: e?.message || 'Invalid OTP' });
-  }
-}));
+registerPost(
+  router,
+  '/invite/set-password',
+  {
+    openApiPath: `${MOUNT}/invite/set-password`,
+    tags: ['Auth'],
+    summary: 'Set password and complete invite onboarding',
+    security: 'none',
+    body: inviteSetPasswordSchema,
+  },
+  inviteVerifyLimiter,
+  asyncHandler(async (req: Request, res: Response): Promise<void> => {
+    const { FirstTimeUserService } = await import('@/services/first-time-user.service');
+    const svc = FirstTimeUserService.getInstance();
+    try {
+      await svc.setPassword({
+        token: req.body.token,
+        otp: req.body.otp,
+        newPassword: req.body.newPassword,
+        firstName: req.body.firstName,
+        lastName: req.body.lastName,
+        email: req.body.email,
+      });
+      res.json({ success: true });
+    } catch (e: any) {
+      res.status(400).json({ success: false, message: e?.message || 'Unable to set password' });
+    }
+  }),
+);
 
-// POST /auth/invite/set-password { token, otp, newPassword }
-router.post('/invite/set-password', inviteVerifyLimiter, asyncHandler(async (req: Request, res: Response): Promise<void> => {
-  const schema = Joi.object({
-    token: Joi.string().required(),
-    otp: Joi.string().pattern(/^\d{6}$/).required(),
-    newPassword: Joi.string()
-      .min(8)
-      .pattern(new RegExp('^(?=.*[a-z])(?=.*[A-Z])(?=.*\\d)(?=.*[^A-Za-z0-9]).+$'))
-      .required()
-      .messages({ 'string.pattern.base': 'Password must include uppercase, lowercase, number, and special character' })
-  });
-  const { error, value } = schema.validate(req.body);
-  if (error) {
-    res.status(400).json({ success: false, message: error.details[0]?.message || 'Validation error' });
-    return;
-  }
+// ----- Forgot Password / Password Reset Flow -----
 
-  const { FirstTimeUserService } = await import('@/services/first-time-user.service');
-  const svc = FirstTimeUserService.getInstance();
-  try {
-    await svc.setPassword({ token: value.token, otp: value.otp, newPassword: value.newPassword });
-    res.json({ success: true });
-  } catch (e: any) {
-    res.status(400).json({ success: false, message: e?.message || 'Unable to set password' });
-  }
-}));
+const passwordResetRequestLimiterRaw = rateLimit({
+  windowMs: 60 * 1000,
+  max: 5,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { success: false, message: 'Too many password reset requests. Please try again later.' },
+});
+
+const passwordResetResetLimiterRaw = rateLimit({
+  windowMs: 60 * 1000,
+  max: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { success: false, message: 'Too many reset attempts. Please try again later.' },
+});
+
+const passwordResetRequestLimiter: typeof passwordResetRequestLimiterRaw = ((req: Request, res: Response, next: any) => {
+  if (bypassSvc.shouldBypass(req)) return next();
+  return passwordResetRequestLimiterRaw(req, res, next);
+}) as any;
+
+const passwordResetResetLimiter: typeof passwordResetResetLimiterRaw = ((req: Request, res: Response, next: any) => {
+  if (bypassSvc.shouldBypass(req)) return next();
+  return passwordResetResetLimiterRaw(req, res, next);
+}) as any;
+
+registerPost(
+  router,
+  '/forgot-password/request',
+  {
+    openApiPath: `${MOUNT}/forgot-password/request`,
+    tags: ['Auth'],
+    summary: 'Request password reset link',
+    security: 'none',
+    body: forgotPasswordRequestSchema,
+  },
+  passwordResetRequestLimiter,
+  asyncHandler(async (req: Request, res: Response): Promise<void> => {
+    const { PasswordResetService } = await import('@/services/password-reset.service');
+    const svc = PasswordResetService.getInstance();
+
+    try {
+      const result = await svc.requestReset({ email: req.body.email, phone: req.body.phone });
+      res.json({
+        success: true,
+        expiresAt: result.expiresAt,
+        deliveryMethod: result.deliveryMethod,
+      });
+    } catch (e: any) {
+      if (e.message?.includes('If an account exists')) {
+        res.json({ success: true, message: 'If an account exists with this information, you will receive a reset link' });
+      } else {
+        res.status(400).json({ success: false, message: e?.message || 'Unable to process request' });
+      }
+    }
+  }),
+);
+
+registerPost(
+  router,
+  '/forgot-password/verify',
+  {
+    openApiPath: `${MOUNT}/forgot-password/verify`,
+    tags: ['Auth'],
+    summary: 'Verify password reset token',
+    security: 'none',
+    body: forgotPasswordVerifySchema,
+  },
+  asyncHandler(async (req: Request, res: Response): Promise<void> => {
+    const { PasswordResetService } = await import('@/services/password-reset.service');
+    const svc = PasswordResetService.getInstance();
+
+    const result = await svc.verifyToken(req.body.token);
+    if (!result.valid) {
+      res.status(400).json({ success: false, message: 'Invalid or expired reset link' });
+      return;
+    }
+
+    res.json({
+      success: true,
+      email: result.email,
+    });
+  }),
+);
+
+registerPost(
+  router,
+  '/forgot-password/reset',
+  {
+    openApiPath: `${MOUNT}/forgot-password/reset`,
+    tags: ['Auth'],
+    summary: 'Reset password using token',
+    security: 'none',
+    body: forgotPasswordResetSchema,
+  },
+  passwordResetResetLimiter,
+  asyncHandler(async (req: Request, res: Response): Promise<void> => {
+    const { PasswordResetService } = await import('@/services/password-reset.service');
+    const svc = PasswordResetService.getInstance();
+
+    try {
+      await svc.resetPassword({
+        token: req.body.token,
+        newPassword: req.body.newPassword,
+      });
+      res.json({ success: true, message: 'Password reset successfully' });
+    } catch (e: any) {
+      res.status(400).json({ success: false, message: e?.message || 'Unable to reset password' });
+    }
+  }),
+);
+
+export { router as authRouter };

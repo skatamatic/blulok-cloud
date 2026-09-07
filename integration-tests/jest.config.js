@@ -1,6 +1,6 @@
 module.exports = {
   preset: 'ts-jest',
-  testEnvironment: 'jsdom', // Changed from 'node' to 'jsdom' for frontend integration
+  testEnvironment: 'node',
   roots: ['<rootDir>/src'],
   testMatch: ['**/__tests__/**/*.test.ts'],
   testPathIgnorePatterns: [
@@ -10,7 +10,7 @@ module.exports = {
     '^.+\\.ts$': 'ts-jest',
   },
   transformIgnorePatterns: [
-    'node_modules/(?!(uuid)/)'
+    'node_modules/(?!(uuid)/)',
   ],
   collectCoverageFrom: [
     'src/**/*.ts',
@@ -18,6 +18,10 @@ module.exports = {
   ],
   testTimeout: 30000, // 30 seconds for integration tests
   moduleNameMapper: {
+    '^@/types/gateway\\.types$': '<rootDir>/../frontend/src/types/gateway.types.ts',
+    '^@/types/facility\\.types$': '<rootDir>/../frontend/src/types/facility.types.ts',
+    '^@/types/dashboard\\.types$': '<rootDir>/../frontend/src/types/dashboard.types.ts',
+    '^@/types/notifications\\.types$': '<rootDir>/../frontend/src/types/notifications.types.ts',
     '^@/(.*)$': '<rootDir>/../backend/src/$1',
     '^@frontend/(.*)$': '<rootDir>/../frontend/src/$1',
   },
@@ -27,6 +31,8 @@ module.exports = {
   // Suppress console logs during tests to reduce noise
   silent: false,
   verbose: false,
+  // Polyfills before test modules load (supertest/formidable needs TextEncoder)
+  setupFiles: ['<rootDir>/src/setup-polyfills.ts'],
   // Setup files to run before tests
   setupFilesAfterEnv: ['<rootDir>/src/setup-mocks.ts', '<rootDir>/src/setup-frontend-integration.ts'],
   // Clear mocks between tests
@@ -38,5 +44,6 @@ module.exports = {
       NODE_ENV: 'test',
       VITE_API_URL: 'http://localhost:3000'
     }
-  }
+  },
+  forceExit: true,
 };

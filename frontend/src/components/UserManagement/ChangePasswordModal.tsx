@@ -2,6 +2,10 @@ import React, { useState } from 'react';
 import { Modal } from '@/components/Modal/Modal';
 import { apiService } from '@/services/api.service';
 import { EyeIcon, EyeSlashIcon, CheckCircleIcon, ExclamationTriangleIcon } from '@heroicons/react/24/outline';
+import {
+  PASSWORD_COMPLEXITY_MESSAGE,
+  PASSWORD_COMPLEXITY_PATTERN,
+} from '@/constants/password';
 
 interface ChangePasswordModalProps {
   isOpen: boolean;
@@ -34,8 +38,8 @@ export function ChangePasswordModal({ isOpen, onClose, onSuccess }: ChangePasswo
       newErrors.newPassword = 'New password is required';
     } else if (formData.newPassword.length < 8) {
       newErrors.newPassword = 'Password must be at least 8 characters long';
-    } else if (!/(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[^A-Za-z0-9])/.test(formData.newPassword)) {
-      newErrors.newPassword = 'Password must include uppercase, lowercase, number, and special character';
+    } else if (!PASSWORD_COMPLEXITY_PATTERN.test(formData.newPassword)) {
+      newErrors.newPassword = PASSWORD_COMPLEXITY_MESSAGE;
     }
 
     if (!formData.confirmPassword.trim()) {

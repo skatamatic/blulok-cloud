@@ -1,106 +1,91 @@
+/**
+ * Quick Storable Edge OAuth 1.0a smoke test (one-legged).
+ *
+ * Usage (PowerShell):
+ *   $env:STOREDGE_KEY="your_consumer_key"
+ *   $env:STOREDGE_SECRET="your_consumer_secret"
+ *   $env:STOREDGE_FACILITY="facility-uuid"
+ *   node test-storedge.js
+ *
+ * Do not commit real credentials.
+ */
 const OAuth = require('oauth-1.0a');
 const crypto = require('crypto');
+const https = require('https');
 
-// Storable Edge credentials from user
-const consumerKey = 'G47RvX9KXMApR6MJ096T43otz6NC7gUXnF4LMBPv';
-const consumerSecret = 'B2IyvJ53vW160sk8TphzGUujkNrFK7iE1I96Tl3k';
-// The facility ID from the user's setup
-const facilityId = 'eb45f0b3-2caf-4fdf-93fd-ba4975bb5352';
-const baseUrl = 'https://api.storedgefms.com';
+const consumerKey = process.env.STOREDGE_KEY || '';
+const consumerSecret = process.env.STOREDGE_SECRET || '';
+const facilityId = process.env.STOREDGE_FACILITY || '';
+const baseUrl = (process.env.STOREDGE_BASE_URL || 'https://api.storedgefms.com').replace(/\/+$/, '');
 
-console.log('Testing Storable Edge API connection...');
+if (!consumerKey || !consumerSecret || !facilityId) {
+  console.error('Set STOREDGE_KEY, STOREDGE_SECRET, STOREDGE_FACILITY (and optionally STOREDGE_BASE_URL).');
+  process.exit(1);
+}
 
-const testEndpoint = async (endpoint, description) => {
-  console.log(`\n=== Testing ${description} ===`);
-  console.log('URL:', `${baseUrl}/v1/${facilityId}/${endpoint}`);
+const oauth = new OAuth({
+  consumer: { key: consumerKey, secret: consumerSecret },
+  signature_method: 'HMAC-SHA1',
+  hash_function(base_string, key) {
+    return crypto.createHmac('sha1', key).update(base_string).digest('base64');
+  },
+});
 
-  const oauth = new OAuth({
-    consumer: {
-      key: consumerKey,
-      secret: consumerSecret,
-    },
-    signature_method: 'HMAC-SHA1',
-    hash_function(base_string, key) {
-      return crypto
-        .createHmac('sha1', key)
-        .update(base_string)
-        .digest('base64');
-    },
-  });
+function requestPath(endpoint) {
+  return `/v1/${facilityId}/${endpoint}`;
+}
 
-  const requestData = {
-    url: `${baseUrl}/v1/${facilityId}/${endpoint}`,
-    method: 'GET',
-  };
+async function testEndpoint(endpoint, description) {
+  const fullUrl = `${baseUrl}${requestPath(endpoint)}`;
+  console.log(`\n=== ${description} ===\nGET ${fullUrl}`);
 
-  const headers = oauth.toHeader(oauth.authorize(requestData));
-  console.log('OAuth Headers:', JSON.stringify(headers, null, 2));
+  const requestData = { url: fullUrl, method: 'GET' };
+  const authHeaders = oauth.toHeader(oauth.authorize(requestData));
 
   return new Promise((resolve) => {
-    const https = require('https');
+    const u = new URL(fullUrl);
     const options = {
-      hostname: 'api.storedgefms.com',
-      path: `/v1/${facilityId}/${endpoint}`,
+      hostname: u.hostname,
+      path: u.pathname + u.search,
       method: 'GET',
       headers: {
-        ...headers,
+        ...authHeaders,
         'Content-Type': 'application/json',
-        'Accept': 'application/json'
-      }
+        Accept: 'application/json',
+      },
     };
 
     const req = https.request(options, (res) => {
-      console.log(`Status: ${res.statusCode}`);
       let data = '';
       res.on('data', (chunk) => {
         data += chunk;
       });
       res.on('end', () => {
+        console.log(`HTTP ${res.statusCode}`);
         try {
           const parsed = JSON.parse(data);
-          if (endpoint === 'tenants/current') {
-            console.log('Response has', parsed.tenants ? parsed.tenants.length : 'unknown', 'tenants');
-            if (parsed.tenants && parsed.tenants.length > 0) {
-              console.log('\nFirst 3 tenants:');
-              parsed.tenants.slice(0, 3).forEach((tenant, index) => {
-                console.log(`Tenant ${index + 1}:`, {
-                  id: tenant.id,
-                  email: tenant.email,
-                  first_name: tenant.first_name,
-                  last_name: tenant.last_name,
-                  active: tenant.active
-                });
-              });
-
-              // Check for null emails
-              const nullEmails = parsed.tenants.filter(t => t.email === null || t.email === undefined);
-              console.log(`\nTenants with null/undefined emails: ${nullEmails.length}`);
-              if (nullEmails.length > 0) {
-                console.log('Null email tenant IDs:', nullEmails.map(t => t.id));
-              }
-            }
+          if (parsed.meta) {
+            console.log('meta:', JSON.stringify(parsed.meta, null, 2));
           } else {
-            console.log('Units response received (not showing full data)');
+            console.log('body (truncated):', data.slice(0, 400));
           }
-          resolve(parsed);
-        } catch (e) {
-          console.log('Raw response:', data.substring(0, 200));
-          resolve(data);
+        } catch {
+          console.log('Raw (truncated):', data.slice(0, 400));
         }
+        resolve();
       });
     });
 
     req.on('error', (e) => {
-      console.error(`Request error: ${e.message}`);
-      resolve(null);
+      console.error(e.message);
+      resolve();
     });
-
     req.end();
   });
-};
+}
 
-// Test both endpoints
 (async () => {
-  await testEndpoint('units', 'Units Endpoint');
-  await testEndpoint('tenants/current', 'Tenants Endpoint');
+  console.log('Storable Edge smoke test');
+  await testEndpoint('units', 'Units');
+  await testEndpoint('tenants/current', 'Tenants (current)');
 })();

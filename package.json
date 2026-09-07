@@ -6,6 +6,12 @@
     "test:backend": "cd backend && npm test",
     "test:frontend": "cd frontend && npm run test:all",
     "test:all": "npm run test:backend && npm run test:frontend",
-    "install:all": "npm install && cd backend && npm install && cd ../frontend && npm install"
+    "install:all": "npm install && cd backend && npm install && cd ../frontend && npm install && cd ../gateway-simulator && npm install",
+    "dev:simulator": "cd gateway-simulator && npm run dev",
+    "build:simulator": "cd gateway-simulator && npm run build",
+    "test:simulator": "cd gateway-simulator && npm test",
+    "dev:mysql:up": "docker compose -f docker-compose.mysql.yml up -d",
+    "dev:mysql:down": "docker compose -f docker-compose.mysql.yml down",
+    "dev:mysql:logs": "docker compose -f docker-compose.mysql.yml logs -f mysql"
   }
 }

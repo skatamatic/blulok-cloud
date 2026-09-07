@@ -5,6 +5,7 @@ import { websocketService } from '@/services/websocket.service';
 jest.mock('@/services/websocket.service', () => ({
   websocketService: {
     subscribe: jest.fn(),
+    reassertSubscription: jest.fn(),
     unsubscribe: jest.fn(),
     onMessage: jest.fn(),
   }
@@ -17,7 +18,7 @@ describe('WidgetSubscriptionManager', () => {
     // Reset the subscription manager state
     (widgetSubscriptionManager as any).activeSubscriptions.clear();
     (widgetSubscriptionManager as any).messageHandlers.clear();
-    (widgetSubscriptionManager as any).isListening.clear();
+    (widgetSubscriptionManager as any).wsMessageUnsubscribers.clear();
   });
 
   describe('subscribe', () => {

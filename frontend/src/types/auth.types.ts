@@ -13,6 +13,11 @@ export interface User {
   firstName: string;
   lastName: string;
   role: UserRole;
+  /**
+   * Presentation-only simplified Cloud UI (facility_admin).
+   * Not an API authorization boundary.
+   */
+  simplifiedUi?: boolean;
   facilityNames?: string[];
   facilityIds?: string[];
 }
@@ -25,7 +30,11 @@ export interface AuthState {
 }
 
 export interface LoginCredentials {
-  email: string;
+  /**
+   * Flexible login identifier. Can be an email address or a phone number.
+   * Backend will normalize and decide which identifier to use.
+   */
+  identifier: string;
   password: string;
 }
 
@@ -40,6 +49,8 @@ export interface AuthContextType {
   authState: AuthState;
   login: (credentials: LoginCredentials) => Promise<LoginResponse>;
   logout: () => void;
+  /** Re-fetch live facility scope from GET /auth/profile (also triggered on WS scope_update). */
+  refreshUserScope: () => Promise<void>;
   isLoading: boolean;
   hasRole: (roles: UserRole[]) => boolean;
   isAdmin: () => boolean;

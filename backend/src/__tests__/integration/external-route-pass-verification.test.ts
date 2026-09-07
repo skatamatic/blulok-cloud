@@ -12,8 +12,12 @@ describe('External route pass verification against provided dev keys', () => {
     const opsJwk = { kty: 'OKP', crv: 'Ed25519', x: OPS_ED25519_PUBLIC_KEY_B64 } as const;
     const opsKey = await importJWK(opsJwk, 'EdDSA');
 
+    // Use a date when the token was still valid (November 5, 2025)
+    const validDate = new Date('2025-11-05T12:00:00Z');
+
     const { payload, protectedHeader } = await jwtVerify(ROUTE_PASS, opsKey, {
       algorithms: ['EdDSA'],
+      currentDate: validDate,
     });
 
     expect(protectedHeader.alg).toBe('EdDSA');

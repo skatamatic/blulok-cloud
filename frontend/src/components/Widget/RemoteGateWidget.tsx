@@ -1,125 +1,298 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { 
   BoltIcon,
   PlayIcon,
   StopIcon,
   ClockIcon,
   ExclamationTriangleIcon,
-  CheckCircleIcon
+  CheckCircleIcon,
+  ArrowPathIcon,
+  InformationCircleIcon,
 } from '@heroicons/react/24/outline';
 import { Widget } from './Widget';
 import { WidgetSize } from './WidgetSizeDropdown';
+import { apiService } from '@/services/api.service';
+import { useWebSocket } from '@/contexts/WebSocketContext';
+import { useLockDeviceRealtime } from '@/hooks/useLockDeviceRealtime';
+import { AccessControlDevice } from '@/types/facility.types';
+import { isSupportsRemoteLockEnabled } from '@/utils/unitLock.utils';
+import {
+  computeOpenUntilUnixSec,
+  isSupportsWidgetTimedOpenEnabled,
+  WIDGET_TIMED_OPEN_MAX_MINUTES,
+} from '@/utils/accessControlOpen.utils';
+import { getApiErrorMessage } from '@/utils/apiError.utils';
+import { shouldRefreshDeviceListForPayload } from '@/utils/deviceStatusWs.utils';
+import { useToast } from '@/contexts/ToastContext';
+import { useWidgetSizeState } from '@/hooks/useWidgetSizeState';
+import { startHardwareAckWatch, LOCK_HARDWARE_FEEDBACK_TIMEOUT_MS } from '@/utils/lockHardwareFeedback.utils';
+import { lockHardwareFeedbackToasts } from '@/utils/lockHardwareFeedback.constants';
+import { DashboardFacilityScopePlaceholder } from '@/components/Widget/DashboardFacilityScopePlaceholder';
+import { formatRelativeTime, formatTime } from '@/utils/datetime.utils';
 
 interface GateDevice {
   id: string;
   name: string;
   facility: string;
-  status: 'online' | 'offline' | 'error';
+  /** Facility UUID when known; empty when the API omits `facility_id`. */
+  facilityId: string;
+  status: 'online' | 'offline' | 'error' | 'maintenance';
   isOpen: boolean;
+  /** When false, cloud must not send CLOSE / remote lock (close on site). */
+  supportsRemoteLock: boolean;
+  /** When true, widget may send timed OPEN with open_until. */
+  supportsWidgetTimedOpen: boolean;
+  /** Whether hardware reports authoritative open/closed state. */
+  hasLockFeedback: boolean;
   lastActivity: Date;
-  holdUntil?: Date;
+  /** Display hint when a timed open command was issued (from open_until). */
+  openUntilEnd?: Date;
+  deviceType: 'gate' | 'elevator' | 'door';
 }
+
+const TIMED_OPEN_TOOLTIP =
+  'Opens the gate and sends open_until (UTC unix time) so hardware can auto-close at the chosen time.';
+
+const MANUAL_CLOSE_HINT = 'Close manually at the gate — remote lock is not enabled for this hardware.';
 
 interface RemoteGateWidgetProps {
   id: string;
   title: string;
   initialSize?: WidgetSize;
+  currentSize?: WidgetSize;
   availableSizes?: WidgetSize[];
+  onSizeChange?: (size: WidgetSize) => void;
   onGridSizeChange?: (gridSize: { w: number; h: number }) => void;
   onRemove?: () => void;
+  readOnly?: boolean;
   facilityFilter?: string;
 }
 
-// Mock gate devices
-const generateMockGates = (): GateDevice[] => {
-  return [
-    {
-      id: 'gate-1',
-      name: 'Main Entrance',
-      facility: 'Downtown Storage',
-      status: 'online',
-      isOpen: false,
-      lastActivity: new Date(Date.now() - 15 * 60 * 1000) // 15 minutes ago
-    },
-    {
-      id: 'gate-2', 
-      name: 'Loading Dock',
-      facility: 'Downtown Storage',
-      status: 'online',
-      isOpen: false,
-      lastActivity: new Date(Date.now() - 2 * 60 * 60 * 1000) // 2 hours ago
-    },
-    {
-      id: 'gate-3',
-      name: 'Vehicle Gate',
-      facility: 'Warehouse District',
-      status: 'offline',
-      isOpen: false,
-      lastActivity: new Date(Date.now() - 24 * 60 * 60 * 1000) // 24 hours ago
-    }
-  ];
+/**
+ * Transform an AccessControlDevice from the API into a GateDevice for display.
+ */
+const transformToGateDevice = (device: AccessControlDevice): GateDevice => {
+  return {
+    id: device.id,
+    name: device.name,
+    facility: device.facility_name || 'Unknown Facility',
+    facilityId: device.facility_id ?? '',
+    status: device.status,
+    isOpen: !device.is_locked,
+    supportsRemoteLock: isSupportsRemoteLockEnabled(device.supports_remote_lock),
+    supportsWidgetTimedOpen: isSupportsWidgetTimedOpenEnabled(device.supports_widget_timed_open),
+    hasLockFeedback: device.has_lock_feedback !== false,
+    lastActivity: device.last_activity ? new Date(device.last_activity) : new Date(),
+    openUntilEnd: device.no_feedback_unlock_until
+      ? new Date(device.no_feedback_unlock_until)
+      : undefined,
+    deviceType: device.device_type,
+  };
 };
 
 export const RemoteGateWidget: React.FC<RemoteGateWidgetProps> = ({
   id,
   title,
   initialSize = 'medium',
+  currentSize,
   availableSizes = ['medium', 'large'],
+  onSizeChange,
   onGridSizeChange,
   onRemove,
+  readOnly,
   facilityFilter
 }) => {
-  const [size, setSize] = useState<WidgetSize>(initialSize);
+  const { size, handleSizeChange } = useWidgetSizeState(
+    currentSize,
+    initialSize,
+    onSizeChange
+  );
   const [gates, setGates] = useState<GateDevice[]>([]);
   const [selectedGate, setSelectedGate] = useState<string>('');
+  const [isLoading, setIsLoading] = useState(true);
   const [isOperating, setIsOperating] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const [holdDuration, setHoldDuration] = useState<number>(5); // minutes
 
+  const { isConnected } = useWebSocket();
+  const { addToast } = useToast();
+  const loadGatesRef = useRef<() => Promise<void>>(async () => {});
+  const gateIdsRef = useRef<Set<string>>(new Set());
+  const gatesRef = useRef<GateDevice[]>([]);
+  gatesRef.current = gates;
+  const gateOpenAckCancelRef = useRef<(() => void) | null>(null);
+  const pendingGateOpenIdRef = useRef<string | null>(null);
+
   useEffect(() => {
-    loadGates();
-    // Update gate status every 30 seconds
-    const interval = setInterval(loadGates, 30000);
-    return () => clearInterval(interval);
+    return () => gateOpenAckCancelRef.current?.();
+  }, []);
+
+  useEffect(() => {
+    if (!pendingGateOpenIdRef.current) return;
+    const g = gates.find((x) => x.id === pendingGateOpenIdRef.current);
+    if (g?.isOpen) {
+      gateOpenAckCancelRef.current?.();
+      gateOpenAckCancelRef.current = null;
+      pendingGateOpenIdRef.current = null;
+    }
+  }, [gates]);
+
+  const loadGates = useCallback(async () => {
+    if (!facilityFilter) {
+      gateIdsRef.current = new Set();
+      setGates([]);
+      setIsLoading(false);
+      return;
+    }
+
+    setError(null);
+    
+    try {
+      const response = await apiService.getDevices({
+        device_type: 'access_control',
+        limit: 200,
+        ...(facilityFilter ? { facility_id: facilityFilter } : {}),
+      });
+
+      if (response.devices) {
+        // Filter for gate/door/elevator types and transform
+        const accessControlDevices = response.devices.filter(
+          (d: AccessControlDevice) => ['gate', 'elevator', 'door'].includes(d.device_type)
+        );
+        const transformedGates = accessControlDevices.map(transformToGateDevice);
+        gateIdsRef.current = new Set(transformedGates.map((g: GateDevice) => g.id));
+        setGates(transformedGates);
+      } else {
+        gateIdsRef.current = new Set();
+        setGates([]);
+      }
+    } catch (err) {
+      console.error('Failed to load access control devices:', err);
+      setError('Failed to load gates');
+      gateIdsRef.current = new Set();
+      setGates([]);
+    } finally {
+      setIsLoading(false);
+    }
   }, [facilityFilter]);
 
   useEffect(() => {
-    // Auto-select first online gate
-    if (gates.length > 0 && !selectedGate) {
-      const onlineGate = gates.find(g => g.status === 'online');
-      if (onlineGate) {
-        setSelectedGate(onlineGate.id);
-      }
+    loadGatesRef.current = loadGates;
+  }, [loadGates]);
+
+  useEffect(() => {
+    void loadGates();
+  }, [loadGates]);
+
+  useLockDeviceRealtime({
+    enabled: isConnected,
+    debouncedRefresh: () => {
+      void loadGatesRef.current();
+    },
+    debounceRefreshFilter: (p) => shouldRefreshDeviceListForPayload(p, gateIdsRef.current),
+    debounceMs: 450,
+    subscribeUnitsForRefresh: false,
+  });
+
+  useEffect(() => {
+    if (gates.length === 0) {
+      if (selectedGate) setSelectedGate('');
+      return;
+    }
+    if (selectedGate && !gates.some((g) => g.id === selectedGate)) {
+      setSelectedGate('');
     }
   }, [gates, selectedGate]);
 
-  const loadGates = async () => {
-    // Simulate API call
-    await new Promise(resolve => setTimeout(resolve, 200));
-    const mockGates = generateMockGates();
-    setGates(mockGates);
-  };
+  useEffect(() => {
+    // Prefer first online gate; otherwise show the first gate (offline still visible).
+    if (gates.length > 0 && !selectedGate) {
+      const preferred = gates.find((g) => g.status === 'online') ?? gates[0];
+      setSelectedGate(preferred.id);
+    }
+  }, [gates, selectedGate]);
 
-  const handleGateOperation = async (operation: 'open' | 'close' | 'hold') => {
+  const showLargeStats = useMemo(
+    () => size === 'large' || size === 'huge' || `${size}`.includes('wide'),
+    [size]
+  );
+
+  const handleGateOperation = async (operation: 'open' | 'close' | 'timed-open') => {
     const gate = gates.find(g => g.id === selectedGate);
     if (!gate || gate.status !== 'online') return;
+    if ((operation === 'open' || operation === 'timed-open') && gate.isOpen) return;
+    if (operation === 'timed-open' && !gate.supportsWidgetTimedOpen) return;
+    if (operation === 'close' && !gate.supportsRemoteLock) {
+      addToast({
+        type: 'info',
+        title: 'Close manually',
+        message: 'Remote lock is not enabled for this device; close at the gate.',
+      });
+      return;
+    }
 
     setIsOperating(true);
-    
-    // Simulate API call
-    await new Promise(resolve => setTimeout(resolve, 1000));
-    
-    setGates(prev => prev.map(g => 
-      g.id === selectedGate 
-        ? { 
-            ...g, 
-            isOpen: operation === 'open' || operation === 'hold',
-            lastActivity: new Date(),
-            holdUntil: operation === 'hold' ? new Date(Date.now() + holdDuration * 60 * 1000) : undefined
-          }
-        : g
-    ));
-    
-    setIsOperating(false);
+    setError(null);
+
+    try {
+      const lockStatus =
+        operation === 'close' ? 'locked' : 'unlocked';
+      const openUntil =
+        operation === 'timed-open' ? computeOpenUntilUnixSec(holdDuration) : undefined;
+      if (openUntil != null) {
+        await apiService.updateAccessControlLockStatus(selectedGate, lockStatus, {
+          open_until: openUntil,
+        });
+      } else {
+        await apiService.updateAccessControlLockStatus(selectedGate, lockStatus);
+      }
+      await loadGates();
+
+      if ((operation === 'open' || operation === 'timed-open') && gate.hasLockFeedback) {
+        const gateId = selectedGate;
+        pendingGateOpenIdRef.current = gateId;
+        gateOpenAckCancelRef.current?.();
+        gateOpenAckCancelRef.current = startHardwareAckWatch(
+          () => {
+            if (pendingGateOpenIdRef.current !== gateId) return false;
+            const g = gatesRef.current.find((x) => x.id === gateId);
+            return !!g && !g.isOpen;
+          },
+          () => {
+            addToast(lockHardwareFeedbackToasts.accessPointOpenTimeout());
+            pendingGateOpenIdRef.current = null;
+            gateOpenAckCancelRef.current = null;
+          },
+          LOCK_HARDWARE_FEEDBACK_TIMEOUT_MS,
+        );
+      }
+
+      if (operation === 'timed-open' && openUntil != null) {
+        setGates((prev) =>
+          prev.map((g) =>
+            g.id === selectedGate
+              ? {
+                  ...g,
+                  openUntilEnd: new Date(openUntil * 1000),
+                }
+              : g
+          )
+        );
+      }
+    } catch (err: unknown) {
+      gateOpenAckCancelRef.current?.();
+      gateOpenAckCancelRef.current = null;
+      pendingGateOpenIdRef.current = null;
+      console.error('Gate operation failed:', err);
+      setError(getApiErrorMessage(err, 'Failed to operate gate'));
+    } finally {
+      setIsOperating(false);
+    }
+  };
+
+  const handleRetry = async () => {
+    setIsLoading(true);
+    await loadGates();
   };
 
   const selectedGateData = gates.find(g => g.id === selectedGate);
@@ -131,19 +304,13 @@ export const RemoteGateWidget: React.FC<RemoteGateWidgetProps> = ({
         return <CheckCircleIcon className="h-4 w-4 text-green-500" />;
       case 'offline':
         return <ExclamationTriangleIcon className="h-4 w-4 text-red-500" />;
+      case 'error':
+        return <ExclamationTriangleIcon className="h-4 w-4 text-red-500" />;
+      case 'maintenance':
+        return <ExclamationTriangleIcon className="h-4 w-4 text-yellow-500" />;
       default:
         return <ExclamationTriangleIcon className="h-4 w-4 text-yellow-500" />;
     }
-  };
-
-  const formatLastActivity = (timestamp: Date) => {
-    const diffMs = Date.now() - timestamp.getTime();
-    const diffMins = Math.floor(diffMs / (1000 * 60));
-    
-    if (diffMins < 1) return 'Just now';
-    if (diffMins < 60) return `${diffMins}m ago`;
-    if (diffMins < 1440) return `${Math.floor(diffMins / 60)}h ago`;
-    return timestamp.toLocaleDateString();
   };
 
   return (
@@ -152,36 +319,84 @@ export const RemoteGateWidget: React.FC<RemoteGateWidgetProps> = ({
       title={title}
       size={size}
       availableSizes={availableSizes}
-      onSizeChange={setSize}
+      onSizeChange={handleSizeChange}
       onGridSizeChange={onGridSizeChange}
       onRemove={onRemove}
+      readOnly={readOnly}
       enhancedMenu={
+        selectedGateData?.supportsWidgetTimedOpen ? (
         <div className="space-y-1">
           <div className="px-3 py-2">
             <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">
-              Hold Duration (minutes)
+              Timed open duration (minutes)
             </label>
             <input
               type="number"
               min="1"
-              max="60"
+              max={WIDGET_TIMED_OPEN_MAX_MINUTES}
               value={holdDuration}
-              onChange={(e) => setHoldDuration(parseInt(e.target.value) || 5)}
+              onChange={(e) =>
+                setHoldDuration(
+                  Math.max(1, Math.min(WIDGET_TIMED_OPEN_MAX_MINUTES, parseInt(e.target.value, 10) || 5)),
+                )
+              }
               className="w-full px-2 py-1 text-xs border border-gray-300 dark:border-gray-600 rounded bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
             />
           </div>
         </div>
+        ) : undefined
       }
     >
-      {size === 'medium' ? (
+      {/* All-facilities mode requires a single facility selection */}
+      {!facilityFilter ? (
+        <DashboardFacilityScopePlaceholder
+          icon={BoltIcon}
+          title="Select a facility"
+          message="Choose a facility from the header to view and control gates at that site."
+        />
+      ) : isLoading && gates.length === 0 ? (
+        <div className="h-full flex items-center justify-center">
+          <div className="text-center">
+            <ArrowPathIcon className="h-8 w-8 text-gray-400 mx-auto mb-2 animate-spin" />
+            <p className="text-sm text-gray-500 dark:text-gray-400">Loading gates...</p>
+          </div>
+        </div>
+      ) : error && gates.length === 0 ? (
+        <div className="h-full flex flex-col items-center justify-center text-center">
+          <ExclamationTriangleIcon className="h-8 w-8 text-red-400 mb-2" />
+          <p className="text-sm text-red-500 dark:text-red-400">{error}</p>
+          <button
+            onClick={handleRetry}
+            className="mt-2 text-xs text-primary-600 dark:text-primary-400 hover:text-primary-700 dark:hover:text-primary-300"
+          >
+            Try again
+          </button>
+        </div>
+      ) : size === 'medium' ? (
         /* Compact gate control for medium widgets */
-        <div className="h-full flex flex-col justify-center">
-          {selectedGateData && selectedGateData.status === 'online' ? (
+        <div className="h-full flex flex-col min-h-0 justify-center gap-2">
+          {gates.length > 1 && (
+            <select
+              value={selectedGate}
+              onChange={(e) => setSelectedGate(e.target.value)}
+              className="w-full px-2 py-1.5 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white text-xs"
+            >
+              <option value="">Choose a gate</option>
+              {gates.map((gate) => (
+                <option key={gate.id} value={gate.id}>
+                  {gate.name} ({gate.status})
+                </option>
+              ))}
+            </select>
+          )}
+
+          {selectedGateData ? (
+            selectedGateData.status === 'online' ? (
             <div className="text-center space-y-2">
               <div className="text-sm font-medium text-gray-900 dark:text-white truncate">
                 {selectedGateData.name}
               </div>
-              <div className={`text-xs px-2 py-1 rounded-full ${
+              <div className={`text-xs px-2 py-1 rounded-full inline-block ${
                 selectedGateData.isOpen 
                   ? 'bg-green-600 text-white dark:bg-green-600'
                   : 'bg-gray-600 text-white dark:bg-gray-600'
@@ -189,56 +404,85 @@ export const RemoteGateWidget: React.FC<RemoteGateWidgetProps> = ({
                 {selectedGateData.isOpen ? 'Open' : 'Closed'}
               </div>
               <button
-                onClick={() => handleGateOperation(selectedGateData.isOpen ? 'close' : 'open')}
-                disabled={isOperating}
+                onClick={() =>
+                  handleGateOperation(selectedGateData.isOpen ? 'close' : 'open')
+                }
+                disabled={
+                  isOperating ||
+                  (selectedGateData.isOpen && !selectedGateData.supportsRemoteLock)
+                }
                 className={`w-full py-2 px-3 text-xs font-medium rounded-lg transition-colors text-white ${
                   selectedGateData.isOpen
-                    ? 'bg-red-600 hover:bg-red-700 disabled:bg-gray-400'
+                    ? selectedGateData.supportsRemoteLock
+                      ? 'bg-red-600 hover:bg-red-700 disabled:bg-gray-400'
+                      : 'bg-gray-400 cursor-not-allowed'
                     : 'bg-green-600 hover:bg-green-700 disabled:bg-gray-400'
                 } disabled:cursor-not-allowed`}
               >
-                {isOperating ? '...' : (selectedGateData.isOpen ? 'Close' : 'Open')}
+                {isOperating
+                  ? '...'
+                  : selectedGateData.isOpen
+                    ? selectedGateData.supportsRemoteLock
+                      ? 'Close'
+                      : 'Closed (on site)'
+                    : 'Open'}
               </button>
             </div>
+            ) : (
+              <div className="text-center space-y-1">
+                <div className="flex items-center justify-center gap-1.5">
+                  {getStatusIcon(selectedGateData.status)}
+                  <span className="text-sm font-medium text-gray-900 dark:text-white truncate">
+                    {selectedGateData.name}
+                  </span>
+                </div>
+                <p className="text-xs text-red-600 dark:text-red-400 capitalize">
+                  Gate {selectedGateData.status}
+                </p>
+                <p className="text-xs text-gray-500 dark:text-gray-400">
+                  Remote control unavailable while offline
+                </p>
+              </div>
+            )
           ) : (
             <div className="text-center">
               <BoltIcon className="h-6 w-6 text-gray-400 mx-auto mb-1" />
               <p className="text-xs text-gray-500 dark:text-gray-400">
-                {onlineGates.length === 0 ? 'No gates online' : 'Select gate'}
+                {gates.length === 0 ? 'No gates found' : 'Select a gate'}
               </p>
             </div>
           )}
         </div>
       ) : (
         /* Full gate control for large widgets */
-        <div className="space-y-2 h-full flex flex-col">
+        <div className="h-full flex flex-col min-h-0 gap-2">
         {/* Gate Selection */}
-        <div>
+        <div className="flex-shrink-0">
           <select
             value={selectedGate}
             onChange={(e) => setSelectedGate(e.target.value)}
-            className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white text-sm"
+            className="w-full px-3 py-1.5 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white text-sm"
           >
             <option value="">Choose a gate</option>
             {gates.map((gate) => (
               <option key={gate.id} value={gate.id}>
-                {gate.name} - {gate.facility}
+                {gate.name} - {gate.facility} ({gate.deviceType})
               </option>
             ))}
           </select>
         </div>
 
-        {/* Gate Status */}
+        {/* Gate status — compact; last activity stays visible */}
         {selectedGateData && (
-          <div className="bg-gray-50 dark:bg-gray-700/50 rounded-lg p-3">
-            <div className="flex items-center justify-between mb-2">
-              <div className="flex items-center space-x-2">
+          <div className="flex-shrink-0 rounded-lg bg-gray-50 dark:bg-gray-700/50 px-2.5 py-2">
+            <div className="flex items-center justify-between gap-2 min-w-0">
+              <div className="flex items-center gap-1.5 min-w-0">
                 {getStatusIcon(selectedGateData.status)}
-                <span className="text-sm font-medium text-gray-900 dark:text-white">
+                <span className="text-sm font-medium text-gray-900 dark:text-white truncate">
                   {selectedGateData.name}
                 </span>
               </div>
-              <span className={`text-xs px-2 py-1 rounded-full ${
+              <span className={`flex-shrink-0 text-xs px-2 py-0.5 rounded-full ${
                 selectedGateData.isOpen 
                   ? 'bg-green-600 text-white dark:bg-green-600'
                   : 'bg-gray-600 text-white dark:bg-gray-600'
@@ -246,69 +490,110 @@ export const RemoteGateWidget: React.FC<RemoteGateWidgetProps> = ({
                 {selectedGateData.isOpen ? 'Open' : 'Closed'}
               </span>
             </div>
-            
-            <div className="text-xs text-gray-500 dark:text-gray-400">
-              Last activity: {formatLastActivity(selectedGateData.lastActivity)}
-            </div>
-
-            {selectedGateData.holdUntil && (
-              <div className="mt-2 text-xs text-blue-600 dark:text-blue-400">
-                Holding open until {selectedGateData.holdUntil.toLocaleTimeString()}
-              </div>
+            <p
+              className="mt-1 text-xs text-gray-500 dark:text-gray-400 truncate"
+              title={formatRelativeTime(selectedGateData.lastActivity, {
+                absoluteAfterHours: 24,
+                absoluteStyle: 'date',
+              })}
+            >
+              Last activity:{' '}
+              {formatRelativeTime(selectedGateData.lastActivity, {
+                absoluteAfterHours: 24,
+                absoluteStyle: 'date',
+              })}
+            </p>
+            {selectedGateData.openUntilEnd && (
+              <p
+                className="mt-0.5 text-[10px] text-blue-600 dark:text-blue-400 truncate"
+                title={`Timed open until ${formatTime(selectedGateData.openUntilEnd)} (UTC)`}
+              >
+                Open until {formatTime(selectedGateData.openUntilEnd)}
+              </p>
             )}
           </div>
         )}
 
-        {/* Control Buttons */}
-        <div className="flex-1 flex flex-col justify-end">
+        {/* Controls — scroll if the grid cell is short */}
+        <div className="flex-1 min-h-0 overflow-y-auto">
           {selectedGateData ? (
             selectedGateData.status === 'online' ? (
-              <div className="space-y-2">
+              <div className="flex flex-col gap-1.5">
                 <button
                   onClick={() => handleGateOperation('open')}
                   disabled={isOperating || selectedGateData.isOpen}
-                  className="w-full flex items-center justify-center space-x-2 py-3 px-4 bg-green-600 hover:bg-green-700 disabled:bg-gray-400 text-white rounded-lg font-medium transition-colors disabled:cursor-not-allowed"
+                  className="w-full flex items-center justify-center gap-2 py-2.5 px-3 bg-green-600 hover:bg-green-700 disabled:bg-gray-400 text-white rounded-lg text-sm font-medium transition-colors disabled:cursor-not-allowed"
                 >
-                  <PlayIcon className="h-5 w-5" />
+                  <PlayIcon className="h-4 w-4 shrink-0" />
                   <span>{isOperating ? 'Opening...' : 'Open Once'}</span>
                 </button>
-                
-                <button
-                  onClick={() => handleGateOperation('hold')}
-                  disabled={isOperating}
-                  className="w-full flex items-center justify-center space-x-2 py-2 px-4 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-400 text-white rounded-lg text-sm transition-colors disabled:cursor-not-allowed"
-                >
-                  <ClockIcon className="h-4 w-4" />
-                  <span>{isOperating ? 'Setting...' : `Hold Open (${holdDuration}m)`}</span>
-                </button>
 
-                {selectedGateData.isOpen && (
+                {selectedGateData.supportsWidgetTimedOpen && (
+                <div className="flex items-stretch gap-1">
+                  <button
+                    type="button"
+                    onClick={() => handleGateOperation('timed-open')}
+                    disabled={isOperating || selectedGateData.isOpen}
+                    title={TIMED_OPEN_TOOLTIP}
+                    className="min-w-0 flex-1 flex items-center justify-center gap-2 py-2 px-3 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-400 text-white rounded-lg text-sm transition-colors disabled:cursor-not-allowed"
+                  >
+                    <ClockIcon className="h-4 w-4 shrink-0" />
+                    <span className="truncate">
+                      {isOperating ? 'Opening...' : `Open for ${holdDuration}m`}
+                    </span>
+                  </button>
+                  <span
+                    className="inline-flex shrink-0 items-center justify-center rounded-lg border border-gray-200 bg-gray-50 px-2 text-gray-400 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-500"
+                    title={TIMED_OPEN_TOOLTIP}
+                    aria-label={TIMED_OPEN_TOOLTIP}
+                  >
+                    <InformationCircleIcon className="h-4 w-4" aria-hidden />
+                  </span>
+                </div>
+                )}
+
+                {selectedGateData.isOpen && selectedGateData.supportsRemoteLock && (
                   <button
                     onClick={() => handleGateOperation('close')}
                     disabled={isOperating}
-                    className="w-full flex items-center justify-center space-x-2 py-2 px-4 bg-red-600 hover:bg-red-700 disabled:bg-gray-400 text-white rounded-lg text-sm transition-colors disabled:cursor-not-allowed"
+                    className="w-full flex items-center justify-center gap-2 py-2 px-3 bg-red-600 hover:bg-red-700 disabled:bg-gray-400 text-white rounded-lg text-sm transition-colors disabled:cursor-not-allowed"
                   >
-                    <StopIcon className="h-4 w-4" />
+                    <StopIcon className="h-4 w-4 shrink-0" />
                     <span>{isOperating ? 'Closing...' : 'Close Gate'}</span>
                   </button>
                 )}
+                {selectedGateData.isOpen && !selectedGateData.supportsRemoteLock && (
+                  <p
+                    className="text-center text-[10px] leading-snug text-gray-400 dark:text-gray-500 italic"
+                    title={MANUAL_CLOSE_HINT}
+                  >
+                    Close on site — remote lock unavailable
+                  </p>
+                )}
               </div>
             ) : (
-              <div className="text-center py-4">
-                <ExclamationTriangleIcon className="h-8 w-8 text-red-400 mx-auto mb-2" />
-                <p className="text-sm text-red-600 dark:text-red-400">Gate offline</p>
-                <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                  Cannot operate gate remotely
+              <div className="flex h-full flex-col items-center justify-center text-center py-2">
+                <ExclamationTriangleIcon className="h-7 w-7 text-red-400 mb-1" />
+                <p className="text-sm text-red-600 dark:text-red-400 capitalize">
+                  Gate {selectedGateData.status}
+                </p>
+                <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
+                  Remote control unavailable
                 </p>
               </div>
             )
           ) : (
-            <div className="text-center py-4">
-              <BoltIcon className="h-8 w-8 text-gray-400 mx-auto mb-2" />
+            <div className="flex h-full flex-col items-center justify-center text-center py-2">
+              <BoltIcon className="h-7 w-7 text-gray-400 mb-1" />
               <p className="text-sm text-gray-500 dark:text-gray-400">Select a gate to control</p>
-              {onlineGates.length === 0 && (
-                <p className="text-xs text-red-500 dark:text-red-400 mt-1">
-                  No gates online
+              {gates.length === 0 && (
+                <p className="text-xs text-gray-400 dark:text-gray-500 mt-0.5">
+                  No access control devices found
+                </p>
+              )}
+              {gates.length > 0 && onlineGates.length === 0 && (
+                <p className="text-xs text-amber-600 dark:text-amber-400 mt-0.5">
+                  All gates offline
                 </p>
               )}
             </div>
@@ -316,26 +601,26 @@ export const RemoteGateWidget: React.FC<RemoteGateWidgetProps> = ({
         </div>
 
         {/* Quick Stats for larger widgets */}
-        {(size === 'large' || size === 'huge' || size.includes('wide')) && (
-          <div className="border-t border-gray-200 dark:border-gray-700 pt-3 mt-3">
+        {showLargeStats && gates.length > 0 && (
+          <div className="flex-shrink-0 border-t border-gray-200 dark:border-gray-700 pt-2">
             <div className="grid grid-cols-3 gap-2 text-center">
               <div>
-                <div className="text-lg font-bold text-gray-900 dark:text-white">
+                <div className="text-base font-bold text-gray-900 dark:text-white">
                   {gates.length}
                 </div>
-                <div className="text-xs text-gray-500 dark:text-gray-400">Total</div>
+                <div className="text-[10px] text-gray-500 dark:text-gray-400">Total</div>
               </div>
               <div>
-                <div className="text-lg font-bold text-green-600 dark:text-green-400">
+                <div className="text-base font-bold text-green-600 dark:text-green-400">
                   {onlineGates.length}
                 </div>
-                <div className="text-xs text-gray-500 dark:text-gray-400">Online</div>
+                <div className="text-[10px] text-gray-500 dark:text-gray-400">Online</div>
               </div>
               <div>
-                <div className="text-lg font-bold text-blue-600 dark:text-blue-400">
+                <div className="text-base font-bold text-blue-600 dark:text-blue-400">
                   {gates.filter(g => g.isOpen).length}
                 </div>
-                <div className="text-xs text-gray-500 dark:text-gray-400">Open</div>
+                <div className="text-[10px] text-gray-500 dark:text-gray-400">Open</div>
               </div>
             </div>
           </div>

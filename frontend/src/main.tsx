@@ -5,6 +5,10 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import App from './App';
 import './index.css';
 
+if (typeof window !== 'undefined') {
+  window.__BLULOK_VITE_DEV__ = import.meta.env.DEV;
+}
+
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {

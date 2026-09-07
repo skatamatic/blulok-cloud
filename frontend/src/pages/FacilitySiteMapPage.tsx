@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 // import { Stage, Layer, Rect, Text, Circle, Line, Group } from 'react-konva';
 import { 
@@ -16,12 +16,23 @@ import {
   MapIcon
 } from '@heroicons/react/24/outline';
 import { useAuth } from '@/contexts/AuthContext';
+import { useGlobalFacility } from '@/contexts/GlobalFacilityContext';
 import { Unit } from '@/types/facility.types';
 import { apiService } from '@/services/api.service';
+import { PrimaryTenantContact } from '@/components/UserManagement/PrimaryTenantContact';
+import { useDetailsBackNavigation } from '@/hooks/useBackNavigation';
+import { DetailsPageHeader } from '@/components/Common/DetailsPageLayout';
+import { canRequestRemoteUnlock, isLockTransitionPending } from '@/utils/unitLock.utils';
+import { useLockDeviceRealtime } from '@/hooks/useLockDeviceRealtime';
+import { lockHardwareFeedbackToasts } from '@/utils/lockHardwareFeedback.constants';
+import { useRemoteUnlockAction } from '@/hooks/useRemoteUnlockAction';
+import { requiresOccupiedUnitOverride } from '@/constants/tenantUnlockOverride.constants';
+import { resolveLockTimeoutMsForUnit } from '@/utils/facilityLockTimeout.utils';
 
 const statusColors = {
   available: 'bg-green-100 text-green-800 dark:bg-green-900/20 dark:text-green-400',
   occupied: 'bg-blue-100 text-blue-800 dark:bg-blue-900/20 dark:text-blue-400',
+  overlocked: 'bg-orange-100 text-orange-800 dark:bg-orange-900/20 dark:text-orange-400',
   maintenance: 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/20 dark:text-yellow-400',
   reserved: 'bg-purple-100 text-purple-800 dark:bg-purple-900/20 dark:text-purple-400',
   locked: 'bg-blue-100 text-blue-800 dark:bg-blue-900/20 dark:text-blue-400',
@@ -61,6 +72,8 @@ interface FacilityLayout {
 export default function FacilitySiteMapPage() {
   const navigate = useNavigate();
   const { authState } = useAuth();
+  const { facilities: globalFacilities } = useGlobalFacility();
+  const { goBack, showBack, backLabel } = useDetailsBackNavigation({ fallbackPath: '/units' });
   // const stageRef = useRef<any>(null);
   
   const [layout, setLayout] = useState<FacilityLayout>({
@@ -82,6 +95,12 @@ export default function FacilitySiteMapPage() {
   const [showUnitDetails, setShowUnitDetails] = useState(false);
 
   const canManage = ['admin', 'dev_admin', 'facility_admin'].includes(authState.user?.role || '');
+  const loadUnitsRef = useRef<() => Promise<void>>(async () => {});
+  const unitsDataRef = useRef<Unit[]>([]);
+  unitsDataRef.current = units;
+  const { requestUnlock, isSubmitting, syncLockStatus, tenantOverrideDialog } = useRemoteUnlockAction({
+    timeoutToast: lockHardwareFeedbackToasts.unitUnlockTimeout,
+  });
 
   useEffect(() => {
     loadUnits();
@@ -97,29 +116,95 @@ export default function FacilitySiteMapPage() {
     }
   };
 
-  const handleLockToggle = async (unit: Unit) => {
-    if (!unit.blulok_device || !canManage) return;
-    
-    try {
-      const newStatus = unit.blulok_device.lock_status === 'locked' ? 'unlocked' : 'locked';
-      await apiService.updateLockStatus(unit.blulok_device.id, newStatus);
-      
-      // Update the layout element
-      setLayout(prev => ({
-        ...prev,
-        elements: prev.elements.map(element => 
-          element.properties.unitId === unit.id 
-            ? { ...element, properties: { ...element.properties, lockStatus: newStatus } }
-            : element
-        )
-      }));
-      
-      // Refresh unit data
-      await loadUnits();
-    } catch (error) {
-      console.error('Failed to toggle lock:', error);
-    }
+  loadUnitsRef.current = loadUnits;
+
+  useLockDeviceRealtime({
+    debouncedRefresh: () => {
+      void loadUnitsRef.current();
+    },
+    debounceMs: 500,
+  });
+
+  const patchUnitLockOptimistic = (unitId: string, lockStatus: string) => {
+    const patch = (list: Unit[]) =>
+      list.map((u) =>
+        u.id === unitId && u.blulok_device
+          ? { ...u, blulok_device: { ...u.blulok_device, lock_status: lockStatus } }
+          : u,
+      );
+    setUnits(patch);
+    setLayout((prev) => ({
+      ...prev,
+      elements: prev.elements.map((element) =>
+        element.properties.unitId === unitId
+          ? { ...element, properties: { ...element.properties, lockStatus } }
+          : element,
+      ),
+    }));
   };
+
+  const handleRemoteUnlock = async (unit: Unit) => {
+    if (!unit.blulok_device || !canManage) return;
+    if (!canRequestRemoteUnlock(unit.blulok_device.lock_status)) return;
+
+    const previousStatus = unit.blulok_device.lock_status ?? 'locked';
+    let clearTransitionalAfterRefresh = false;
+
+    const refreshAfterUnlockAttempt = async () => {
+      await loadUnits();
+      if (!clearTransitionalAfterRefresh) return;
+      clearTransitionalAfterRefresh = false;
+      const revert = (list: Unit[]) =>
+        list.map((u) => {
+          if (u.id !== unit.id || !u.blulok_device) return u;
+          const status = u.blulok_device.lock_status;
+          if (status === 'unlocking' || status === 'locking') {
+            return {
+              ...u,
+              blulok_device: { ...u.blulok_device, lock_status: previousStatus },
+            };
+          }
+          return u;
+        });
+      setUnits(revert);
+      setLayout((prev) => ({
+        ...prev,
+        elements: prev.elements.map((element) =>
+          element.properties.unitId === unit.id
+            ? { ...element, properties: { ...element.properties, lockStatus: previousStatus } }
+            : element,
+        ),
+      }));
+    };
+
+    await requestUnlock({
+      deviceId: unit.blulok_device.id,
+      watchKey: unit.id,
+      timeoutMs: resolveLockTimeoutMsForUnit(unit, globalFacilities),
+      getLockStatus: () => {
+        const cur = unitsDataRef.current.find((x) => x.id === unit.id);
+        return cur?.blulok_device?.lock_status;
+      },
+      applyOptimisticUnlocking: () => {
+        patchUnitLockOptimistic(unit.id, 'unlocking');
+      },
+      revertOptimisticLockStatus: (status) => {
+        clearTransitionalAfterRefresh = true;
+        patchUnitLockOptimistic(unit.id, status);
+      },
+      refresh: refreshAfterUnlockAttempt,
+      requiresTenantOverride: requiresOccupiedUnitOverride(unit, authState.user?.id),
+      unitLabel: unit.unit_number,
+    });
+  };
+
+  useEffect(() => {
+    for (const unit of units) {
+      if (unit.blulok_device?.lock_status) {
+        syncLockStatus(unit.id, unit.blulok_device.lock_status);
+      }
+    }
+  }, [units, syncLockStatus]);
 
   const loadLayout = async () => {
     // For now, generate a sample layout
@@ -271,44 +356,36 @@ export default function FacilitySiteMapPage() {
     <div className="h-screen flex flex-col bg-gray-50 dark:bg-gray-900">
       {/* Header */}
       <div className="bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 px-6 py-4">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center space-x-4">
-            <button
-              onClick={() => navigate('/units')}
-              className="p-2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors"
-            >
-              <ArrowLeftIcon className="h-5 w-5" />
-            </button>
-            <div>
-              <h1 className="text-xl font-bold text-gray-900 dark:text-white">Facility Site Map</h1>
-              <p className="text-sm text-gray-600 dark:text-gray-400">{layout.name}</p>
-            </div>
-          </div>
-          
-          <div className="flex items-center space-x-3">
-            {canManage && (
+        <DetailsPageHeader
+          onBack={showBack ? goBack : undefined}
+          backLabel={backLabel}
+          title="Facility Site Map"
+          subtitle={layout.name}
+          actions={
+            <>
+              {canManage && (
+                <button
+                  onClick={() => setIsEditing(!isEditing)}
+                  className={`inline-flex items-center px-4 py-2 border text-sm font-medium rounded-lg transition-colors ${
+                    isEditing
+                      ? 'border-primary-300 text-primary-700 bg-primary-50 dark:border-primary-600 dark:text-primary-400 dark:bg-primary-900/20'
+                      : 'border-gray-300 text-gray-700 bg-white hover:bg-gray-50 dark:border-gray-600 dark:text-gray-300 dark:bg-gray-800 dark:hover:bg-gray-700'
+                  }`}
+                >
+                  <PencilIcon className="h-4 w-4 mr-2" />
+                  {isEditing ? 'Exit Edit' : 'Edit Layout'}
+                </button>
+              )}
               <button
-                onClick={() => setIsEditing(!isEditing)}
-                className={`inline-flex items-center px-4 py-2 border text-sm font-medium rounded-lg transition-colors ${
-                  isEditing
-                    ? 'border-primary-300 text-primary-700 bg-primary-50 dark:border-primary-600 dark:text-primary-400 dark:bg-primary-900/20'
-                    : 'border-gray-300 text-gray-700 bg-white hover:bg-gray-50 dark:border-gray-600 dark:text-gray-300 dark:bg-gray-800 dark:hover:bg-gray-700'
-                }`}
+                onClick={() => navigate('/units')}
+                className="inline-flex items-center px-4 py-2 border border-gray-300 dark:border-gray-600 text-sm font-medium rounded-lg text-gray-700 dark:text-gray-200 bg-white dark:bg-gray-800 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
               >
-                <PencilIcon className="h-4 w-4 mr-2" />
-                {isEditing ? 'Exit Edit' : 'Edit Layout'}
+                <EyeIcon className="h-4 w-4 mr-2" />
+                List View
               </button>
-            )}
-            
-            <button
-              onClick={() => navigate('/units')}
-              className="inline-flex items-center px-4 py-2 border border-gray-300 dark:border-gray-600 text-sm font-medium rounded-lg text-gray-700 dark:text-gray-200 bg-white dark:bg-gray-800 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
-            >
-              <EyeIcon className="h-4 w-4 mr-2" />
-              List View
-            </button>
-          </div>
-        </div>
+            </>
+          }
+        />
       </div>
 
       <div className="flex-1 flex">
@@ -421,11 +498,11 @@ export default function FacilitySiteMapPage() {
                   For now, use the grid and table views in the Units page.
                 </p>
                 <button
-                  onClick={() => navigate('/units')}
+                  onClick={goBack}
                   className="inline-flex items-center px-4 py-2 bg-primary-600 hover:bg-primary-700 text-white text-sm font-medium rounded-lg transition-colors"
                 >
                   <ArrowLeftIcon className="h-4 w-4 mr-2" />
-                  Back to Units
+                  {backLabel ?? 'Back'}
                 </button>
               </div>
             </div>
@@ -484,13 +561,11 @@ export default function FacilitySiteMapPage() {
               {selectedUnit.primary_tenant && (
                 <div>
                   <h4 className="text-sm font-medium text-gray-900 dark:text-white mb-2">Primary Tenant</h4>
-                  <div className="bg-gray-50 dark:bg-gray-700 rounded-lg p-3">
-                    <p className="font-medium text-gray-900 dark:text-white">
-                      {selectedUnit.primary_tenant.first_name} {selectedUnit.primary_tenant.last_name}
-                    </p>
-                    <p className="text-sm text-gray-500 dark:text-gray-400">
-                      {selectedUnit.primary_tenant.email}
-                    </p>
+                  <div className="bg-gray-50 dark:bg-gray-700 rounded-lg p-3 text-gray-900 dark:text-white">
+                    <PrimaryTenantContact
+                      tenant={selectedUnit.primary_tenant}
+                      contactClassName="text-sm text-gray-500 dark:text-gray-400"
+                    />
                   </div>
                 </div>
               )}
@@ -537,18 +612,31 @@ export default function FacilitySiteMapPage() {
                   
                   {selectedUnit.blulok_device && (
                     <button
-                      onClick={() => handleLockToggle(selectedUnit)}
-                      className={`w-full flex items-center justify-center space-x-2 py-2 px-4 text-sm font-medium rounded-lg transition-colors ${
-                        selectedUnit.blulok_device.lock_status === 'locked'
-                          ? 'bg-green-100 text-green-700 hover:bg-green-200 dark:bg-green-900/20 dark:text-green-400'
-                          : 'bg-red-100 text-red-700 hover:bg-red-200 dark:bg-red-900/20 dark:text-red-400'
+                      type="button"
+                      onClick={() => void handleRemoteUnlock(selectedUnit)}
+                      disabled={
+                        isLockTransitionPending(selectedUnit.blulok_device.lock_status) ||
+                        isSubmitting(selectedUnit.id) ||
+                        !canRequestRemoteUnlock(selectedUnit.blulok_device.lock_status)
+                      }
+                      className={`w-full flex items-center justify-center space-x-2 py-2 px-4 text-sm font-medium rounded-lg transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${
+                        isLockTransitionPending(selectedUnit.blulok_device.lock_status) ||
+                        isSubmitting(selectedUnit.id)
+                          ? 'bg-blue-600 text-white animate-pulse'
+                          : canRequestRemoteUnlock(selectedUnit.blulok_device.lock_status)
+                            ? 'bg-green-100 text-green-700 hover:bg-green-200 dark:bg-green-900/20 dark:text-green-400'
+                            : 'bg-gray-200 text-gray-600 dark:bg-gray-600 dark:text-gray-300'
                       }`}
                     >
-                      {selectedUnit.blulok_device.lock_status === 'locked' ? 
-                        <LockOpenIcon className="h-4 w-4" /> : 
-                        <LockClosedIcon className="h-4 w-4" />
-                      }
-                      <span>{selectedUnit.blulok_device.lock_status === 'locked' ? 'Unlock' : 'Lock'}</span>
+                      <LockOpenIcon className="h-4 w-4" />
+                      <span>
+                        {isLockTransitionPending(selectedUnit.blulok_device.lock_status) ||
+                        isSubmitting(selectedUnit.id)
+                          ? 'Unlocking…'
+                          : canRequestRemoteUnlock(selectedUnit.blulok_device.lock_status)
+                            ? 'Unlock'
+                            : 'Unlocked'}
+                      </span>
                     </button>
                   )}
                 </div>
@@ -598,6 +686,7 @@ export default function FacilitySiteMapPage() {
           )}
         </div>
       </div>
+      {tenantOverrideDialog}
     </div>
   );
 }

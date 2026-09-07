@@ -1,0 +1,110 @@
+import * as THREE from 'three';
+import type { FacilitySceneImportServices } from '../import/facilitySceneImport';
+import { runFacilitySceneImport } from '../import/facilitySceneImport';
+import { CameraMode } from '../types';
+import type { AssetCategory } from '../types';
+import type { DataSourceConfig, EditorState, FacilityData, LegacyFacilityData } from '../types';
+import type { CameraController } from '../CameraController';
+import type { BuildingManager } from '../BuildingManager';
+import type { FloorManager } from '../FloorManager';
+import type { GridSystem } from '../GridSystem';
+import type { SceneManager } from '../SceneManager';
+import type { SkinManager } from '../SkinManager';
+import type { PlacedObjectPlacementCoordinator } from '../placement/PlacedObjectPlacementCoordinator';
+import { OptimizationManager } from '../OptimizationManager';
+import { getThemeManager } from '../ThemeManager';
+import {
+  placePlacedObjectFromSavedForImport,
+  placePlacedObjectFromSerializedForImport,
+} from './placeLoadedPlacedObjects';
+
+export type FacilityImportHost = {
+  getState: () => EditorState;
+  sceneManager: SceneManager;
+  buildingManager: BuildingManager;
+  floorManager: FloorManager;
+  cameraController: CameraController;
+  placementCoordinator: PlacedObjectPlacementCoordinator;
+  skinManager: SkinManager;
+  gridSystem: GridSystem;
+  resetWorkingGridAlignment: () => void;
+  setDataSourceConfig: (config: DataSourceConfig | null) => void;
+  calculateSceneBounds: () => THREE.Box3;
+  emitStateUpdated: () => void;
+  emitThemeMissing: (payload: { missingThemeId: string }) => void;
+};
+
+export function createFacilityImportServices(host: FacilityImportHost): FacilitySceneImportServices {
+  return {
+    clearSceneForImport: () => {
+      host.sceneManager.clearObjects();
+      host.buildingManager.clear();
+    },
+    resetWorkingGridAlignment: () => host.resetWorkingGridAlignment(),
+    restoreCamera: (camera) => {
+      host.cameraController.applySavedState(camera, false);
+    },
+    restoreBuilding: (id, footprints, floors, name) => {
+      host.buildingManager.restoreBuilding(id, footprints, floors, name);
+    },
+    registerFloorLevel: (level) => host.floorManager.registerFloor(level),
+    setEditorFloorMode: (hasBuildings) => {
+      if (hasBuildings) {
+        host.getState().isFloorMode = true;
+      }
+    },
+    placeObjectFromSavedData: (obj) =>
+      placePlacedObjectFromSavedForImport(obj, host.placementCoordinator),
+    placeObjectFromSerialized: (serialized) =>
+      placePlacedObjectFromSerializedForImport(serialized, host.placementCoordinator),
+    syncActiveFloor: (level) => {
+      host.getState().activeFloor = level;
+      host.floorManager.setFloor(level);
+    },
+    loadLegacyFacilitySkins: (skins) => host.skinManager.loadFacilitySkins(skins),
+    applyActiveSkinsRecord: (map) => {
+      Object.entries(map).forEach(([category, skinId]) => {
+        host.skinManager.setActiveSkin(category as AssetCategory, skinId);
+      });
+    },
+    setSnapGridSize: (size) => {
+      host.getState().snap.gridSize = size;
+    },
+    optimizeGroundTilesAfterLoad: () => {
+      OptimizationManager.getInstance().optimizeAll(true);
+    },
+    setGridUiVisible: (visible) => {
+      host.getState().ui.showGrid = visible;
+      host.gridSystem.setVisible(visible);
+    },
+    resolveAndApplyTheme: (activeThemeId) => {
+      const themeManager = getThemeManager();
+      const theme = themeManager.getTheme(activeThemeId);
+      if (theme) {
+        themeManager.setActiveTheme(activeThemeId);
+      } else {
+        console.warn(
+          `[FacilityImport] Theme not found: ${activeThemeId}, falling back to default`
+        );
+        themeManager.setActiveTheme('theme-default');
+        host.emitThemeMissing({ missingThemeId: activeThemeId });
+      }
+    },
+    setDataSourceConfig: (config) => host.setDataSourceConfig(config),
+    frameImportedLayout: () => {
+      const state = host.getState();
+      state.camera.mode = CameraMode.FREE;
+      host.cameraController.setMode(CameraMode.FREE);
+      const bounds = host.calculateSceneBounds();
+      host.cameraController.frameAllContent(bounds, false, 'aerial');
+    },
+    emitImportComplete: () => host.emitStateUpdated(),
+  };
+}
+
+export function importFacilitySceneData(
+  data: FacilityData | LegacyFacilityData,
+  host: FacilityImportHost
+): void {
+  runFacilitySceneImport(data, createFacilityImportServices(host));
+}

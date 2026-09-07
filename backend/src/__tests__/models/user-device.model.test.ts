@@ -14,6 +14,7 @@ describe('UserDeviceModel', () => {
     // Create a mock UserDeviceModel
     userDeviceModel = {
       findByUserAndAppDeviceId: jest.fn(),
+      findActiveByUserAndAppDeviceId: jest.fn(),
       listByUser: jest.fn(),
       countActiveByUser: jest.fn(),
       create: jest.fn(),
@@ -59,6 +60,82 @@ describe('UserDeviceModel', () => {
       userDeviceModel.findByUserAndAppDeviceId.mockResolvedValue(undefined);
 
       const result = await userDeviceModel.findByUserAndAppDeviceId(
+        testData.users.tenant.id,
+        'nonexistent-device'
+      );
+
+      expect(result).toBeUndefined();
+    });
+  });
+
+  describe('findActiveByUserAndAppDeviceId', () => {
+    it('should find active device by user and app device id', async () => {
+      const mockDevice: UserDevice = {
+        id: 'device-1',
+        user_id: testData.users.tenant.id,
+        app_device_id: 'app-device-123',
+        platform: 'ios',
+        device_name: 'iPhone 12',
+        public_key: 'base64-public-key',
+        status: 'active',
+        last_used_at: new Date(),
+        created_at: new Date(),
+        updated_at: new Date(),
+      };
+
+      userDeviceModel.findActiveByUserAndAppDeviceId.mockResolvedValue(mockDevice);
+
+      const result = await userDeviceModel.findActiveByUserAndAppDeviceId(
+        testData.users.tenant.id,
+        'app-device-123'
+      );
+
+      expect(result).toEqual(mockDevice);
+      expect(userDeviceModel.findActiveByUserAndAppDeviceId).toHaveBeenCalledWith(
+        testData.users.tenant.id,
+        'app-device-123'
+      );
+    });
+
+    it('should find pending_key device by user and app device id', async () => {
+      const mockDevice: UserDevice = {
+        id: 'device-1',
+        user_id: testData.users.tenant.id,
+        app_device_id: 'app-device-123',
+        platform: 'ios',
+        device_name: 'iPhone 12',
+        status: 'pending_key',
+        created_at: new Date(),
+        updated_at: new Date(),
+      };
+
+      userDeviceModel.findActiveByUserAndAppDeviceId.mockResolvedValue(mockDevice);
+
+      const result = await userDeviceModel.findActiveByUserAndAppDeviceId(
+        testData.users.tenant.id,
+        'app-device-123'
+      );
+
+      expect(result).toEqual(mockDevice);
+      expect(result?.status).toBe('pending_key');
+    });
+
+    it('should return undefined when device is revoked', async () => {
+      // Revoked devices should not be found by findActiveByUserAndAppDeviceId
+      userDeviceModel.findActiveByUserAndAppDeviceId.mockResolvedValue(undefined);
+
+      const result = await userDeviceModel.findActiveByUserAndAppDeviceId(
+        testData.users.tenant.id,
+        'revoked-device'
+      );
+
+      expect(result).toBeUndefined();
+    });
+
+    it('should return undefined when device not found', async () => {
+      userDeviceModel.findActiveByUserAndAppDeviceId.mockResolvedValue(undefined);
+
+      const result = await userDeviceModel.findActiveByUserAndAppDeviceId(
         testData.users.tenant.id,
         'nonexistent-device'
       );

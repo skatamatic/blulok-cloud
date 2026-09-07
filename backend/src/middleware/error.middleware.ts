@@ -76,6 +76,61 @@ export class AppError extends Error implements ApiError {
 }
 
 /**
+ * Access Denied Error (403)
+ * 
+ * Thrown when a user lacks permission to access a resource.
+ */
+export class AccessDeniedError extends AppError {
+  constructor(message: string = 'Access denied') {
+    super(message, 403);
+  }
+}
+
+/**
+ * Not Found Error (404)
+ * 
+ * Thrown when a requested resource does not exist.
+ */
+export class NotFoundError extends AppError {
+  constructor(resource: string = 'Resource') {
+    super(`${resource} not found`, 404);
+  }
+}
+
+/**
+ * Validation Error (400)
+ * 
+ * Thrown when input validation fails.
+ */
+export class ValidationError extends AppError {
+  constructor(message: string = 'Validation failed') {
+    super(message, 400);
+  }
+}
+
+/**
+ * Conflict Error (409)
+ *
+ * Thrown when a request conflicts with current resource state constraints.
+ */
+export class ConflictError extends AppError {
+  constructor(message: string = 'Conflict') {
+    super(message, 409);
+  }
+}
+
+/**
+ * Unauthorized Error (401)
+ * 
+ * Thrown when authentication is required but not provided.
+ */
+export class UnauthorizedError extends AppError {
+  constructor(message: string = 'Authentication required') {
+    super(message, 401);
+  }
+}
+
+/**
  * Global Error Handler Middleware
  *
  * Express error handling middleware that formats and logs all application errors.
@@ -91,6 +146,23 @@ export const errorHandler = (
 
   // Log error with request context for debugging
   logger.error(`${req.method} ${req.url} - ${statusCode} - ${message} - ${req.ip}`);
+
+  if (statusCode >= 500 && error.isOperational !== true) {
+    void (async (): Promise<void> => {
+      try {
+        const { InAppNotificationDispatcher } = await import(
+          '@/services/notifications/in-app-notification-dispatcher.service'
+        );
+        await InAppNotificationDispatcher.getInstance().notifyBackendError(
+          'Critical Backend Error',
+          `${req.method} ${req.url}: ${message}`,
+          { path: req.url, method: req.method },
+        );
+      } catch (notifyErr) {
+        logger.error('Failed to dispatch backend_error notification:', notifyErr);
+      }
+    })();
+  }
 
   // Send structured error response
   const errorResponse = {

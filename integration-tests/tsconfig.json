@@ -15,6 +15,10 @@
     "sourceMap": true,
     "baseUrl": ".",
     "paths": {
+      "@/types/gateway.types": ["../frontend/src/types/gateway.types"],
+      "@/types/facility.types": ["../frontend/src/types/facility.types"],
+      "@/types/dashboard.types": ["../frontend/src/types/dashboard.types"],
+      "@/types/notifications.types": ["../frontend/src/types/notifications.types"],
       "@/*": ["../backend/src/*"]
     }
   },

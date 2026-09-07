@@ -69,6 +69,7 @@ describe('DenylistOptimizationService', () => {
       const entry: DeviceDenylistEntry = {
         id: 'entry-1',
         device_id: 'device-1',
+        device_type: 'blulok',
         user_id: 'user-1',
         expires_at: null,
         created_at: new Date(),
@@ -87,6 +88,7 @@ describe('DenylistOptimizationService', () => {
       const entry: DeviceDenylistEntry = {
         id: 'entry-1',
         device_id: 'device-1',
+        device_type: 'blulok',
         user_id: 'user-1',
         expires_at: futureDate,
         created_at: new Date(),
@@ -108,6 +110,7 @@ describe('DenylistOptimizationService', () => {
       const entry: DeviceDenylistEntry = {
         id: 'entry-1',
         device_id: 'device-1',
+        device_type: 'blulok',
         user_id: 'user-1',
         expires_at: pastDate,
         created_at: new Date(),
@@ -127,6 +130,7 @@ describe('DenylistOptimizationService', () => {
       const entry: DeviceDenylistEntry = {
         id: 'entry-1',
         device_id: 'device-1',
+        device_type: 'blulok',
         user_id: 'user-1',
         expires_at: expiredDate,
         created_at: new Date(),

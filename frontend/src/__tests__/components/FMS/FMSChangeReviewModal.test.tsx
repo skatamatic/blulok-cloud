@@ -1,5 +1,6 @@
 import React from 'react';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import '@/__tests__/mocks/websocket-provider-deps';
 import { FMSChangeReviewModal } from '@/components/FMS/FMSChangeReviewModal';
 import { FMSSyncProvider } from '@/contexts/FMSSyncContext';
 import { ThemeProvider } from '@/contexts/ThemeContext';
@@ -13,6 +14,9 @@ jest.mock('@/services/fms.service', () => ({
   fmsService: {
     reviewChanges: jest.fn(),
     applyChanges: jest.fn(),
+    dismissChanges: jest.fn(),
+    getPendingChanges: jest.fn().mockResolvedValue([]),
+    getSyncDetails: jest.fn().mockResolvedValue({ id: 'sync-123', sync_status: 'pending_review' }),
   },
 }));
 
@@ -26,10 +30,25 @@ jest.mock('@/contexts/ToastContext', () => ({
 
 import { useToast } from '@/contexts/ToastContext';
 
+// Mock the WebSocket context
+jest.mock('@/contexts/WebSocketContext', () => ({
+  WebSocketProvider: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
+  useWebSocket: () => ({
+    subscribe: jest.fn(() => 'sub-id'),
+    unsubscribe: jest.fn(),
+    isConnected: false,
+  }),
+}));
+
 // Mock the useFMSSync hook
-let mockUseFMSSyncReturn = {
+const mockUseFMSSyncReturn = {
   hideReview: jest.fn(),
   minimizeReview: jest.fn(),
+  openPendingReview: jest.fn(),
+  syncState: {
+    facilityId: 'facility-1',
+    facilityName: 'Test Facility',
+  },
 };
 
 jest.mock('@/contexts/FMSSyncContext', () => ({
@@ -183,7 +202,7 @@ describe('FMSChangeReviewModal', () => {
         />
       );
 
-      expect(screen.getByText('Review FMS Changes (4 detected) - Test Facility')).toBeInTheDocument();
+      expect(screen.getByRole('heading', { name: /Review FMS Changes \(4 detected\).*Test Facility/ })).toBeInTheDocument();
       expect(screen.getByText('All Changes (4)')).toBeInTheDocument();
       expect(screen.getByText('New tenant John Doe added to unit A-101')).toBeInTheDocument();
     });
@@ -213,7 +232,7 @@ describe('FMSChangeReviewModal', () => {
         />
       );
 
-      expect(screen.getByText('Review FMS Changes (4 detected)')).toBeInTheDocument();
+      expect(screen.getByRole('heading', { name: /Review FMS Changes \(4 detected\)/ })).toBeInTheDocument();
     });
 
     it('shows empty state when no changes provided', () => {
@@ -227,7 +246,7 @@ describe('FMSChangeReviewModal', () => {
         />
       );
 
-      expect(screen.getByText('Review FMS Changes (0 detected)')).toBeInTheDocument();
+      expect(screen.getByRole('heading', { name: /Review FMS Changes \(0 detected\)/ })).toBeInTheDocument();
       expect(screen.getByText('All Changes (0)')).toBeInTheDocument();
       expect(screen.getByText('No changes in this category')).toBeInTheDocument();
     });
@@ -274,7 +293,7 @@ describe('FMSChangeReviewModal', () => {
       expect(screen.queryByText('Tenant Bob Wilson removed from system')).not.toBeInTheDocument();
 
       // Selection count should reflect filtered changes
-      expect(screen.getByText(/2.*changes selected/)).toBeInTheDocument();
+      expect(screen.getByText(/2.*selected/)).toBeInTheDocument();
     });
 
     it('filters to updated changes only', () => {
@@ -351,7 +370,7 @@ describe('FMSChangeReviewModal', () => {
         />
       );
 
-      expect(screen.getByText(/4.*changes selected/)).toBeInTheDocument();
+      expect(screen.getByText(/4.*selected/)).toBeInTheDocument();
     });
 
     it('toggles individual change selection', async () => {
@@ -456,8 +475,11 @@ describe('FMSChangeReviewModal', () => {
       );
 
       // Find expand button by looking for the button with ChevronRightIcon initially
-      const changeContainer = screen.getByText('New tenant John Doe added to unit A-101').closest('div[class*="border-2"]');
-      const expandButton = changeContainer?.querySelector('button[class*="p-1 rounded-lg"]');
+      const changeCards = screen.getAllByTestId('fms-change-card');
+      const addCard = changeCards.find((card) =>
+        card.textContent?.includes('New tenant John Doe added to unit A-101'),
+      );
+      const expandButton = addCard?.querySelector('[data-testid="fms-change-expand"]');
 
       // Initially collapsed
       expect(screen.queryByText('Details')).not.toBeInTheDocument();
@@ -484,8 +506,8 @@ describe('FMSChangeReviewModal', () => {
 
       // Find and expand the update change
       const updateChange = screen.getByText('Tenant Jane Smith updated contact information');
-      const changeContainer = updateChange.closest('[data-testid="change-container"]') || updateChange.closest('div[class*="border-2"]');
-      const expandButton = changeContainer?.querySelector('button[class*="p-1 rounded-lg"]');
+      const changeContainer = updateChange.closest('[data-testid="fms-change-card"]');
+      const expandButton = changeContainer?.querySelector('[data-testid="fms-change-expand"]');
 
       if (expandButton) {
         fireEvent.click(expandButton);
@@ -508,10 +530,8 @@ describe('FMSChangeReviewModal', () => {
 
       // Find and expand the addition change
       const addChange = screen.getByText('New tenant John Doe added to unit A-101');
-      const expandButtons = addChange.closest('div')?.querySelectorAll('button');
-      const expandButton = Array.from(expandButtons || []).find(btn =>
-        btn.querySelector('svg[data-slot="icon"]')
-      );
+      const changeContainer = addChange.closest('[data-testid="fms-change-card"]');
+      const expandButton = changeContainer?.querySelector('[data-testid="fms-change-expand"]');
 
       if (expandButton) {
         fireEvent.click(expandButton);
@@ -535,10 +555,10 @@ describe('FMSChangeReviewModal', () => {
       );
 
       // Check that change type labels are displayed correctly
-      expect(screen.getByText('TENANT ADDED')).toBeInTheDocument();
-      expect(screen.getByText('TENANT UPDATED')).toBeInTheDocument();
-      expect(screen.getByText('TENANT REMOVED')).toBeInTheDocument();
-      expect(screen.getByText('UNIT ADDED')).toBeInTheDocument();
+      expect(screen.getByText('Tenant added')).toBeInTheDocument();
+      expect(screen.getByText('Tenant updated')).toBeInTheDocument();
+      expect(screen.getByText('Tenant removed')).toBeInTheDocument();
+      expect(screen.getByText('Unit added')).toBeInTheDocument();
     });
 
     it('applies correct colors for different change types', () => {
@@ -554,10 +574,81 @@ describe('FMSChangeReviewModal', () => {
 
       // The color classes are applied to icon containers
       // We verify the changes are rendered with their types
-      expect(screen.getByText('TENANT ADDED')).toBeInTheDocument();
-      expect(screen.getByText('TENANT UPDATED')).toBeInTheDocument();
-      expect(screen.getByText('TENANT REMOVED')).toBeInTheDocument();
-      expect(screen.getByText('UNIT ADDED')).toBeInTheDocument();
+      expect(screen.getByText('Tenant added')).toBeInTheDocument();
+      expect(screen.getByText('Tenant updated')).toBeInTheDocument();
+      expect(screen.getByText('Tenant removed')).toBeInTheDocument();
+      expect(screen.getByText('Unit added')).toBeInTheDocument();
+    });
+
+    it('does not flag tenant_removed as invalid when is_valid is omitted (legacy API rows)', () => {
+      const removedWithoutFlag: FMSChange = {
+        id: 'removed-legacy',
+        sync_log_id: 'sync-123',
+        change_type: FMSChangeType.TENANT_REMOVED,
+        entity_type: 'tenant',
+        external_id: 'ext-removed',
+        internal_id: 'user-removed',
+        before_data: {
+          email: 'jodycs1@gmail.com',
+          first_name: 'jody',
+          last_name: 'sacher',
+        },
+        after_data: null,
+        required_actions: [FMSChangeAction.DEACTIVATE_USER, FMSChangeAction.REMOVE_ACCESS],
+        impact_summary: 'Tenant removed: jodycs1@gmail.com',
+        is_reviewed: false,
+        created_at: '2025-01-01T00:00:00Z',
+      };
+
+      renderWithProviders(
+        <FMSChangeReviewModal
+          isOpen={true}
+          onClose={jest.fn()}
+          changes={[removedWithoutFlag]}
+          onApply={jest.fn()}
+          syncResult={{ ...mockSyncResult, changesDetected: [removedWithoutFlag] }}
+        />
+      );
+
+      expect(screen.queryByText('Cannot apply this change')).not.toBeInTheDocument();
+      expect(screen.getByText('Invalid (0)')).toBeInTheDocument();
+    });
+
+    it('distinguishes a failed apply attempt from a payload that was never applicable', () => {
+      const failedApply: FMSChange = {
+        id: 'unit-failed',
+        sync_log_id: 'sync-123',
+        change_type: FMSChangeType.UNIT_UPDATED,
+        entity_type: 'unit',
+        external_id: 'ext-908',
+        internal_id: 'unit-908',
+        before_data: { status: 'available' },
+        after_data: { unitNumber: '908', status: 'occupied' },
+        required_actions: [],
+        impact_summary: 'Update unit 908',
+        is_reviewed: true,
+        is_accepted: true,
+        is_valid: false,
+        validation_errors: ['Unit 908 is occupied by Lucien Robel in FMS, but that tenant cannot be created in BluLok.'],
+        created_at: '2025-01-01T00:00:00Z',
+      };
+
+      renderWithProviders(
+        <FMSChangeReviewModal
+          isOpen={true}
+          onClose={jest.fn()}
+          changes={[failedApply]}
+          onApply={jest.fn()}
+          syncResult={{ ...mockSyncResult, changesDetected: [failedApply] }}
+        />
+      );
+
+      expect(screen.getByText('This change failed to apply')).toBeInTheDocument();
+      expect(screen.queryByText('Cannot apply this change')).not.toBeInTheDocument();
+      expect(screen.getByText(/Lucien Robel/)).toBeInTheDocument();
+      expect(
+        screen.getByText(/Automatic sync did not apply because a problem was detected/),
+      ).toBeInTheDocument();
     });
   });
 
@@ -636,7 +727,7 @@ describe('FMSChangeReviewModal', () => {
         );
         expect(mockOnApply).toHaveBeenCalledWith(['change-1', 'change-2', 'change-3', 'change-4']);
       });
-    });
+    }, 20_000);
 
     it('handles apply API failure gracefully', async () => {
       const mockOnApply = jest.fn();
@@ -787,8 +878,8 @@ describe('FMSChangeReviewModal', () => {
       );
 
       // Expand to see data rendering
-      const changeContainer = screen.getByText('Test change').closest('div[class*="border-2"]');
-      const expandButton = changeContainer?.querySelector('button[class*="p-1 rounded-lg"]');
+      const changeContainer = screen.getByText('Test change').closest('[data-testid="fms-change-card"]');
+      const expandButton = changeContainer?.querySelector('[data-testid="fms-change-expand"]');
       if (expandButton) {
         fireEvent.click(expandButton);
       }
@@ -828,7 +919,7 @@ describe('FMSChangeReviewModal', () => {
       );
 
       const heading = screen.getByRole('heading', { level: 2 });
-      expect(heading).toHaveTextContent('Review FMS Changes (4 detected) - Test Facility');
+      expect(heading).toHaveTextContent(/Review FMS Changes \(4 detected\).*Test Facility/);
     });
 
     it('supports keyboard navigation', () => {
@@ -923,6 +1014,142 @@ describe('FMSChangeReviewModal', () => {
 
       // Should not crash
       expect(screen.getByText('Change without actions')).toBeInTheDocument();
+    });
+  });
+
+  describe('Grouped invalid problems', () => {
+    it('combines identity-collision and vacant-ledger rows into two problem cards', () => {
+      const grouped: FMSChange[] = [
+        {
+          id: 't3',
+          sync_log_id: 'sync-123',
+          change_type: FMSChangeType.TENANT_ADDED,
+          entity_type: 'tenant',
+          external_id: 'ext-t3',
+          after_data: { email: 't3@blulok.com' },
+          required_actions: [FMSChangeAction.CREATE_USER],
+          impact_summary:
+            'FMS tenant t3@blulok.com matches an existing BluLok user who is already mapped to a different FMS tenant',
+          is_reviewed: false,
+          is_valid: false,
+          validation_errors: [
+            'Contact info matches BluLok user t3@blulok.com, who is already mapped to a different FMS tenant. Each BluLok user can map to only one FMS tenant. Give this tenant a unique email or phone in your FMS, or remap the user.',
+          ],
+          created_at: '2025-01-01T00:00:00Z',
+        },
+        {
+          id: 't2',
+          sync_log_id: 'sync-123',
+          change_type: FMSChangeType.TENANT_ADDED,
+          entity_type: 'tenant',
+          external_id: 'ext-t2',
+          after_data: { email: 't2@blulok.com' },
+          required_actions: [FMSChangeAction.CREATE_USER],
+          impact_summary:
+            'FMS tenant t2@blulok.com matches an existing BluLok user who is already mapped to a different FMS tenant',
+          is_reviewed: false,
+          is_valid: false,
+          validation_errors: [
+            'Contact info matches BluLok user t3@blulok.com, who is already mapped to a different FMS tenant. Each BluLok user can map to only one FMS tenant. Give this tenant a unique email or phone in your FMS, or remap the user.',
+          ],
+          created_at: '2025-01-01T00:00:00Z',
+        },
+        {
+          id: 'u100',
+          sync_log_id: 'sync-123',
+          change_type: FMSChangeType.UNIT_UPDATED,
+          entity_type: 'unit',
+          external_id: 'ext-100',
+          after_data: { unitNumber: '100' },
+          required_actions: [],
+          impact_summary: 'Update unit 100',
+          is_reviewed: false,
+          is_valid: false,
+          validation_errors: [
+            'Unit 100 is occupied by Tester Three (t3@blulok.com) in FMS, but that tenant cannot be created in BluLok: Contact info matches BluLok user t3@blulok.com, who is already mapped to a different FMS tenant.',
+          ],
+          created_at: '2025-01-01T00:00:00Z',
+        },
+        {
+          id: 'a101',
+          sync_log_id: 'sync-123',
+          change_type: FMSChangeType.TENANT_UNIT_CHANGED,
+          entity_type: 'tenant',
+          external_id: 'ext-june',
+          after_data: { unitNumber: '101' },
+          required_actions: [FMSChangeAction.ASSIGN_UNIT],
+          impact_summary: 'Assign june.mary@yopmail.com to unit 101 — blocked (FMS unit is vacant)',
+          is_reviewed: false,
+          is_valid: false,
+          validation_errors: [
+            'FMS marks unit 101 as vacant, but a ledger still lists June Marry (june.mary@yopmail.com) on it. Unit status is the source of truth for occupancy, so this assignment was not applied.',
+          ],
+          created_at: '2025-01-01T00:00:00Z',
+        },
+        {
+          id: 'a806',
+          sync_log_id: 'sync-123',
+          change_type: FMSChangeType.TENANT_UNIT_CHANGED,
+          entity_type: 'tenant',
+          external_id: 'ext-june',
+          after_data: { unitNumber: '806' },
+          required_actions: [FMSChangeAction.ASSIGN_UNIT],
+          impact_summary: 'Assign june.mary@yopmail.com to unit 806 — blocked (FMS unit is vacant)',
+          is_reviewed: false,
+          is_valid: false,
+          validation_errors: [
+            'FMS marks unit 806 as vacant, but a ledger still lists June Marry (june.mary@yopmail.com) on it. Unit status is the source of truth for occupancy, so this assignment was not applied.',
+          ],
+          created_at: '2025-01-01T00:00:00Z',
+        },
+      ];
+
+      renderWithProviders(
+        <FMSChangeReviewModal
+          isOpen={true}
+          onClose={jest.fn()}
+          changes={grouped}
+          onApply={jest.fn()}
+          syncResult={{ ...mockSyncResult, changesDetected: grouped }}
+        />
+      );
+
+      expect(screen.getAllByTestId('fms-change-card')).toHaveLength(2);
+      expect(screen.getByText('2 problems could not be applied')).toBeInTheDocument();
+      expect(screen.getByText('Already mapped to another FMS tenant')).toBeInTheDocument();
+      expect(screen.getByText('Unit status and ledger disagree')).toBeInTheDocument();
+      expect(screen.getByText('Invalid (2)')).toBeInTheDocument();
+    });
+
+    it('titles a single incomplete tenant as a problem, not Tenant added', () => {
+      const incomplete: FMSChange = {
+        id: 'nameless',
+        sync_log_id: 'sync-123',
+        change_type: FMSChangeType.TENANT_ADDED,
+        entity_type: 'tenant',
+        external_id: 'ext-nameless',
+        after_data: { firstName: '', lastName: '' },
+        required_actions: [FMSChangeAction.CREATE_USER],
+        impact_summary: 'New tenant: Unknown Unknown (placeholder — no login)',
+        is_reviewed: false,
+        is_valid: false,
+        validation_errors: ['Missing or empty first name', 'Missing or empty last name'],
+        created_at: '2025-01-01T00:00:00Z',
+      };
+
+      renderWithProviders(
+        <FMSChangeReviewModal
+          isOpen={true}
+          onClose={jest.fn()}
+          changes={[incomplete]}
+          onApply={jest.fn()}
+          syncResult={{ ...mockSyncResult, changesDetected: [incomplete] }}
+        />
+      );
+
+      expect(screen.getByText('Incomplete tenant record')).toBeInTheDocument();
+      expect(screen.queryByText('Tenant added')).not.toBeInTheDocument();
+      expect(screen.queryByText('create user')).not.toBeInTheDocument();
     });
   });
 });

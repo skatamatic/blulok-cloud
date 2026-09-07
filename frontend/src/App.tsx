@@ -7,22 +7,27 @@ import { WebSocketProvider } from '@/contexts/WebSocketContext';
 import { ToastProvider } from '@/contexts/ToastContext';
 import { WebSocketDebugProvider } from '@/contexts/WebSocketDebugContext';
 import { FMSSyncProvider, useFMSSync } from '@/contexts/FMSSyncContext';
+import { BluFMSDemoProvider } from '@/contexts/BluFMSDemoContext';
+import { GlobalFacilityProvider } from '@/contexts/GlobalFacilityContext';
+import { FacilityChangeNavigator } from '@/components/Layout/FacilityChangeNavigator';
+import { BluDesignProvider } from '@/contexts/BluDesignContext';
 import { FMSSyncStatusBar } from '@/components/FMS/FMSSyncStatusBar';
 import { FMSSyncProgressModal } from '@/components/FMS/FMSSyncProgressModal';
 import { FMSChangeReviewModal } from '@/components/FMS/FMSChangeReviewModal';
 import ToastContainer from '@/components/Toast/ToastContainer';
-import { useWebSocket } from '@/contexts/WebSocketContext';
-import { useToast } from '@/contexts/ToastContext';
-import { useEffect, useRef } from 'react';
+import { useGatewayStatusToasts } from '@/hooks/useGatewayStatusToasts';
+import { useLiveDataToasts } from '@/hooks/useLiveDataToasts';
 import { ProtectedRoute } from '@/components/ProtectedRoute';
 import { DashboardLayout } from '@/components/Layout/DashboardLayout';
+import { UserRole } from '@/types/auth.types';
 import LandingPage from '@/pages/LandingPage';
 import LoginPage from '@/pages/LoginPage';
 import DashboardPage from '@/pages/DashboardPage';
 import UserManagementPage from '@/pages/UserManagementPage';
 import UserDetailsPage from '@/pages/UserDetailsPage';
 import SettingsPage from '@/pages/SettingsPage';
-import NotificationSettingsPage from '@/pages/NotificationSettingsPage';
+import AddFacilityPage from '@/pages/AddFacilityPage';
+
 import FacilitiesPage from '@/pages/FacilitiesPage';
 import FacilityDetailsPage from '@/pages/FacilityDetailsPage';
 import EditFacilityPage from '@/pages/EditFacilityPage';
@@ -34,6 +39,14 @@ import UnitDetailsPage from '@/pages/UnitDetailsPage';
 import SimpleSiteMapPage from '@/pages/SimpleSiteMapPage';
 import AccessHistoryPage from '@/pages/AccessHistoryPage';
 import DeveloperToolsPage from '@/pages/DeveloperToolsPage';
+import BluFMSDashboardPage from '@/pages/blufms/BluFMSDashboardPage';
+import BluFMSFacilityMapPage from '@/pages/blufms/BluFMSFacilityMapPage';
+import BluDesignViewPage from '@/pages/bludesign/BluDesignViewPage';
+import BluDesignBuildPage from '@/pages/bludesign/BluDesignBuildPage';
+import BluDesignImportPage from '@/pages/bludesign/BluDesignImportPage';
+import BluDesignAssetsPage from '@/pages/bludesign/BluDesignAssetsPage';
+import BluDesignConfigPage from '@/pages/bludesign/BluDesignConfigPage';
+
 
 // Global FMS modals component
 function FMSModals() {
@@ -57,7 +70,7 @@ function FMSModals() {
           isOpen={true}
           onClose={hideReview}
           changes={syncState.pendingChanges}
-          onApply={async (_changeIds) => {
+          onApply={async () => {
             // Callback after changes are applied - currently handled by modal internally
             console.log('Changes applied successfully');
           }}
@@ -69,39 +82,15 @@ function FMSModals() {
   );
 }
 
-// Global gateway status listener to raise toasts on any view
+// Debounced gateway connectivity toasts (see useGatewayStatusToasts).
 function GatewayStatusListener() {
-  const ws = useWebSocket();
-  const { addToast } = useToast();
-  const lastStatusRef = useRef<Record<string, string>>({});
+  useGatewayStatusToasts();
+  return null;
+}
 
-  useEffect(() => {
-    const subscriptionId = ws.subscribe('gateway_status', (data: any) => {
-      try {
-        const gateways = data?.gateways || [];
-        gateways.forEach((g: any) => {
-          const prev = lastStatusRef.current[g.id];
-          lastStatusRef.current[g.id] = g.status;
-          if (prev && prev !== g.status) {
-            // Only show toasts for actual status changes (online, offline, error)
-            if (g.status === 'online' || g.status === 'offline' || g.status === 'error') {
-              const statusMessage = g.status === 'online' ? 'online' : g.status === 'offline' ? 'offline' : 'error';
-              addToast({
-                type: g.status === 'online' ? 'success' : 'error',
-                title: `Facility gateway is now ${statusMessage}`
-              });
-            }
-          }
-        });
-      } catch (e) {
-        console.error('Failed to process gateway status update', e);
-      }
-    });
-    return () => {
-      if (subscriptionId) ws.unsubscribe(subscriptionId);
-    };
-  }, [ws]);
-
+// Dashboard `/ws` live-data outage / resume toasts (see useLiveDataToasts).
+function LiveDataStatusListener() {
+  useLiveDataToasts();
   return null;
 }
 
@@ -114,8 +103,12 @@ function App() {
             <WebSocketDebugProvider>
               <SidebarProvider>
                 <DropdownProvider>
-                  <FMSSyncProvider>
-                    <div className="min-h-screen bg-gray-50 dark:bg-gray-900 text-gray-900 dark:text-gray-100 transition-colors duration-200">
+                  <GlobalFacilityProvider>
+                    <FacilityChangeNavigator />
+                    <BluFMSDemoProvider>
+                      <BluDesignProvider>
+                        <FMSSyncProvider>
+                        <div className="min-h-screen bg-gray-50 dark:bg-gray-900 text-gray-900 dark:text-gray-100 transition-colors duration-200">
                       <Routes>
                         {/* Public routes */}
                         <Route path="/" element={<LandingPage />} />
@@ -124,7 +117,7 @@ function App() {
                         {/* Protected routes */}
                         <Route path="/dashboard" element={
                           <ProtectedRoute>
-                            <DashboardLayout>
+                            <DashboardLayout lockViewport>
                               <DashboardPage />
                             </DashboardLayout>
                           </ProtectedRoute>
@@ -139,7 +132,7 @@ function App() {
                         } />
 
                         <Route path="/users/:userId/details" element={
-                          <ProtectedRoute requireUserManagement>
+                          <ProtectedRoute>
                             <DashboardLayout>
                               <UserDetailsPage />
                             </DashboardLayout>
@@ -147,20 +140,24 @@ function App() {
                         } />
 
                         <Route path="/settings" element={
-                          <ProtectedRoute requireAdmin>
+                          <ProtectedRoute requireSettingsAccess>
                             <DashboardLayout>
                               <SettingsPage />
                             </DashboardLayout>
                           </ProtectedRoute>
                         } />
 
-                        <Route path="/notification-settings" element={
+                        <Route path="/settings/add-facility" element={
                           <ProtectedRoute requireAdmin>
                             <DashboardLayout>
-                              <NotificationSettingsPage />
+                              <AddFacilityPage />
                             </DashboardLayout>
                           </ProtectedRoute>
                         } />
+
+                        {/* Redirect old routes to unified settings page */}
+                        <Route path="/notification-settings" element={<Navigate to="/settings?tab=notifications" replace />} />
+                        <Route path="/storage-config" element={<Navigate to="/settings?tab=storage" replace />} />
 
                         {/* Facility routes */}
                         <Route path="/facilities" element={
@@ -180,7 +177,7 @@ function App() {
                         } />
 
                         <Route path="/facilities/:id/edit" element={
-                          <ProtectedRoute requireAdmin>
+                          <ProtectedRoute requiredRoles={[UserRole.ADMIN, UserRole.DEV_ADMIN, UserRole.FACILITY_ADMIN]}>
                             <DashboardLayout>
                               <EditFacilityPage />
                             </DashboardLayout>
@@ -249,15 +246,77 @@ function App() {
                           </ProtectedRoute>
                         } />
 
+                        {/* BluFMS Routes */}
+                        <Route path="/blufms/dashboard" element={
+                          <ProtectedRoute>
+                            <DashboardLayout>
+                              <BluFMSDashboardPage />
+                            </DashboardLayout>
+                          </ProtectedRoute>
+                        } />
+
+                        <Route path="/blufms/facility-map" element={
+                          <ProtectedRoute requiredRoles={[UserRole.ADMIN, UserRole.DEV_ADMIN, UserRole.FACILITY_ADMIN]}>
+                            <DashboardLayout>
+                              <BluFMSFacilityMapPage />
+                            </DashboardLayout>
+                          </ProtectedRoute>
+                        } />
+
+                        {/* BluDesign Routes */}
+                        <Route path="/bludesign/view" element={
+                          <ProtectedRoute>
+                            <DashboardLayout>
+                              <BluDesignViewPage />
+                            </DashboardLayout>
+                          </ProtectedRoute>
+                        } />
+
+                        <Route path="/bludesign/build" element={
+                          <ProtectedRoute>
+                            <DashboardLayout>
+                              <BluDesignBuildPage />
+                            </DashboardLayout>
+                          </ProtectedRoute>
+                        } />
+
+                        <Route path="/bludesign/import" element={
+                          <ProtectedRoute>
+                            <DashboardLayout>
+                              <BluDesignImportPage />
+                            </DashboardLayout>
+                          </ProtectedRoute>
+                        } />
+
+                        <Route path="/bludesign/assets" element={
+                          <ProtectedRoute>
+                            <DashboardLayout>
+                              <BluDesignAssetsPage />
+                            </DashboardLayout>
+                          </ProtectedRoute>
+                        } />
+
+                        <Route path="/bludesign/config" element={
+                          <ProtectedRoute>
+                            <DashboardLayout>
+                              <BluDesignConfigPage />
+                            </DashboardLayout>
+                          </ProtectedRoute>
+                        } />
+
                         {/* Redirect unknown routes to dashboard if authenticated, otherwise to landing */}
                         <Route path="*" element={<Navigate to="/dashboard" replace />} />
                       </Routes>
                       <GatewayStatusListener />
+                      <LiveDataStatusListener />
                       <ToastContainer />
                       <FMSSyncStatusBar />
                       <FMSModals />
-                    </div>
-                  </FMSSyncProvider>
+                        </div>
+                        </FMSSyncProvider>
+                      </BluDesignProvider>
+                    </BluFMSDemoProvider>
+                  </GlobalFacilityProvider>
                 </DropdownProvider>
               </SidebarProvider>
             </WebSocketDebugProvider>

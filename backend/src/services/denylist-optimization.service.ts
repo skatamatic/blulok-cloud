@@ -68,8 +68,10 @@ export class DenylistOptimizationService {
       return false;
     }
 
-    const now = new Date();
-    const shouldSkip = entry.expires_at < now;
+    const expiresMs = entry.expires_at instanceof Date
+      ? entry.expires_at.getTime()
+      : new Date(entry.expires_at as any).getTime();
+    const shouldSkip = Number.isFinite(expiresMs) && expiresMs <= Date.now();
 
     if (shouldSkip) {
       logger.debug(`Skipping DENYLIST_REMOVE for user ${entry.user_id} on device ${entry.device_id}: entry already expired`);

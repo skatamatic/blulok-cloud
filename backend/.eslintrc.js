@@ -8,8 +8,8 @@ module.exports = {
   plugins: ['@typescript-eslint/eslint-plugin'],
   extends: [
     'eslint:recommended',
-    '@typescript-eslint/recommended',
-    '@typescript-eslint/recommended-requiring-type-checking',
+    'plugin:@typescript-eslint/recommended',
+    'plugin:@typescript-eslint/recommended-requiring-type-checking',
   ],
   root: true,
   env: {
@@ -22,10 +22,29 @@ module.exports = {
     '@typescript-eslint/explicit-function-return-type': 'error',
     '@typescript-eslint/explicit-module-boundary-types': 'error',
     '@typescript-eslint/no-explicit-any': 'error',
-    '@typescript-eslint/no-unused-vars': 'error',
-    '@typescript-eslint/prefer-const': 'error',
+    '@typescript-eslint/no-unused-vars': [
+      'error',
+      { argsIgnorePattern: '^_', varsIgnorePattern: '^_' },
+    ],
     '@typescript-eslint/no-inferrable-types': 'off',
     'prefer-const': 'error',
     'no-var': 'error',
+    'no-restricted-syntax': [
+      'error',
+      {
+        selector:
+          "CallExpression[callee.object.name='router'][callee.property.name=/^(get|post|put|patch|delete)$/]",
+        message:
+          'Use registerGet/registerPost/registerPut/registerPatch/registerDelete from @/openapi/register-route instead of router.* in route files.',
+      },
+    ],
   },
+  overrides: [
+    {
+      files: ['src/openapi/**/*.ts', 'src/middleware/**/*.ts'],
+      rules: {
+        'no-restricted-syntax': 'off',
+      },
+    },
+  ],
 };

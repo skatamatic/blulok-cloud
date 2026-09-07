@@ -2,24 +2,30 @@ import express, { Application } from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
 import compression from 'compression';
-import rateLimit from 'express-rate-limit';
 
 import { config } from '@/config/environment';
+import { CORS_ALLOWED_HEADERS, CORS_ALLOWED_METHODS } from '@/config/cors';
 import { errorHandler } from '@/middleware/error.middleware';
 import { requestLogger } from '@/middleware/logger.middleware';
 import { authenticateToken } from '@/middleware/auth.middleware';
+import { defaultLimiter } from '@/middleware/security-limits';
 import { healthRouter } from '@/routes/health.routes';
 import { authRouter } from '@/routes/auth.routes';
 import { usersRouter } from '@/routes/users.routes';
 import { userFacilitiesRouter } from '@/routes/user-facilities.routes';
 import { widgetLayoutsRouter } from '@/routes/widget-layouts.routes';
+import { savedDashboardsRouter } from '@/routes/saved-dashboards.routes';
+import { dashboardAssignmentsRouter } from '@/routes/dashboard-assignments.routes';
 import { facilitiesRouter } from '@/routes/facilities.routes';
+import { facilityUnitsRouter } from '@/routes/facility-units.routes';
 import { gatewayRouter } from '@/routes/gateway.routes';
 import { devicesRouter } from '@/routes/devices.routes';
 import { unitsRouter } from '@/routes/units.routes';
 import accessHistoryRouter from '@/routes/access-history.routes';
+import accessSessionsRouter from '@/routes/access-sessions.routes';
 import keySharingRouter from '@/routes/key-sharing.routes';
 import { fmsRouter } from '@/routes/fms.routes';
+import { fmsWebhookRouter } from '@/routes/fms-webhook.routes';
 import { devRouter } from '@/routes/dev.routes';
 import { systemSettingsRouter } from '@/routes/system-settings.routes';
 import { userDevicesRouter } from '@/routes/user-devices.routes';
@@ -29,9 +35,27 @@ import { internalGatewayRouter } from '@/routes/internal-gateway.routes';
 import { adminRouter } from '@/routes/admin.routes';
 import { denylistRouter } from '@/routes/denylist.routes';
 import { routePassesRouter } from '@/routes/route-passes.routes';
+import { schedulesRouter } from '@/routes/schedules.routes';
+import { bluDesignRouter } from '@/bludesign';
+import { accessControlRouter } from '@/routes/access-control.routes';
+import { notificationsRouter } from '@/routes/notifications.routes';
+import { activityRouter } from '@/routes/activity.routes';
+import { firmwareRouter } from '@/routes/firmware.routes';
+import { systemStorageRouter } from '@/routes/system-storage.routes';
+import { deviceGroupsRouter } from '@/routes/device-groups.routes';
+import { accessCodesRouter } from '@/routes/access-codes.routes';
+import dashboardRouter from '@/routes/dashboard.routes';
+import { openApiDocsRouter } from '@/openapi/docs.routes';
 
 export function createApp(): Application {
   const app = express();
+
+  // Respect proxies only when explicitly configured (prevents rate-limit bypass)
+  if (config.server.trustProxyDepth > 0) {
+    app.set('trust proxy', config.server.trustProxyDepth);
+  } else {
+    app.set('trust proxy', false);
+  }
 
   // Security middleware
   app.use(helmet({
@@ -40,7 +64,7 @@ export function createApp(): Application {
         defaultSrc: ["'self'"],
         styleSrc: ["'self'", "'unsafe-inline'"],
         scriptSrc: ["'self'"],
-        imgSrc: ["'self'", "data:", "https:"],
+        imgSrc: ["'self'", "data:", "blob:", "https:"],
       },
     },
     hsts: {
@@ -54,24 +78,29 @@ export function createApp(): Application {
   app.use(cors({
     origin: config.corsOrigins,
     credentials: true,
-    methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH'],
-    allowedHeaders: ['Content-Type', 'Authorization', 'X-App-Device-Id', 'X-App-Platform'],
+    methods: [...CORS_ALLOWED_METHODS],
+    allowedHeaders: [...CORS_ALLOWED_HEADERS],
   }));
 
-  // Rate limiting (disabled in test mode to avoid test failures)
-  if (config.nodeEnv !== 'test') {
-  const limiter = rateLimit({
-    windowMs: 60 * 1000, // 1 minute
-    max: 100, // Limit each IP to 100 requests per windowMs
-    message: 'Too many requests from this IP, please try again later.',
-    standardHeaders: true,
-    legacyHeaders: false,
-  });
-  app.use(limiter);
-  }
+  // Explicit preflight handler to prevent 405 on OPTIONS
+  app.options('*', cors({
+    origin: config.corsOrigins,
+    credentials: true,
+    methods: [...CORS_ALLOWED_METHODS],
+    allowedHeaders: [...CORS_ALLOWED_HEADERS],
+  }));
+
+  // Global rate limiting (wrapped with RateLimitBypassService and disabled in test)
+  app.use(defaultLimiter);
 
   // Compression and parsing middleware
   app.use(compression());
+  // FMS webhooks require raw body for HMAC signature verification (before JSON parser)
+  app.use(
+    '/api/v1/fms/webhook',
+    express.raw({ type: 'application/json', limit: '1mb' }),
+    fmsWebhookRouter
+  );
   app.use(express.json({ limit: '10mb' }));
   app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
@@ -87,14 +116,21 @@ export function createApp(): Application {
   app.use('/api/v1/user-devices', userDevicesRouter);
   app.use('/api/v1/user-facilities', userFacilitiesRouter);
   app.use('/api/v1/widget-layouts', widgetLayoutsRouter);
+  app.use('/api/v1/saved-dashboards', savedDashboardsRouter);
+  app.use('/api/v1/dashboard-assignments', dashboardAssignmentsRouter);
   app.use('/api/v1/facilities', facilitiesRouter);
-  app.use('/api/v1/gateways', gatewayRouter);
+  // Nested /facilities/:id/* routes that mirror the schedules router mount pattern
+  app.use('/api/v1', facilityUnitsRouter);
+  // Mount specific /api/v1/* routers before schedulesRouter (schedules applies auth to all /api/v1 paths)
   app.use('/api/v1/internal/gateway', internalGatewayRouter);
+  app.use('/api/v1/gateways', gatewayRouter);
+  app.use('/api/v1', schedulesRouter);
   app.use('/api/v1/admin', adminRouter);
   app.use('/api/v1/devices', devicesRouter);
     app.use('/api/v1/units', unitsRouter);
     app.use('/api/v1/fms', fmsRouter);
     app.use('/api/v1/access-history', accessHistoryRouter);
+    app.use('/api/v1/access-sessions', accessSessionsRouter);
     app.use('/api/v1/key-sharing', keySharingRouter);
   app.use('/api/v1/passes', passesRouter);
     app.use('/api/v1/route-passes', routePassesRouter);
@@ -102,6 +138,26 @@ export function createApp(): Application {
     app.use('/api/v1/commands', commandsRouter);
     app.use('/api/v1/dev', authenticateToken, devRouter);
   app.use('/api/v1/system-settings', systemSettingsRouter);
+  
+  // Access control, notifications, and activity routes
+  app.use('/api/v1/access-control', accessControlRouter);
+  app.use('/api/v1/notifications', notificationsRouter);
+  app.use('/api/v1/activity', activityRouter);
+  app.use('/api/v1/dashboard', dashboardRouter);
+
+  // Firmware OTA routes
+  app.use('/api/v1/firmware', firmwareRouter);
+  app.use('/api/v1/device-groups', deviceGroupsRouter);
+  app.use('/api/v1/access-codes', accessCodesRouter);
+  
+  // System storage config (admin)
+  app.use('/api/v1/admin/storage-config', systemStorageRouter);
+
+  // BluDesign routes (isolated 3D facility design system)
+  app.use('/api/v1/bludesign', bluDesignRouter);
+
+  // OpenAPI spec (always) and Swagger UI (enabled by default via ENABLE_OPENAPI_DOCS)
+  app.use('/api', openApiDocsRouter);
 
   // Error handling middleware (must be last)
   app.use(errorHandler);

@@ -47,47 +47,80 @@ import { asyncHandler } from '@/middleware/error.middleware';
 import { FMSService } from '@/services/fms/fms.service';
 import { FMSConfigurationModel } from '@/models/fms-configuration.model';
 import { FMSSyncLogModel } from '@/models/fms-sync-log.model';
+import {
+  registerGet,
+  registerPost,
+  registerPut,
+  registerDelete,
+} from '@/openapi/register-route';
+import {
+  createFmsConfigSchema,
+  updateFmsConfigSchema,
+  fmsConfigIdParamSchema,
+  fmsFacilityIdParamSchema,
+  fmsSyncLogIdParamSchema,
+  fmsSyncHistoryQuerySchema,
+  reviewFmsChangesSchema,
+  applyFmsChangesSchema,
+  dismissFmsChangesSchema,
+  fmsConfigListQuerySchema,
+  fmsConfigResponseSchema,
+  fmsConfigListResponseSchema,
+  fmsConfigCreateResponseSchema,
+  fmsConfigMutationResponseSchema,
+  fmsConnectionTestResponseSchema,
+  fmsSyncResponseSchema,
+  fmsSyncCancelResponseSchema,
+  fmsSyncHistoryResponseSchema,
+  fmsWebhookEventsQuerySchema,
+  fmsWebhookEventsResponseSchema,
+  fmsSyncLogResponseSchema,
+  fmsPendingChangesResponseSchema,
+  fmsReviewChangesResponseSchema,
+  fmsDismissChangesResponseSchema,
+  fmsApplyChangesResponseSchema,
+} from '@/schemas/fms.schemas';
+import { errorEnvelopeSchema } from '@/openapi/common-schemas';
+import { refreshPendingTenantChangeForDisplay } from '@/services/fms/fms-tenant-validation.utils';
 
 const router = Router();
+const MOUNT = '/api/v1/fms';
 
-// Apply authentication to all routes
 router.use(authenticateToken);
 
-// Lazy-load models and services to avoid initialization order issues
 const getFMSService = () => FMSService.getInstance();
 const getFMSConfigModel = () => new FMSConfigurationModel();
 const getSyncLogModel = () => new FMSSyncLogModel();
 
-/**
- * POST /api/v1/fms/config
- * Create FMS configuration for a facility
- * Requires: ADMIN or DEV_ADMIN role only (FACILITY_ADMIN cannot create/modify FMS config)
- */
-router.post('/config',
+registerPost(
+  router,
+  '/config',
+  {
+    openApiPath: `${MOUNT}/config`,
+    tags: ['FMS'],
+    summary: 'Create FMS configuration for a facility',
+    description: 'Requires ADMIN or DEV_ADMIN role only (FACILITY_ADMIN cannot create/modify FMS config).',
+    security: 'bearer',
+    body: createFmsConfigSchema,
+    responses: {
+      201: fmsConfigCreateResponseSchema,
+      400: errorEnvelopeSchema,
+      409: errorEnvelopeSchema,
+    },
+  },
   requireRoles([UserRole.ADMIN, UserRole.DEV_ADMIN]),
   asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
     const { facility_id, provider_type, config, is_enabled } = req.body;
 
-    // Validate input
-    if (!facility_id || !provider_type || !config) {
-      res.status(400).json({
-        success: false,
-        message: 'facility_id, provider_type, and config are required'
-      });
-      return;
-    }
-
-    // Check if config already exists
     const existingConfig = await getFMSConfigModel().findByFacilityId(facility_id);
     if (existingConfig) {
       res.status(409).json({
         success: false,
-        message: 'FMS configuration already exists for this facility'
+        message: 'FMS configuration already exists for this facility',
       });
       return;
     }
 
-    // Create configuration
     const fmsConfig = await getFMSConfigModel().create({
       facility_id,
       provider_type,
@@ -100,33 +133,87 @@ router.post('/config',
       message: 'FMS configuration created successfully',
       config: fmsConfig,
     });
-  })
+  }),
 );
 
-/**
- * GET /api/v1/fms/config/:facilityId
- * Get FMS configuration for a facility
- */
-router.get('/config/:facilityId',
+registerGet(
+  router,
+  '/config',
+  {
+    openApiPath: `${MOUNT}/config`,
+    tags: ['FMS'],
+    summary: 'List FMS configurations',
+    description:
+      'Returns FMS configs visible to the caller. FACILITY_ADMIN is scoped to assigned facilities. Use webhooks_only to filter webhook-enabled integrations.',
+    security: 'bearer',
+    query: fmsConfigListQuerySchema,
+    responses: {
+      200: fmsConfigListResponseSchema,
+      403: errorEnvelopeSchema,
+    },
+  },
+  requireRoles([UserRole.ADMIN, UserRole.DEV_ADMIN, UserRole.FACILITY_ADMIN]),
+  asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+    const user = req.user!;
+    const query = req.query as {
+      webhooks_only?: boolean;
+      is_enabled?: boolean;
+      provider_type?: string;
+    };
+    const webhooksOnly = query.webhooks_only === true;
+    const isEnabled = query.is_enabled;
+    const providerType = query.provider_type;
+
+    const facilityIds =
+      user.role === UserRole.FACILITY_ADMIN ? user.facilityIds : undefined;
+
+    if (user.role === UserRole.FACILITY_ADMIN && !facilityIds?.length) {
+      res.json({ success: true, configs: [] });
+      return;
+    }
+
+    let configs = await getFMSConfigModel().findAllWithFacilities({
+      is_enabled: isEnabled,
+      provider_type: providerType as import('@/types/fms.types').FMSProviderType | undefined,
+      facility_ids: facilityIds,
+    });
+
+    if (webhooksOnly) {
+      configs = configs.filter((c) => c.config?.features?.supportsWebhooks === true);
+    }
+
+    res.json({
+      success: true,
+      configs,
+    });
+  }),
+);
+
+registerGet(
+  router,
+  '/config/:facilityId',
+  {
+    openApiPath: `${MOUNT}/config/{facilityId}`,
+    tags: ['FMS'],
+    summary: 'Get FMS configuration for a facility',
+    security: 'bearer',
+    params: fmsFacilityIdParamSchema,
+    responses: {
+      200: fmsConfigResponseSchema,
+      403: errorEnvelopeSchema,
+      404: errorEnvelopeSchema,
+    },
+  },
   requireRoles([UserRole.ADMIN, UserRole.DEV_ADMIN, UserRole.FACILITY_ADMIN]),
   asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
     const user = req.user!;
     const { facilityId } = req.params;
 
-    if (!facilityId) {
-      res.status(400).json({
-        success: false,
-        message: 'Facility ID is required'
-      });
-      return;
-    }
-
-    // Check access
     if (user.role === UserRole.FACILITY_ADMIN) {
       if (!user.facilityIds?.includes(facilityId)) {
         res.status(403).json({
           success: false,
-          message: 'Access denied to this facility'
+          message: 'Access denied to this facility',
         });
         return;
       }
@@ -137,7 +224,7 @@ router.get('/config/:facilityId',
     if (!config) {
       res.status(404).json({
         success: false,
-        message: 'FMS configuration not found'
+        message: 'FMS configuration not found',
       });
       return;
     }
@@ -146,39 +233,39 @@ router.get('/config/:facilityId',
       success: true,
       config,
     });
-  })
+  }),
 );
 
-/**
- * PUT /api/v1/fms/config/:id
- * Update FMS configuration
- * Requires: ADMIN or DEV_ADMIN role only (FACILITY_ADMIN cannot modify FMS config)
- */
-router.put('/config/:id',
+registerPut(
+  router,
+  '/config/:id',
+  {
+    openApiPath: `${MOUNT}/config/{id}`,
+    tags: ['FMS'],
+    summary: 'Update FMS configuration',
+    description: 'Requires ADMIN or DEV_ADMIN role only (FACILITY_ADMIN cannot modify FMS config).',
+    security: 'bearer',
+    params: fmsConfigIdParamSchema,
+    body: updateFmsConfigSchema,
+    responses: {
+      200: fmsConfigCreateResponseSchema,
+      404: errorEnvelopeSchema,
+    },
+  },
   requireRoles([UserRole.ADMIN, UserRole.DEV_ADMIN]),
   asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
     const { id } = req.params;
     const { provider_type, config, is_enabled } = req.body;
 
-    if (!id) {
-      res.status(400).json({
-        success: false,
-        message: 'Configuration ID is required'
-      });
-      return;
-    }
-
-    // Get existing config
     const existingConfig = await getFMSConfigModel().findById(id);
     if (!existingConfig) {
       res.status(404).json({
         success: false,
-        message: 'FMS configuration not found'
+        message: 'FMS configuration not found',
       });
       return;
     }
 
-    // Update configuration
     const updatedConfig = await getFMSConfigModel().update(id, {
       provider_type,
       config,
@@ -190,33 +277,33 @@ router.put('/config/:id',
       message: 'FMS configuration updated successfully',
       config: updatedConfig,
     });
-  })
+  }),
 );
 
-/**
- * DELETE /api/v1/fms/config/:id
- * Delete FMS configuration
- * Requires: ADMIN or DEV_ADMIN role only (FACILITY_ADMIN cannot delete FMS config)
- */
-router.delete('/config/:id',
+registerDelete(
+  router,
+  '/config/:id',
+  {
+    openApiPath: `${MOUNT}/config/{id}`,
+    tags: ['FMS'],
+    summary: 'Delete FMS configuration',
+    description: 'Requires ADMIN or DEV_ADMIN role only (FACILITY_ADMIN cannot delete FMS config).',
+    security: 'bearer',
+    params: fmsConfigIdParamSchema,
+    responses: {
+      200: fmsConfigMutationResponseSchema,
+      404: errorEnvelopeSchema,
+    },
+  },
   requireRoles([UserRole.ADMIN, UserRole.DEV_ADMIN]),
   asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
     const { id } = req.params;
 
-    if (!id) {
-      res.status(400).json({
-        success: false,
-        message: 'Configuration ID is required'
-      });
-      return;
-    }
-
-    // Get existing config
     const existingConfig = await getFMSConfigModel().findById(id);
     if (!existingConfig) {
       res.status(404).json({
         success: false,
-        message: 'FMS configuration not found'
+        message: 'FMS configuration not found',
       });
       return;
     }
@@ -227,43 +314,44 @@ router.delete('/config/:id',
       success: true,
       message: 'FMS configuration deleted successfully',
     });
-  })
+  }),
 );
 
-/**
- * POST /api/v1/fms/config/:id/test
- * Test FMS connection
- */
-router.post('/config/:id/test',
+registerPost(
+  router,
+  '/config/:id/test',
+  {
+    openApiPath: `${MOUNT}/config/{id}/test`,
+    tags: ['FMS'],
+    summary: 'Test FMS connection',
+    security: 'bearer',
+    params: fmsConfigIdParamSchema,
+    responses: {
+      200: fmsConnectionTestResponseSchema,
+      403: errorEnvelopeSchema,
+      404: errorEnvelopeSchema,
+      500: fmsConnectionTestResponseSchema,
+    },
+  },
   requireRoles([UserRole.ADMIN, UserRole.DEV_ADMIN, UserRole.FACILITY_ADMIN]),
   asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
     const user = req.user!;
     const { id } = req.params;
 
-    if (!id) {
-      res.status(400).json({
-        success: false,
-        message: 'Configuration ID is required'
-      });
-      return;
-    }
-
-    // Get config
     const config = await getFMSConfigModel().findById(id);
     if (!config) {
       res.status(404).json({
         success: false,
-        message: 'FMS configuration not found'
+        message: 'FMS configuration not found',
       });
       return;
     }
 
-    // Check access
     if (user.role === UserRole.FACILITY_ADMIN) {
       if (!user.facilityIds?.includes(config.facility_id)) {
         res.status(403).json({
           success: false,
-          message: 'Access denied to this facility'
+          message: 'Access denied to this facility',
         });
         return;
       }
@@ -284,80 +372,73 @@ router.post('/config/:id/test',
         error: error instanceof Error ? error.message : 'Unknown error',
       });
     }
-  })
+  }),
 );
 
-/**
- * POST /api/v1/fms/sync/:facilityId
- * Trigger manual FMS sync
- */
-router.post('/sync/:facilityId',
+registerPost(
+  router,
+  '/sync/:facilityId',
+  {
+    openApiPath: `${MOUNT}/sync/{facilityId}`,
+    tags: ['FMS'],
+    summary: 'Trigger manual FMS sync',
+    security: 'bearer',
+    params: fmsFacilityIdParamSchema,
+    responses: {
+      200: fmsSyncResponseSchema,
+      403: errorEnvelopeSchema,
+    },
+  },
   requireRoles([UserRole.ADMIN, UserRole.DEV_ADMIN, UserRole.FACILITY_ADMIN]),
   asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
     const user = req.user!;
     const { facilityId } = req.params;
 
-    if (!facilityId) {
-      res.status(400).json({
-        success: false,
-        message: 'Facility ID is required'
-      });
-      return;
-    }
-
-    // Check access
     if (user.role === UserRole.FACILITY_ADMIN) {
       if (!user.facilityIds?.includes(facilityId)) {
         res.status(403).json({
           success: false,
-          message: 'Access denied to this facility'
+          message: 'Access denied to this facility',
         });
         return;
       }
     }
 
-    try {
-      const result = await getFMSService().performSync(facilityId, user.userId, user.role);
+    const result = await getFMSService().performSync(facilityId, user.userId, user.role);
 
-      res.json({
-        success: result.success,
-        message: result.success ? 'Sync completed successfully' : 'Sync completed with errors',
-        result,
-      });
-    } catch (error) {
-      res.status(500).json({
-        success: false,
-        message: 'Sync failed',
-        error: error instanceof Error ? error.message : 'Unknown error',
-      });
-    }
-  })
+    res.json({
+      success: result.success,
+      message: result.success ? 'Sync completed successfully' : 'Sync completed with errors',
+      result,
+    });
+  }),
 );
 
-/**
- * POST /api/v1/fms/sync/:facilityId/cancel
- * Cancel an active FMS sync
- */
-router.post('/sync/:facilityId/cancel',
+registerPost(
+  router,
+  '/sync/:facilityId/cancel',
+  {
+    openApiPath: `${MOUNT}/sync/{facilityId}/cancel`,
+    tags: ['FMS'],
+    summary: 'Cancel an active FMS sync',
+    security: 'bearer',
+    params: fmsFacilityIdParamSchema,
+    responses: {
+      200: fmsSyncCancelResponseSchema,
+      403: errorEnvelopeSchema,
+      500: errorEnvelopeSchema,
+    },
+  },
   requireRoles([UserRole.ADMIN, UserRole.DEV_ADMIN, UserRole.FACILITY_ADMIN]),
   asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
     const user = req.user!;
     const { facilityId } = req.params;
 
-    if (!facilityId) {
-      res.status(400).json({
-        success: false,
-        message: 'Facility ID is required'
-      });
-      return;
-    }
-
-    // Check access
     if (user.role === UserRole.FACILITY_ADMIN) {
       if (!user.facilityIds?.includes(facilityId)) {
         res.status(403).json({
           success: false,
-          message: 'Access denied to this facility'
+          message: 'Access denied to this facility',
         });
         return;
       }
@@ -378,34 +459,35 @@ router.post('/sync/:facilityId/cancel',
         error: error instanceof Error ? error.message : 'Unknown error',
       });
     }
-  })
+  }),
 );
 
-/**
- * GET /api/v1/fms/sync/:facilityId/history
- * Get sync history for a facility
- */
-router.get('/sync/:facilityId/history',
+registerGet(
+  router,
+  '/sync/:facilityId/history',
+  {
+    openApiPath: `${MOUNT}/sync/{facilityId}/history`,
+    tags: ['FMS'],
+    summary: 'Get sync history for a facility',
+    security: 'bearer',
+    params: fmsFacilityIdParamSchema,
+    query: fmsSyncHistoryQuerySchema,
+    responses: {
+      200: fmsSyncHistoryResponseSchema,
+      403: errorEnvelopeSchema,
+    },
+  },
   requireRoles([UserRole.ADMIN, UserRole.DEV_ADMIN, UserRole.FACILITY_ADMIN]),
   asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
     const user = req.user!;
     const { facilityId } = req.params;
     const { limit, offset } = req.query;
 
-    if (!facilityId) {
-      res.status(400).json({
-        success: false,
-        message: 'Facility ID is required'
-      });
-      return;
-    }
-
-    // Check access
     if (user.role === UserRole.FACILITY_ADMIN) {
       if (!user.facilityIds?.includes(facilityId)) {
         res.status(403).json({
           success: false,
-          message: 'Access denied to this facility'
+          message: 'Access denied to this facility',
         });
         return;
       }
@@ -421,43 +503,88 @@ router.get('/sync/:facilityId/history',
       logs: result.logs,
       total: result.total,
     });
-  })
+  }),
 );
 
-/**
- * GET /api/v1/fms/sync/:syncLogId
- * Get sync details
- */
-router.get('/sync/:syncLogId',
+registerGet(
+  router,
+  '/webhooks/:facilityId/events',
+  {
+    openApiPath: `${MOUNT}/webhooks/{facilityId}/events`,
+    tags: ['FMS'],
+    summary: 'Get recent FMS webhook events for a facility',
+    security: 'bearer',
+    params: fmsFacilityIdParamSchema,
+    query: fmsWebhookEventsQuerySchema,
+    responses: {
+      200: fmsWebhookEventsResponseSchema,
+      403: errorEnvelopeSchema,
+    },
+  },
+  requireRoles([UserRole.ADMIN, UserRole.DEV_ADMIN, UserRole.FACILITY_ADMIN]),
+  asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+    const user = req.user!;
+    const { facilityId } = req.params;
+    const limit = req.query.limit ? parseInt(String(req.query.limit), 10) : 5;
+
+    if (user.role === UserRole.FACILITY_ADMIN) {
+      if (!user.facilityIds?.includes(facilityId)) {
+        res.status(403).json({
+          success: false,
+          message: 'Access denied to this facility',
+        });
+        return;
+      }
+    }
+
+    const includeDiagnostics = user.role === UserRole.ADMIN || user.role === UserRole.DEV_ADMIN;
+    const events = await FMSService.getInstance().getRecentWebhookEvents(facilityId, limit, {
+      includeUnsuccessful: includeDiagnostics,
+      includeRawPayload: includeDiagnostics,
+    });
+
+    res.json({
+      success: true,
+      events,
+    });
+  }),
+);
+
+registerGet(
+  router,
+  '/sync/:syncLogId',
+  {
+    openApiPath: `${MOUNT}/sync/{syncLogId}`,
+    tags: ['FMS'],
+    summary: 'Get sync details',
+    security: 'bearer',
+    params: fmsSyncLogIdParamSchema,
+    responses: {
+      200: fmsSyncLogResponseSchema,
+      403: errorEnvelopeSchema,
+      404: errorEnvelopeSchema,
+    },
+  },
   requireRoles([UserRole.ADMIN, UserRole.DEV_ADMIN, UserRole.FACILITY_ADMIN]),
   asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
     const user = req.user!;
     const { syncLogId } = req.params;
-
-    if (!syncLogId) {
-      res.status(400).json({
-        success: false,
-        message: 'Sync log ID is required'
-      });
-      return;
-    }
 
     const syncLog = await getSyncLogModel().findById(syncLogId);
 
     if (!syncLog) {
       res.status(404).json({
         success: false,
-        message: 'Sync log not found'
+        message: 'Sync log not found',
       });
       return;
     }
 
-    // Check access
     if (user.role === UserRole.FACILITY_ADMIN) {
       if (!user.facilityIds?.includes(syncLog.facility_id)) {
         res.status(403).json({
           success: false,
-          message: 'Access denied to this sync log'
+          message: 'Access denied to this sync log',
         });
         return;
       }
@@ -467,108 +594,94 @@ router.get('/sync/:syncLogId',
       success: true,
       syncLog,
     });
-  })
+  }),
 );
 
-/**
- * GET /api/v1/fms/changes/:syncLogId/pending
- * Get pending changes for review
- */
-router.get('/changes/:syncLogId/pending',
+registerGet(
+  router,
+  '/changes/:syncLogId/pending',
+  {
+    openApiPath: `${MOUNT}/changes/{syncLogId}/pending`,
+    tags: ['FMS'],
+    summary: 'Get pending changes for review',
+    security: 'bearer',
+    params: fmsSyncLogIdParamSchema,
+    responses: {
+      200: fmsPendingChangesResponseSchema,
+      403: errorEnvelopeSchema,
+      404: errorEnvelopeSchema,
+    },
+  },
   requireRoles([UserRole.ADMIN, UserRole.DEV_ADMIN, UserRole.FACILITY_ADMIN]),
   asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
     const user = req.user!;
     const { syncLogId } = req.params;
 
-    if (!syncLogId) {
-      res.status(400).json({
-        success: false,
-        message: 'Sync log ID is required'
-      });
-      return;
-    }
-
-    // Get sync log to check facility access
     const syncLog = await getSyncLogModel().findById(syncLogId);
     if (!syncLog) {
       res.status(404).json({
         success: false,
-        message: 'Sync log not found'
+        message: 'Sync log not found',
       });
       return;
     }
 
-    // Check access
     if (user.role === UserRole.FACILITY_ADMIN) {
       if (!user.facilityIds?.includes(syncLog.facility_id)) {
         res.status(403).json({
           success: false,
-          message: 'Access denied'
+          message: 'Access denied',
         });
         return;
       }
     }
 
-    // Retrieve pending changes and ensure validation_errors are present for invalid items
-    const changes = (await getFMSService().getPendingChanges(syncLogId)).map((c) => {
-      if ((c.is_valid === false || c.is_valid === null || typeof c.is_valid === 'undefined') && (!c.validation_errors || c.validation_errors.length === 0)) {
-        const derived: string[] = [];
-        const after: any = c.after_data;
-        if (c.entity_type === 'tenant' && after) {
-          const email = after.email as string | null | undefined;
-          const firstName = (after.firstName ?? after.first_name) as string | null | undefined;
-          const lastName = (after.lastName ?? after.last_name) as string | null | undefined;
-          if (!email || (typeof email === 'string' && email.trim() === '')) derived.push('Missing or empty email address');
-          if (!firstName || (typeof firstName === 'string' && firstName.trim() === '')) derived.push('Missing or empty first name');
-          if (!lastName || (typeof lastName === 'string' && lastName.trim() === '')) derived.push('Missing or empty last name');
-        }
-        return { ...c, validation_errors: derived.length > 0 ? derived : c.validation_errors };
-      }
-      return c;
-    });
+    const changes = (await getFMSService().getPendingChanges(syncLogId)).map((c) =>
+      refreshPendingTenantChangeForDisplay(c),
+    );
 
     res.json({
       success: true,
       changes,
       total: changes.length,
     });
-  })
+  }),
 );
 
-/**
- * POST /api/v1/fms/changes/review
- * Review changes (accept or reject)
- */
-router.post('/changes/review',
+registerPost(
+  router,
+  '/changes/review',
+  {
+    openApiPath: `${MOUNT}/changes/review`,
+    tags: ['FMS'],
+    summary: 'Review changes (accept or reject)',
+    security: 'bearer',
+    body: reviewFmsChangesSchema,
+    responses: {
+      200: fmsReviewChangesResponseSchema,
+      403: errorEnvelopeSchema,
+      404: errorEnvelopeSchema,
+    },
+  },
   requireRoles([UserRole.ADMIN, UserRole.DEV_ADMIN, UserRole.FACILITY_ADMIN]),
   asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
     const user = req.user!;
     const { syncLogId, changeIds, accepted } = req.body;
 
-    if (!syncLogId || !Array.isArray(changeIds) || typeof accepted !== 'boolean') {
-      res.status(400).json({
-        success: false,
-        message: 'syncLogId, changeIds (array), and accepted (boolean) are required'
-      });
-      return;
-    }
-
-    // SECURITY: Get sync log to validate facility access
     const syncLog = await getSyncLogModel().findById(syncLogId);
     if (!syncLog) {
       res.status(404).json({
         success: false,
-        message: 'Sync log not found'
+        message: 'Sync log not found',
       });
       return;
     }
 
-    // SECURITY: Check facility access
     if (user.role === UserRole.FACILITY_ADMIN) {
       if (!user.facilityIds?.includes(syncLog.facility_id)) {
         res.status(403).json({
           success: false,
-          message: 'Access denied to this facility'
+          message: 'Access denied to this facility',
         });
         return;
       }
@@ -580,43 +693,44 @@ router.post('/changes/review',
       success: true,
       message: `${changeIds.length} change(s) ${accepted ? 'accepted' : 'rejected'}`,
     });
-  })
+  }),
 );
 
-/**
- * POST /api/v1/fms/changes/apply
- * Apply accepted changes
- */
-router.post('/changes/apply',
+registerPost(
+  router,
+  '/changes/apply',
+  {
+    openApiPath: `${MOUNT}/changes/apply`,
+    tags: ['FMS'],
+    summary: 'Apply accepted changes',
+    security: 'bearer',
+    body: applyFmsChangesSchema,
+    responses: {
+      200: fmsApplyChangesResponseSchema,
+      403: errorEnvelopeSchema,
+      404: errorEnvelopeSchema,
+      500: fmsApplyChangesResponseSchema,
+    },
+  },
   requireRoles([UserRole.ADMIN, UserRole.DEV_ADMIN, UserRole.FACILITY_ADMIN]),
   asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
     const user = req.user!;
     const { syncLogId, changeIds } = req.body;
 
-    if (!syncLogId || !Array.isArray(changeIds)) {
-      res.status(400).json({
-        success: false,
-        message: 'syncLogId and changeIds (array) are required'
-      });
-      return;
-    }
-
-    // SECURITY: Get sync log to validate facility access
     const syncLog = await getSyncLogModel().findById(syncLogId);
     if (!syncLog) {
       res.status(404).json({
         success: false,
-        message: 'Sync log not found'
+        message: 'Sync log not found',
       });
       return;
     }
 
-    // SECURITY: Check facility access
     if (user.role === UserRole.FACILITY_ADMIN) {
       if (!user.facilityIds?.includes(syncLog.facility_id)) {
         res.status(403).json({
           success: false,
-          message: 'Access denied to this facility'
+          message: 'Access denied to this facility',
         });
         return;
       }
@@ -637,34 +751,61 @@ router.post('/changes/apply',
         error: error instanceof Error ? error.message : 'Unknown error',
       });
     }
-  })
+  }),
 );
 
-/**
- * POST /api/v1/fms/webhook/:facilityId
- * Webhook receiver for FMS events
- * TODO: Implement webhook signature validation per provider
- */
-router.post('/webhook/:facilityId',
-  asyncHandler(async (_req: AuthenticatedRequest, res: Response): Promise<void> => {
-    // Webhook implementation stub
-    // const { facilityId } = req.params;
-    // const payload = req.body;
-    // const signature = req.headers['x-fms-signature'] as string;
+registerPost(
+  router,
+  '/changes/dismiss',
+  {
+    openApiPath: `${MOUNT}/changes/dismiss`,
+    tags: ['FMS'],
+    summary: 'Dismiss pending FMS changes from review',
+    description:
+      'Marks invalid or failed changes as rejected so they leave the pending review queue. Omit changeIds to dismiss all dismissible pending changes for the sync log.',
+    security: 'bearer',
+    body: dismissFmsChangesSchema,
+    responses: {
+      200: fmsDismissChangesResponseSchema,
+      403: errorEnvelopeSchema,
+      404: errorEnvelopeSchema,
+    },
+  },
+  requireRoles([UserRole.ADMIN, UserRole.DEV_ADMIN, UserRole.FACILITY_ADMIN]),
+  asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+    const user = req.user!;
+    const { syncLogId, changeIds } = req.body;
 
-    // TODO: Validate webhook signature
-    // TODO: Parse webhook payload
-    // TODO: Process event
-    // TODO: Create sync log entry
-    // TODO: Detect changes
-    // TODO: Apply changes if auto-accept enabled
+    const syncLog = await getSyncLogModel().findById(syncLogId);
+    if (!syncLog) {
+      res.status(404).json({
+        success: false,
+        message: 'Sync log not found',
+      });
+      return;
+    }
+
+    if (user.role === UserRole.FACILITY_ADMIN) {
+      if (!user.facilityIds?.includes(syncLog.facility_id)) {
+        res.status(403).json({
+          success: false,
+          message: 'Access denied to this facility',
+        });
+        return;
+      }
+    }
+
+    const { dismissed } = await getFMSService().dismissChanges(syncLogId, changeIds);
 
     res.json({
       success: true,
-      message: 'Webhook received (processing not yet implemented)',
+      message:
+        dismissed === 0
+          ? 'No dismissible changes found'
+          : `${dismissed} change(s) dismissed`,
+      dismissed,
     });
-  })
+  }),
 );
 
 export { router as fmsRouter };
-

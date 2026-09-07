@@ -1,7 +1,16 @@
 import { RoutePassIssuanceModel, RoutePassIssuanceLog } from '@/models/route-pass-issuance.model';
 import { DatabaseService } from '@/services/database.service';
+import { logger } from '@/utils/logger';
 
 jest.mock('@/services/database.service');
+jest.mock('@/utils/logger', () => ({
+  logger: {
+    info: jest.fn(),
+    warn: jest.fn(),
+    error: jest.fn(),
+    debug: jest.fn(),
+  },
+}));
 
 describe('RoutePassIssuanceModel', () => {
   let model: RoutePassIssuanceModel;
@@ -21,6 +30,7 @@ describe('RoutePassIssuanceModel', () => {
     mockKnex = jest.fn((table: string) => {
       return mockQueryBuilder;
     });
+    mockKnex.raw = jest.fn((sql: string, bindings?: any[]) => ({ sql, bindings }));
 
     (DatabaseService.getInstance as jest.Mock).mockReturnValue({
       connection: mockKnex,
@@ -42,7 +52,7 @@ describe('RoutePassIssuanceModel', () => {
         id: 'log-1',
         user_id: 'user-1',
         device_id: 'device-1',
-        audiences: ['lock:lock-1', 'lock:lock-2'],
+        audiences: ['lock:serial-1', 'lock:serial-2'],
         jti: 'jwt-id-123',
         issued_at: now,
         expires_at: expiresAt,
@@ -72,7 +82,7 @@ describe('RoutePassIssuanceModel', () => {
       const result = await model.create({
         userId: 'user-1',
         deviceId: 'device-1',
-        audiences: ['lock:lock-1', 'lock:lock-2'],
+        audiences: ['lock:serial-1', 'lock:serial-2'],
         jti: 'jwt-id-123',
         issuedAt: now,
         expiresAt,
@@ -82,14 +92,14 @@ describe('RoutePassIssuanceModel', () => {
         id: expect.any(String),
         user_id: 'user-1',
         device_id: 'device-1',
-        audiences: JSON.stringify(['lock:lock-1', 'lock:lock-2']),
+        audiences: JSON.stringify(['lock:serial-1', 'lock:serial-2']),
         jti: 'jwt-id-123',
         issued_at: now,
         expires_at: expiresAt,
-        created_at: expect.any(Date),
-        updated_at: expect.any(Date),
+        created_at: expect.anything(),
+        updated_at: expect.anything(),
       });
-      expect(result.audiences).toEqual(['lock:lock-1', 'lock:lock-2']);
+      expect(result.audiences).toEqual(['lock:serial-1', 'lock:serial-2']);
     });
   });
 
@@ -102,7 +112,7 @@ describe('RoutePassIssuanceModel', () => {
         id: 'log-1',
         user_id: 'user-1',
         device_id: 'device-1',
-        audiences: JSON.stringify(['lock:lock-1']),
+        audiences: JSON.stringify(['lock:serial-1']),
         jti: 'jwt-id-123',
         issued_at: now,
         expires_at: expiresAt,
@@ -127,7 +137,7 @@ describe('RoutePassIssuanceModel', () => {
 
       expect(firstMock).toHaveBeenCalled();
       expect(result).toBeDefined();
-      expect(result?.audiences).toEqual(['lock:lock-1']);
+      expect(result?.audiences).toEqual(['lock:serial-1']);
     });
 
     it('returns undefined if no route pass exists', async () => {
@@ -177,7 +187,7 @@ describe('RoutePassIssuanceModel', () => {
         id: 'log-1',
         user_id: 'user-1',
         device_id: 'device-1',
-        audiences: JSON.stringify(['lock:lock-1']),
+        audiences: JSON.stringify(['lock:serial-1']),
         jti: 'jwt-id-123',
         issued_at: new Date(now.getTime() - 25 * 60 * 60 * 1000),
         expires_at: expiredAt,
@@ -210,7 +220,7 @@ describe('RoutePassIssuanceModel', () => {
         id: 'log-1',
         user_id: 'user-1',
         device_id: 'device-1',
-        audiences: JSON.stringify(['lock:lock-1']),
+        audiences: JSON.stringify(['lock:serial-1']),
         jti: 'jwt-id-123',
         issued_at: now,
         expires_at: expiresAt,
@@ -246,7 +256,7 @@ describe('RoutePassIssuanceModel', () => {
           id: 'log-1',
           user_id: 'user-1',
           device_id: 'device-1',
-          audiences: JSON.stringify(['lock:lock-1']),
+          audiences: JSON.stringify(['lock:serial-1']),
           jti: 'jwt-id-123',
           issued_at: now,
           expires_at: expiresAt,
@@ -257,7 +267,7 @@ describe('RoutePassIssuanceModel', () => {
           id: 'log-2',
           user_id: 'user-1',
           device_id: 'device-2',
-          audiences: JSON.stringify(['lock:lock-2']),
+          audiences: JSON.stringify(['lock:serial-2']),
           jti: 'jwt-id-456',
           issued_at: new Date(now.getTime() - 1000),
           expires_at: new Date(now.getTime() + 23 * 60 * 60 * 1000),
@@ -283,8 +293,8 @@ describe('RoutePassIssuanceModel', () => {
       const result = await model.getUserHistory('user-1', { limit: 50, offset: 0 });
 
       expect(result).toHaveLength(2);
-      expect(result[0].audiences).toEqual(['lock:lock-1']);
-      expect(result[1].audiences).toEqual(['lock:lock-2']);
+      expect(result[0].audiences).toEqual(['lock:serial-1']);
+      expect(result[1].audiences).toEqual(['lock:serial-2']);
     });
 
     it('applies date filters', async () => {
@@ -315,6 +325,36 @@ describe('RoutePassIssuanceModel', () => {
       expect(mockKnex).toHaveBeenCalledWith('route_pass_issuance_log');
       expect(builder.where).toHaveBeenCalledWith('issued_at', '>=', startDate);
       expect(builder.where).toHaveBeenCalledWith('issued_at', '<=', endDate);
+    });
+
+    it('sanitizes malformed audience payloads', async () => {
+      const malformedEntries = [
+        { id: 'log-1', audiences: '' },
+        { id: 'log-2', audiences: 'not-json' },
+        { id: 'log-3', audiences: null },
+      ];
+
+      const builder: any = {
+        where: jest.fn().mockReturnThis(),
+        orderBy: jest.fn().mockReturnThis(),
+        limit: jest.fn().mockReturnThis(),
+        offset: jest.fn().mockResolvedValue(malformedEntries),
+      };
+
+      mockKnex.mockImplementation((table: string) => {
+        if (table === 'route_pass_issuance_log') {
+          return builder;
+        }
+        return {};
+      });
+
+      const result = await model.getUserHistory('user-1', { limit: 50, offset: 0 });
+
+      expect(result).toHaveLength(3);
+      for (const entry of result) {
+        expect(entry.audiences).toEqual([]);
+      }
+      expect(logger.warn).toHaveBeenCalled();
     });
   });
 

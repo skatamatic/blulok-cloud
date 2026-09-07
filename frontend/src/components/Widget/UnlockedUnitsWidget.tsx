@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useWidgetSizeState } from '@/hooks/useWidgetSizeState';
 import { useNavigate } from 'react-router-dom';
 import { 
   LockOpenIcon,
@@ -7,20 +8,25 @@ import {
   UserIcon,
   MapPinIcon,
   LockClosedIcon,
-  ArrowPathIcon
 } from '@heroicons/react/24/outline';
 import { Widget } from './Widget';
 import { WidgetSize } from './WidgetSizeDropdown';
 import { motion } from 'framer-motion';
 import { useUnitsData } from '@/hooks/useUnitsData';
+import { WIDGET_BODY_CLASS, WIDGET_LIST_SCROLL_CLASS } from '@/utils/widget-layout.utils';
 
 interface UnlockedUnitsWidgetProps {
   id: string;
   title: string;
   initialSize?: WidgetSize;
+  currentSize?: WidgetSize;
   availableSizes?: WidgetSize[];
+  onSizeChange?: (size: WidgetSize) => void;
   onGridSizeChange?: (gridSize: { w: number; h: number }) => void;
   onRemove?: () => void;
+  readOnly?: boolean;
+  /** When set (single facility from global selector), scopes unit lists to that facility */
+  facilityFilter?: string;
 }
 
 // Helper function to calculate duration since unlock
@@ -60,15 +66,23 @@ export const UnlockedUnitsWidget: React.FC<UnlockedUnitsWidgetProps> = ({
   id,
   title,
   initialSize = 'medium',
+  currentSize,
   availableSizes = ['small', 'medium', 'medium-tall', 'large', 'large-wide', 'huge'],
+  onSizeChange,
   onGridSizeChange,
-  onRemove
+  onRemove,
+  readOnly,
+  facilityFilter,
 }) => {
   const navigate = useNavigate();
-  const [size, setSize] = useState<WidgetSize>(initialSize);
+  const { size, handleSizeChange } = useWidgetSizeState(
+    currentSize,
+    initialSize,
+    onSizeChange
+  );
   const [filter, setFilter] = useState<'all' | 'long_unlocked' | 'recent_unlocked'>('all');
   
-  const { data: unitsData, loading, error, refetch } = useUnitsData();
+  const { data: unitsData, loading, error } = useUnitsData(facilityFilter);
 
 
   // Filter units based on duration
@@ -139,20 +153,12 @@ export const UnlockedUnitsWidget: React.FC<UnlockedUnitsWidgetProps> = ({
       title={`${title} ${displayedUnits.length > 0 ? `(${displayedUnits.length})` : ''}`}
       size={size}
       availableSizes={availableSizes}
-      onSizeChange={setSize}
+      onSizeChange={handleSizeChange}
       onGridSizeChange={onGridSizeChange}
       onRemove={onRemove}
+      readOnly={readOnly}
       enhancedMenu={
         <div className="space-y-1">
-          <button
-            onClick={refetch}
-            disabled={loading}
-            className="w-full px-3 py-2 text-left text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 rounded flex items-center space-x-2 disabled:opacity-50"
-          >
-            <ArrowPathIcon className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
-            <span>Refresh</span>
-          </button>
-          <div className="border-t border-gray-200 dark:border-gray-600 my-1"></div>
           {[
             { key: 'all', label: 'All Unlocked' },
             { key: 'long_unlocked', label: 'Long Unlocked (2h+)' },
@@ -173,7 +179,7 @@ export const UnlockedUnitsWidget: React.FC<UnlockedUnitsWidgetProps> = ({
         </div>
       }
     >
-      <div className="flex flex-col">
+      <div className={WIDGET_BODY_CLASS}>
         {/* Error Display */}
         {error && (
           <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg p-3 mb-4">
@@ -323,14 +329,6 @@ export const UnlockedUnitsWidget: React.FC<UnlockedUnitsWidgetProps> = ({
                       {displayedUnits.length} Unlocked
                     </span>
                   </div>
-                  <button
-                    onClick={refetch}
-                    disabled={loading}
-                    className="p-1 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors rounded"
-                    title="Refresh"
-                  >
-                    <ArrowPathIcon className={`h-3 w-3 ${loading ? 'animate-spin' : ''}`} />
-                  </button>
                 </div>
 
                 {/* Duration Summary - More compact */}
@@ -354,7 +352,7 @@ export const UnlockedUnitsWidget: React.FC<UnlockedUnitsWidgetProps> = ({
                 </div>
 
                 {/* Most Critical Units - Refined layout with grouping */}
-                <div className="flex-1 space-y-1.5 overflow-y-auto">
+                <div className={`${WIDGET_LIST_SCROLL_CLASS} space-y-1.5`}>
                   {groupedUnits.slice(0, hasMultipleFacilities ? 2 : 1).map((group, groupIndex) => (
                     <div key={group.facilityName} className="space-y-1.5">
                       {/* Facility Header for small mode */}

@@ -1,9 +1,22 @@
 import { Response, NextFunction, RequestHandler } from 'express';
 import { AuthService } from '@/services/auth.service';
+import { FacilityAccessService } from '@/services/facility-access.service';
+import { UserModel, type User } from '@/models/user.model';
 import { UserRole, AuthenticatedRequest } from '@/types/auth.types';
-import { AppError } from '@/middleware/error.middleware';
+import { AppError, asyncHandler } from '@/middleware/error.middleware';
 
-export const authenticateToken: RequestHandler = (req: AuthenticatedRequest, _res: Response, next: NextFunction): void => {
+/**
+ * Verify JWT and attach the authenticated user to the request.
+ * For facility-scoped roles, overwrites `facilityIds` with live DB associations
+ * so route handlers never authorize or filter using stale JWT claims.
+ * Also rejects tokens for deactivated or password-reset-required accounts
+ * (e.g. after account reset) so JWTs cannot outlive auth identity wipes.
+ */
+export const authenticateToken = asyncHandler(async (
+  req: AuthenticatedRequest,
+  _res: Response,
+  next: NextFunction
+): Promise<void> => {
   const authHeader = req.headers.authorization;
   const token = authHeader && authHeader.split(' ')[1]; // Bearer TOKEN
 
@@ -16,12 +29,29 @@ export const authenticateToken: RequestHandler = (req: AuthenticatedRequest, _re
     throw new AppError('Invalid or expired token', 401);
   }
 
-  req.user = decoded;
-  next();
-};
+  const dbUser = (await UserModel.findById(decoded.userId)) as User | undefined;
+  if (!dbUser) {
+    throw new AppError('Invalid or expired token', 401);
+  }
+  const denial = AuthService.getSessionDenialReason(dbUser);
+  if (denial) {
+    throw new AppError(denial, 401);
+  }
 
-export const requireRoles = (roles: UserRole[]) => {
-  return (req: AuthenticatedRequest, _res: Response, next: NextFunction): void => {
+  req.user = decoded;
+
+  if (AuthService.isFacilityScoped(decoded.role as UserRole)) {
+    req.user.facilityIds = await FacilityAccessService.getUserFacilityIds(
+      decoded.userId,
+      decoded.role as UserRole
+    );
+  }
+
+  next();
+});
+
+export const requireRoles = (roles: UserRole[]): RequestHandler => {
+  return ((req: AuthenticatedRequest, _res: Response, next: NextFunction): void => {
     if (!req.user) {
       throw new AppError('Authentication required', 401);
     }
@@ -31,7 +61,7 @@ export const requireRoles = (roles: UserRole[]) => {
     }
 
     next();
-  };
+  }) as RequestHandler;
 };
 
 export const requireAdmin: RequestHandler = (req: AuthenticatedRequest, _res: Response, next: NextFunction): void => {
@@ -228,8 +258,9 @@ export const requireFacilityScope: RequestHandler = (req: AuthenticatedRequest, 
 };
 
 /**
- * Helper to extract facility filters for queries
- * Returns facility IDs that should be used for filtering, or undefined if global admin
+ * Helper to extract facility filters for queries.
+ * Returns facility IDs that should be used for filtering, or undefined if global admin.
+ * Requires `authenticateToken` (hydrates facilityIds from DB for scoped roles).
  */
 export const applyFacilityScope = (req: AuthenticatedRequest): string[] | undefined => {
   if (!req.user) {

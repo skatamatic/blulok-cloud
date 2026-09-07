@@ -126,10 +126,11 @@ describe('ProviderConfigForm', () => {
   });
 
   describe('Auto-Accept Toggle', () => {
-    it('should render auto-accept checkbox', () => {
+    it('should render auto-accept checkboxes', () => {
       renderComponent(FMSProviderType.SIMULATED);
-      
-      expect(screen.getByLabelText(/Automatically accept/i)).toBeInTheDocument();
+
+      expect(screen.getByLabelText(/Auto-apply webhook events/i)).toBeInTheDocument();
+      expect(screen.getByLabelText(/Auto-apply full \/ manual sync/i)).toBeInTheDocument();
     });
 
     it('should include auto-accept setting in config', async () => {
@@ -144,8 +145,8 @@ describe('ProviderConfigForm', () => {
       });
 
       renderComponent(FMSProviderType.SIMULATED);
-      
-      const autoAcceptCheckbox = screen.getByLabelText(/Automatically accept/i);
+
+      const autoAcceptCheckbox = screen.getByLabelText(/Auto-apply full \/ manual sync/i);
       fireEvent.click(autoAcceptCheckbox);
 
       const submitButton = screen.getByText('Save Configuration');
@@ -157,6 +158,7 @@ describe('ProviderConfigForm', () => {
             config: expect.objectContaining({
               syncSettings: expect.objectContaining({
                 autoAcceptChanges: true,
+                autoAcceptWebhookChanges: false,
               }),
             }),
           })
@@ -338,10 +340,76 @@ describe('ProviderConfigForm', () => {
       });
     });
 
+    it('should render webhook security fields for Storable Edge', () => {
+      renderComponent(FMSProviderType.STOREDGE);
+
+      expect(screen.getByLabelText(/Webhook security/i)).toBeInTheDocument();
+      expect(screen.getByText(/Webhook URL:/i)).toBeInTheDocument();
+    });
+
+    it('should save header_secret webhook auth mode', async () => {
+      mockFmsService.createConfig.mockResolvedValue({
+        id: 'config-1',
+        facility_id: facilityId,
+        provider_type: FMSProviderType.STOREDGE,
+        is_enabled: true,
+        config: {} as any,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      });
+
+      renderComponent(FMSProviderType.STOREDGE);
+
+      fireEvent.change(screen.getByLabelText(/Facility ID/i), {
+        target: { value: 'my-facility-id' },
+      });
+      fireEvent.change(screen.getByLabelText(/Storable Edge API URL/i), {
+        target: { value: 'https://api.storedge.com' },
+      });
+      fireEvent.change(screen.getByLabelText(/Consumer Key/i), {
+        target: { value: 'key' },
+      });
+      fireEvent.change(screen.getByLabelText(/Consumer Secret/i), {
+        target: { value: 'secret' },
+      });
+
+      fireEvent.change(screen.getByLabelText(/Webhook security/i), {
+        target: { value: 'header_secret' },
+      });
+      fireEvent.change(screen.getByLabelText(/Shared secret value/i), {
+        target: { value: 'my-static-header-secret' },
+      });
+
+      fireEvent.click(screen.getByText('Save Configuration'));
+
+      await waitFor(() => {
+        expect(mockFmsService.createConfig).toHaveBeenCalledWith(
+          expect.objectContaining({
+            config: expect.objectContaining({
+              syncSettings: expect.objectContaining({
+                webhookAuthMode: 'header_secret',
+                webhookSecret: 'my-static-header-secret',
+              }),
+            }),
+          })
+        );
+      });
+    });
+
+    it('should show danger warning when no auth mode selected', () => {
+      renderComponent(FMSProviderType.STOREDGE);
+
+      fireEvent.change(screen.getByLabelText(/Webhook security/i), {
+        target: { value: 'none' },
+      });
+
+      expect(screen.getByText(/Danger: unauthenticated webhook endpoint/i)).toBeInTheDocument();
+    });
+
     it('should show helpful placeholder text for each field', () => {
       renderComponent(FMSProviderType.STOREDGE);
 
-      expect(screen.getByPlaceholderText('https://api.storedge.com')).toBeInTheDocument();
+      expect(screen.getByPlaceholderText('https://api.storedgefms.com')).toBeInTheDocument();
       expect(screen.getByPlaceholderText('your-facility-id')).toBeInTheDocument();
       expect(screen.getByPlaceholderText('Enter your OAuth consumer key')).toBeInTheDocument();
       expect(screen.getByPlaceholderText('Enter your OAuth consumer secret')).toBeInTheDocument();
@@ -393,7 +461,7 @@ describe('ProviderConfigForm', () => {
       expect(screen.getByDisplayValue('existing-consumer-secret')).toBeInTheDocument();
 
       // Check that auto-accept checkbox is checked
-      const autoAcceptCheckbox = screen.getByLabelText(/Automatically accept/i);
+      const autoAcceptCheckbox = screen.getByLabelText(/Auto-apply full \/ manual sync/i);
       expect(autoAcceptCheckbox).toBeChecked();
     });
 
@@ -440,7 +508,7 @@ describe('ProviderConfigForm', () => {
       expect(screen.getByDisplayValue('test-secret')).toBeInTheDocument();
 
       // Check that auto-accept checkbox is unchecked
-      const autoAcceptCheckbox = screen.getByLabelText(/Automatically accept/i);
+      const autoAcceptCheckbox = screen.getByLabelText(/Auto-apply full \/ manual sync/i);
       expect(autoAcceptCheckbox).not.toBeChecked();
     });
   });

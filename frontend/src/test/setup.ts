@@ -2,18 +2,33 @@ import '@testing-library/jest-dom';
 
 // Polyfill for TextEncoder/TextDecoder (needed for supertest)
 import { TextEncoder, TextDecoder } from 'util';
-(global as any).TextEncoder = TextEncoder;
-(global as any).TextDecoder = TextDecoder;
+type GlobalWithPolyfills = typeof globalThis & {
+  setImmediate?: typeof setImmediate;
+  IntersectionObserver: typeof IntersectionObserver;
+};
+const globalWithPolyfills = global as GlobalWithPolyfills;
+
+Object.defineProperty(globalThis, 'TextEncoder', {
+  writable: true,
+  configurable: true,
+  value: TextEncoder as unknown as typeof globalThis.TextEncoder,
+});
+Object.defineProperty(globalThis, 'TextDecoder', {
+  writable: true,
+  configurable: true,
+  value: TextDecoder as unknown as typeof globalThis.TextDecoder,
+});
 
 // Polyfill for setImmediate (needed for Express)
-(global as any).setImmediate = (callback: (...args: any[]) => void, ...args: any[]) => {
+globalWithPolyfills.setImmediate = ((callback: (...args: unknown[]) => void, ...args: unknown[]) => {
   return setTimeout(callback, 0, ...args);
-};
+}) as unknown as typeof setImmediate;
 
 // Mock import.meta for Vite environment variables
 Object.defineProperty(globalThis, 'import.meta', {
   value: {
     env: {
+      DEV: false,
       VITE_API_URL: 'http://localhost:3000',
       VITE_WS_URL: 'ws://localhost:3000',
       VITE_GOOGLE_MAPS_API_KEY: 'test-api-key',
@@ -24,7 +39,7 @@ Object.defineProperty(globalThis, 'import.meta', {
 });
 
 // Mock IntersectionObserver
-(global as any).IntersectionObserver = class IntersectionObserver {
+globalWithPolyfills.IntersectionObserver = class IntersectionObserver {
   root = null;
   rootMargin = '';
   thresholds = [];
@@ -66,10 +81,17 @@ const originalWarn = console.warn;
 const originalLog = console.log;
 
 beforeAll(() => {
-  console.error = jest.fn((...args: any[]) => {
-    // Only log React warnings and critical errors, suppress everything else
+  console.error = jest.fn((...args: unknown[]) => {
+    // Suppress React warnings about act(), deprecated APIs, and non-boolean attributes
+    // Only show actual test failures and critical errors
     const message = args[0]?.toString() || '';
-    if (message.includes('Warning:') || (message.includes('Error:') && !message.includes('Failed to'))) {
+    const shouldSuppress = 
+      message.includes('ReactDOMTestUtils.act') ||
+      message.includes('not wrapped in act') ||
+      message.includes('non-boolean attribute') ||
+      message.includes('Warning:');
+    
+    if (!shouldSuppress && message.includes('Error:')) {
       originalError(...args);
     }
   });

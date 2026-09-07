@@ -1,6 +1,83 @@
-import { UnitModel } from '@/models/unit.model';
+import {
+  UnitModel,
+  deriveEffectiveUnitStatus,
+  assertStoredStatusAllowedWithAssignments,
+} from '@/models/unit.model';
 import { UserRole } from '@/types/auth.types';
 import { createMockTestData, MockTestData } from '@/__tests__/utils/mock-test-helpers';
+
+describe('deriveEffectiveUnitStatus', () => {
+  it('treats any assignment as occupied', () => {
+    expect(deriveEffectiveUnitStatus('available', 1)).toBe('occupied');
+    expect(deriveEffectiveUnitStatus('maintenance', 2)).toBe('occupied');
+    expect(deriveEffectiveUnitStatus('reserved', 1)).toBe('occupied');
+  });
+
+  it('maps stale occupied with zero assignments to available', () => {
+    expect(deriveEffectiveUnitStatus('occupied', 0)).toBe('available');
+  });
+
+  it('preserves maintenance and reserved when unassigned', () => {
+    expect(deriveEffectiveUnitStatus('maintenance', 0)).toBe('maintenance');
+    expect(deriveEffectiveUnitStatus('reserved', 0)).toBe('reserved');
+    expect(deriveEffectiveUnitStatus('available', 0)).toBe('available');
+  });
+
+  it('returns overlocked when occupied and flagged', () => {
+    expect(deriveEffectiveUnitStatus('occupied', 1, true)).toBe('overlocked');
+    expect(deriveEffectiveUnitStatus('occupied', 2, true)).toBe('overlocked');
+  });
+
+  it('ignores overlock flag when unit is vacant', () => {
+    expect(deriveEffectiveUnitStatus('available', 0, true)).toBe('available');
+    expect(deriveEffectiveUnitStatus('occupied', 0, true)).toBe('available');
+  });
+});
+
+describe('last unlock timestamp subquery', () => {
+  it('uses successful unlock activity_logs with access_logs fallback', () => {
+    const { LAST_UNLOCK_AT_SUBQUERY_SQL } = jest.requireActual('@/models/unit.model') as {
+      LAST_UNLOCK_AT_SUBQUERY_SQL: string;
+    };
+    expect(LAST_UNLOCK_AT_SUBQUERY_SQL).toContain('activity_logs');
+    expect(LAST_UNLOCK_AT_SUBQUERY_SQL).toContain("al.activity_type = 'unlock'");
+    expect(LAST_UNLOCK_AT_SUBQUERY_SQL).toContain("al.result = 'success'");
+    expect(LAST_UNLOCK_AT_SUBQUERY_SQL).toContain('access_logs');
+    expect(LAST_UNLOCK_AT_SUBQUERY_SQL).toContain("al2.action = 'unlock'");
+    expect(LAST_UNLOCK_AT_SUBQUERY_SQL).not.toContain('last_seen');
+  });
+});
+
+describe('assertStoredStatusAllowedWithAssignments', () => {
+  it('allows available, maintenance, and reserved when there are no assignments', () => {
+    expect(() => assertStoredStatusAllowedWithAssignments('available', 0)).not.toThrow();
+    expect(() => assertStoredStatusAllowedWithAssignments('maintenance', 0)).not.toThrow();
+    expect(() => assertStoredStatusAllowedWithAssignments('reserved', 0)).not.toThrow();
+  });
+
+  it('rejects occupied when there are no assignments', () => {
+    expect(() => assertStoredStatusAllowedWithAssignments('occupied', 0)).toThrow(
+      /Cannot set unit to occupied without a tenant assignment/
+    );
+  });
+
+  it('allows only occupied when assignments exist', () => {
+    expect(() => assertStoredStatusAllowedWithAssignments('occupied', 1)).not.toThrow();
+    expect(() => assertStoredStatusAllowedWithAssignments('occupied', 3)).not.toThrow();
+  });
+
+  it('rejects vacant statuses when assignments exist', () => {
+    expect(() => assertStoredStatusAllowedWithAssignments('available', 1)).toThrow(
+      /Cannot change unit status while tenants are assigned/
+    );
+    expect(() => assertStoredStatusAllowedWithAssignments('reserved', 2)).toThrow(
+      /Cannot change unit status while tenants are assigned/
+    );
+    expect(() => assertStoredStatusAllowedWithAssignments('maintenance', 1)).toThrow(
+      /Cannot change unit status while tenants are assigned/
+    );
+  });
+});
 
 describe('UnitModel', () => {
   let unitModel: UnitModel;
@@ -86,6 +163,17 @@ describe('UnitModel', () => {
 
       expect(result).toHaveProperty('units');
       expect(result).toHaveProperty('total');
+      expect(result.units.every((unit) => unit.facility_id === testData.facilities.facility1.id)).toBe(true);
+    });
+
+    it('should apply camelCase facilityId filter correctly', async () => {
+      const result = await unitModel.getUnitsListForUser(
+        testData.users.admin.id,
+        'admin' as UserRole,
+        { facilityId: testData.facilities.facility2.id, limit: 10, offset: 0 }
+      );
+
+      expect(result.units.every((unit) => unit.facility_id === testData.facilities.facility2.id)).toBe(true);
     });
 
     it('should apply pagination correctly', async () => {

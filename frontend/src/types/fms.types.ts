@@ -35,6 +35,7 @@ export enum FMSChangeType {
   UNIT_ADDED = 'unit_added',
   UNIT_REMOVED = 'unit_removed',
   UNIT_UPDATED = 'unit_updated',
+  UNIT_OVERLOCK_CHANGED = 'unit_overlock_changed',
 }
 
 export enum FMSChangeAction {
@@ -45,6 +46,25 @@ export enum FMSChangeAction {
   DEACTIVATE_USER = 'deactivate_user',
   ASSIGN_UNIT = 'assign_unit',
   UNASSIGN_UNIT = 'unassign_unit',
+}
+
+export enum FMSWebhookAuthMode {
+  HMAC = 'hmac',
+  NONE = 'none',
+  HEADER_SECRET = 'header_secret',
+}
+
+/**
+ * Controls whether newly created FMS tenants receive invite SMS/email.
+ * Unset / unknown values resolve to NONE (no automatic invites).
+ */
+export enum FMSInvitePolicy {
+  /** Never auto-send invites (default). Admins can still invite manually. */
+  NONE = 'none',
+  /** Auto-send only when the tenant is assigned to a unit with a BluLok device. */
+  DEVICE_EQUIPPED = 'device_equipped',
+  /** Auto-send to every non-placeholder tenant with contact info. */
+  ALL = 'all',
 }
 
 export interface FMSAuthConfig {
@@ -60,7 +80,7 @@ export interface FMSAuthConfig {
     tokenEndpoint?: string;
     consumerKey?: string; // OAuth1 consumer key
     consumerSecret?: string; // OAuth1 consumer secret
-    [key: string]: any;
+    [key: string]: unknown;
   };
 }
 
@@ -77,11 +97,20 @@ export interface FMSProviderConfig {
   };
   syncSettings: {
     autoAcceptChanges: boolean;
+    autoAcceptWebhookChanges?: boolean;
     syncInterval?: number;
     webhookUrl?: string;
+    webhookAuthMode?: FMSWebhookAuthMode;
     webhookSecret?: string;
+    webhookAuthHeader?: string;
+    webhookSignatureHeader?: string;
+    /**
+     * When to send invite SMS/email for newly created FMS tenants.
+     * Defaults to `none` when unset.
+     */
+    invitePolicy?: FMSInvitePolicy;
   };
-  customSettings?: Record<string, any>;
+  customSettings?: Record<string, unknown>;
 }
 
 export interface FMSConfiguration {
@@ -103,8 +132,8 @@ export interface FMSChange {
   entity_type: 'tenant' | 'unit';
   external_id: string;
   internal_id?: string;
-  before_data?: any;
-  after_data: any;
+  before_data?: unknown;
+  after_data: unknown;
   required_actions: FMSChangeAction[];
   impact_summary: string;
   is_reviewed: boolean;
@@ -152,9 +181,31 @@ export interface FMSSyncLog {
     units_synced: number;
     errors: string[];
     warnings: string[];
+    /** Set by server when changes were applied by facility auto-accept during this sync. */
+    changes_auto_applied?: boolean;
   };
   created_at: string;
   updated_at: string;
+}
+
+export type FMSWebhookRecordStatus = 'received' | 'processed' | 'failed' | 'ignored';
+
+export interface FMSWebhookFeedItem {
+  id: string;
+  facilityId: string;
+  eventType: string;
+  externalEventId: string;
+  receivedAt: string;
+  summary: Record<string, unknown>;
+  summaryText: string;
+  changesDetected: number;
+  changesApplied: number;
+  autoApplied: boolean;
+  requiresReview: boolean;
+  syncLogId: string;
+  status?: FMSWebhookRecordStatus;
+  errorMessage?: string | null;
+  rawPayload?: Record<string, unknown> | null;
 }
 
 // API Response types
@@ -184,12 +235,25 @@ export interface FMSTestConnectionResponse {
   error?: string;
 }
 
+/** Structured failure from applyChanges for user-facing summaries. */
+export interface FMSApplyErrorDetail {
+  changeId: string;
+  changeType: FMSChangeType;
+  entityType: 'tenant' | 'unit';
+  externalId: string;
+  entityLabel: string;
+  message: string;
+}
+
 // Result of applying FMS changes
 export interface FMSChangeApplicationResult {
   success: boolean;
   changesApplied: number;
   changesFailed: number;
   errors: string[];
+  errorDetails?: FMSApplyErrorDetail[];
+  appliedChangeIds?: string[];
+  failedChangeIds?: string[];
   accessChanges: {
     usersCreated: string[];
     usersDeactivated: string[];

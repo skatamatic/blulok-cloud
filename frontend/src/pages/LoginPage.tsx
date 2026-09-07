@@ -1,10 +1,12 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
+import { isViteDev } from '@/services/appConfig';
+import { DEV_QUICK_LOGIN_ACCOUNTS } from '@/config/devTestAccounts';
 import { LockClosedIcon, EyeIcon, EyeSlashIcon, ExclamationTriangleIcon } from '@heroicons/react/24/outline';
 
 export default function LoginPage() {
-  const [email, setEmail] = useState('');
+  const [identifier, setIdentifier] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState('');
@@ -17,7 +19,7 @@ export default function LoginPage() {
   const location = useLocation();
 
   const from = location.state?.from?.pathname || '/dashboard';
-  const isDev = (import.meta as any).env?.DEV;
+  const isDev = isViteDev();
 
   // Redirect if already authenticated
   useEffect(() => {
@@ -94,7 +96,7 @@ export default function LoginPage() {
     setIsSubmitting(true);
 
     try {
-      const response = await login({ email, password });
+      const response = await login({ identifier, password });
       
       if (response.success) {
         navigate(from, { replace: true });
@@ -120,15 +122,15 @@ export default function LoginPage() {
     }
   };
 
-  const handleTestAccountLogin = async (email: string, password: string) => {
-    setEmail(email);
+  const handleTestAccountLogin = async (emailOrPhone: string, password: string) => {
+    setIdentifier(emailOrPhone);
     setPassword(password);
     setError('');
     setIsLoading(true);
     setIsSubmitting(true);
 
     try {
-      const response = await login({ email, password });
+      const response = await login({ identifier: emailOrPhone, password });
       
       if (response.success) {
         navigate(from, { replace: true });
@@ -189,19 +191,19 @@ export default function LoginPage() {
           <form ref={formRef} className="space-y-6" onSubmit={handleSubmit}>
             <div className="space-y-4">
               <div>
-                <label htmlFor="email" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-                  Email address
+                <label htmlFor="identifier" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                  Email or phone
                 </label>
                 <input
-                  id="email"
-                  name="email"
-                  type="email"
-                  autoComplete="email"
+                  id="identifier"
+                  name="identifier"
+                  type="text"
+                  autoComplete="username"
                   required
-                  value={email}
-                  onChange={handleInputChange(setEmail)}
+                  value={identifier}
+                  onChange={handleInputChange(setIdentifier)}
                   className="input"
-                  placeholder="Enter your email"
+                  placeholder="Enter your email or phone"
                 />
               </div>
 
@@ -264,23 +266,19 @@ export default function LoginPage() {
                 <div className="text-sm font-medium text-gray-600 dark:text-gray-400 mb-3">
                   Quick login with test accounts:
                 </div>
-                <div className="space-y-2">
-                  <button
-                    onClick={() => handleTestAccountLogin('admin@blulok.com', 'Admin123!@#')}
-                    disabled={isLoading || isSubmitting}
-                    className="w-full bg-gray-50 dark:bg-gray-700 hover:bg-gray-100 dark:hover:bg-gray-600 rounded-md p-3 text-left transition-colors duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
-                  >
-                    <div className="font-medium text-gray-900 dark:text-white">Admin Account</div>
-                    <div className="text-xs text-gray-500 dark:text-gray-400">admin@blulok.com</div>
-                  </button>
-                  <button
-                    onClick={() => handleTestAccountLogin('devadmin@blulok.com', 'DevAdmin123!@#')}
-                    disabled={isLoading || isSubmitting}
-                    className="w-full bg-gray-50 dark:bg-gray-700 hover:bg-gray-100 dark:hover:bg-gray-600 rounded-md p-3 text-left transition-colors duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
-                  >
-                    <div className="font-medium text-gray-900 dark:text-white">Dev Admin Account</div>
-                    <div className="text-xs text-gray-500 dark:text-gray-400">devadmin@blulok.com</div>
-                  </button>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  {DEV_QUICK_LOGIN_ACCOUNTS.map((account) => (
+                    <button
+                      key={account.email}
+                      type="button"
+                      onClick={() => handleTestAccountLogin(account.email, account.password)}
+                      disabled={isLoading || isSubmitting}
+                      className="w-full bg-gray-50 dark:bg-gray-700 hover:bg-gray-100 dark:hover:bg-gray-600 rounded-md p-3 text-left transition-colors duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      <div className="font-medium text-gray-900 dark:text-white">{account.label}</div>
+                      <div className="text-xs text-gray-500 dark:text-gray-400">{account.email}</div>
+                    </button>
+                  ))}
                 </div>
               </div>
             </div>

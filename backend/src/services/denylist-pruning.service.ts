@@ -55,11 +55,17 @@ export class DenylistPruningService {
     // Run immediately, then schedule daily
     this.prune().catch(err => logger.error('Error in initial denylist prune:', err));
 
-    // Schedule daily
+    // Schedule daily with error handling to prevent crashes
     this.intervalId = setInterval(async () => {
-      logger.info('Starting scheduled denylist pruning');
-      await this.prune();
+      try {
+        logger.info('Starting scheduled denylist pruning');
+        await this.prune();
+      } catch (err) {
+        // Log error but don't let it crash the server
+        logger.error('Error in scheduled denylist prune (non-fatal, will retry tomorrow):', err);
+      }
     }, this.DAILY_MS);
+    this.intervalId.unref?.();
 
     logger.info('Denylist pruning service started (daily interval)');
   }
@@ -73,6 +79,14 @@ export class DenylistPruningService {
       this.intervalId = null;
       logger.info('Denylist pruning service stopped');
     }
+  }
+
+  /** Test-only: stop loops and drop the singleton. */
+  public static resetForTests(): void {
+    if (DenylistPruningService.instance) {
+      DenylistPruningService.instance.stop();
+    }
+    DenylistPruningService.instance = undefined as unknown as DenylistPruningService;
   }
 
   /**

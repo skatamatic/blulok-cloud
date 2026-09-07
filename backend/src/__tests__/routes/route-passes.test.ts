@@ -2,13 +2,15 @@ import request from 'supertest';
 import { createApp } from '@/app';
 import { UserRole } from '@/types/auth.types';
 
+let mockUserRole: UserRole = UserRole.DEV_ADMIN;
+
 // Mock authentication middleware
 jest.mock('@/middleware/auth.middleware', () => ({
   authenticateToken: (req: any, res: any, next: any) => {
     if (!req.user) {
       req.user = {
-        userId: 'admin-1',
-        role: UserRole.DEV_ADMIN,
+        userId: 'mock-user',
+        role: mockUserRole,
       };
     }
     next();
@@ -18,21 +20,33 @@ jest.mock('@/middleware/auth.middleware', () => ({
   requireUserManagement: (req: any, res: any, next: any) => {
     if (!req.user) {
       req.user = {
-        userId: 'admin-1',
-        role: UserRole.DEV_ADMIN,
+        userId: 'mock-user',
+        role: mockUserRole,
       };
     }
     next();
   },
   requireAdmin: (req: any, res: any, next: any) => next(),
-  requireDevAdmin: (req: any, res: any, next: any) => next(),
+  requireDevAdmin: (req: any, res: any, next: any) => {
+    if (!req.user) {
+      req.user = {
+        userId: 'mock-user',
+        role: mockUserRole,
+      };
+    }
+    if (req.user.role !== UserRole.DEV_ADMIN) {
+      return res.status(403).json({ success: false, message: 'dev_admin required' });
+    }
+    next();
+  },
   requireAdminOrFacilityAdmin: (req: any, res: any, next: any) => next(),
   requireUserManagementOrSelf: (req: any, res: any, next: any) => next(),
+  requireFacilityAccess: () => (req: any, res: any, next: any) => next(),
   requireRoles: () => (req: any, res: any, next: any) => {
     if (!req.user) {
       req.user = {
-        userId: 'admin-1',
-        role: UserRole.DEV_ADMIN,
+        userId: 'mock-user',
+        role: mockUserRole,
       };
     }
     next();
@@ -54,6 +68,7 @@ describe('Route Passes Routes', () => {
   let app: any;
 
   beforeEach(() => {
+    mockUserRole = UserRole.DEV_ADMIN;
     app = createApp();
     mockGetUserHistory.mockClear();
     mockGetUserHistoryCount.mockClear();
@@ -70,7 +85,7 @@ describe('Route Passes Routes', () => {
           id: 'log-1',
           user_id: 'user-1',
           device_id: 'device-1',
-          audiences: ['lock:lock-1', 'lock:lock-2'],
+          audiences: ['lock:serial-1', 'lock:serial-2'],
           jti: 'jwt-id-123',
           issued_at: new Date('2024-01-01'),
           expires_at: new Date('2024-01-02'),
@@ -97,7 +112,7 @@ describe('Route Passes Routes', () => {
         id: `log-${i}`,
         user_id: 'user-1',
         device_id: `device-${i}`,
-        audiences: ['lock:lock-1'],
+        audiences: ['lock:serial-1'],
         jti: `jwt-id-${i}`,
         issued_at: new Date(),
         expires_at: new Date(),
@@ -117,7 +132,7 @@ describe('Route Passes Routes', () => {
       expect(response.body.pagination.hasMore).toBe(true);
     });
 
-    it('applies date filters', async () => {
+    it('applies date filters with UTC day bounds for date-only params', async () => {
       mockGetUserHistory.mockResolvedValue([]);
       mockGetUserHistoryCount.mockResolvedValue(0);
 
@@ -128,36 +143,34 @@ describe('Route Passes Routes', () => {
       expect(mockGetUserHistory).toHaveBeenCalledWith('user-1', {
         limit: 50,
         offset: 0,
-        startDate: expect.any(Date),
-        endDate: expect.any(Date),
+        startDate: new Date('2024-01-01T00:00:00.000Z'),
+        endDate: new Date('2024-12-31T23:59:59.999Z'),
+      });
+    });
+
+    it('parses full ISO date filters as-is', async () => {
+      mockGetUserHistory.mockResolvedValue([]);
+      mockGetUserHistoryCount.mockResolvedValue(0);
+
+      const from = '2024-06-01T04:00:00.000Z';
+      const to = '2024-06-02T03:59:59.999Z';
+
+      await request(app)
+        .get(`/api/v1/route-passes/users/user-1?startDate=${encodeURIComponent(from)}&endDate=${encodeURIComponent(to)}`)
+        .expect(200);
+
+      expect(mockGetUserHistory).toHaveBeenCalledWith('user-1', {
+        limit: 50,
+        offset: 0,
+        startDate: new Date(from),
+        endDate: new Date(to),
       });
     });
 
     it('rejects non-dev-admin users', async () => {
-      // Create a fresh app with tenant user mock
-      jest.resetModules();
-      jest.doMock('@/middleware/auth.middleware', () => ({
-        authenticateToken: (req: any, res: any, next: any) => {
-          req.user = {
-            userId: 'user-1',
-            role: UserRole.TENANT,
-          };
-          next();
-        },
-        requireTenant: (req: any, res: any, next: any) => next(),
-        requireNotTenant: (req: any, res: any, next: any) => next(),
-        requireUserManagement: (req: any, res: any, next: any) => next(),
-        requireAdmin: (req: any, res: any, next: any) => next(),
-        requireDevAdmin: (_req: any, res: any, _next: any) => res.status(403).json({ success: false, message: 'dev_admin required' }),
-        requireAdminOrFacilityAdmin: (req: any, res: any, next: any) => next(),
-        requireUserManagementOrSelf: (req: any, res: any, next: any) => next(),
-        requireRoles: () => (_req: any, _res: any, next: any) => next(),
-      }));
-      
-      const { createApp: createFreshApp } = require('@/app');
-      const tenantApp = createFreshApp();
-      
-      const response = await request(tenantApp)
+      mockUserRole = UserRole.TENANT;
+
+      const response = await request(app)
         .get('/api/v1/route-passes/users/user-1')
         .expect(403);
 

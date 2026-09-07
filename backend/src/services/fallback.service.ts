@@ -58,6 +58,9 @@ export class FallbackService {
     const devicePublicKeyB64 = row?.public_key as string | undefined;
     if (!devicePublicKeyB64) throw new Error('Device not registered');
 
+    const userRow = await this.db('users').where({ id: userId }).select('role').first();
+    if (!userRow?.role) throw new Error('User not found');
+
     // Verify signature using device public key
     const jwk: JWK = { kty: 'OKP', crv: 'Ed25519', x: devicePublicKeyB64 } as any;
     const key = await importJWK(jwk, 'EdDSA');
@@ -72,7 +75,12 @@ export class FallbackService {
     }
 
     // Issue new Route Pass
-    const routePass = await PassesService.issueRoutePass({ userId, devicePublicKey: devicePublicKeyB64, audiences: [] });
+    const routePass = await PassesService.issueRoutePass({
+      userId,
+      devicePublicKey: devicePublicKeyB64,
+      audiences: [],
+      userRole: userRow.role as string,
+    });
     return routePass;
   }
 }

@@ -32,7 +32,7 @@ describe('GatewayFactory', () => {
 
       // Import and mock the physical gateway
       const { PhysicalGateway } = require('../../../services/gateway/gateways/physical.gateway');
-      const MockPhysicalGateway = PhysicalGateway as jest.MockedClass<any>;
+      const MockPhysicalGateway = PhysicalGateway;
       MockPhysicalGateway.mockImplementation(() => mockGatewayInstance);
 
       const result = GatewayFactory.createPhysicalGateway(
@@ -54,7 +54,7 @@ describe('GatewayFactory', () => {
 
     it('should use default protocol version when not specified', () => {
       const { PhysicalGateway } = require('../../../services/gateway/gateways/physical.gateway');
-      const MockPhysicalGateway = PhysicalGateway as jest.MockedClass<any>;
+      const MockPhysicalGateway = PhysicalGateway;
 
       GatewayFactory.createPhysicalGateway('gw1', 'facility1', 'ws://test');
 
@@ -198,7 +198,7 @@ describe('GatewayFactory', () => {
       };
 
       const { PhysicalGateway } = require('../../../services/gateway/gateways/physical.gateway');
-      const MockPhysicalGateway = PhysicalGateway as jest.MockedClass<any>;
+      const MockPhysicalGateway = PhysicalGateway;
       const mockGatewayInstance = { id: config.id } as IGateway;
       MockPhysicalGateway.mockImplementation(() => mockGatewayInstance);
 
@@ -434,7 +434,7 @@ describe('GatewayFactory', () => {
       const mockSimulatedGateway = { id: 'simulated' } as IGateway;
 
       const { PhysicalGateway } = require('../../../services/gateway/gateways/physical.gateway');
-      const MockPhysicalGateway = PhysicalGateway as jest.MockedClass<any>;
+      const MockPhysicalGateway = PhysicalGateway;
 
       MockPhysicalGateway.mockImplementation(() => mockPhysicalGateway);
       MockHttpGateway.mockImplementation(() => mockHttpGateway as any);
@@ -471,7 +471,7 @@ describe('GatewayFactory', () => {
     it('should work with real gateway constructors', () => {
       // Test that the factory calls real constructors correctly
       const { PhysicalGateway } = require('../../../services/gateway/gateways/physical.gateway');
-      const MockPhysicalGateway = PhysicalGateway as jest.MockedClass<any>;
+      const MockPhysicalGateway = PhysicalGateway;
 
       GatewayFactory.createPhysicalGateway('real-gw', 'facility', 'ws://real');
 

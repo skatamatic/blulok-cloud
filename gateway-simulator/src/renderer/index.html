@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+    <title>BluLok Gateway Simulator</title>
+    <script>
+      if (window.matchMedia('(prefers-color-scheme: dark)').matches) {
+        document.documentElement.classList.add('dark');
+      }
+    </script>
+    <style>
+      #boot-splash {
+        position: fixed;
+        inset: 0;
+        z-index: 9999;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: #f9fafb;
+        color: #111827;
+        font-family: Inter, system-ui, sans-serif;
+      }
+      html.dark #boot-splash {
+        background: #030712;
+        color: #f3f4f6;
+      }
+      #boot-splash .boot-splash-inner {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 1rem;
+        text-align: center;
+        padding: 2rem;
+      }
+      #boot-splash .boot-splash-spinner {
+        width: 2.75rem;
+        height: 2.75rem;
+        border-radius: 9999px;
+        border: 3px solid rgba(20, 127, 212, 0.2);
+        border-top-color: #147fd4;
+        animation: boot-splash-spin 0.75s linear infinite;
+      }
+      #boot-splash .boot-splash-title {
+        margin: 0;
+        font-size: 1.125rem;
+        font-weight: 700;
+        letter-spacing: -0.01em;
+        color: #147fd4;
+      }
+      #boot-splash .boot-splash-subtitle {
+        margin: 0;
+        font-size: 0.875rem;
+        color: #6b7280;
+      }
+      html.dark #boot-splash .boot-splash-subtitle {
+        color: #9ca3af;
+      }
+      @keyframes boot-splash-spin {
+        to {
+          transform: rotate(360deg);
+        }
+      }
+    </style>
+  </head>
+  <body class="bg-gray-50 dark:bg-gray-950 text-gray-900 dark:text-gray-100">
+    <div id="boot-splash" role="status" aria-live="polite" aria-label="Starting BluLok Gateway Simulator">
+      <div class="boot-splash-inner">
+        <div class="boot-splash-spinner" aria-hidden="true"></div>
+        <p class="boot-splash-title">BluLok Gateway Simulator</p>
+        <p class="boot-splash-subtitle">Starting simulator…</p>
+      </div>
+    </div>
+    <div id="root"></div>
+    <script type="module" src="./main.tsx"></script>
+  </body>
+</html>

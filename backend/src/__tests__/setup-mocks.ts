@@ -1,5 +1,7 @@
 // Global test setup with database mocking
+process.env.NODE_ENV = 'test';
 import { resetMocks, mockDatabaseService, createMockKnex } from './mocks/database.mock';
+import { teardownBackgroundServices, teardownBackgroundTimers } from './teardown-background-services';
 
 // Mock the database service before any tests run
 jest.mock('../services/database.service', () => ({
@@ -10,8 +12,9 @@ jest.mock('../services/database.service', () => ({
 jest.mock('../services/auth.service', () => ({
   AuthService: {
     login: jest.fn().mockImplementation((credentials: any) => {
+      const identifier = (credentials.identifier || credentials.email || '').trim();
       // Mock successful login for test users
-      if (credentials.email === 'tenant@test.com' && credentials.password === 'password123') {
+      if (identifier === 'tenant@test.com' && credentials.password === 'password123') {
         return Promise.resolve({
           success: true,
           token: 'mock-jwt-token',
@@ -24,7 +27,7 @@ jest.mock('../services/auth.service', () => ({
           }
         });
       }
-      if (credentials.email === 'admin@test.com' && credentials.password === 'password123') {
+      if (identifier === 'admin@test.com' && credentials.password === 'password123') {
         return Promise.resolve({
           success: true,
           token: 'mock-jwt-token',
@@ -37,7 +40,7 @@ jest.mock('../services/auth.service', () => ({
           }
         });
       }
-      if (credentials.email === 'valid@example.com' && credentials.password === 'plaintextpassword') {
+      if (identifier === 'valid@example.com' && credentials.password === 'plaintextpassword') {
         return Promise.resolve({
           success: true,
           token: 'mock-jwt-token',
@@ -50,7 +53,7 @@ jest.mock('../services/auth.service', () => ({
           }
         });
       }
-      if (credentials.email === 'inactive@example.com') {
+      if (identifier === 'inactive@example.com') {
         return Promise.resolve({
           success: false,
           message: 'Account is deactivated. Please contact administrator.'
@@ -59,15 +62,39 @@ jest.mock('../services/auth.service', () => ({
       // Mock failed login for other cases
       return Promise.resolve({
         success: false,
-        message: 'Invalid email or password'
+        message: 'Invalid credentials'
       });
     }),
-    createUser: jest.fn().mockImplementation((userData: any) => {
+    createUser: jest.fn().mockImplementation((userData: any, options?: { reactivateIfInactive?: boolean }) => {
       // Check for duplicate email
       if (userData.email === 'tenant@test.com' || userData.email === 'existing@example.com') {
         return Promise.resolve({
           success: false,
           message: 'User with this email already exists'
+        });
+      }
+      if (userData.email === 'inactive@test.com') {
+        if (options?.reactivateIfInactive) {
+          return Promise.resolve({
+            success: true,
+            message: 'User reactivated successfully',
+            userId: 'inactive-user-1',
+            reactivated: true,
+          });
+        }
+        return Promise.resolve({
+          success: false,
+          code: 'USER_INACTIVE',
+          message:
+            'An inactive user with this email already exists. Confirm to reactivate and update their profile.',
+          inactiveUser: {
+            id: 'inactive-user-1',
+            email: 'inactive@test.com',
+            firstName: 'Inactive',
+            lastName: 'User',
+            role: 'tenant',
+            phoneNumber: null,
+          },
         });
       }
       return Promise.resolve({
@@ -98,15 +125,15 @@ jest.mock('../services/auth.service', () => ({
       });
     }),
     generateToken: jest.fn().mockImplementation((user: any, facilityIds?: string[]) => {
-      // Return a mock JWT token with 3 parts (header.payload.signature)
       const header = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9';
       const payload = Buffer.from(JSON.stringify({
         userId: user.id,
         email: user.email,
-        firstName: user.firstName || 'Test',
-        lastName: user.lastName || 'User',
+        firstName: user.firstName || user.first_name || 'Test',
+        lastName: user.lastName || user.last_name || 'User',
         role: user.role,
-        facilityIds: facilityIds || []
+        facilityIds: facilityIds || [],
+        iat: Date.now(),
       })).toString('base64');
       const signature = 'mock-signature';
       return `${header}.${payload}.${signature}`;
@@ -133,6 +160,11 @@ jest.mock('../services/auth.service', () => ({
       }
       return null;
     }),
+    getSessionDenialReason: jest.fn().mockImplementation((user: { is_active?: boolean; requires_password_reset?: boolean }) => {
+      if (user && user.is_active === false) return 'Account is deactivated';
+      if (user && user.requires_password_reset) return 'Account requires re-authentication';
+      return null;
+    }),
     hasPermission: jest.fn().mockImplementation((userRole: string, allowedRoles: string[]) => {
       return allowedRoles.includes(userRole);
     }),
@@ -149,12 +181,15 @@ jest.mock('../services/auth.service', () => ({
       return ['dev_admin', 'admin', 'facility_admin'].includes(role);
     }),
     isFacilityScoped: jest.fn().mockImplementation((role: string) => {
-      return ['facility_admin', 'tenant', 'maintenance'].includes(role);
+      return !['admin', 'dev_admin'].includes(role);
     }),
     canAccessAllFacilities: jest.fn().mockImplementation((role: string) => {
       return ['admin', 'dev_admin'].includes(role);
     }),
-    canAccessFacility: jest.fn().mockResolvedValue(true)
+    canAccessFacility: jest.fn().mockImplementation(async (userId: string, _role: string, facilityId: string) => {
+      const { UserFacilityAssociationModel } = require('../models/user-facility-association.model');
+      return UserFacilityAssociationModel.hasAccessToFacility(userId, facilityId);
+    }),
   }
 }));
 
@@ -315,6 +350,35 @@ jest.mock('../models/facility.model', () => ({
       }
       // Return null for non-existent facilities
       return Promise.resolve(null);
+    }),
+    findByName: jest.fn().mockImplementation((name: string, excludeId?: string) => {
+      const normalized = name.trim().toLowerCase();
+      const resolveFacilityId = (facilityId?: string) => {
+        if (facilityId === 'facility-1') return '550e8400-e29b-41d4-a716-446655440001';
+        if (facilityId === 'facility-2') return '550e8400-e29b-41d4-a716-446655440002';
+        if (facilityId === 'facility-3') return '550e8400-e29b-41d4-a716-446655440003';
+        return facilityId;
+      };
+      const excludedId = resolveFacilityId(excludeId);
+      const mockFacilities = [
+        {
+          id: '550e8400-e29b-41d4-a716-446655440001',
+          name: 'Test Facility 1',
+        },
+        {
+          id: '550e8400-e29b-41d4-a716-446655440002',
+          name: 'Test Facility 2',
+        },
+        {
+          id: '550e8400-e29b-41d4-a716-446655440003',
+          name: 'Test Facility 3',
+        },
+      ];
+      const match = mockFacilities.find(
+        (facility) =>
+          facility.name.trim().toLowerCase() === normalized && facility.id !== excludedId
+      );
+      return Promise.resolve(match || null);
     }),
     findByIds: jest.fn().mockResolvedValue([]),
     create: jest.fn().mockImplementation((data: any) => {
@@ -485,59 +549,80 @@ jest.mock('../models/access-log.model', () => ({
     getUserAccessHistory: jest.fn().mockResolvedValue({ logs: [], total: 0 }),
     getFacilityAccessHistory: jest.fn().mockResolvedValue({ logs: [], total: 0 }),
     getUnitAccessHistory: jest.fn().mockResolvedValue({ logs: [], total: 0 }),
+    getActivityStats: jest.fn().mockImplementation((options: any) => {
+      // Generate mock activity stats based on groupBy parameter
+      const result: Array<{ timestamp: string; count: number }> = [];
+      const { startDate, endDate, groupBy } = options;
+      
+      const current = new Date(startDate);
+      while (current <= new Date(endDate)) {
+        let timestamp: string;
+        switch (groupBy) {
+          case 'hour':
+            timestamp = current.toISOString().slice(0, 13) + ':00:00';
+            current.setHours(current.getHours() + 1);
+            break;
+          case 'day':
+            timestamp = current.toISOString().slice(0, 10);
+            current.setDate(current.getDate() + 1);
+            break;
+          case 'week':
+            timestamp = current.toISOString().slice(0, 10);
+            current.setDate(current.getDate() + 7);
+            break;
+          default:
+            timestamp = current.toISOString().slice(0, 10);
+            current.setDate(current.getDate() + 1);
+        }
+        // Add mock count (random between 0 and 20)
+        result.push({ timestamp, count: Math.floor(Math.random() * 20) });
+      }
+      
+      return Promise.resolve(result);
+    }),
   }),
 }));
 
-jest.mock('../models/device.model', () => ({
-  DeviceModel: createModelMock({
-    findAccessControlDevices: jest.fn().mockResolvedValue([
-      {
-        id: 'device-1',
-        name: 'Test Access Control Device',
-        device_type: 'access_control',
-        facility_id: '550e8400-e29b-41d4-a716-446655440001',
-        status: 'online'
-      }
-    ]),
-    findBluLokDevices: jest.fn().mockResolvedValue([
-      {
-        id: 'device-2',
-        name: 'Test BluLok Device',
-        device_type: 'blulok',
-        facility_id: '550e8400-e29b-41d4-a716-446655440001',
-        unit_id: '550e8400-e29b-41d4-a716-446655440011',
-        status: 'online',
-        lock_status: 'locked'
-      }
-    ]),
-    updateLockStatus: jest.fn().mockResolvedValue({ success: true }),
-    updateStatus: jest.fn().mockResolvedValue({ success: true }),
-    updateDeviceStatus: jest.fn().mockResolvedValue({ success: true }),
-    createAccessControlDevice: jest.fn().mockImplementation((data: any) => 
-      Promise.resolve({ 
-        id: 'new-device', 
-        name: data.name,
-        device_type: data.device_type,
-        location_description: data.location_description,
-        relay_channel: data.relay_channel,
-        gateway_id: data.gateway_id
-      })
-    ),
-    createBluLokDevice: jest.fn().mockImplementation((data: any) => 
-      Promise.resolve({ 
-        id: 'new-device', 
-        name: data.name,
-        device_type: data.device_type,
-        location_description: data.location_description,
-        unit_id: data.unit_id,
-        gateway_id: data.gateway_id
-      })
-    ),
-    getFacilityHierarchy: jest.fn().mockResolvedValue({ hierarchy: [] }),
-    getFacilityDeviceHierarchy: jest.fn().mockResolvedValue({ hierarchy: [] }),
-    findByFacilityId: jest.fn().mockResolvedValue([]),
-    countAccessControlDevices: jest.fn().mockResolvedValue(1),
-    countBluLokDevices: jest.fn().mockResolvedValue(1),
+// Single shared DeviceModel instance so route modules (e.g. devices.routes) and tests
+// mutate the same `db.connection` and method mocks (see devices.routes.test.ts).
+jest.mock('../models/device.model', () => {
+  const mockReturnValues: any = {
+    createAccessControlDevice: { id: 'device-1', name: 'Test Device' },
+    createBluLokDevice: { id: 'device-1', name: 'Test Device' },
+  };
+  const mockKnexFn = jest.fn((table: string) => ({
+    select: jest.fn().mockReturnThis(),
+    where: jest.fn().mockReturnThis(),
+    first: jest.fn().mockResolvedValue({ unit_id: 'unit-1' }),
+    whereIn: jest.fn().mockReturnThis(),
+    join: jest.fn().mockReturnThis(),
+    orderBy: jest.fn().mockReturnThis(),
+    limit: jest.fn().mockReturnThis(),
+    offset: jest.fn().mockReturnThis(),
+  }));
+  (global as any).__mockReturnValues = mockReturnValues;
+  const createAccessControlDeviceMock = jest.fn(async (payload?: Record<string, unknown>) => {
+    if (payload && 'serial' in payload) {
+      throw new Error('Access control create payload must not contain BluLok serial alias field');
+    }
+    if (payload && !payload.device_serial) {
+      throw new Error('Access control create payload must include device_serial');
+    }
+    const values = (global as any).__mockReturnValues || mockReturnValues;
+    return {
+      ...values.createAccessControlDevice,
+      ...(payload ?? {}),
+    };
+  });
+  const createBluLokDeviceMock = jest.fn(async (payload?: Record<string, unknown>) => {
+    if (!payload?.device_serial) {
+      throw new Error('BluLok create payload must include device_serial');
+    }
+    const values = (global as any).__mockReturnValues || mockReturnValues;
+    return values.createBluLokDevice;
+  });
+  const mockInstance = {
+    findAll: jest.fn().mockResolvedValue({ items: [], total: 0 }),
     findById: jest.fn().mockImplementation((id: string) => {
       if (id === 'device-1') {
         return Promise.resolve({
@@ -547,24 +632,133 @@ jest.mock('../models/device.model', () => ({
           facility_id: '550e8400-e29b-41d4-a716-446655440001',
           unit_id: '550e8400-e29b-41d4-a716-446655440011',
           status: 'online',
-          lock_status: 'locked'
+          lock_status: 'locked',
         });
       }
       return Promise.resolve(null);
     }),
-  }),
-}));
+    create: jest.fn().mockResolvedValue({ id: 'new-item' }),
+    updateById: jest.fn().mockResolvedValue({ id: 'updated-item' }),
+    deleteById: jest.fn().mockResolvedValue(1),
+    exists: jest.fn().mockResolvedValue(false),
+    count: jest.fn().mockResolvedValue(0),
+    findUnassignedDevices: jest.fn().mockResolvedValue([]),
+    countUnassignedDevices: jest.fn().mockResolvedValue(0),
+    findAccessControlDevices: jest.fn().mockResolvedValue([
+      {
+        id: 'device-1',
+        name: 'Test Access Control Device',
+        device_type: 'access_control',
+        facility_id: '550e8400-e29b-41d4-a716-446655440001',
+        status: 'online',
+      },
+    ]),
+    findBluLokDevices: jest.fn().mockResolvedValue([
+      {
+        id: 'device-2',
+        name: 'Test BluLok Device',
+        device_type: 'blulok',
+        facility_id: '550e8400-e29b-41d4-a716-446655440001',
+        unit_id: '550e8400-e29b-41d4-a716-446655440011',
+        status: 'online',
+        lock_status: 'locked',
+      },
+    ]),
+    findBluLokDeviceById: jest.fn().mockImplementation((id: string) => {
+      if (id === 'device-1' || id === 'device-2') {
+        return Promise.resolve({
+          id,
+          facility_id: id === 'device-1' ? 'facility-1' : '550e8400-e29b-41d4-a716-446655440001',
+          device_serial: 'SERIAL-1',
+        });
+      }
+      return Promise.resolve(null);
+    }),
+    findAccessControlDeviceWithGateway: jest.fn().mockImplementation((id: string) => {
+      if (id === 'ac-device-1') {
+        return Promise.resolve({
+          id: 'ac-device-1',
+          name: 'Test Access Control Device',
+          facility_id: 'facility-1',
+        });
+      }
+      return Promise.resolve(null);
+    }),
+    countAccessControlDevices: jest.fn().mockResolvedValue(1),
+    countBluLokDevices: jest.fn().mockResolvedValue(1),
+    getFacilityHierarchy: jest.fn().mockResolvedValue({ hierarchy: [] }),
+    getFacilityDeviceHierarchy: jest.fn().mockResolvedValue({
+      facility: { id: 'facility-1', name: 'Test Facility' },
+      gateway: { id: 'gateway-1', facility_id: 'facility-1', status: 'online' },
+      accessControlDevices: [],
+      blulokDevices: [],
+    }),
+    findByFacilityId: jest.fn().mockResolvedValue([]),
+    findGatewayById: jest.fn().mockImplementation((id: string) =>
+      Promise.resolve({
+        id,
+        facility_id: '550e8400-e29b-41d4-a716-446655440001',
+        name: 'Test Gateway',
+      })
+    ),
+    findBluLokBySerial: jest.fn().mockResolvedValue(null),
+    findBluLokByUnitId: jest.fn().mockResolvedValue(null),
+    findUnitFacilityId: jest
+      .fn()
+      .mockResolvedValue('550e8400-e29b-41d4-a716-446655440001'),
+    findAccessControlIdentityConflict: jest.fn().mockResolvedValue(null),
+    createAccessControlDevice: createAccessControlDeviceMock,
+    deleteAccessControlDevice: jest.fn().mockResolvedValue(undefined),
+    createBluLokDevice: createBluLokDeviceMock,
+    updateLockStatus: jest.fn().mockResolvedValue({ success: true }),
+    updateStatus: jest.fn().mockResolvedValue({ success: true }),
+    updateDeviceStatus: jest.fn().mockResolvedValue({ success: true }),
+    db: { connection: mockKnexFn },
+  };
+  (global as any).__sharedMockDeviceModel = mockInstance;
+  return {
+    DeviceModel: jest.fn().mockImplementation(() => mockInstance),
+  };
+});
 
 jest.mock('../models/gateway.model', () => ({
   GatewayModel: createModelMock({
     findAll: jest.fn().mockResolvedValue([
       { id: 'gateway-1', facility_id: 'facility-1', name: 'Gateway 1', status: 'online', gateway_type: 'simulated' },
-      { id: 'gateway-2', facility_id: 'facility-2', name: 'Gateway 2', status: 'offline', gateway_type: 'simulated' }
+      { id: 'gateway-2', facility_id: 'facility-2', name: 'Gateway 2', status: 'offline', gateway_type: 'simulated' },
+      { id: 'gateway-3', facility_id: null, name: 'Gateway 3', status: 'online', gateway_type: 'simulated' },
+      { id: 'gateway-4', facility_id: null, name: 'Gateway 4', status: 'offline', gateway_type: 'simulated' },
     ]),
+    findByFacilityId: jest.fn().mockImplementation((facilityId: string) => {
+      if (
+        facilityId === 'facility-1' ||
+        facilityId === '550e8400-e29b-41d4-a716-446655440001'
+      ) {
+        return Promise.resolve({
+          id: 'gateway-1',
+          facility_id: facilityId,
+          name: 'Gateway 1',
+          status: 'online',
+          gateway_type: 'simulated',
+        });
+      }
+      if (facilityId === 'facility-2') {
+        return Promise.resolve({
+          id: 'gateway-2',
+          facility_id: facilityId,
+          name: 'Gateway 2',
+          status: 'offline',
+          gateway_type: 'simulated',
+        });
+      }
+      return Promise.resolve(null);
+    }),
     findById: jest.fn().mockImplementation((id: string) => {
       const gateways = [
         { id: 'gateway-1', facility_id: 'facility-1', name: 'Gateway 1', status: 'online', gateway_type: 'simulated' },
-        { id: 'gateway-2', facility_id: 'facility-2', name: 'Gateway 2', status: 'offline', gateway_type: 'simulated' }
+        { id: 'gateway-2', facility_id: 'facility-2', name: 'Gateway 2', status: 'offline', gateway_type: 'simulated' },
+        { id: 'gateway-3', facility_id: null, name: 'Gateway 3', status: 'online', gateway_type: 'simulated' },
+        { id: 'gateway-4', facility_id: null, name: 'Gateway 4', status: 'offline', gateway_type: 'simulated' },
       ];
 
       // Handle dynamically created gateways
@@ -593,7 +787,9 @@ jest.mock('../models/gateway.model', () => ({
     update: jest.fn().mockImplementation((id: string, data: any) => {
       const gateways = [
         { id: 'gateway-1', facility_id: 'facility-1', name: 'Gateway 1', status: 'online', gateway_type: 'simulated' },
-        { id: 'gateway-2', facility_id: 'facility-2', name: 'Gateway 2', status: 'offline', gateway_type: 'simulated' }
+        { id: 'gateway-2', facility_id: 'facility-2', name: 'Gateway 2', status: 'offline', gateway_type: 'simulated' },
+        { id: 'gateway-3', facility_id: null, name: 'Gateway 3', status: 'online', gateway_type: 'simulated' },
+        { id: 'gateway-4', facility_id: null, name: 'Gateway 4', status: 'offline', gateway_type: 'simulated' },
       ];
       const gateway = gateways.find(g => g.id === id);
       return Promise.resolve(gateway ? { ...gateway, ...data } : null);
@@ -640,8 +836,28 @@ jest.mock('../models/unit-assignment.model', () => ({
     findById: jest.fn().mockResolvedValue(null),
     findByUnitId: jest.fn().mockResolvedValue([]),
     findByTenantId: jest.fn().mockResolvedValue([]),
-    findByUnitAndTenant: jest.fn().mockImplementation((unitId: string, tenantId: string) => 
-      Promise.resolve({
+    findByUnitAndTenant: jest.fn().mockImplementation((unitId: string, tenantId: string) => {
+      const unit1Ids = new Set(['unit-1', '550e8400-e29b-41d4-a716-446655440011']);
+      const unit2Ids = new Set(['unit-2', '550e8400-e29b-41d4-a716-446655440012']);
+
+      const isTenant1PrimaryOnUnit1 = unit1Ids.has(unitId) && tenantId === 'tenant-1';
+      const isTenant2PrimaryOnUnit2 = unit2Ids.has(unitId) && tenantId === 'tenant-2';
+      const isSharedOnUnit1 = unit1Ids.has(unitId) && tenantId === 'other-tenant-1';
+
+      if (isTenant1PrimaryOnUnit1 || isTenant2PrimaryOnUnit2 || isSharedOnUnit1) {
+        return Promise.resolve({
+          id: 'assignment-existing',
+          unit_id: unitId,
+          tenant_id: tenantId,
+          access_type: 'full',
+          is_primary: isTenant1PrimaryOnUnit1 || isTenant2PrimaryOnUnit2,
+          created_at: new Date(),
+          updated_at: new Date(),
+        });
+      }
+
+      // Preserve permissive defaults for broad test compatibility.
+      return Promise.resolve({
         id: 'assignment-existing',
         unit_id: unitId,
         tenant_id: tenantId,
@@ -649,9 +865,14 @@ jest.mock('../models/unit-assignment.model', () => ({
         is_primary: false,
         created_at: new Date(),
         updated_at: new Date(),
-      })
-    ),
+      });
+    }),
     update: jest.fn().mockResolvedValue(null),
+    assignPrimaryAtomically: jest.fn().mockResolvedValue({
+      removedPrimaryAssignments: [],
+      assigned: 'created',
+      assignedAccessType: 'full',
+    }),
     delete: jest.fn().mockResolvedValue(true),
     deleteByUnitAndTenant: jest.fn().mockResolvedValue(true),
     deleteByTenantId: jest.fn().mockResolvedValue(0),
@@ -705,6 +926,7 @@ jest.mock('../services/fms/fms.service', () => ({
         changesApplied: 0,
         changesFailed: 0,
         errors: [],
+        errorDetails: [],
         accessChanges: {
           usersCreated: [],
           usersDeactivated: [],
@@ -712,6 +934,7 @@ jest.mock('../services/fms/fms.service', () => ({
           accessRevoked: [],
         },
       }),
+      applyTenantRemoved: jest.fn().mockResolvedValue(undefined),
     }),
   },
 }));
@@ -731,6 +954,7 @@ jest.mock('../models/fms-configuration.model', () => ({
     findById: jest.fn().mockResolvedValue(null),
     findByFacilityId: jest.fn().mockResolvedValue(null),
     findAll: jest.fn().mockResolvedValue([]),
+    findAllWithFacilities: jest.fn().mockResolvedValue([]),
     update: jest.fn().mockResolvedValue(null),
     delete: jest.fn().mockResolvedValue(true),
     existsForFacility: jest.fn().mockResolvedValue(false),
@@ -757,8 +981,11 @@ jest.mock('../models/fms-sync-log.model', () => ({
     findById: jest.fn().mockResolvedValue(null),
     findByFacilityId: jest.fn().mockResolvedValue({ logs: [], total: 0 }),
     findLatestByFacilityId: jest.fn().mockResolvedValue(null),
+    findOpenReviewSyncLog: jest.fn().mockResolvedValue(null),
+    findOpenWebhookReviewSyncLog: jest.fn().mockResolvedValue(null),
     update: jest.fn().mockResolvedValue(null),
     markCompleted: jest.fn().mockResolvedValue(undefined),
+    markPendingReview: jest.fn().mockResolvedValue(undefined),
     markFailed: jest.fn().mockResolvedValue(undefined),
   })),
 }));
@@ -783,6 +1010,8 @@ jest.mock('../models/fms-change.model', () => ({
     update: jest.fn().mockResolvedValue(null),
     reviewChange: jest.fn().mockResolvedValue(null),
     markApplied: jest.fn().mockResolvedValue(null),
+    bulkMarkApplied: jest.fn().mockResolvedValue(0),
+    bulkCreate: jest.fn().mockResolvedValue([]),
     bulkReview: jest.fn().mockResolvedValue(0),
     deleteBySyncLogId: jest.fn().mockResolvedValue(0),
     getStatsBySyncLogId: jest.fn().mockResolvedValue({
@@ -835,6 +1064,28 @@ jest.mock('../models/key-sharing.model', () => ({
         }
       ];
 
+      // Track deleted sharings - check if findById was called with 'new-sharing-record'
+      // and if updateById was called to set is_active: false
+      // For simplicity, include 'new-sharing-record' if filtering for inactive and unit-3
+      if (filters.unit_id === 'unit-3' && filters.is_active === false) {
+        mockRecords.push({
+          id: 'new-sharing-record',
+          primary_tenant_id: 'tenant-1',
+          shared_with_user_id: 'tenant-2',
+          unit_id: 'unit-3',
+          access_level: 'full',
+          is_active: false,
+          expires_at: null,
+          created_at: new Date(),
+          updated_at: new Date(),
+          unit: {
+            id: 'unit-3',
+            facility_id: 'facility-1',
+            unit_number: 'A-103'
+          }
+        });
+      }
+
       let filteredRecords = mockRecords;
 
       // Apply filters
@@ -858,6 +1109,13 @@ jest.mock('../models/key-sharing.model', () => ({
       if (filters.primary_tenant_id) {
         filteredRecords = filteredRecords.filter(record => 
           record.primary_tenant_id === filters.primary_tenant_id
+        );
+      }
+
+      // Apply shared_with_user_id filter
+      if (filters.shared_with_user_id) {
+        filteredRecords = filteredRecords.filter(record =>
+          record.shared_with_user_id === filters.shared_with_user_id
         );
       }
       
@@ -897,6 +1155,19 @@ jest.mock('../models/key-sharing.model', () => ({
           updated_at: new Date()
         });
       }
+      // Support dynamically created sharings (from create mock)
+      if (id === 'new-sharing-record') {
+        return Promise.resolve({
+          id: 'new-sharing-record',
+          primary_tenant_id: 'tenant-1',
+          shared_with_user_id: 'tenant-2',
+          unit_id: 'unit-3',
+          access_level: 'full',
+          is_active: true,
+          created_at: new Date(),
+          updated_at: new Date()
+        });
+      }
       return Promise.resolve(null);
     }),
     create: jest.fn().mockImplementation((data: any) => {
@@ -907,6 +1178,7 @@ jest.mock('../models/key-sharing.model', () => ({
       return Promise.resolve({
         id: 'new-sharing-record',
         ...data,
+        is_active: data.is_active !== undefined ? data.is_active : true,
         created_at: new Date(),
         updated_at: new Date()
       });
@@ -948,7 +1220,7 @@ jest.mock('../models/key-sharing.model', () => ({
       }
       return Promise.resolve(false);
     }),
-    getUnitSharedKeys: jest.fn().mockImplementation((unitId: string, _filters: any = {}) => {
+    getUnitSharedKeys: jest.fn().mockImplementation((unitId: string, filters: any = {}) => {
       // Return mock shared keys for unit
       if (unitId === 'unit-1') {
         const sharedKeys = [
@@ -959,9 +1231,34 @@ jest.mock('../models/key-sharing.model', () => ({
             access_level: 'temporary',
             is_active: true,
             expires_at: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000)
+          },
+          {
+            id: 'sharing-3',
+            primary_tenant_id: 'tenant-1',
+            shared_with_user_id: 'facility2-tenant-1',
+            access_level: 'full',
+            is_active: true,
+            expires_at: null
           }
         ];
-        return Promise.resolve({ sharings: sharedKeys, total: sharedKeys.length });
+        
+        // Filter by shared_with_user_id if provided (for duplicate check)
+        let filteredKeys = sharedKeys;
+        if (filters.shared_with_user_id) {
+          filteredKeys = filteredKeys.filter(key => key.shared_with_user_id === filters.shared_with_user_id);
+        }
+        
+        // Apply is_active filter if provided
+        if (filters.is_active !== undefined) {
+          filteredKeys = filteredKeys.filter(key => {
+            // Handle both boolean and numeric values (database may return 1/0)
+            const keyIsActive = key.is_active === true || (key.is_active as any) === 1;
+            const filterIsActive = filters.is_active === true || filters.is_active === 1;
+            return keyIsActive === filterIsActive;
+          });
+        }
+        
+        return Promise.resolve({ sharings: filteredKeys, total: filteredKeys.length });
       }
       if (unitId === 'non-existent-unit') {
         return Promise.resolve({ sharings: [], total: 0 });
@@ -1020,6 +1317,21 @@ jest.mock('../models/key-sharing.model', () => ({
       }
       return Promise.resolve({ sharings: [], total: 0 });
     }),
+    isPrimaryTenantForUnit: jest.fn().mockImplementation((userId: string, unitId: string) => {
+      const unit1Ids = ['550e8400-e29b-41d4-a716-446655440011', 'unit-1'];
+      const unit2Ids = ['550e8400-e29b-41d4-a716-446655440012', 'unit-2'];
+
+      if (userId === 'tenant-1' && unit1Ids.includes(unitId)) {
+        return Promise.resolve(true); // primary tenant for unit-1
+      }
+      if (userId === 'other-tenant-1' && unit1Ids.includes(unitId)) {
+        return Promise.resolve(false); // shared user on unit-1
+      }
+      if (userId === 'other-tenant-1' && unit2Ids.includes(unitId)) {
+        return Promise.resolve(true); // primary tenant for unit-2
+      }
+      return Promise.resolve(false);
+    }),
     update: jest.fn().mockImplementation((id: string, data: any) => {
       return Promise.resolve({
         id,
@@ -1046,6 +1358,7 @@ jest.mock('../models/user.model', () => {
     {
       id: 'tenant-1',
       email: 'tenant@test.com',
+      login_identifier: 'tenant@test.com',
       password_hash: 'hashed-password',
       first_name: 'Tenant',
       last_name: 'User',
@@ -1057,6 +1370,7 @@ jest.mock('../models/user.model', () => {
     {
       id: 'tenant-2',
       email: 'tenant2@test.com',
+      login_identifier: 'tenant2@test.com',
       password_hash: 'hashed-password',
       first_name: 'Tenant',
       last_name: 'Two',
@@ -1068,6 +1382,7 @@ jest.mock('../models/user.model', () => {
     {
       id: 'other-tenant-1',
       email: 'othertenant@test.com',
+      login_identifier: 'othertenant@test.com',
       password_hash: 'hashed-password',
       first_name: 'Other',
       last_name: 'Tenant',
@@ -1079,6 +1394,7 @@ jest.mock('../models/user.model', () => {
     {
       id: 'facility2-tenant-1',
       email: 'facility2tenant@test.com',
+      login_identifier: 'facility2tenant@test.com',
       password_hash: 'hashed-password',
       first_name: 'Facility2',
       last_name: 'Tenant',
@@ -1088,8 +1404,21 @@ jest.mock('../models/user.model', () => {
       updated_at: new Date('2024-01-01'),
     },
     {
+      id: 'facility2-admin-1',
+      email: 'facility2admin@test.com',
+      login_identifier: 'facility2admin@test.com',
+      password_hash: 'hashed-password',
+      first_name: 'Facility2',
+      last_name: 'Admin',
+      role: 'facility_admin',
+      is_active: true,
+      created_at: new Date('2024-01-01'),
+      updated_at: new Date('2024-01-01'),
+    },
+    {
       id: 'facility-admin-1',
       email: 'facilityadmin@test.com',
+      login_identifier: 'facilityadmin@test.com',
       password_hash: 'hashed-password',
       first_name: 'Facility',
       last_name: 'Admin',
@@ -1099,8 +1428,21 @@ jest.mock('../models/user.model', () => {
       updated_at: new Date('2024-01-01'),
     },
     {
+      id: 'facility-admin-2',
+      email: 'facilityadmin2@test.com',
+      login_identifier: 'facilityadmin2@test.com',
+      password_hash: 'hashed-password',
+      first_name: 'Facility',
+      last_name: 'AdminTwo',
+      role: 'facility_admin',
+      is_active: true,
+      created_at: new Date('2024-01-01'),
+      updated_at: new Date('2024-01-01'),
+    },
+    {
       id: 'admin-1',
       email: 'admin@test.com',
+      login_identifier: 'admin@test.com',
       password_hash: 'hashed-password',
       first_name: 'Admin',
       last_name: 'User',
@@ -1112,6 +1454,7 @@ jest.mock('../models/user.model', () => {
     {
       id: 'dev-admin-1',
       email: 'devadmin@test.com',
+      login_identifier: 'devadmin@test.com',
       password_hash: 'hashed-password',
       first_name: 'Dev',
       last_name: 'Admin',
@@ -1123,29 +1466,59 @@ jest.mock('../models/user.model', () => {
     {
       id: 'maintenance-1',
       email: 'maintenance@test.com',
+      login_identifier: 'maintenance@test.com',
       password_hash: 'hashed-password',
       first_name: 'Maintenance',
       last_name: 'User',
       role: 'maintenance',
       is_active: true,
+      is_placeholder: false,
+      created_at: new Date('2024-01-01'),
+      updated_at: new Date('2024-01-01'),
+    },
+    {
+      id: 'placeholder-tenant-1',
+      email: null,
+      phone_number: null,
+      login_identifier: 'fms-ph:facility-1:ext-placeholder-1',
+      password_hash: '$2b$10$dummyhashforinvitationflow',
+      first_name: 'Placeholder',
+      last_name: 'Tenant',
+      role: 'tenant',
+      is_active: true,
+      is_placeholder: true,
+      requires_password_reset: true,
       created_at: new Date('2024-01-01'),
       updated_at: new Date('2024-01-01'),
     },
   ];
   
-  defaultUsers.forEach(user => mockUsers.set(user.id, { ...user }));
-  
+  const seedDefaultUsers = (): void => {
+    mockUsers.clear();
+    defaultUsers.forEach(user =>
+      mockUsers.set(user.id, { ...user, is_placeholder: user.is_placeholder ?? false }),
+    );
+  };
+
+  seedDefaultUsers();
+
   return {
+    // Tests deactivate and mutate these rows; without a reset the next test
+    // authenticating as that user gets a 401 from the session denial check.
+    __resetMockUsers: seedDefaultUsers,
     UserModel: {
       findById: jest.fn().mockImplementation((id: string) => {
         const user = mockUsers.get(id);
         return Promise.resolve(user || undefined);
       }),
       create: jest.fn().mockImplementation((data: any) => {
-        // Check for duplicate email
-        const existingUser = Array.from(mockUsers.values()).find(u => u.email === data.email);
-        if (existingUser) {
-          return Promise.reject(new Error('Email already exists'));
+        // Check for duplicate email (ignore null/empty — placeholders and phone-only users share that)
+        const email = typeof data.email === 'string' ? data.email.trim() : '';
+        if (email) {
+          const existingUser = Array.from(mockUsers.values()).find(u => u.email === data.email);
+          if (existingUser) {
+            return Promise.reject(new Error('Email already exists'));
+          }
         }
         
         const newUser = {
@@ -1162,15 +1535,31 @@ jest.mock('../models/user.model', () => {
         if (!user) {
           return Promise.resolve(undefined);
         }
+        // Match BaseModel.updateById: omit undefined/null so partial updates do not clear fields.
+        const cleanData = Object.fromEntries(
+          Object.entries(data || {}).filter(([, value]) => value !== undefined && value !== null),
+        );
         const updatedUser = {
           ...user,
-          ...data,
+          ...cleanData,
           id: user.id, // Preserve original ID
-          email: user.email, // Preserve original email
           updated_at: new Date(),
         };
         mockUsers.set(id, updatedUser);
         return Promise.resolve(updatedUser);
+      }),
+      setPhoneNumber: jest.fn().mockImplementation((id: string, phoneE164: string | null) => {
+        const user = mockUsers.get(id);
+        if (!user) {
+          return Promise.resolve(undefined);
+        }
+        const updatedUser = {
+          ...user,
+          phone_number: phoneE164,
+          updated_at: new Date(),
+        };
+        mockUsers.set(id, updatedUser);
+        return Promise.resolve(undefined);
       }),
       deleteById: jest.fn().mockImplementation((id: string) => {
         const deleted = mockUsers.delete(id);
@@ -1193,11 +1582,27 @@ jest.mock('../models/user.model', () => {
         const user = Array.from(mockUsers.values()).find(u => u.email === email);
         return Promise.resolve(user || undefined);
       }),
+      findByLoginIdentifier: jest.fn().mockImplementation((identifier: string) => {
+        const normalized = (identifier || '').toLowerCase();
+        const user = Array.from(mockUsers.values()).find(u => {
+          const loginId = (u.login_identifier || u.email || '').toLowerCase();
+          return loginId === normalized;
+        });
+        return Promise.resolve(user || undefined);
+      }),
       findActiveUsers: jest.fn().mockImplementation(() => {
         const activeUsers = Array.from(mockUsers.values()).filter(u => u.is_active);
         return Promise.resolve(activeUsers);
       }),
       findByRole: jest.fn().mockImplementation((role: string) => {
+        const users = Array.from(mockUsers.values()).filter(u => u.role === role);
+        return Promise.resolve(users);
+      }),
+      findByRoleMinimalForFacility: jest.fn().mockImplementation((role: string, _facilityId: string) => {
+        const users = Array.from(mockUsers.values()).filter(u => u.role === role);
+        return Promise.resolve(users);
+      }),
+      findByRoleMinimal: jest.fn().mockImplementation((role: string) => {
         const users = Array.from(mockUsers.values()).filter(u => u.role === role);
         return Promise.resolve(users);
       }),
@@ -1255,40 +1660,59 @@ jest.mock('../models/user.model', () => {
         
         return Promise.resolve(users.length);
       }),
+      findByPhone: jest.fn().mockImplementation((phone: string) => {
+        const user = Array.from(mockUsers.values()).find(u => u.phone_number === phone);
+        return Promise.resolve(user || undefined);
+      }),
+      findAllByEmail: jest.fn().mockImplementation((email: string) => {
+        const key = (email || '').toLowerCase();
+        return Promise.resolve(
+          Array.from(mockUsers.values()).filter((u) => (u.email || '').toLowerCase() === key),
+        );
+      }),
+      findAllByPhone: jest.fn().mockImplementation((phone: string) => {
+        return Promise.resolve(
+          Array.from(mockUsers.values()).filter((u) => u.phone_number === phone),
+        );
+      }),
+      findAllByLoginIdentifiers: jest.fn().mockImplementation((identifiers: string[]) => {
+        const keys = new Set((identifiers || []).map((value) => String(value).toLowerCase()));
+        return Promise.resolve(
+          Array.from(mockUsers.values()).filter((u) =>
+            keys.has((u.login_identifier || '').toLowerCase()),
+          ),
+        );
+      }),
     },
   };
 });
 
-jest.mock('../models/user-facility-association.model', () => ({
-  UserFacilityAssociationModel: {
-        getUserFacilityIds: jest.fn().mockImplementation((userId: string) => {
-          // Return mock facility IDs based on user
-          if (userId === 'facility-admin-1') {
-            return Promise.resolve(['550e8400-e29b-41d4-a716-446655440001']);
-          }
-          if (userId === 'tenant-1') {
-            return Promise.resolve(['550e8400-e29b-41d4-a716-446655440001']);
-          }
-          if (userId === 'tenant-2') {
-            return Promise.resolve(['550e8400-e29b-41d4-a716-446655440001']);
-          }
-          if (userId === 'tenant-3') {
-            return Promise.resolve(['550e8400-e29b-41d4-a716-446655440002']);
-          }
-          if (userId === 'facility2-tenant-1') {
-            return Promise.resolve(['550e8400-e29b-41d4-a716-446655440002']);
-          }
-          if (userId === 'maintenance-1') {
-            return Promise.resolve(['550e8400-e29b-41d4-a716-446655440001']);
-          }
-          return Promise.resolve([]);
-        }),
+jest.mock('../models/user-facility-association.model', () => {
+  const mockUserFacilityIds: Record<string, string[]> = {
+    'facility-admin-1': ['550e8400-e29b-41d4-a716-446655440001', 'facility-1'],
+    'facility-admin-2': ['550e8400-e29b-41d4-a716-446655440001'],
+    'tenant-1': ['550e8400-e29b-41d4-a716-446655440001', 'facility-1'],
+    'tenant-2': ['550e8400-e29b-41d4-a716-446655440001'],
+    'tenant-3': ['550e8400-e29b-41d4-a716-446655440002'],
+    'placeholder-tenant-1': ['550e8400-e29b-41d4-a716-446655440001', 'facility-1'],
+    'facility2-tenant-1': ['550e8400-e29b-41d4-a716-446655440002', 'facility-2'],
+    'maintenance-1': ['550e8400-e29b-41d4-a716-446655440001', 'facility-1'],
+  };
+
+  return {
+    UserFacilityAssociationModel: {
+      getUserFacilityIds: jest.fn().mockImplementation((userId: string) =>
+        Promise.resolve(mockUserFacilityIds[userId] ?? [])
+      ),
     findByUserId: jest.fn().mockResolvedValue([]),
     findByFacilityId: jest.fn().mockResolvedValue([]),
     getFacilityUserIds: jest.fn().mockResolvedValue([]),
     addUserToFacility: jest.fn().mockResolvedValue({ id: 'new-association' }),
         removeUserFromFacility: jest.fn().mockImplementation((userId: string, facilityId: string) => {
           // Mock non-existent associations
+          if (facilityId === 'non-existent') {
+            return Promise.resolve(0);
+          }
           if (userId === 'tenant-1' && facilityId === 'non-existent') {
             return Promise.resolve(0);
           }
@@ -1296,20 +1720,68 @@ jest.mock('../models/user-facility-association.model', () => ({
         }),
     setUserFacilities: jest.fn().mockResolvedValue(undefined),
     getUsersWithFacilities: jest.fn().mockResolvedValue([]),
-        hasAccessToFacility: jest.fn().mockImplementation((userId: string, facilityId: string) => {
-          // Mock existing associations
-          if (userId === 'tenant-1' && facilityId === '550e8400-e29b-41d4-a716-446655440001') {
-            return Promise.resolve(true);
-          }
-          if (userId === 'tenant-1' && facilityId === '550e8400-e29b-41d4-a716-446655440002') {
-            return Promise.resolve(false);
-          }
-          return Promise.resolve(false);
-        }),
+        hasAccessToFacility: jest.fn().mockImplementation((userId: string, facilityId: string) =>
+          Promise.resolve((mockUserFacilityIds[userId] ?? []).includes(facilityId))
+        ),
   },
-}));
+  };
+});
+
+jest.mock('../services/facility-access.service', () => {
+  const { UserRole } = require('../types/auth.types');
+
+  return {
+    FacilityAccessService: {
+      getUserFacilityIds: jest.fn().mockImplementation(async (userId: string, userRole: string) => {
+        if (userRole === UserRole.ADMIN || userRole === UserRole.DEV_ADMIN) {
+          return [];
+        }
+        const { UserFacilityAssociationModel } = require('../models/user-facility-association.model');
+        return UserFacilityAssociationModel.getUserFacilityIds(userId);
+      }),
+      hasAccessToFacility: jest.fn().mockImplementation(async (userId: string, userRole: string, facilityId: string) => {
+        if (userRole === UserRole.ADMIN || userRole === UserRole.DEV_ADMIN) {
+          return true;
+        }
+        const ids = await require('../services/facility-access.service').FacilityAccessService.getUserFacilityIds(
+          userId,
+          userRole
+        );
+        return ids.includes(facilityId);
+      }),
+      getUserScope: jest.fn().mockImplementation(async (userId: string, userRole: string) => {
+        if (userRole === UserRole.ADMIN || userRole === UserRole.DEV_ADMIN) {
+          return { type: 'all' };
+        }
+        const ids = await require('../services/facility-access.service').FacilityAccessService.getUserFacilityIds(
+          userId,
+          userRole
+        );
+        return { type: 'facility_limited', facilityIds: ids };
+      }),
+      validateFacilityAccess: jest.fn().mockImplementation(async (userId: string, userRole: string, facilityId: string) =>
+        require('../services/facility-access.service').FacilityAccessService.hasAccessToFacility(userId, userRole, facilityId)
+      ),
+      getAccessInfo: jest.fn().mockResolvedValue({
+        role: UserRole.TENANT,
+        scope: 'facility_limited',
+        facilityIds: [],
+        facilityCount: 0,
+      }),
+      getTenantMaintenanceFacilityIds: jest.fn().mockImplementation(async (userId: string) => {
+        const { UserFacilityAssociationModel } = require('../models/user-facility-association.model');
+        return UserFacilityAssociationModel.getUserFacilityIds(userId);
+      }),
+    },
+  };
+});
 
 jest.mock('../models/unit.model', () => {
+  const {
+    deriveEffectiveUnitStatus: actualDeriveEffectiveUnitStatus,
+    assertStoredStatusAllowedWithAssignments: actualAssertStoredStatusAllowedWithAssignments,
+  } = jest.requireActual('../models/unit.model');
+
   const mockUnits = [
     {
       id: '550e8400-e29b-41d4-a716-446655440011',
@@ -1380,6 +1852,8 @@ jest.mock('../models/unit.model', () => {
   ];
 
   return {
+    deriveEffectiveUnitStatus: actualDeriveEffectiveUnitStatus,
+    assertStoredStatusAllowedWithAssignments: actualAssertStoredStatusAllowedWithAssignments,
     UnitModel: jest.fn().mockImplementation(() => ({
       getUnitsListForUser: jest.fn().mockImplementation(async (userId: string, userRole: string, filters: any) => {
         // Security check: throw on null/undefined userId
@@ -1412,8 +1886,9 @@ jest.mock('../models/unit.model', () => {
         }
         
         // Apply filters
-        if (filters.facility_id) {
-          filteredUnits = filteredUnits.filter(u => u.facility_id === filters.facility_id);
+        if (filters.facility_id || filters.facilityId) {
+          const facilityFilter = filters.facility_id || filters.facilityId;
+          filteredUnits = filteredUnits.filter(u => u.facility_id === facilityFilter);
         }
         if (filters.status) {
           filteredUnits = filteredUnits.filter(u => u.status === filters.status);
@@ -1510,7 +1985,9 @@ jest.mock('../models/unit.model', () => {
         const actualId = idMap[unitId] || unitId;
         return mockUnits.find(u => u.id === actualId) || null;
       }),
-      
+
+      syncUnitOccupancyStatusFromAssignments: jest.fn().mockResolvedValue(undefined),
+
       findByPrimaryTenant: jest.fn().mockImplementation(async (tenantId: string) => {
         const assignments = mockUnitAssignments.filter(a => a.tenant_id === tenantId);
         const unitIds = assignments.map(a => a.unit_id);
@@ -1614,6 +2091,34 @@ jest.mock('bcrypt', () => ({
   }),
 }));
 
+jest.mock('../models/user-dashboard-page.model', () => ({
+  UserDashboardPageModel: {
+    findByUserId: jest.fn().mockResolvedValue([]),
+    findByIdForUser: jest.fn().mockResolvedValue(undefined),
+    createPage: jest.fn().mockImplementation((_userId: string, name: string, pageOrder: number) =>
+      Promise.resolve({
+        id: 'page-1',
+        user_id: _userId,
+        name,
+        page_order: pageOrder,
+        created_at: new Date(),
+        updated_at: new Date(),
+      })
+    ),
+    ensureDefaultPage: jest.fn().mockImplementation((userId: string) =>
+      Promise.resolve({
+        id: 'page-1',
+        user_id: userId,
+        name: 'Main',
+        page_order: 0,
+        created_at: new Date(),
+        updated_at: new Date(),
+      })
+    ),
+    deletePagesNotIn: jest.fn().mockResolvedValue(undefined),
+  },
+}));
+
 // Mock UserWidgetLayoutModel
 jest.mock('../models/user-widget-layout.model', () => ({
   UserWidgetLayoutModel: {
@@ -1627,6 +2132,7 @@ jest.mock('../models/user-widget-layout.model', () => ({
         {
           id: 'layout-1',
           user_id: userId,
+          page_id: 'page-1',
           widget_id: 'facilities_stats',
           widget_type: 'stats',
           layout_config: {
@@ -1640,6 +2146,28 @@ jest.mock('../models/user-widget-layout.model', () => ({
         }
       ]);
     }),
+    resolvePageId: jest.fn().mockResolvedValue('page-1'),
+    findPagesWithWidgets: jest.fn().mockImplementation(async (userId: string) => {
+      const { UserWidgetLayoutModel } = jest.requireMock('../models/user-widget-layout.model');
+      const widgets = await UserWidgetLayoutModel.findByUserId(userId);
+      if (widgets.length === 0) {
+        return { pages: [], widgetsByPageId: new Map() };
+      }
+      const pages = [
+        {
+          id: 'page-1',
+          user_id: userId,
+          name: 'Main',
+          page_order: 0,
+          created_at: new Date(),
+          updated_at: new Date(),
+        },
+      ];
+      const widgetsByPageId = new Map([[ 'page-1', widgets ]]);
+      return { pages, widgetsByPageId };
+    }),
+    findByUserAndPage: jest.fn().mockResolvedValue(undefined),
+    saveDashboardState: jest.fn().mockResolvedValue(undefined),
     findByUserAndWidget: jest.fn().mockImplementation((userId: string, widgetId: string) => {
       if (userId === 'tenant-1' && widgetId === 'facilities_stats') {
         return Promise.resolve({
@@ -1659,8 +2187,16 @@ jest.mock('../models/user-widget-layout.model', () => ({
       }
       return Promise.resolve(undefined);
     }),
-    saveUserLayouts: jest.fn().mockImplementation((_userId: string, _layouts: any[]) => {
-      return Promise.resolve();
+    saveUserLayouts: jest.fn().mockImplementation(async (userId: string, layouts: unknown[]) => {
+      const { UserWidgetLayoutModel } = jest.requireMock('../models/user-widget-layout.model');
+      return UserWidgetLayoutModel.saveDashboardState(userId, [
+        {
+          id: 'page-1',
+          name: 'Main',
+          pageOrder: 0,
+          widgets: layouts,
+        },
+      ]);
     }),
     hideWidget: jest.fn().mockImplementation((_userId: string, _widgetId: string) => {
       return Promise.resolve();
@@ -1669,6 +2205,9 @@ jest.mock('../models/user-widget-layout.model', () => ({
       return Promise.resolve();
     }),
     resetToDefaults: jest.fn().mockImplementation((_userId: string) => {
+      return Promise.resolve();
+    }),
+    clearUserDashboard: jest.fn().mockImplementation((_userId: string) => {
       return Promise.resolve();
     }),
     updateById: jest.fn().mockImplementation((id: string, data: any) => {
@@ -1760,6 +2299,58 @@ jest.mock('../models/user-widget-layout.model', () => ({
   }
 }));
 
+jest.mock('../models/saved-dashboard.model', () => ({
+  SavedDashboardModel: {
+    listAll: jest.fn().mockResolvedValue([]),
+    findById: jest.fn().mockResolvedValue(undefined),
+    findByName: jest.fn().mockResolvedValue(undefined),
+    createFromUserWorkingLayout: jest.fn().mockResolvedValue({
+      id: 'saved-dashboard-1',
+      name: 'Test Dashboard',
+      description: null,
+    }),
+    updateSnapshotFromUserWorkingLayout: jest.fn().mockResolvedValue({
+      id: 'saved-dashboard-1',
+      name: 'Test Dashboard',
+      description: null,
+      page_count: 1,
+      widget_count: 2,
+      updated_at: new Date(),
+    }),
+    updateMetadata: jest.fn().mockResolvedValue({
+      id: 'saved-dashboard-1',
+      name: 'Renamed Dashboard',
+      description: null,
+    }),
+    deleteById: jest.fn().mockResolvedValue(1),
+    loadIntoUserWorkingLayout: jest.fn().mockResolvedValue([]),
+    countAssignmentsReferencing: jest.fn().mockResolvedValue(0),
+  },
+  DashboardAssignmentModel: {
+    listAll: jest.fn().mockResolvedValue([]),
+    findById: jest.fn().mockResolvedValue(undefined),
+    createAssignment: jest.fn().mockResolvedValue({
+      id: 'assignment-1',
+      saved_dashboard_id: 'saved-dashboard-1',
+      scope: 'global',
+      facility_id: null,
+      user_id: null,
+      target_role: 'facility_admin',
+      priority: 0,
+    }),
+    updateAssignment: jest.fn().mockResolvedValue(undefined),
+    deleteById: jest.fn().mockResolvedValue(1),
+    resolveAssignment: jest.fn().mockResolvedValue(null),
+    resolveAssignedDashboardId: jest.fn().mockResolvedValue(null),
+    findAffectedUserIds: jest.fn().mockResolvedValue([]),
+    findUserIdsForSavedDashboard: jest.fn().mockResolvedValue([]),
+    scopePriority: jest.fn().mockImplementation((scope: string) => {
+      const priorities: Record<string, number> = { user: 300, facility: 200, global: 100 };
+      return priorities[scope] ?? 0;
+    }),
+  },
+}));
+
 // Mock winston logger to avoid console noise during tests
 jest.mock('../utils/logger', () => ({
   logger: {
@@ -1770,14 +2361,126 @@ jest.mock('../utils/logger', () => ({
   },
 }));
 
+// Mock @google-cloud/storage to prevent blocking during test discovery
+// This MUST be hoisted and applied before any module imports the Storage class
+jest.mock('@google-cloud/storage', () => {
+  const mockFile = {
+    exists: jest.fn().mockResolvedValue([false]),
+    save: jest.fn().mockResolvedValue(undefined),
+    download: jest.fn().mockResolvedValue([Buffer.from('test')]),
+    delete: jest.fn().mockResolvedValue(undefined),
+    getMetadata: jest.fn().mockResolvedValue([{ size: '1024' }]),
+    getSignedUrl: jest.fn().mockResolvedValue(['https://signed-url.example.com/file']),
+  };
+
+  const mockBucket = {
+    exists: jest.fn().mockResolvedValue([true]),
+    file: jest.fn().mockReturnValue(mockFile),
+    getFiles: jest.fn().mockResolvedValue([[]]),
+  };
+
+  // Return a factory function that returns the mock storage instance
+  const MockStorage = jest.fn().mockImplementation(() => ({
+    bucket: jest.fn().mockReturnValue(mockBucket),
+  }));
+
+  return {
+    Storage: MockStorage,
+    Bucket: jest.fn(),
+    File: jest.fn(),
+    __mockBucket: mockBucket,
+    __mockFile: mockFile,
+  };
+});
+
+// Mock googleapis to prevent blocking during test discovery
+// This MUST be hoisted and applied before any module imports googleapis
+// Note: Test-specific mocks can override this, but this ensures no blocking during discovery
+jest.mock('googleapis', () => {
+  // Create a mutable credentials object that can be updated by setCredentials
+  const credentials = {
+    access_token: 'mock-access-token',
+    refresh_token: 'mock-refresh-token',
+  };
+
+  const mockOAuth2Client = {
+    setCredentials: jest.fn().mockImplementation((creds) => {
+      Object.assign(credentials, creds);
+    }),
+    getAccessToken: jest.fn().mockResolvedValue({ token: 'mock-token' }),
+    refreshAccessToken: jest.fn().mockResolvedValue({
+      credentials: {
+        access_token: 'new-mock-access-token',
+        refresh_token: 'new-mock-refresh-token',
+      },
+    }),
+    generateAuthUrl: jest.fn().mockReturnValue('https://auth-url.example.com'),
+    getToken: jest.fn().mockResolvedValue({
+      tokens: {
+        access_token: 'mock-access-token',
+        refresh_token: 'mock-refresh-token',
+      },
+    }),
+    get credentials() {
+      return credentials;
+    },
+  };
+
+  // Factory function for OAuth2 that returns the mock client
+  const MockOAuth2 = jest.fn().mockImplementation(() => mockOAuth2Client);
+
+  const mockDrive = {
+    files: {
+      list: jest.fn().mockResolvedValue({ data: { files: [] } }),
+      get: jest.fn().mockResolvedValue({
+        data: {
+          id: 'file-id',
+          name: 'test-file',
+          mimeType: 'application/vnd.google-apps.folder',
+        },
+      }),
+      create: jest.fn().mockResolvedValue({ data: { id: 'new-file-id' } }),
+      delete: jest.fn().mockResolvedValue(undefined),
+      update: jest.fn().mockResolvedValue({ data: { id: 'updated-file-id' } }),
+    },
+    permissions: {
+      create: jest.fn().mockResolvedValue({ data: {} }),
+    },
+  };
+
+  // Factory function for drive that returns the mock drive instance
+  const MockDrive = jest.fn().mockReturnValue(mockDrive);
+
+  return {
+    google: {
+      auth: {
+        OAuth2: MockOAuth2,
+      },
+      drive: MockDrive,
+    },
+    __mockOAuth2Client: mockOAuth2Client,
+    __mockDrive: mockDrive,
+  };
+});
+
 // Global test setup
 beforeEach(() => {
   resetMocks();
+  (require('../models/user.model') as { __resetMockUsers?: () => void }).__resetMockUsers?.();
 });
 
 // Global test teardown
 afterEach(() => {
   jest.clearAllMocks();
+});
+
+// Global test teardown — timers after each test; connections once per worker.
+afterEach(async () => {
+  await teardownBackgroundTimers();
+});
+
+afterAll(async () => {
+  await teardownBackgroundServices();
 });
 
 export { resetMocks };

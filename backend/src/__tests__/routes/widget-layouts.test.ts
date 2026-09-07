@@ -2,6 +2,9 @@ import request from 'supertest';
 import { createApp } from '@/app';
 import { createMockTestData, MockTestData, expectUnauthorized, expectSuccess, expectBadRequest } from '@/__tests__/utils/mock-test-helpers';
 
+/** Roles that may read layouts but cannot mutate (requireAdmin on writes). */
+const NON_ADMIN_LAYOUT_MUTATION_ROLES = ['facilityAdmin', 'tenant', 'maintenance'] as const;
+
 describe('Widget Layouts Routes', () => {
   let app: any;
   let testData: MockTestData;
@@ -59,18 +62,21 @@ describe('Widget Layouts Routes', () => {
 
         expectSuccess(response);
         expect(response.body).toHaveProperty('layouts');
+        expect(response.body).toHaveProperty('pages');
         expect(response.body).toHaveProperty('isDefault', true);
         expect(Array.isArray(response.body.layouts)).toBe(true);
+        expect(Array.isArray(response.body.pages)).toBe(true);
       });
 
-      it('should return saved layouts for user with existing layouts', async () => {
+      it('should return saved personal layouts for admin with working state', async () => {
         const response = await request(app)
           .get('/api/v1/widget-layouts')
-          .set('Authorization', `Bearer ${testData.users.otherTenant.token}`)
+          .set('Authorization', `Bearer ${testData.users.devAdmin.token}`)
           .expect(200);
 
         expectSuccess(response);
         expect(response.body).toHaveProperty('layouts');
+        expect(response.body).toHaveProperty('layoutSource', 'personal');
         expect(response.body).toHaveProperty('isDefault', false);
         expect(Array.isArray(response.body.layouts)).toBe(true);
       });
@@ -157,38 +163,18 @@ describe('Widget Layouts Routes', () => {
         expect(response.body).toHaveProperty('message', 'Widget layout saved successfully');
       });
 
-      it('should save widget layouts for FACILITY_ADMIN', async () => {
-        const response = await request(app)
-          .post('/api/v1/widget-layouts')
-          .set('Authorization', `Bearer ${testData.users.facilityAdmin.token}`)
-          .send(validLayoutData)
-          .expect(200);
+      it.each(NON_ADMIN_LAYOUT_MUTATION_ROLES)(
+        'should reject layout save for %s',
+        async (roleKey) => {
+          const user = testData.users[roleKey];
+          const response = await request(app)
+            .post('/api/v1/widget-layouts')
+            .set('Authorization', `Bearer ${user.token}`)
+            .send(validLayoutData);
 
-        expectSuccess(response);
-        expect(response.body).toHaveProperty('message', 'Widget layout saved successfully');
-      });
-
-      it('should save widget layouts for TENANT', async () => {
-        const response = await request(app)
-          .post('/api/v1/widget-layouts')
-          .set('Authorization', `Bearer ${testData.users.tenant.token}`)
-          .send(validLayoutData)
-          .expect(200);
-
-        expectSuccess(response);
-        expect(response.body).toHaveProperty('message', 'Widget layout saved successfully');
-      });
-
-      it('should save widget layouts for MAINTENANCE', async () => {
-        const response = await request(app)
-          .post('/api/v1/widget-layouts')
-          .set('Authorization', `Bearer ${testData.users.maintenance.token}`)
-          .send(validLayoutData)
-          .expect(200);
-
-        expectSuccess(response);
-        expect(response.body).toHaveProperty('message', 'Widget layout saved successfully');
-      });
+          expect(response.status).toBe(403);
+        }
+      );
 
       it('should return 400 for missing layouts array', async () => {
         const response = await request(app)
@@ -257,6 +243,72 @@ describe('Widget Layouts Routes', () => {
           .expect(400);
 
         expectBadRequest(response);
+      });
+
+      it('should accept dock-full size for full-page dock layouts', async () => {
+        const response = await request(app)
+          .post('/api/v1/widget-layouts')
+          .set('Authorization', `Bearer ${testData.users.devAdmin.token}`)
+          .send({
+            pages: [
+              {
+                name: 'Main',
+                pageOrder: 0,
+                widgets: [
+                  {
+                    widgetId: 'facility-viewer',
+                    widgetType: 'facility-viewer',
+                    layoutConfig: {
+                      position: { x: 0, y: 0, w: 12, h: 6 },
+                      size: 'dock-full',
+                    },
+                    displayOrder: 0,
+                  },
+                ],
+              },
+            ],
+          })
+          .expect(200);
+
+        expectSuccess(response);
+        expect(response.body).toHaveProperty('message', 'Dashboard saved successfully');
+      });
+
+      it('should reflow dock-full when payload includes overlapping widgets', async () => {
+        const response = await request(app)
+          .post('/api/v1/widget-layouts')
+          .set('Authorization', `Bearer ${testData.users.devAdmin.token}`)
+          .send({
+            pages: [
+              {
+                name: 'Main',
+                pageOrder: 0,
+                widgets: [
+                  {
+                    widgetId: 'facility-viewer',
+                    widgetType: 'facility-viewer',
+                    layoutConfig: {
+                      position: { x: 0, y: 0, w: 12, h: 6 },
+                      size: 'dock-full',
+                    },
+                    displayOrder: 0,
+                  },
+                  {
+                    widgetId: 'stats-facilities',
+                    widgetType: 'stats-facilities',
+                    layoutConfig: {
+                      position: { x: 6, y: 0, w: 3, h: 2 },
+                      size: 'medium',
+                    },
+                    displayOrder: 1,
+                  },
+                ],
+              },
+            ],
+          })
+          .expect(200);
+
+        expectSuccess(response);
       });
 
       it('should return 400 for invalid display order', async () => {
@@ -379,38 +431,18 @@ describe('Widget Layouts Routes', () => {
         expect(response.body).toHaveProperty('message', 'Widget updated successfully');
       });
 
-      it('should update widget for FACILITY_ADMIN', async () => {
-        const response = await request(app)
-          .put('/api/v1/widget-layouts/facilities_stats')
-          .set('Authorization', `Bearer ${testData.users.facilityAdmin.token}`)
-          .send(validUpdateData)
-          .expect(200);
+      it.each(NON_ADMIN_LAYOUT_MUTATION_ROLES)(
+        'should reject widget update for %s',
+        async (roleKey) => {
+          const user = testData.users[roleKey];
+          const response = await request(app)
+            .put('/api/v1/widget-layouts/facilities_stats')
+            .set('Authorization', `Bearer ${user.token}`)
+            .send(validUpdateData);
 
-        expectSuccess(response);
-        expect(response.body).toHaveProperty('message', 'Widget updated successfully');
-      });
-
-      it('should update widget for TENANT', async () => {
-        const response = await request(app)
-          .put('/api/v1/widget-layouts/facilities_stats')
-          .set('Authorization', `Bearer ${testData.users.tenant.token}`)
-          .send(validUpdateData)
-          .expect(200);
-
-        expectSuccess(response);
-        expect(response.body).toHaveProperty('message', 'Widget updated successfully');
-      });
-
-      it('should update widget for MAINTENANCE', async () => {
-        const response = await request(app)
-          .put('/api/v1/widget-layouts/facilities_stats')
-          .set('Authorization', `Bearer ${testData.users.maintenance.token}`)
-          .send(validUpdateData)
-          .expect(200);
-
-        expectSuccess(response);
-        expect(response.body).toHaveProperty('message', 'Widget updated successfully');
-      });
+          expect(response.status).toBe(403);
+        }
+      );
 
       it('should create new widget if it does not exist', async () => {
         const response = await request(app)
@@ -503,9 +535,8 @@ describe('Widget Layouts Routes', () => {
           .put('/api/v1/widget-layouts/')
           .set('Authorization', `Bearer ${testData.users.admin.token}`)
           .send(validUpdateData)
-          .expect(404); // Route not found
+          .expect(404);
 
-        // This will be a 404 from Express router, not our custom error
         expect(response.status).toBe(404);
       });
 
@@ -561,35 +592,17 @@ describe('Widget Layouts Routes', () => {
         expect(response.body).toHaveProperty('message', 'Widget hidden successfully');
       });
 
-      it('should hide widget for FACILITY_ADMIN', async () => {
-        const response = await request(app)
-          .delete('/api/v1/widget-layouts/facilities_stats')
-          .set('Authorization', `Bearer ${testData.users.facilityAdmin.token}`)
-          .expect(200);
+      it.each(NON_ADMIN_LAYOUT_MUTATION_ROLES)(
+        'should reject hide widget for %s',
+        async (roleKey) => {
+          const user = testData.users[roleKey];
+          const response = await request(app)
+            .delete('/api/v1/widget-layouts/facilities_stats')
+            .set('Authorization', `Bearer ${user.token}`);
 
-        expectSuccess(response);
-        expect(response.body).toHaveProperty('message', 'Widget hidden successfully');
-      });
-
-      it('should hide widget for TENANT', async () => {
-        const response = await request(app)
-          .delete('/api/v1/widget-layouts/facilities_stats')
-          .set('Authorization', `Bearer ${testData.users.tenant.token}`)
-          .expect(200);
-
-        expectSuccess(response);
-        expect(response.body).toHaveProperty('message', 'Widget hidden successfully');
-      });
-
-      it('should hide widget for MAINTENANCE', async () => {
-        const response = await request(app)
-          .delete('/api/v1/widget-layouts/facilities_stats')
-          .set('Authorization', `Bearer ${testData.users.maintenance.token}`)
-          .expect(200);
-
-        expectSuccess(response);
-        expect(response.body).toHaveProperty('message', 'Widget hidden successfully');
-      });
+          expect(response.status).toBe(403);
+        }
+      );
 
       it('should return 400 for missing widget ID', async () => {
         const response = await request(app)
@@ -623,35 +636,17 @@ describe('Widget Layouts Routes', () => {
         expect(response.body).toHaveProperty('message', 'Widget shown successfully');
       });
 
-      it('should show widget for FACILITY_ADMIN', async () => {
-        const response = await request(app)
-          .post('/api/v1/widget-layouts/facilities_stats/show')
-          .set('Authorization', `Bearer ${testData.users.facilityAdmin.token}`)
-          .expect(200);
+      it.each(NON_ADMIN_LAYOUT_MUTATION_ROLES)(
+        'should reject show widget for %s',
+        async (roleKey) => {
+          const user = testData.users[roleKey];
+          const response = await request(app)
+            .post('/api/v1/widget-layouts/facilities_stats/show')
+            .set('Authorization', `Bearer ${user.token}`);
 
-        expectSuccess(response);
-        expect(response.body).toHaveProperty('message', 'Widget shown successfully');
-      });
-
-      it('should show widget for TENANT', async () => {
-        const response = await request(app)
-          .post('/api/v1/widget-layouts/facilities_stats/show')
-          .set('Authorization', `Bearer ${testData.users.tenant.token}`)
-          .expect(200);
-
-        expectSuccess(response);
-        expect(response.body).toHaveProperty('message', 'Widget shown successfully');
-      });
-
-      it('should show widget for MAINTENANCE', async () => {
-        const response = await request(app)
-          .post('/api/v1/widget-layouts/facilities_stats/show')
-          .set('Authorization', `Bearer ${testData.users.maintenance.token}`)
-          .expect(200);
-
-        expectSuccess(response);
-        expect(response.body).toHaveProperty('message', 'Widget shown successfully');
-      });
+          expect(response.status).toBe(403);
+        }
+      );
 
       it('should return 400 for missing widget ID', async () => {
         const response = await request(app)
@@ -664,10 +659,55 @@ describe('Widget Layouts Routes', () => {
       });
     });
 
-    describe('POST /api/v1/widget-layouts/reset - Reset to Defaults', () => {
-      it('should reset layouts for DEV_ADMIN', async () => {
+    describe('POST /api/v1/widget-layouts/reset - Clear personal layout', () => {
+      it('should clear personal layout for DEV_ADMIN', async () => {
         const response = await request(app)
           .post('/api/v1/widget-layouts/reset')
+          .set('Authorization', `Bearer ${testData.users.devAdmin.token}`)
+          .expect(200);
+
+        expectSuccess(response);
+        expect(response.body).toHaveProperty(
+          'message',
+          'Personal dashboard cleared; showing assigned or default layout'
+        );
+        expect(response.body).toHaveProperty('layoutSource');
+      });
+
+      it('should clear personal layout for ADMIN', async () => {
+        const response = await request(app)
+          .post('/api/v1/widget-layouts/reset')
+          .set('Authorization', `Bearer ${testData.users.admin.token}`)
+          .expect(200);
+
+        expectSuccess(response);
+        expect(response.body).toHaveProperty(
+          'message',
+          'Personal dashboard cleared; showing assigned or default layout'
+        );
+      });
+
+      it('should reject FACILITY_ADMIN', async () => {
+        const response = await request(app)
+          .post('/api/v1/widget-layouts/reset')
+          .set('Authorization', `Bearer ${testData.users.facilityAdmin.token}`);
+
+        expect(response.status).toBe(403);
+      });
+
+      it('should reject TENANT', async () => {
+        const response = await request(app)
+          .post('/api/v1/widget-layouts/reset')
+          .set('Authorization', `Bearer ${testData.users.tenant.token}`);
+
+        expect(response.status).toBe(403);
+      });
+    });
+
+    describe('POST /api/v1/widget-layouts/reset-defaults - Reset to system templates', () => {
+      it('should reset layouts for DEV_ADMIN', async () => {
+        const response = await request(app)
+          .post('/api/v1/widget-layouts/reset-defaults')
           .set('Authorization', `Bearer ${testData.users.devAdmin.token}`)
           .expect(200);
 
@@ -675,44 +715,12 @@ describe('Widget Layouts Routes', () => {
         expect(response.body).toHaveProperty('message', 'Widget layout reset to defaults');
       });
 
-      it('should reset layouts for ADMIN', async () => {
+      it('should reject non-admin roles', async () => {
         const response = await request(app)
-          .post('/api/v1/widget-layouts/reset')
-          .set('Authorization', `Bearer ${testData.users.admin.token}`)
-          .expect(200);
+          .post('/api/v1/widget-layouts/reset-defaults')
+          .set('Authorization', `Bearer ${testData.users.tenant.token}`);
 
-        expectSuccess(response);
-        expect(response.body).toHaveProperty('message', 'Widget layout reset to defaults');
-      });
-
-      it('should reset layouts for FACILITY_ADMIN', async () => {
-        const response = await request(app)
-          .post('/api/v1/widget-layouts/reset')
-          .set('Authorization', `Bearer ${testData.users.facilityAdmin.token}`)
-          .expect(200);
-
-        expectSuccess(response);
-        expect(response.body).toHaveProperty('message', 'Widget layout reset to defaults');
-      });
-
-      it('should reset layouts for TENANT', async () => {
-        const response = await request(app)
-          .post('/api/v1/widget-layouts/reset')
-          .set('Authorization', `Bearer ${testData.users.tenant.token}`)
-          .expect(200);
-
-        expectSuccess(response);
-        expect(response.body).toHaveProperty('message', 'Widget layout reset to defaults');
-      });
-
-      it('should reset layouts for MAINTENANCE', async () => {
-        const response = await request(app)
-          .post('/api/v1/widget-layouts/reset')
-          .set('Authorization', `Bearer ${testData.users.maintenance.token}`)
-          .expect(200);
-
-        expectSuccess(response);
-        expect(response.body).toHaveProperty('message', 'Widget layout reset to defaults');
+        expect(response.status).toBe(403);
       });
     });
 
@@ -892,9 +900,9 @@ describe('Widget Layouts Routes', () => {
     });
 
     describe('Widget Layout Access', () => {
-      it('should allow all authenticated users to manage their own layouts', async () => {
+      it('should allow all authenticated users to read their own layouts', async () => {
         const roles = ['devAdmin', 'admin', 'facilityAdmin', 'tenant', 'maintenance'];
-        
+
         for (const role of roles) {
           const user = testData.users[role as keyof typeof testData.users];
           const response = await request(app)
@@ -904,6 +912,28 @@ describe('Widget Layouts Routes', () => {
 
           expectSuccess(response);
           expect(response.body).toHaveProperty('layouts');
+        }
+      });
+
+      it('should reject non-admin layout mutations', async () => {
+        for (const roleKey of NON_ADMIN_LAYOUT_MUTATION_ROLES) {
+          const user = testData.users[roleKey];
+          const response = await request(app)
+            .post('/api/v1/widget-layouts')
+            .set('Authorization', `Bearer ${user.token}`)
+            .send({
+              layouts: [
+                {
+                  widgetId: 'facilities_stats',
+                  widgetType: 'stats',
+                  layoutConfig: { position: { x: 0, y: 0, w: 3, h: 2 }, size: 'medium' },
+                  displayOrder: 0,
+                  isVisible: true,
+                },
+              ],
+            });
+
+          expect(response.status).toBe(403);
         }
       });
 

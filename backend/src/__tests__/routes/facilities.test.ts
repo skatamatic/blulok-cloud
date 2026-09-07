@@ -1,6 +1,9 @@
 import request from 'supertest';
 import { createApp } from '@/app';
 import { createMockTestData, MockTestData, expectSuccess, expectUnauthorized, expectForbidden, expectNotFound } from '@/__tests__/utils/mock-test-helpers';
+import { UserFacilityAssociationModel } from '@/models/user-facility-association.model';
+import { AuthService } from '@/services/auth.service';
+import { UserRole } from '@/types/auth.types';
 
 describe('Facilities Routes', () => {
   let app: any;
@@ -40,7 +43,12 @@ describe('Facilities Routes', () => {
       response = await request(app).delete('/api/v1/facilities/facility-1');
       expect(response.status).toBe(401);
       expectUnauthorized(response);
-    });
+
+      // Test GET /api/v1/facilities/:facilityId/units
+      response = await request(app).get('/api/v1/facilities/facility-1/units');
+      expect(response.status).toBe(401);
+      expectUnauthorized(response);
+    }, 30000); // Increase timeout to 30s
   });
 
   describe('GET /api/v1/facilities - List Facilities', () => {
@@ -77,6 +85,59 @@ describe('Facilities Routes', () => {
       expect(response.body).toHaveProperty('total');
       // Should only return facilities where admin has units
       expect(response.body.facilities.length).toBeGreaterThan(0);
+    });
+
+    it('should list facilities from live DB associations even when JWT facilityIds are stale', async () => {
+      const liveFacilityIds = [
+        '550e8400-e29b-41d4-a716-446655440001',
+        '550e8400-e29b-41d4-a716-446655440002',
+      ];
+      const getIdsMock = UserFacilityAssociationModel.getUserFacilityIds as jest.Mock;
+      getIdsMock.mockResolvedValueOnce(liveFacilityIds);
+
+      const response = await request(app)
+        .get('/api/v1/facilities')
+        .set('Authorization', `Bearer ${testData.users.facilityAdmin.token}`)
+        .expect(200);
+
+      expectSuccess(response);
+      const returnedIds = response.body.facilities.map((f: { id: string }) => f.id);
+      expect(returnedIds).toEqual(
+        expect.arrayContaining(liveFacilityIds)
+      );
+      expect(response.body.total).toBe(liveFacilityIds.length);
+      expect(returnedIds.length).toBe(liveFacilityIds.length);
+    });
+
+    it('should list only DB-associated facilities when JWT still includes a removed facility', async () => {
+      const facilityOne = '550e8400-e29b-41d4-a716-446655440001';
+      const facilityTwo = '550e8400-e29b-41d4-a716-446655440002';
+      const jwtWithBothFacilities = AuthService.generateToken(
+        {
+          id: 'facility-admin-1',
+          email: 'facilityadmin@test.com',
+          role: UserRole.FACILITY_ADMIN,
+          password_hash: 'hashed-password',
+          first_name: 'Facility',
+          last_name: 'Admin',
+          is_active: true,
+          created_at: new Date(),
+          updated_at: new Date(),
+        } as any,
+        [facilityOne, facilityTwo]
+      );
+
+      const getIdsMock = UserFacilityAssociationModel.getUserFacilityIds as jest.Mock;
+      getIdsMock.mockResolvedValueOnce([facilityOne]);
+
+      const response = await request(app)
+        .get('/api/v1/facilities')
+        .set('Authorization', `Bearer ${jwtWithBothFacilities}`)
+        .expect(200);
+
+      expectSuccess(response);
+      expect(response.body.total).toBe(1);
+      expect(response.body.facilities.map((f: { id: string }) => f.id)).toEqual([facilityOne]);
     });
 
     it('should return only facilities with units for TENANT', async () => {
@@ -221,6 +282,35 @@ describe('Facilities Routes', () => {
       expectForbidden(response);
     });
 
+    it('should return 403 for removed facility even when JWT still includes it', async () => {
+      const facilityOne = '550e8400-e29b-41d4-a716-446655440001';
+      const facilityTwo = '550e8400-e29b-41d4-a716-446655440002';
+      const jwtWithBothFacilities = AuthService.generateToken(
+        {
+          id: 'facility-admin-1',
+          email: 'facilityadmin@test.com',
+          role: UserRole.FACILITY_ADMIN,
+          password_hash: 'hashed-password',
+          first_name: 'Facility',
+          last_name: 'Admin',
+          is_active: true,
+          created_at: new Date(),
+          updated_at: new Date(),
+        } as any,
+        [facilityOne, facilityTwo]
+      );
+
+      const getIdsMock = UserFacilityAssociationModel.getUserFacilityIds as jest.Mock;
+      getIdsMock.mockResolvedValueOnce([facilityOne]);
+
+      const response = await request(app)
+        .get(`/api/v1/facilities/${facilityTwo}`)
+        .set('Authorization', `Bearer ${jwtWithBothFacilities}`)
+        .expect(403);
+
+      expectForbidden(response);
+    });
+
     it('should return 403 for TENANT without access', async () => {
       const response = await request(app)
         .get('/api/v1/facilities/facility-2')
@@ -304,6 +394,17 @@ describe('Facilities Routes', () => {
 
       expectForbidden(response);
     });
+
+    it('should return 409 when creating a facility with a duplicate name', async () => {
+      const response = await request(app)
+        .post('/api/v1/facilities')
+        .set('Authorization', `Bearer ${testData.users.admin.token}`)
+        .send({ ...validFacilityData, name: 'Test Facility 1' })
+        .expect(409);
+
+      expect(response.body.success).toBe(false);
+      expect(response.body.message).toMatch(/name already exists/i);
+    });
   });
 
   describe('PUT /api/v1/facilities/:id - Update Facility', () => {
@@ -385,6 +486,27 @@ describe('Facilities Routes', () => {
         .expect(403);
 
       expectForbidden(response);
+    });
+
+    it('should return 409 when renaming to an existing facility name', async () => {
+      const response = await request(app)
+        .put('/api/v1/facilities/facility-1')
+        .set('Authorization', `Bearer ${testData.users.facilityAdmin.token}`)
+        .send({ name: 'Test Facility 2' })
+        .expect(409);
+
+      expect(response.body.success).toBe(false);
+      expect(response.body.message).toMatch(/name already exists/i);
+    });
+
+    it('should allow keeping the same facility name on update', async () => {
+      const response = await request(app)
+        .put('/api/v1/facilities/facility-1')
+        .set('Authorization', `Bearer ${testData.users.facilityAdmin.token}`)
+        .send({ name: 'Test Facility 1', description: 'Same name, new description' })
+        .expect(200);
+
+      expectSuccess(response);
     });
   });
 

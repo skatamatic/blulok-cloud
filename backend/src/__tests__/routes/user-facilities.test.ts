@@ -36,7 +36,7 @@ describe('User-Facilities Routes', () => {
         }
         expectUnauthorized(response);
       }
-    });
+    }, 30000); // Increase timeout to 30s
   });
 
   describe('GET /api/v1/user-facilities/:userId - Get User Facilities', () => {
@@ -111,10 +111,12 @@ describe('User-Facilities Routes', () => {
     const validData = {
       facilityIds: ['550e8400-e29b-41d4-a716-446655440001', '550e8400-e29b-41d4-a716-446655440002']
     };
+    const autoManagedMessage =
+      'Facility associations for tenants and maintenance users are managed automatically through unit assignments and key sharing';
 
-    it('should allow ADMIN to set user facilities', async () => {
+    it('should allow ADMIN to set facility admin associations', async () => {
       const response = await request(app)
-        .put('/api/v1/user-facilities/tenant-1')
+        .put('/api/v1/user-facilities/facility-admin-2')
         .set('Authorization', `Bearer ${testData.users.admin.token}`)
         .send(validData);
 
@@ -123,9 +125,9 @@ describe('User-Facilities Routes', () => {
       expect(response.body.message).toContain('updated successfully');
     });
 
-    it('should allow DEV_ADMIN to set user facilities', async () => {
+    it('should allow DEV_ADMIN to set facility admin associations', async () => {
       const response = await request(app)
-        .put('/api/v1/user-facilities/tenant-1')
+        .put('/api/v1/user-facilities/facility-admin-2')
         .set('Authorization', `Bearer ${testData.users.devAdmin.token}`)
         .send(validData);
 
@@ -133,24 +135,24 @@ describe('User-Facilities Routes', () => {
       expect(response.body.success).toBe(true);
     });
 
-    it('should allow FACILITY_ADMIN to set facilities they manage', async () => {
+    it('should prevent FACILITY_ADMIN from managing facility admin associations', async () => {
       const response = await request(app)
-        .put('/api/v1/user-facilities/tenant-1')
+        .put('/api/v1/user-facilities/facility-admin-2')
         .set('Authorization', `Bearer ${testData.users.facilityAdmin.token}`)
         .send({ facilityIds: ['facility-1'] });
 
-      expect(response.status).toBe(200);
-      expect(response.body.success).toBe(true);
+      expectForbidden(response);
+      expect(response.body.message).toContain('Only global administrators can manage facility admin associations');
     });
 
-    it('should prevent FACILITY_ADMIN from setting facilities they dont manage', async () => {
+    it('should reject manual facility assignment for tenants', async () => {
       const response = await request(app)
         .put('/api/v1/user-facilities/tenant-1')
-        .set('Authorization', `Bearer ${testData.users.facilityAdmin.token}`)
-        .send({ facilityIds: ['550e8400-e29b-41d4-a716-446655440002'] });
+        .set('Authorization', `Bearer ${testData.users.admin.token}`)
+        .send(validData);
 
-      expectForbidden(response);
-      expect(response.body.message).toContain('You can only assign users to facilities you manage');
+      expectBadRequest(response);
+      expect(response.body.message).toBe(autoManagedMessage);
     });
 
     it('should prevent TENANT from setting user facilities', async () => {
@@ -202,9 +204,12 @@ describe('User-Facilities Routes', () => {
   });
 
   describe('POST /api/v1/user-facilities/:userId/facilities/:facilityId - Add Facility', () => {
-    it('should allow ADMIN to add facility to user', async () => {
+    const autoManagedMessage =
+      'Facility associations for tenants and maintenance users are managed automatically through unit assignments and key sharing';
+
+    it('should allow ADMIN to add facility to facility admin', async () => {
       const response = await request(app)
-        .post('/api/v1/user-facilities/tenant-1/facilities/550e8400-e29b-41d4-a716-446655440002')
+        .post('/api/v1/user-facilities/facility-admin-2/facilities/550e8400-e29b-41d4-a716-446655440002')
         .set('Authorization', `Bearer ${testData.users.admin.token}`);
 
       expect(response.status).toBe(200);
@@ -212,27 +217,27 @@ describe('User-Facilities Routes', () => {
       expect(response.body.message).toContain('added to facility successfully');
     });
 
-    it('should allow DEV_ADMIN to add facility to user', async () => {
+    it('should allow DEV_ADMIN to add facility to facility admin', async () => {
       const response = await request(app)
-        .post('/api/v1/user-facilities/tenant-1/facilities/550e8400-e29b-41d4-a716-446655440002')
+        .post('/api/v1/user-facilities/facility-admin-2/facilities/550e8400-e29b-41d4-a716-446655440002')
         .set('Authorization', `Bearer ${testData.users.devAdmin.token}`);
 
       expect(response.status).toBe(200);
       expect(response.body.success).toBe(true);
     });
 
-    it('should allow FACILITY_ADMIN to add facility they manage', async () => {
+    it('should prevent FACILITY_ADMIN from managing facility admin associations', async () => {
       const response = await request(app)
-        .post('/api/v1/user-facilities/other-tenant-1/facilities/facility-1')
+        .post('/api/v1/user-facilities/facility-admin-2/facilities/facility-1')
         .set('Authorization', `Bearer ${testData.users.facilityAdmin.token}`);
 
-      expect(response.status).toBe(200);
-      expect(response.body.success).toBe(true);
+      expectForbidden(response);
+      expect(response.body.message).toContain('Only global administrators can manage facility admin associations');
     });
 
     it('should prevent FACILITY_ADMIN from adding facility they dont manage', async () => {
       const response = await request(app)
-        .post('/api/v1/user-facilities/tenant-1/facilities/550e8400-e29b-41d4-a716-446655440002')
+        .post('/api/v1/user-facilities/facility-admin-2/facilities/550e8400-e29b-41d4-a716-446655440002')
         .set('Authorization', `Bearer ${testData.users.facilityAdmin.token}`);
 
       expectForbidden(response);
@@ -256,11 +261,20 @@ describe('User-Facilities Routes', () => {
 
     it('should return 400 if association already exists', async () => {
       const response = await request(app)
-        .post('/api/v1/user-facilities/tenant-1/facilities/550e8400-e29b-41d4-a716-446655440001')
+        .post('/api/v1/user-facilities/facility-admin-2/facilities/550e8400-e29b-41d4-a716-446655440001')
         .set('Authorization', `Bearer ${testData.users.admin.token}`);
 
       expectBadRequest(response);
       expect(response.body.message).toContain('already has access');
+    });
+
+    it('should reject manual facility assignment for tenants', async () => {
+      const response = await request(app)
+        .post('/api/v1/user-facilities/tenant-1/facilities/550e8400-e29b-41d4-a716-446655440002')
+        .set('Authorization', `Bearer ${testData.users.admin.token}`);
+
+      expectBadRequest(response);
+      expect(response.body.message).toBe(autoManagedMessage);
     });
 
     it('should return 404 for non-existent user', async () => {
@@ -274,9 +288,12 @@ describe('User-Facilities Routes', () => {
   });
 
   describe('DELETE /api/v1/user-facilities/:userId/facilities/:facilityId - Remove Facility', () => {
-    it('should allow ADMIN to remove facility from user', async () => {
+    const autoManagedMessage =
+      'Facility associations for tenants and maintenance users are managed automatically through unit assignments and key sharing';
+
+    it('should allow ADMIN to remove facility from facility admin', async () => {
       const response = await request(app)
-        .delete('/api/v1/user-facilities/tenant-1/facilities/550e8400-e29b-41d4-a716-446655440001')
+        .delete('/api/v1/user-facilities/facility-admin-2/facilities/550e8400-e29b-41d4-a716-446655440001')
         .set('Authorization', `Bearer ${testData.users.admin.token}`);
 
       expect(response.status).toBe(200);
@@ -284,27 +301,27 @@ describe('User-Facilities Routes', () => {
       expect(response.body.message).toContain('removed from facility successfully');
     });
 
-    it('should allow DEV_ADMIN to remove facility from user', async () => {
+    it('should allow DEV_ADMIN to remove facility from facility admin', async () => {
       const response = await request(app)
-        .delete('/api/v1/user-facilities/tenant-1/facilities/550e8400-e29b-41d4-a716-446655440001')
+        .delete('/api/v1/user-facilities/facility-admin-2/facilities/550e8400-e29b-41d4-a716-446655440001')
         .set('Authorization', `Bearer ${testData.users.devAdmin.token}`);
 
       expect(response.status).toBe(200);
       expect(response.body.success).toBe(true);
     });
 
-    it('should allow FACILITY_ADMIN to remove facility they manage', async () => {
+    it('should prevent FACILITY_ADMIN from removing facility admin associations', async () => {
       const response = await request(app)
-        .delete('/api/v1/user-facilities/tenant-1/facilities/facility-1')
+        .delete('/api/v1/user-facilities/facility-admin-2/facilities/facility-1')
         .set('Authorization', `Bearer ${testData.users.facilityAdmin.token}`);
 
-      expect(response.status).toBe(200);
-      expect(response.body.success).toBe(true);
+      expectForbidden(response);
+      expect(response.body.message).toContain('Only global administrators can manage facility admin associations');
     });
 
     it('should prevent FACILITY_ADMIN from removing facility they dont manage', async () => {
       const response = await request(app)
-        .delete('/api/v1/user-facilities/tenant-1/facilities/550e8400-e29b-41d4-a716-446655440002')
+        .delete('/api/v1/user-facilities/facility-admin-2/facilities/550e8400-e29b-41d4-a716-446655440002')
         .set('Authorization', `Bearer ${testData.users.facilityAdmin.token}`);
 
       expectForbidden(response);
@@ -328,11 +345,20 @@ describe('User-Facilities Routes', () => {
 
     it('should return 404 for non-existent association', async () => {
       const response = await request(app)
-        .delete('/api/v1/user-facilities/tenant-1/facilities/non-existent')
+        .delete('/api/v1/user-facilities/facility-admin-2/facilities/non-existent')
         .set('Authorization', `Bearer ${testData.users.admin.token}`);
 
       expectNotFound(response);
       expect(response.body.message).toBe('Association not found');
+    });
+
+    it('should reject manual facility removal for tenants', async () => {
+      const response = await request(app)
+        .delete('/api/v1/user-facilities/tenant-1/facilities/550e8400-e29b-41d4-a716-446655440001')
+        .set('Authorization', `Bearer ${testData.users.admin.token}`);
+
+      expectBadRequest(response);
+      expect(response.body.message).toBe(autoManagedMessage);
     });
   });
 });

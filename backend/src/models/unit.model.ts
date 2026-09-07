@@ -1,7 +1,73 @@
+import type { Knex } from 'knex';
 import { DatabaseService } from '@/services/database.service';
 import { UserRole } from '@/types/auth.types';
 import { logger } from '@/utils/logger';
 import { FacilityAccessService } from '@/services/facility-access.service';
+import { compareNaturalStrings } from '@/utils/natural-string-compare';
+import { DeviceGroupModel } from '@/models/device-group.model';
+
+/** Allowed GET /units sort_by values (query param may be camelCase sortBy from clients). */
+const UNIT_LIST_SORT_WHITELIST = [
+  'unit_number',
+  'status',
+  'unit_type',
+  'created_at',
+  'facility_name',
+  'tenant_last_name',
+  'lock_status',
+  'battery_level',
+] as const;
+type UnitListSortKey = (typeof UNIT_LIST_SORT_WHITELIST)[number];
+
+function normalizeUnitListSortKey(raw: unknown): UnitListSortKey {
+  const s = typeof raw === 'string' ? raw.trim() : '';
+  if (s && (UNIT_LIST_SORT_WHITELIST as readonly string[]).includes(s)) {
+    return s as UnitListSortKey;
+  }
+  return 'unit_number';
+}
+
+function parseBluLokDeviceSettings(raw: unknown): Record<string, unknown> | undefined {
+  if (raw == null) return undefined;
+  if (typeof raw === 'object' && !Array.isArray(raw)) {
+    return raw as Record<string, unknown>;
+  }
+  if (typeof raw === 'string') {
+    try {
+      const parsed = JSON.parse(raw);
+      return typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)
+        ? (parsed as Record<string, unknown>)
+        : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+  return undefined;
+}
+
+/** Latest successful unlock for a unit (activity_logs, then legacy access_logs). */
+export const LAST_UNLOCK_AT_SUBQUERY_SQL = `(
+  SELECT COALESCE(
+    (
+      SELECT MAX(al.occurred_at)
+      FROM activity_logs al
+      WHERE al.unit_id = u.id
+        AND al.activity_type = 'unlock'
+        AND al.result = 'success'
+    ),
+    (
+      SELECT MAX(al2.occurred_at)
+      FROM access_logs al2
+      WHERE al2.unit_id = u.id
+        AND al2.action = 'unlock'
+        AND al2.success = 1
+    )
+  )
+)`;
+
+export function lastUnlockAtSelect(knex: Knex, alias = 'last_activity'): Knex.Raw {
+  return knex.raw(`${LAST_UNLOCK_AT_SUBQUERY_SQL} as ??`, [alias]);
+}
 
 /**
  * Unit Entity Interface
@@ -36,6 +102,8 @@ export interface Unit {
   unit_type: string | null;
   /** Current occupancy/availability status */
   status: 'available' | 'occupied' | 'maintenance' | 'reserved';
+  /** FMS/manual overlock flag — displayed as "overlocked" when unit has tenants */
+  is_overlocked: boolean;
   /** Optional description of the unit */
   description: string | null;
   /** Physical features and amenities (balcony, parking space, etc.) */
@@ -126,6 +194,56 @@ export interface UnitAssignment {
   updated_at: Date;
 }
 
+export type EffectiveUnitStatus = 'available' | 'occupied' | 'overlocked' | 'maintenance' | 'reserved';
+
+/**
+ * Effective occupancy status for API responses: any tenant assignment implies occupied
+ * (or overlocked when flagged); stale `units.status = 'occupied'` with zero assignments
+ * is treated as available.
+ */
+export function deriveEffectiveUnitStatus(
+  storedStatus: Unit['status'],
+  assignmentCount: number,
+  isOverlocked = false
+): EffectiveUnitStatus {
+  if (assignmentCount > 0 && isOverlocked) {
+    return 'overlocked';
+  }
+  if (assignmentCount > 0) {
+    return 'occupied';
+  }
+  if (storedStatus === 'occupied') {
+    return 'available';
+  }
+  return storedStatus;
+}
+
+/** List/detail label when the unit has tenants but no primary assignment row. */
+export const SHARED_ACCESS_TENANT_LABEL = 'Shared access';
+
+/**
+ * Stored `units.status` rules:
+ * - With tenants: only `occupied` is allowed (status is driven by assignments).
+ * - Without tenants: `available`, `maintenance`, or `reserved` — not `occupied`.
+ */
+export function assertStoredStatusAllowedWithAssignments(
+  newStatus: Unit['status'],
+  assignmentCount: number
+): void {
+  if (assignmentCount > 0) {
+    if (newStatus !== 'occupied') {
+      throw new Error(
+        'Cannot change unit status while tenants are assigned. Remove all tenants first.'
+      );
+    }
+    return;
+  }
+
+  if (newStatus === 'occupied') {
+    throw new Error('Cannot set unit to occupied without a tenant assignment. Assign a tenant first.');
+  }
+}
+
 /**
  * Unit Model Class
  *
@@ -151,6 +269,43 @@ export class UnitModel {
 
   constructor() {
     this.db = DatabaseService.getInstance();
+  }
+
+  /**
+   * Persist `units.status` from `unit_assignments` so the column stays aligned with reality.
+   */
+  async syncUnitOccupancyStatusFromAssignments(unitId: string, trx?: Knex.Transaction): Promise<void> {
+    const knex = trx ?? this.db.connection;
+    const row = await knex('unit_assignments').where({ unit_id: unitId }).count('* as c').first();
+    const count = Number((row as { c?: string | number })?.c ?? 0);
+    const unit = (await knex('units').where('id', unitId).first()) as Unit | undefined;
+    if (!unit) {
+      return;
+    }
+    const next = deriveEffectiveUnitStatus(unit.status, count, Boolean(unit.is_overlocked));
+    const updates: Partial<Unit> = {};
+    if (next !== unit.status && next !== 'overlocked') {
+      updates.status = next as Unit['status'];
+    }
+    if (count === 0 && unit.is_overlocked) {
+      updates.is_overlocked = false;
+    }
+    if (Object.keys(updates).length > 0) {
+      await knex('units').where('id', unitId).update({ ...updates, updated_at: knex.fn.now() });
+    }
+  }
+
+  async setOverlockStatus(unitId: string, isOverlocked: boolean, trx?: Knex.Transaction): Promise<void> {
+    const knex = trx ?? this.db.connection;
+    await knex('units').where('id', unitId).update({
+      is_overlocked: isOverlocked,
+      updated_at: knex.fn.now(),
+    });
+  }
+
+  async hasBlulokDevice(unitId: string): Promise<boolean> {
+    const row = await this.db.connection('blulok_devices').where('unit_id', unitId).first('id');
+    return Boolean(row);
   }
 
   /**
@@ -189,8 +344,8 @@ export class UnitModel {
           'pa.first_name',
           'pa.last_name',
           'pa.tenant_email',
-          'bd.last_seen as unlocked_since',
-          'bd.last_seen as last_activity',
+          lastUnlockAtSelect(knex, 'unlocked_since'),
+          lastUnlockAtSelect(knex, 'last_activity'),
           'bd.lock_status',
           'bd.device_status',
           'bd.battery_level',
@@ -210,26 +365,43 @@ export class UnitModel {
           'u.id', 'pa.unit_id'
         )
         .where('pa.rn', 1)
-        .where('bd.lock_status', 'unlocked')
-        .where('u.status', 'occupied');
+        .where('bd.lock_status', 'unlocked');
 
+      // Occupancy is defined by assignments (primary join above), not only `units.status`,
+      // so we do not filter on u.status here—stale status must not hide unlocked leased units.
 
       // Apply role-based filtering
-      if (userRole === 'admin' || userRole === 'dev_admin') {
+      if (userRole === UserRole.ADMIN || userRole === UserRole.DEV_ADMIN) {
         // Admin and Dev Admin see all unlocked units from all facilities
         // No additional filtering needed
-      } else if (userRole === 'facility_admin') {
+      } else if (userRole === UserRole.FACILITY_ADMIN) {
         // Facility Admin see unlocked units from facilities they manage
-        const scope = await this.determineUserScope(userId, userRole);
+        const scope = await FacilityAccessService.getUserScope(userId, userRole);
         if (scope.type === 'facility_limited' && scope.facilityIds && scope.facilityIds.length > 0) {
           query = query.whereIn('u.facility_id', scope.facilityIds);
         } else {
           // No facility associations, return empty result
           return [];
         }
-      } else if (userRole === 'tenant' || userRole === 'maintenance') {
-        // Tenants and Maintenance see only unlocked units that are assigned to them
-        query = query.where('ua.tenant_id', userId);
+      } else if (userRole === UserRole.TENANT || userRole === UserRole.MAINTENANCE) {
+        // Tenants and Maintenance see only unlocked units that are assigned to them OR shared with them
+        const accessibleUnitIds = knex
+          .select('unit_id')
+          .from('unit_assignments')
+          .where('tenant_id', userId)
+          .union([
+            knex
+              .select('unit_id')
+              .from('key_sharing')
+              .where('shared_with_user_id', userId)
+              .where('is_active', true)
+              .where(function() {
+                this.whereNull('expires_at')
+                  .orWhere('expires_at', '>', knex.fn.now());
+              })
+          ]);
+        
+        query = query.whereIn('u.id', accessibleUnitIds);
       } else {
         // Unknown role, return empty result
         return [];
@@ -272,23 +444,37 @@ export class UnitModel {
         .join('facilities as f', 'u.facility_id', 'f.id');
 
       // Apply role-based filtering
-      if (userRole === 'admin' || userRole === 'dev_admin') {
+      if (userRole === UserRole.ADMIN || userRole === UserRole.DEV_ADMIN) {
         // Admin and Dev Admin see all units from all facilities
         // No additional filtering needed
-      } else if (userRole === 'facility_admin') {
+      } else if (userRole === UserRole.FACILITY_ADMIN) {
         // Facility Admin see units from facilities they manage
-        const scope = await this.determineUserScope(userId, userRole);
+        const scope = await FacilityAccessService.getUserScope(userId, userRole);
         if (scope.type === 'facility_limited' && scope.facilityIds && scope.facilityIds.length > 0) {
           query = query.whereIn('u.facility_id', scope.facilityIds);
         } else {
           // No facility associations, return empty result
           return [];
         }
-      } else if (userRole === 'tenant' || userRole === 'maintenance') {
-        // Tenants and Maintenance see only units that are assigned to them
-        query = query
-          .join('unit_assignments as ua', 'u.id', 'ua.unit_id')
-          .where('ua.tenant_id', userId);
+      } else if (userRole === UserRole.TENANT || userRole === UserRole.MAINTENANCE) {
+        // Tenants and Maintenance see units assigned to them OR shared with them via key_sharing
+        const accessibleUnitIds = knex
+          .select('unit_id')
+          .from('unit_assignments')
+          .where('tenant_id', userId)
+          .union([
+            knex
+              .select('unit_id')
+              .from('key_sharing')
+              .where('shared_with_user_id', userId)
+              .where('is_active', true)
+              .where(function() {
+                this.whereNull('expires_at')
+                  .orWhere('expires_at', '>', knex.fn.now());
+              })
+          ]);
+        
+        query = query.whereIn('u.id', accessibleUnitIds);
       } else {
         // Unknown role, return empty result
         return [];
@@ -315,19 +501,19 @@ export class UnitModel {
         .join('units as u', 'ua.unit_id', 'u.id');
 
       // Apply role-based filtering
-      if (userRole === 'admin' || userRole === 'dev_admin') {
+      if (userRole === UserRole.ADMIN || userRole === UserRole.DEV_ADMIN) {
         // Admin and Dev Admin see all unit assignments from all facilities
         // No additional filtering needed
-      } else if (userRole === 'facility_admin') {
+      } else if (userRole === UserRole.FACILITY_ADMIN) {
         // Facility Admin see unit assignments from facilities they manage
-        const scope = await this.determineUserScope(userId, userRole);
+        const scope = await FacilityAccessService.getUserScope(userId, userRole);
         if (scope.type === 'facility_limited' && scope.facilityIds && scope.facilityIds.length > 0) {
           query = query.whereIn('u.facility_id', scope.facilityIds);
         } else {
           // No facility associations, return empty result
           return [];
         }
-      } else if (userRole === 'tenant' || userRole === 'maintenance') {
+      } else if (userRole === UserRole.TENANT || userRole === UserRole.MAINTENANCE) {
         // Tenants and Maintenance see only their own assignments
         query = query.where('ua.tenant_id', userId);
       } else {
@@ -354,19 +540,33 @@ export class UnitModel {
       let query = knex
         .select([
           'u.*',
+          knex.raw(
+            '(SELECT COUNT(*) FROM unit_assignments WHERE unit_assignments.unit_id = u.id) as assignment_count'
+          ),
           'f.name as facility_name',
           'f.address as facility_address',
+          'f.lock_command_timeout_sec as facility_lock_command_timeout_sec',
           'bd.id as device_id',
           'bd.device_serial',
+          'bd.serial as blulok_serial',
+          'bd.device_settings as blulok_device_settings',
           'bd.lock_status',
           'bd.device_status',
           'bd.battery_level',
-          'bd.last_seen as last_activity',
+          lastUnlockAtSelect(knex),
           'bd.firmware_version',
+          'bd.signal_strength',
+          'bd.temperature',
+          'bd.error_code',
+          'bd.error_message',
+          'bd.supports_remote_lock',
           'ua.tenant_id as primary_tenant_id',
           'users.first_name as tenant_first_name',
           'users.last_name as tenant_last_name',
-          'users.email as tenant_email'
+          'users.email as tenant_email',
+          'users.phone_number as tenant_phone',
+          'users.is_placeholder as tenant_is_placeholder',
+          'users.last_login as tenant_last_login',
         ])
         .from('units as u')
         .leftJoin('facilities as f', 'u.facility_id', 'f.id')
@@ -377,23 +577,38 @@ export class UnitModel {
         .leftJoin('users', 'ua.tenant_id', 'users.id');
 
       // Apply role-based filtering
-      if (userRole === 'admin' || userRole === 'dev_admin') {
+      if (userRole === UserRole.ADMIN || userRole === UserRole.DEV_ADMIN) {
         // Admin and Dev Admin see all units from all facilities
         // No additional filtering needed
-      } else if (userRole === 'facility_admin') {
+      } else if (userRole === UserRole.FACILITY_ADMIN) {
         // Facility Admin see units from facilities they manage
-        const scope = await this.determineUserScope(userId, userRole);
+        const scope = await FacilityAccessService.getUserScope(userId, userRole);
         if (scope.type === 'facility_limited' && scope.facilityIds && scope.facilityIds.length > 0) {
           query = query.whereIn('u.facility_id', scope.facilityIds);
         } else {
           // No facility associations, return empty result
           return { units: [], total: 0 };
         }
-      } else if (userRole === 'tenant' || userRole === 'maintenance') {
-        // Tenants and Maintenance see only units that are assigned to them
-        query = query
-          .join('unit_assignments as ua_filter', 'u.id', 'ua_filter.unit_id')
-          .where('ua_filter.tenant_id', userId);
+      } else if (userRole === UserRole.TENANT || userRole === UserRole.MAINTENANCE) {
+        // Tenants and Maintenance see units assigned to them OR shared with them via key_sharing
+        // Use a subquery to get unit IDs from both unit_assignments and active key_sharing records
+        const accessibleUnitIds = knex
+          .select('unit_id')
+          .from('unit_assignments')
+          .where('tenant_id', userId)
+          .union([
+            knex
+              .select('unit_id')
+              .from('key_sharing')
+              .where('shared_with_user_id', userId)
+              .where('is_active', true)
+              .where(function() {
+                this.whereNull('expires_at')
+                  .orWhere('expires_at', '>', knex.fn.now());
+              })
+          ]);
+        
+        query = query.whereIn('u.id', accessibleUnitIds);
       } else {
         // Unknown role, return empty result
         return { units: [], total: 0 };
@@ -410,16 +625,32 @@ export class UnitModel {
     }
     
     if (filters.status) {
-        query = query.where('u.status', filters.status);
+        const st = filters.status as string;
+        if (st === 'occupied') {
+          query = query.whereExists(
+            knex.select(knex.raw('1')).from('unit_assignments as ua_stat').whereRaw('ua_stat.unit_id = u.id')
+          );
+        } else if (st === 'available') {
+          query = query
+            .whereNotExists(
+              knex.select(knex.raw('1')).from('unit_assignments as ua_stat').whereRaw('ua_stat.unit_id = u.id')
+            )
+            .where(function () {
+              this.where('u.status', 'available').orWhere('u.status', 'occupied');
+            });
+        } else {
+          query = query.where('u.status', st);
+        }
     }
     
-    if (filters.unit_type) {
+      if (filters.unit_type) {
         query = query.where('u.unit_type', filters.unit_type);
       }
 
-      if (filters.facility_id) {
-        query = query.where('u.facility_id', filters.facility_id);
-    }
+      const facilityFilter = filters.facility_id || filters.facilityId;
+      if (facilityFilter) {
+        query = query.where('u.facility_id', facilityFilter);
+      }
     
     if (filters.tenant_id) {
         query = query.where('ua.tenant_id', filters.tenant_id);
@@ -447,10 +678,49 @@ export class UnitModel {
 
       // We'll calculate the total after deduplication
 
-    // Apply sorting
-    const sortBy = filters.sortBy || 'unit_number';
-    const sortOrder = filters.sortOrder || 'asc';
-      query = query.orderBy(sortBy, sortOrder);
+    // Apply sorting (effective status matches deriveEffectiveUnitStatus / API payload)
+    const sortBy = normalizeUnitListSortKey(
+      (filters as { sortBy?: string; sort_by?: string }).sortBy ??
+        (filters as { sort_by?: string }).sort_by
+    );
+    const sortOrderRaw = (filters.sortOrder || filters.sort_order || 'asc') as string;
+    const sortOrderNorm = sortOrderRaw === 'desc' ? 'desc' : 'asc';
+
+    if (sortBy === 'unit_number') {
+      // Stable SQL order; natural sort applied in memory after deduplication.
+      query = query.orderBy('u.id', 'asc');
+    } else if (sortBy === 'status') {
+      const dir = sortOrderNorm === 'desc' ? 'DESC' : 'ASC';
+      query = query.orderByRaw(
+        `FIELD(
+          CASE
+            WHEN (SELECT COUNT(*) FROM unit_assignments ua_sort WHERE ua_sort.unit_id = u.id) > 0 AND u.is_overlocked = 1 THEN 'overlocked'
+            WHEN (SELECT COUNT(*) FROM unit_assignments ua_sort WHERE ua_sort.unit_id = u.id) > 0 THEN 'occupied'
+            WHEN u.status = 'occupied' THEN 'available'
+            ELSE u.status
+          END,
+          'available', 'reserved', 'maintenance', 'occupied', 'overlocked'
+        ) ${dir}`
+      );
+      query = query.orderBy('u.id', 'asc');
+    } else if (sortBy === 'facility_name') {
+      query = query.orderBy('f.name', sortOrderNorm).orderBy('u.id', 'asc');
+    } else if (sortBy === 'tenant_last_name') {
+      const dir = sortOrderNorm === 'desc' ? 'DESC' : 'ASC';
+      query = query.orderByRaw(
+        `(CASE WHEN users.last_name IS NULL AND users.first_name IS NULL THEN 1 ELSE 0 END) ASC, users.last_name ${dir}, users.first_name ${dir}, u.id ASC`
+      );
+    } else if (sortBy === 'lock_status') {
+      query = query.orderBy('bd.lock_status', sortOrderNorm).orderBy('u.id', 'asc');
+    } else if (sortBy === 'battery_level') {
+      query = query.orderBy('bd.battery_level', sortOrderNorm).orderBy('u.id', 'asc');
+    } else if (sortBy === 'unit_type') {
+      query = query.orderBy('u.unit_type', sortOrderNorm).orderBy('u.id', 'asc');
+    } else if (sortBy === 'created_at') {
+      query = query.orderBy('u.created_at', sortOrderNorm).orderBy('u.id', 'asc');
+    } else {
+      query = query.orderBy('u.id', 'asc');
+    }
 
     // Get all results first (without pagination)
     const allResults = await query;
@@ -462,7 +732,14 @@ export class UnitModel {
         uniqueUnits.set(row.id, row);
       }
     });
-    const deduplicatedResults = Array.from(uniqueUnits.values());
+    const deduplicatedResults: any[] = Array.from(uniqueUnits.values());
+
+    if (sortBy === 'unit_number') {
+      const mult = sortOrderNorm === 'desc' ? -1 : 1;
+      deduplicatedResults.sort(
+        (a, b) => mult * compareNaturalStrings(String(a.unit_number ?? ''), String(b.unit_number ?? ''))
+      );
+    }
     
     // Apply pagination after deduplication
     const limit = parseInt(filters.limit as string) || 20;
@@ -477,10 +754,12 @@ export class UnitModel {
         id: row.id,
         unit_number: row.unit_number,
         unit_type: row.unit_type,
-        status: row.status,
+        status: deriveEffectiveUnitStatus(row.status, Number(row.assignment_count ?? 0), Boolean(row.is_overlocked)),
+        is_overlocked: Boolean(row.is_overlocked),
         facility_id: row.facility_id,
         facility_name: row.facility_name,
         facility_address: row.facility_address,
+        facility_lock_command_timeout_sec: row.facility_lock_command_timeout_sec,
         created_at: row.created_at,
         updated_at: row.updated_at,
         // Add fields expected by frontend widgets
@@ -488,15 +767,25 @@ export class UnitModel {
         device_status: row.device_status,
         battery_level: row.battery_level,
         last_activity: row.last_activity,
-        unlocked_since: row.last_activity || new Date().toISOString(), // Use last_activity as unlocked_since, fallback to now
-        tenant_name: row.primary_tenant_id ? `${row.tenant_first_name || ''} ${row.tenant_last_name || ''}`.trim() : null,
+        unlocked_since: row.last_activity ?? null,
+        tenant_name: row.primary_tenant_id
+          ? `${row.tenant_first_name || ''} ${row.tenant_last_name || ''}`.trim()
+          : Number(row.assignment_count ?? 0) > 0
+            ? SHARED_ACCESS_TENANT_LABEL
+            : null,
         tenant_email: row.tenant_email,
+        tenant_phone: row.tenant_phone,
+        signal_strength: row.signal_strength != null ? Number(row.signal_strength) : null,
         blulok_device: row.device_id ? {
           id: row.device_id,
           device_serial: row.device_serial,
+          serial: row.blulok_serial ?? undefined,
+          device_settings: parseBluLokDeviceSettings(row.blulok_device_settings),
           lock_status: row.lock_status,
+          supports_remote_lock: Boolean(row.supports_remote_lock),
           device_status: row.device_status,
           battery_level: row.battery_level,
+          signal_strength: row.signal_strength != null ? Number(row.signal_strength) : null,
           last_activity: row.last_activity,
           firmware_version: row.firmware_version
         } : null,
@@ -504,7 +793,10 @@ export class UnitModel {
           id: row.primary_tenant_id,
           first_name: row.tenant_first_name,
           last_name: row.tenant_last_name,
-          email: row.tenant_email
+          email: row.tenant_email,
+          phone_number: row.tenant_phone,
+          is_placeholder: Boolean(row.tenant_is_placeholder),
+          last_login: row.tenant_last_login ?? null,
         } : null
       }));
 
@@ -523,6 +815,20 @@ export class UnitModel {
     const knex = this.db.connection;
     
     try {
+      const device = await knex('blulok_devices')
+        .where('unit_id', unitId)
+        .select('id', 'supports_remote_lock')
+        .first();
+
+      if (!device) {
+        return false;
+      }
+
+      if (!device.supports_remote_lock) {
+        logger.warn('lockUnit rejected: supports_remote_lock is false', { unitId, deviceId: device.id });
+        return false;
+      }
+
       const result = await knex('blulok_devices')
         .where('unit_id', unitId)
         .update({
@@ -556,20 +862,6 @@ export class UnitModel {
   }
 
   /**
-   * Determine user scope based on role and facility associations
-   * @deprecated Use FacilityAccessService.getUserScope() instead
-   */
-  private async determineUserScope(userId: string, userRole: UserRole): Promise<{ type: 'all' | 'facility_limited'; facilityIds?: string[] }> {
-    try {
-      return await FacilityAccessService.getUserScope(userId, userRole);
-    } catch (error) {
-      logger.error(`Error determining user scope for user ${userId}:`, error);
-      // Fallback to facility_limited with empty array for safety
-      return { type: 'facility_limited', facilityIds: [] };
-    }
-  }
-
-  /**
    * Check if a user has access to a specific unit
    */
   async hasUserAccessToUnit(unitId: string, userId: string, userRole: UserRole): Promise<boolean> {
@@ -597,14 +889,30 @@ export class UnitModel {
         return false; // User doesn't have access to the facility
       }
 
-      // For tenants and maintenance, also check unit assignment
-      if (userRole === 'tenant' || userRole === 'maintenance') {
+      // For tenants and maintenance, also check unit assignment OR key_sharing
+      if (userRole === UserRole.TENANT || userRole === UserRole.MAINTENANCE) {
+        // Check unit_assignments first
         const assignment = await knex('unit_assignments')
           .where('unit_id', unitId)
           .where('tenant_id', userId)
           .first();
 
-        return !!assignment; // User must be assigned to the unit
+        if (assignment) {
+          return true;
+        }
+
+        // Check key_sharing for shared access
+        const sharing = await knex('key_sharing')
+          .where('unit_id', unitId)
+          .where('shared_with_user_id', userId)
+          .where('is_active', true)
+          .where(function() {
+            this.whereNull('expires_at')
+              .orWhere('expires_at', '>', knex.fn.now());
+          })
+          .first();
+
+        return !!sharing;
       }
 
       return true; // Admin, dev_admin, and facility_admin with facility access
@@ -696,12 +1004,12 @@ export class UnitModel {
         .join('facilities as f', 'u.facility_id', 'f.id');
 
       // Apply role-based filtering
-      if (userRole === 'admin' || userRole === 'dev_admin') {
+      if (userRole === UserRole.ADMIN || userRole === UserRole.DEV_ADMIN) {
         // Admin and Dev Admin see stats for all units from all facilities
         // No additional filtering needed
-      } else if (userRole === 'facility_admin') {
+      } else if (userRole === UserRole.FACILITY_ADMIN) {
         // Facility Admin see stats for units from facilities they manage
-        const scope = await this.determineUserScope(userId, userRole);
+        const scope = await FacilityAccessService.getUserScope(userId, userRole);
         if (scope.type === 'facility_limited' && scope.facilityIds && scope.facilityIds.length > 0) {
           baseQuery = baseQuery.whereIn('u.facility_id', scope.facilityIds);
         } else {
@@ -716,7 +1024,7 @@ export class UnitModel {
             locked: 0
           };
         }
-      } else if (userRole === 'tenant' || userRole === 'maintenance') {
+      } else if (userRole === UserRole.TENANT || userRole === UserRole.MAINTENANCE) {
         // Tenants and Maintenance see stats for units that are assigned to them
         baseQuery = baseQuery
           .join('unit_assignments as ua', 'u.id', 'ua.unit_id')
@@ -734,23 +1042,32 @@ export class UnitModel {
         };
       }
 
-      // Get unit status counts
+      const assignmentAgg = knex('unit_assignments').select('unit_id').count('* as cnt').groupBy('unit_id').as('ua_cnt');
+
       const statusCounts = await baseQuery
         .clone()
+        .leftJoin(assignmentAgg, 'u.id', 'ua_cnt.unit_id')
         .select(
           knex.raw('COUNT(*) as total'),
-          knex.raw('SUM(CASE WHEN u.status = "occupied" THEN 1 ELSE 0 END) as occupied'),
-          knex.raw('SUM(CASE WHEN u.status = "available" THEN 1 ELSE 0 END) as available'),
-          knex.raw('SUM(CASE WHEN u.status = "maintenance" THEN 1 ELSE 0 END) as maintenance'),
-          knex.raw('SUM(CASE WHEN u.status = "reserved" THEN 1 ELSE 0 END) as reserved')
+          knex.raw('SUM(CASE WHEN COALESCE(ua_cnt.cnt, 0) > 0 THEN 1 ELSE 0 END) as occupied'),
+          knex.raw(
+            "SUM(CASE WHEN COALESCE(ua_cnt.cnt, 0) = 0 AND u.status IN ('available', 'occupied') THEN 1 ELSE 0 END) as available"
+          ),
+          knex.raw(
+            "SUM(CASE WHEN COALESCE(ua_cnt.cnt, 0) = 0 AND u.status = 'maintenance' THEN 1 ELSE 0 END) as maintenance"
+          ),
+          knex.raw(
+            "SUM(CASE WHEN COALESCE(ua_cnt.cnt, 0) = 0 AND u.status = 'reserved' THEN 1 ELSE 0 END) as reserved"
+          )
         )
         .first();
 
-      // Get lock status counts for occupied units
       const lockCounts = await baseQuery
         .clone()
         .join('blulok_devices as bd', 'u.id', 'bd.unit_id')
-        .where('u.status', 'occupied')
+        .whereExists(
+          knex.select(knex.raw('1')).from('unit_assignments as ua_lk').whereRaw('ua_lk.unit_id = u.id')
+        )
         .select(
           knex.raw('SUM(CASE WHEN bd.lock_status = "unlocked" THEN 1 ELSE 0 END) as unlocked'),
           knex.raw('SUM(CASE WHEN bd.lock_status = "locked" THEN 1 ELSE 0 END) as locked')
@@ -792,6 +1109,21 @@ export class UnitModel {
   }
 
   /**
+   * Find many units by primary key (for bulk assignment and similar).
+   */
+  async findByIds(unitIds: string[]): Promise<Unit[]> {
+    if (unitIds.length === 0) return [];
+    const knex = this.db.connection;
+    try {
+      const rows = (await knex('units').whereIn('id', unitIds)) as Unit[];
+      return rows || [];
+    } catch (error) {
+      logger.error('Error finding units by IDs:', error);
+      throw error;
+    }
+  }
+
+  /**
    * Get unit details for a user with role-based access control
    */
   async getUnitDetailsForUser(unitId: string, userId: string, userRole: UserRole): Promise<any> {
@@ -802,19 +1134,31 @@ export class UnitModel {
       let query = knex
         .select([
           'u.*',
+          knex.raw(
+            '(SELECT COUNT(*) FROM unit_assignments WHERE unit_assignments.unit_id = u.id) as assignment_count'
+          ),
           'f.name as facility_name',
           'f.address as facility_address',
+          'f.lock_command_timeout_sec as facility_lock_command_timeout_sec',
           'bd.id as device_id',
           'bd.device_serial',
+          'bd.serial as blulok_serial',
+          'bd.device_settings as blulok_device_settings',
           'bd.lock_status',
           'bd.device_status',
           'bd.battery_level',
-          'bd.last_seen as last_activity',
+          lastUnlockAtSelect(knex),
           'bd.firmware_version',
+          'bd.signal_strength',
+          'bd.temperature',
+          'bd.error_code',
+          'bd.error_message',
+          'bd.supports_remote_lock',
           'ua.tenant_id as primary_tenant_id',
           'users.first_name as tenant_first_name',
           'users.last_name as tenant_last_name',
-          'users.email as tenant_email'
+          'users.email as tenant_email',
+          'users.is_placeholder as tenant_is_placeholder'
         ])
         .from('units as u')
         .leftJoin('facilities as f', 'u.facility_id', 'f.id')
@@ -826,24 +1170,38 @@ export class UnitModel {
         .where('u.id', unitId);
 
       // Apply role-based filtering
-      if (userRole === 'admin' || userRole === 'dev_admin') {
+      if (userRole === UserRole.ADMIN || userRole === UserRole.DEV_ADMIN) {
         // Admin and Dev Admin can see all units
         // No additional filtering needed
-      } else if (userRole === 'facility_admin') {
+      } else if (userRole === UserRole.FACILITY_ADMIN) {
         // Facility Admin can see units from facilities they manage
-        const scope = await this.determineUserScope(userId, userRole);
+        const scope = await FacilityAccessService.getUserScope(userId, userRole);
         if (scope.type === 'facility_limited' && scope.facilityIds && scope.facilityIds.length > 0) {
           query = query.whereIn('u.facility_id', scope.facilityIds);
         } else {
           // No facility associations, return null
           return null;
         }
-      } else if (userRole === 'tenant' || userRole === 'maintenance') {
+      } else if (userRole === UserRole.TENANT || userRole === UserRole.MAINTENANCE) {
         // Tenants and Maintenance can see units they are associated with
-        // (either as primary tenant or have shared access)
-        query = query
-          .join('unit_assignments as ua_filter', 'u.id', 'ua_filter.unit_id')
-          .where('ua_filter.tenant_id', userId);
+        // (either as primary tenant/assigned OR have shared access via key_sharing)
+        const accessibleUnitIds = knex
+          .select('unit_id')
+          .from('unit_assignments')
+          .where('tenant_id', userId)
+          .union([
+            knex
+              .select('unit_id')
+              .from('key_sharing')
+              .where('shared_with_user_id', userId)
+              .where('is_active', true)
+              .where(function() {
+                this.whereNull('expires_at')
+                  .orWhere('expires_at', '>', knex.fn.now());
+              })
+          ]);
+        
+        query = query.whereIn('u.id', accessibleUnitIds);
       } else {
         // Unknown role, return null
         return null;
@@ -881,15 +1239,19 @@ export class UnitModel {
         access_expires_at: assignment.access_expires_at
       }));
 
+      const accessGroups = await new DeviceGroupModel().getGroupsForBlulokUnit(unitId, result.device_id ?? null);
+
       // Transform result to match expected format
       return {
         id: result.id,
         unit_number: result.unit_number,
         unit_type: result.unit_type,
-        status: result.status,
+        status: deriveEffectiveUnitStatus(result.status, Number(result.assignment_count ?? 0), Boolean(result.is_overlocked)),
+        is_overlocked: Boolean(result.is_overlocked),
         facility_id: result.facility_id,
         facility_name: result.facility_name,
         facility_address: result.facility_address,
+        facility_lock_command_timeout_sec: result.facility_lock_command_timeout_sec,
         created_at: result.created_at,
         updated_at: result.updated_at,
         // Add fields expected by frontend
@@ -897,24 +1259,37 @@ export class UnitModel {
         device_status: result.device_status,
         battery_level: result.battery_level,
         last_activity: result.last_activity,
-        tenant_name: result.primary_tenant_id ? `${result.tenant_first_name || ''} ${result.tenant_last_name || ''}`.trim() : null,
-        tenant_email: result.tenant_email,
+        tenant_name: result.primary_tenant_id
+          ? `${result.tenant_first_name || ''} ${result.tenant_last_name || ''}`.trim()
+          : Number(result.assignment_count ?? 0) > 0
+            ? SHARED_ACCESS_TENANT_LABEL
+            : null,
+        tenant_email: result.primary_tenant_id ? result.tenant_email : null,
         blulok_device: result.device_id ? {
           id: result.device_id,
           device_serial: result.device_serial,
+          serial: result.blulok_serial ?? undefined,
+          device_settings: parseBluLokDeviceSettings(result.blulok_device_settings),
           lock_status: result.lock_status,
+          supports_remote_lock: Boolean(result.supports_remote_lock),
           device_status: result.device_status,
           battery_level: result.battery_level,
           last_activity: result.last_activity,
-          firmware_version: result.firmware_version
+          firmware_version: result.firmware_version,
+          signal_strength: result.signal_strength != null ? Number(result.signal_strength) : null,
+          temperature: result.temperature != null ? Number(result.temperature) : null,
+          error_code: result.error_code ?? null,
+          error_message: result.error_message ?? null
         } : null,
         primary_tenant: result.primary_tenant_id ? {
           id: result.primary_tenant_id,
           first_name: result.tenant_first_name,
           last_name: result.tenant_last_name,
-          email: result.tenant_email
+          email: result.tenant_email,
+          is_placeholder: Boolean(result.tenant_is_placeholder),
         } : null,
-        shared_tenants: sharedTenants
+        shared_tenants: sharedTenants,
+        access_groups: accessGroups,
       };
 
     } catch (error) {
@@ -975,6 +1350,13 @@ export class UnitModel {
         }
       }
 
+      const assignmentCountRow = await knex('unit_assignments').where({ unit_id: unitId }).count('* as c').first();
+      const assignmentCount = Number((assignmentCountRow as { c?: string | number })?.c ?? 0);
+
+      if (updateData.status !== undefined) {
+        assertStoredStatusAllowedWithAssignments(updateData.status, assignmentCount);
+      }
+
       // Prepare update data
       const updateFields: any = {
         updated_at: knex.fn.now()
@@ -1005,14 +1387,53 @@ export class UnitModel {
         .where('id', unitId)
         .update(updateFields);
 
-      // Get the updated unit
-      const updatedUnit = await knex('units').where('id', unitId).first();
-      
+      const updatedUnit = (await knex('units').where('id', unitId).first()) as Unit | undefined;
+      if (!updatedUnit) {
+        throw new Error('Unit not found');
+      }
+
       logger.info(`Unit updated: ${unitId} by user ${userId}`);
-      return updatedUnit;
+      return {
+        ...updatedUnit,
+        status: deriveEffectiveUnitStatus(updatedUnit.status, assignmentCount, Boolean(updatedUnit.is_overlocked)),
+      } as Unit;
     } catch (error) {
       logger.error('Error updating unit:', error);
       throw error;
     }
+  }
+
+  /**
+   * Delete a unit row. Caller must enforce authorization and run pre-delete cleanup.
+   */
+  async deleteUnitById(unitId: string): Promise<void> {
+    const knex = this.db.connection;
+
+    try {
+      const deleted = await knex('units').where('id', unitId).del();
+      if (deleted === 0) {
+        throw new Error('Unit not found');
+      }
+
+      logger.info(`Unit deleted: ${unitId}`);
+    } catch (error) {
+      logger.error('Error deleting unit:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * @deprecated Use deleteUnitById after service-layer authorization and cleanup.
+   */
+  async deleteUnit(unitId: string, userId: string, userRole: UserRole): Promise<void> {
+    const hasAccess = await this.hasUserAccessToUnit(unitId, userId, userRole);
+    if (!hasAccess) {
+      const existing = await this.db.connection('units').where('id', unitId).first();
+      if (!existing) {
+        throw new Error('Unit not found');
+      }
+      throw new Error('Access denied: You do not have permission to delete this unit');
+    }
+    await this.deleteUnitById(unitId);
   }
 }

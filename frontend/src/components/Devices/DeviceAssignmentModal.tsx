@@ -1,8 +1,6 @@
 import { useState, useEffect } from 'react';
-import { 
+import {
   CpuChipIcon,
-  HomeIcon,
-  XMarkIcon,
   PlusIcon,
   TrashIcon,
   ArrowPathIcon
@@ -11,11 +9,15 @@ import { Modal } from '@/components/Modal/Modal';
 import { ConfirmModal } from '@/components/Modal/ConfirmModal';
 import { apiService } from '@/services/api.service';
 import { useToast } from '@/contexts/ToastContext';
+import { DeviceFilter } from '@/components/Common/DeviceFilter';
+import { BluLokDeviceSummary } from '@/components/Common/BluLokDeviceSummary';
+import {
+  formatBluLokDeviceSubtitle,
+  formatBluLokUserFacingLabel,
+  type BluLokDeviceDisplayFields,
+} from '@/utils/blulokDeviceDisplay.utils';
 
-interface Device {
-  id: string;
-  device_serial: string;
-  firmware_version?: string;
+interface Device extends BluLokDeviceDisplayFields {
   device_status: 'online' | 'offline' | 'low_battery' | 'error';
   battery_level?: number;
   facility_name?: string;
@@ -27,12 +29,9 @@ interface UnitForModal {
   unit_number: string;
   unit_type?: string;
   facility_id: string;
-  blulok_device?: {
+  blulok_device?: Device & {
     id: string;
-    device_serial: string;
-    firmware_version?: string;
     device_status?: string;
-    battery_level?: number;
   };
 }
 
@@ -94,7 +93,7 @@ export function DeviceAssignmentModal({ isOpen, onClose, onSuccess, unit }: Devi
 
     try {
       setLoading(true);
-      await apiService.unassignDeviceFromUnit(unit.blulok_device.id);
+      await apiService.unassignDeviceFromUnit(unit.blulok_device!.id);
       addToast({ type: 'success', title: 'Device unassigned from unit successfully' });
       onSuccess();
       setShowUnassignConfirm(false);
@@ -113,7 +112,7 @@ export function DeviceAssignmentModal({ isOpen, onClose, onSuccess, unit }: Devi
       setLoading(true);
       // First unassign the old device, then assign the new one
       // The backend handles this automatically, but we can also do it explicitly
-      await apiService.unassignDeviceFromUnit(unit.blulok_device.id);
+      await apiService.unassignDeviceFromUnit(unit.blulok_device!.id);
       await apiService.assignDeviceToUnit(selectedDevice, unit.id);
       addToast({ type: 'success', title: 'Device changed successfully' });
       onSuccess();
@@ -133,7 +132,6 @@ export function DeviceAssignmentModal({ isOpen, onClose, onSuccess, unit }: Devi
   };
 
   const hasDevice = !!unit?.blulok_device;
-  const isChangingDevice = hasDevice && !!selectedDevice;
 
   return (
     <>
@@ -171,24 +169,24 @@ export function DeviceAssignmentModal({ isOpen, onClose, onSuccess, unit }: Devi
                           <CpuChipIcon className="h-5 w-5 text-blue-600 dark:text-blue-400" />
                         </div>
                       </div>
-                      <div>
-                        <p className="text-sm font-medium text-gray-900 dark:text-white font-mono">
-                          {unit.blulok_device.device_serial}
+                      <div className="min-w-0">
+                        <p className="text-base font-semibold text-gray-900 dark:text-white">
+                          {formatBluLokUserFacingLabel({
+                            ...unit.blulok_device!,
+                            unit_id: unit.id,
+                            unit_number: unit.unit_number,
+                          })}
                         </p>
-                        <div className="flex items-center space-x-4 mt-1">
-                          {unit.blulok_device.firmware_version && (
-                            <p className="text-xs text-gray-500 dark:text-gray-400">
-                              Firmware: {unit.blulok_device.firmware_version}
-                            </p>
-                          )}
-                          <span className={`text-xs px-2 py-0.5 rounded-full ${
-                            unit.blulok_device.device_status === 'online' 
-                              ? 'bg-green-100 text-green-800 dark:bg-green-900/20 dark:text-green-400'
-                              : 'bg-red-100 text-red-800 dark:bg-red-900/20 dark:text-red-400'
-                          }`}>
-                            {unit.blulok_device.device_status}
-                          </span>
-                        </div>
+                        <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
+                          {formatBluLokDeviceSubtitle(unit.blulok_device!)}
+                        </p>
+                        <span className={`inline-flex mt-2 text-xs px-2 py-0.5 rounded-full ${
+                          unit.blulok_device!.device_status === 'online'
+                            ? 'bg-green-100 text-green-800 dark:bg-green-900/20 dark:text-green-400'
+                            : 'bg-red-100 text-red-800 dark:bg-red-900/20 dark:text-red-400'
+                        }`}>
+                          {unit.blulok_device!.device_status}
+                        </span>
                       </div>
                     </div>
                     <button
@@ -220,21 +218,14 @@ export function DeviceAssignmentModal({ isOpen, onClose, onSuccess, unit }: Devi
                     <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
                       Available Devices
                     </label>
-                    <select
+                    <DeviceFilter
                       value={selectedDevice}
-                      onChange={(e) => setSelectedDevice(e.target.value)}
-                      className="block w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg shadow-sm focus:outline-none focus:ring-1 focus:ring-primary-500 focus:border-primary-500 bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
-                    >
-                      <option value="">Choose a device</option>
-                      {devices.map((device) => (
-                        <option key={device.id} value={device.id}>
-                          {device.device_serial} 
-                          {device.firmware_version && ` (v${device.firmware_version})`}
-                          {device.facility_name && ` - ${device.facility_name}`}
-                          {device.device_status && ` - ${device.device_status}`}
-                        </option>
-                      ))}
-                    </select>
+                      onChange={setSelectedDevice}
+                      placeholder="Search devices..."
+                      className="w-full"
+                      facilityId={unit!.facility_id}
+                      excludeDeviceIds={unit?.blulok_device?.id ? [unit.blulok_device.id] : []}
+                    />
                   </div>
 
                   {devices.length === 0 && (
@@ -250,28 +241,16 @@ export function DeviceAssignmentModal({ isOpen, onClose, onSuccess, unit }: Devi
                         const device = devices.find(d => d.id === selectedDevice);
                         if (!device) return null;
                         return (
-                          <div className="space-y-2">
+                          <div className="space-y-3">
                             <p className="text-sm font-medium text-gray-900 dark:text-white">
-                              Device Details
+                              Selected device
                             </p>
-                            <div className="grid grid-cols-2 gap-2 text-xs text-gray-600 dark:text-gray-400">
-                              <div>
-                                <span className="font-medium">Serial:</span> {device.device_serial}
-                              </div>
-                              {device.firmware_version && (
-                                <div>
-                                  <span className="font-medium">Firmware:</span> {device.firmware_version}
-                                </div>
-                              )}
-                              <div>
-                                <span className="font-medium">Status:</span> {device.device_status}
-                              </div>
-                              {device.battery_level !== undefined && (
-                                <div>
-                                  <span className="font-medium">Battery:</span> {device.battery_level}%
-                                </div>
-                              )}
-                            </div>
+                            <BluLokDeviceSummary device={device} status={device.device_status} />
+                            {device.battery_level !== undefined && (
+                              <p className="text-xs text-gray-500 dark:text-gray-400">
+                                Battery: {device.battery_level}%
+                              </p>
+                            )}
                           </div>
                         );
                       })()}

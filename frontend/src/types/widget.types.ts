@@ -3,7 +3,22 @@
  * This file should be kept in sync with backend/src/types/widget.types.ts
  */
 
-export type WidgetSize = 'tiny' | 'small' | 'medium' | 'medium-tall' | 'large' | 'huge' | 'large-wide' | 'huge-wide';
+export type WidgetSize =
+  | 'tiny'
+  | 'small'
+  | 'medium'
+  | 'medium-tall'
+  | 'large'
+  | 'huge'
+  | 'large-wide'
+  | 'huge-wide'
+  | 'mega-tall'
+  | 'dock-top'
+  | 'dock-bottom'
+  | 'dock-left'
+  | 'dock-right'
+  | 'dock-bottom-two-thirds'
+  | 'dock-full';
 
 export type WidgetCategory = 'analytics' | 'status' | 'activity' | 'system';
 
@@ -16,6 +31,8 @@ export interface WidgetTypeDefinition {
   allowMultiple: boolean;
   category: WidgetCategory;
   requiredPermissions?: string[];
+  /** When true, the widget can enter a runtime fullscreen "focus" mode covering the entire dashboard. */
+  supportsFullscreen?: boolean;
 }
 
 /**
@@ -31,7 +48,6 @@ export const WIDGET_TYPES = {
   
   // Activity widgets
   'activity-monitor': 'activity-monitor',
-  'activity-feed': 'activity-feed',
   'access-history': 'access-history',
   
   // Status widgets
@@ -40,16 +56,20 @@ export const WIDGET_TYPES = {
   'unlocked-units': 'unlocked-units',
   'lock-status': 'lock-status',
   'shared-keys': 'shared-keys',
-  'system-status': 'system-status',
+  'daily-access-codes': 'daily-access-codes',
   
   // System widgets
   'remote-gate': 'remote-gate',
   'sync-fms': 'sync-fms',
-  'performance-stats': 'performance-stats',
   
-  // Demo/Test widgets
-  'test-scroll': 'test-scroll',
+  // Analytics widgets
   'histogram': 'histogram',
+  
+  // Visualization widgets
+  'facility-viewer': 'facility-viewer',
+
+  // Management widgets
+  'units-manager': 'units-manager',
 } as const;
 
 export type WidgetType = typeof WIDGET_TYPES[keyof typeof WIDGET_TYPES];
@@ -67,7 +87,7 @@ export const WIDGET_REGISTRY: Record<WidgetType, WidgetTypeDefinition> = {
     availableSizes: ['tiny', 'small', 'medium', 'large'],
     allowMultiple: false,
     category: 'analytics',
-    requiredPermissions: ['admin', 'facility_admin']
+    requiredPermissions: ['admin', 'facility_admin', 'maintenance']
   },
   'stats-devices': {
     type: 'stats-devices',
@@ -77,7 +97,7 @@ export const WIDGET_REGISTRY: Record<WidgetType, WidgetTypeDefinition> = {
     availableSizes: ['tiny', 'small', 'medium', 'large'],
     allowMultiple: false,
     category: 'analytics',
-    requiredPermissions: ['admin', 'facility_admin']
+    requiredPermissions: ['admin', 'facility_admin', 'maintenance']
   },
   'stats-users': {
     type: 'stats-users',
@@ -87,7 +107,7 @@ export const WIDGET_REGISTRY: Record<WidgetType, WidgetTypeDefinition> = {
     availableSizes: ['tiny', 'small', 'medium', 'large'],
     allowMultiple: false,
     category: 'analytics',
-    requiredPermissions: ['admin', 'facility_admin']
+    requiredPermissions: ['admin', 'facility_admin', 'maintenance']
   },
   'stats-alerts': {
     type: 'stats-alerts',
@@ -97,27 +117,17 @@ export const WIDGET_REGISTRY: Record<WidgetType, WidgetTypeDefinition> = {
     availableSizes: ['tiny', 'small', 'medium', 'large'],
     allowMultiple: false,
     category: 'status',
-    requiredPermissions: ['admin', 'facility_admin']
+    requiredPermissions: ['admin', 'facility_admin', 'maintenance']
   },
   'activity-monitor': {
     type: 'activity-monitor',
     name: 'Activity Monitor',
     description: 'Real-time activity log and monitoring',
     defaultSize: 'medium-tall',
-    availableSizes: ['medium', 'medium-tall', 'large', 'large-wide', 'huge', 'huge-wide'],
+    availableSizes: ['medium', 'medium-tall', 'large', 'large-wide', 'huge', 'huge-wide', 'dock-top', 'dock-bottom', 'dock-left', 'dock-right', 'dock-bottom-two-thirds'],
     allowMultiple: false,
     category: 'activity',
-    requiredPermissions: ['admin', 'facility_admin']
-  },
-  'activity-feed': {
-    type: 'activity-feed',
-    name: 'Recent Activity',
-    description: 'Latest system activity',
-    defaultSize: 'large',
-    availableSizes: ['medium', 'medium-tall', 'large', 'huge', 'large-wide', 'huge-wide'],
-    allowMultiple: false,
-    category: 'activity',
-    requiredPermissions: ['admin', 'facility_admin']
+    requiredPermissions: ['admin', 'facility_admin', 'maintenance']
   },
   'access-history': {
     type: 'access-history',
@@ -127,7 +137,7 @@ export const WIDGET_REGISTRY: Record<WidgetType, WidgetTypeDefinition> = {
     availableSizes: ['small', 'medium', 'large', 'medium-tall'],
     allowMultiple: false,
     category: 'activity',
-    requiredPermissions: ['tenant', 'admin', 'facility_admin']
+    requiredPermissions: ['tenant', 'admin', 'facility_admin', 'maintenance']
   },
   'notifications': {
     type: 'notifications',
@@ -137,7 +147,7 @@ export const WIDGET_REGISTRY: Record<WidgetType, WidgetTypeDefinition> = {
     availableSizes: ['medium', 'medium-tall', 'large', 'large-wide', 'huge', 'huge-wide'],
     allowMultiple: false,
     category: 'status',
-    requiredPermissions: ['tenant', 'admin', 'facility_admin']
+    requiredPermissions: ['tenant', 'admin', 'facility_admin', 'maintenance']
   },
   'battery-status': {
     type: 'battery-status',
@@ -147,7 +157,7 @@ export const WIDGET_REGISTRY: Record<WidgetType, WidgetTypeDefinition> = {
     availableSizes: ['small', 'medium', 'medium-tall', 'large'],
     allowMultiple: false,
     category: 'activity',
-    requiredPermissions: ['admin', 'facility_admin']
+    requiredPermissions: ['admin', 'facility_admin', 'maintenance', 'tenant']
   },
   'unlocked-units': {
     type: 'unlocked-units',
@@ -157,7 +167,7 @@ export const WIDGET_REGISTRY: Record<WidgetType, WidgetTypeDefinition> = {
     availableSizes: ['small', 'medium', 'medium-tall', 'large', 'large-wide', 'huge'],
     allowMultiple: false,
     category: 'status',
-    requiredPermissions: ['admin', 'facility_admin']
+    requiredPermissions: ['admin', 'facility_admin', 'maintenance', 'tenant']
   },
   'lock-status': {
     type: 'lock-status',
@@ -167,7 +177,7 @@ export const WIDGET_REGISTRY: Record<WidgetType, WidgetTypeDefinition> = {
     availableSizes: ['small', 'medium', 'large', 'medium-tall'],
     allowMultiple: false,
     category: 'status',
-    requiredPermissions: ['tenant', 'admin', 'facility_admin']
+    requiredPermissions: ['tenant', 'admin', 'dev_admin', 'facility_admin', 'maintenance']
   },
   'shared-keys': {
     type: 'shared-keys',
@@ -177,17 +187,17 @@ export const WIDGET_REGISTRY: Record<WidgetType, WidgetTypeDefinition> = {
     availableSizes: ['small', 'medium', 'large', 'medium-tall'],
     allowMultiple: false,
     category: 'status',
-    requiredPermissions: ['tenant', 'admin', 'facility_admin']
+    requiredPermissions: ['tenant', 'admin', 'facility_admin', 'maintenance']
   },
-  'system-status': {
-    type: 'system-status',
-    name: 'System Status',
-    description: 'Overall system health',
-    defaultSize: 'large',
-    availableSizes: ['small', 'medium', 'large', 'large-wide'],
+  'daily-access-codes': {
+    type: 'daily-access-codes',
+    name: 'Daily Access Codes',
+    description: 'View and refresh active keypad access codes',
+    defaultSize: 'medium',
+    availableSizes: ['small', 'medium', 'medium-tall', 'large'],
     allowMultiple: false,
     category: 'status',
-    requiredPermissions: ['admin', 'facility_admin']
+    requiredPermissions: ['tenant', 'admin', 'dev_admin', 'facility_admin', 'maintenance']
   },
   'remote-gate': {
     type: 'remote-gate',
@@ -197,7 +207,7 @@ export const WIDGET_REGISTRY: Record<WidgetType, WidgetTypeDefinition> = {
     availableSizes: ['medium', 'large'],
     allowMultiple: false,
     category: 'system',
-    requiredPermissions: ['admin', 'facility_admin']
+    requiredPermissions: ['admin', 'facility_admin', 'maintenance']
   },
   'sync-fms': {
     type: 'sync-fms',
@@ -207,38 +217,115 @@ export const WIDGET_REGISTRY: Record<WidgetType, WidgetTypeDefinition> = {
     availableSizes: ['tiny', 'small', 'medium', 'large'],
     allowMultiple: false,
     category: 'system',
-    requiredPermissions: ['admin', 'dev_admin', 'facility_admin']
-  },
-  'performance-stats': {
-    type: 'performance-stats',
-    name: 'System Performance',
-    description: 'Performance metrics',
-    defaultSize: 'huge',
-    availableSizes: ['medium', 'large', 'huge'],
-    allowMultiple: false,
-    category: 'system',
-    requiredPermissions: ['admin', 'facility_admin']
-  },
-  'test-scroll': {
-    type: 'test-scroll',
-    name: 'Scrollable Content',
-    description: 'Demo scrollable widget',
-    defaultSize: 'large',
-    availableSizes: ['medium', 'medium-tall', 'large', 'huge', 'large-wide', 'huge-wide'],
-    allowMultiple: true,
-    category: 'system',
-    requiredPermissions: ['admin', 'facility_admin']
+    requiredPermissions: ['admin', 'dev_admin', 'facility_admin', 'maintenance']
   },
   'histogram': {
     type: 'histogram',
     name: 'Activity Histogram',
     description: 'Site activity over time',
     defaultSize: 'large-wide',
-    availableSizes: ['medium', 'medium-tall', 'large', 'large-wide', 'huge', 'huge-wide'],
+    availableSizes: ['medium', 'medium-tall', 'large', 'large-wide', 'huge', 'huge-wide', 'dock-top', 'dock-bottom', 'dock-bottom-two-thirds'],
     allowMultiple: true,
     category: 'analytics',
-    requiredPermissions: ['admin', 'facility_admin']
-  }
+    requiredPermissions: ['admin', 'facility_admin', 'maintenance']
+  },
+  'facility-viewer': {
+    type: 'facility-viewer',
+    name: 'Facility 3D View',
+    description: 'Interactive 3D visualization of linked facility with real-time lock status',
+    defaultSize: 'huge',
+    availableSizes: ['huge', 'huge-wide', 'dock-left', 'dock-right', 'dock-bottom-two-thirds', 'dock-full'],
+    allowMultiple: false,
+    category: 'status',
+    requiredPermissions: ['admin', 'facility_admin', 'maintenance'],
+    supportsFullscreen: true,
+  },
+  'units-manager': {
+    type: 'units-manager',
+    name: 'Units Manager',
+    description: 'Live unit grid with lock state, battery, signal, tenant, and one-tap remote unlock',
+    defaultSize: 'dock-bottom',
+    availableSizes: [
+      'large',
+      'large-wide',
+      'huge',
+      'huge-wide',
+      'dock-top',
+      'dock-bottom',
+      'dock-bottom-two-thirds',
+      'dock-left',
+      'dock-right',
+      'dock-full',
+    ],
+    allowMultiple: false,
+    category: 'status',
+    requiredPermissions: ['admin', 'dev_admin', 'facility_admin', 'maintenance'],
+    supportsFullscreen: true,
+  },
+};
+
+/** Persisted view settings for the Facility 3D View dashboard widget */
+export type FacilityViewerSkyPreset = 'blank' | 'day' | 'sunset' | 'night' | 'natural' | 'space';
+export type FacilityViewerGroundPreset =
+  | 'blank'
+  | 'grid'
+  | 'grass'
+  | 'concrete'
+  | 'natural'
+  | 'woodland'
+  | 'urban'
+  | 'techno'
+  | 'local';
+
+/** Re-export for widget config — keep in sync with ScenePresets EnvironmentOptions. */
+export type {
+  EnvironmentOptions as FacilityViewerEnvironmentOptions,
+  SkyEnvironmentOptions,
+  GroundEnvironmentOptions,
+  WoodlandEnvironmentOptions,
+  UrbanEnvironmentOptions,
+  LocalEnvironmentOptions,
+} from '@/components/bludesign/core/environment/ScenePresets';
+
+export interface FacilityViewerWidgetConfig {
+  skyPreset?: FacilityViewerSkyPreset;
+  groundPreset?: FacilityViewerGroundPreset;
+  environmentOptions?: import('@/components/bludesign/core/environment/ScenePresets').EnvironmentOptions;
+  /** Lift facility assets to sit on local terrain relief (viewer widget only). */
+  terrainAlignAssets?: boolean;
+  /** Flatten terrain to ground level near assets (mutually exclusive with terrainAlignAssets). */
+  terrainFlattenToGround?: boolean;
+  /** Meters beyond each asset footprint where terrain flattening fades out. */
+  terrainFlattenDistance?: number;
+  /** Flatten strength (0 = off, 1 = full flatten at asset). */
+  terrainFlattenBlend?: number;
+  /** Relief height (m) to flatten toward; raise above 0 to avoid recessed pockets on high terrain. */
+  terrainFlattenBaseline?: number;
+}
+
+export const DEFAULT_TERRAIN_FLATTEN_DISTANCE = 8;
+export const DEFAULT_TERRAIN_FLATTEN_BLEND = 1;
+export const DEFAULT_TERRAIN_FLATTEN_BASELINE = 0;
+export const TERRAIN_FLATTEN_DISTANCE_RANGE = { min: 1, max: 40 } as const;
+export const TERRAIN_FLATTEN_BLEND_RANGE = { min: 0, max: 1 } as const;
+export const TERRAIN_FLATTEN_BASELINE_RANGE = { min: 0, max: 40 } as const;
+
+export type ViewerTerrainConformMode = 'none' | 'align-assets' | 'flatten-terrain';
+
+export function resolveViewerTerrainConformMode(
+  config: Pick<
+    FacilityViewerWidgetConfig,
+    'terrainAlignAssets' | 'terrainFlattenToGround'
+  >
+): ViewerTerrainConformMode {
+  if (config.terrainFlattenToGround) return 'flatten-terrain';
+  if (config.terrainAlignAssets) return 'align-assets';
+  return 'none';
+}
+
+export const DEFAULT_FACILITY_VIEWER_CONFIG: FacilityViewerWidgetConfig = {
+  skyPreset: 'blank',
+  groundPreset: 'blank',
 };
 
 /**
@@ -290,6 +377,9 @@ export class WidgetTypeHelper {
    * This should be used sparingly - prefer using the canonical widget types
    */
   static extractWidgetTypeFromId(widgetId: string): string {
+    if (widgetId.includes('units-manager') || widgetId.includes('units_manager')) {
+      return WIDGET_TYPES['units-manager'];
+    }
     // Map old widget ID patterns to new canonical types
     if (widgetId.includes('facilities_stats') || widgetId.includes('facilities')) {
       return WIDGET_TYPES['stats-facilities'];
@@ -306,11 +396,11 @@ export class WidgetTypeHelper {
     if (widgetId.includes('recent_activity') || widgetId.includes('activity')) {
       return WIDGET_TYPES['activity-monitor'];
     }
-    if (widgetId.includes('system_status') || widgetId.includes('status')) {
-      return WIDGET_TYPES['system-status'];
+    if (widgetId.includes('system_status')) {
+      return WIDGET_TYPES['stats-facilities'];
     }
     if (widgetId.includes('performance_stats') || widgetId.includes('performance')) {
-      return WIDGET_TYPES['performance-stats'];
+      return WIDGET_TYPES['stats-devices'];
     }
     if (widgetId.includes('syncfms') || widgetId.includes('sync_fms')) {
       return WIDGET_TYPES['sync-fms'];

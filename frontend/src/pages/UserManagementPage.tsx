@@ -1,26 +1,29 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { useAuth } from '@/contexts/AuthContext';
+import { FunnelIcon, PlusIcon } from '@heroicons/react/24/outline';
 import { UserRole } from '@/types/auth.types';
 import { apiService } from '@/services/api.service';
 import { generateHighlightId } from '@/utils/navigation.utils';
 import { useHighlight } from '@/hooks/useHighlight';
 import { ExpandableFilters } from '@/components/Common/ExpandableFilters';
+import { ListPageHeader } from '@/components/Common/DetailsPageLayout';
 import { AddUserModal } from '@/components/UserManagement/AddUserModal';
 import { SortableHeader } from '@/components/UserManagement/SortableHeader';
-import {
-  PlusIcon,
-  FunnelIcon,
-  BuildingOfficeIcon,
-} from '@heroicons/react/24/outline';
+import { useGlobalFacility, ALL_FACILITIES_ID } from '@/contexts/GlobalFacilityContext';
+import { withReturnPath } from '@/hooks/useBackNavigation';
+import { formatDate } from '@/utils/datetime.utils';
+import { PlaceholderUserBadge } from '@/components/UserManagement/PlaceholderUserBadge';
+import { formatUserContactSubtitle } from '@/utils/userDisplay.utils';
 
 interface User {
   id: string;
-  email: string;
+  email: string | null;
+  phoneNumber?: string | null;
   firstName: string;
   lastName: string;
   role: UserRole;
   isActive: boolean;
+  isPlaceholder?: boolean;
   lastLogin?: string;
   createdAt: string;
   facilityNames?: string[];
@@ -30,7 +33,6 @@ interface User {
 export default function UserManagementPage() {
   const location = useLocation();
   const navigate = useNavigate();
-  const { authState } = useAuth();
   const [users, setUsers] = useState<User[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchLoading, setSearchLoading] = useState(false);
@@ -45,38 +47,26 @@ export default function UserManagementPage() {
   // Filter states
   const [search, setSearch] = useState('');
   const [roleFilter, setRoleFilter] = useState('');
-  const [facilityFilter, setFacilityFilter] = useState('');
   const [sortBy, setSortBy] = useState('created_at');
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc');
-
-  // Facilities state
-  const [facilities, setFacilities] = useState<Array<{ id: string; name: string }>>([]);
+  const { selectedFacilityId, isLoading: isFacilityLoading } = useGlobalFacility();
   const [filtersExpanded, setFiltersExpanded] = useState(false);
+  const latestRequestIdRef = useRef(0);
+  const hasLoadedOnceRef = useRef(false);
+  const fetchUsersRef = useRef<(page: number, mode: 'initial' | 'refresh') => Promise<void>>(
+    async () => undefined,
+  );
 
-  useEffect(() => {
-    fetchUsers(currentPage);
-    fetchFacilities();
-  }, []);
-
-  const fetchFacilities = async () => {
-    try {
-      // setFacilitiesLoading(true);
-      const response = await apiService.getFacilities();
-      if (response.success) {
-        setFacilities(response.facilities || []);
-      } else {
-        console.error('Failed to fetch facilities:', response.message);
-      }
-    } catch (error) {
-      console.error('Error fetching facilities:', error);
-    } finally {
-      // setFacilitiesLoading(false);
+  const fetchUsers = useCallback(async (page: number, mode: 'initial' | 'refresh') => {
+    if (isFacilityLoading) {
+      return;
     }
-  };
 
-  const fetchUsers = useCallback(async (page: number, isInitialLoad = false) => {
+    const requestId = ++latestRequestIdRef.current;
+    const showFullSkeleton = mode === 'initial' || !hasLoadedOnceRef.current;
+
     try {
-      if (isInitialLoad) {
+      if (showFullSkeleton) {
         setLoading(true);
       } else {
         setSearchLoading(true);
@@ -88,12 +78,20 @@ export default function UserManagementPage() {
       const response = await apiService.getUsers({
         search: search || undefined,
         role: roleFilter || undefined,
-        facility: facilityFilter || undefined,
+        facility:
+          selectedFacilityId && selectedFacilityId !== ALL_FACILITIES_ID
+            ? selectedFacilityId
+            : undefined,
         sortBy,
         sortOrder,
         limit,
         offset,
       });
+
+      if (requestId !== latestRequestIdRef.current) {
+        return;
+      }
+
       if (response.success) {
         setUsers(response.users);
         setTotal(response.total || 0);
@@ -102,39 +100,52 @@ export default function UserManagementPage() {
       } else {
         setError('Failed to fetch users');
       }
-    } catch (err) {
+    } catch {
+      if (requestId !== latestRequestIdRef.current) {
+        return;
+      }
       setError('Error fetching users');
     } finally {
-      if (isInitialLoad) {
+      // Always clear both flags for the winning request. A superseded "initial"
+      // fetch used to skip setLoading(false) while the newer refresh only cleared
+      // searchLoading — leaving the table stuck on skeletons (Facility Setup → Users).
+      if (requestId === latestRequestIdRef.current) {
+        hasLoadedOnceRef.current = true;
         setLoading(false);
-      } else {
         setSearchLoading(false);
       }
     }
-  }, [search, roleFilter, facilityFilter, sortBy, sortOrder]);
+  }, [search, roleFilter, selectedFacilityId, sortBy, sortOrder, isFacilityLoading]);
 
-  // Initial load
-  useEffect(() => {
-    fetchUsers(currentPage, true);
-  }, []);
+  fetchUsersRef.current = fetchUsers;
 
-  // Debounced fetch for search/filter changes
+  // Initial load once facility scope is ready (single request — no debounce twin).
   useEffect(() => {
+    if (isFacilityLoading || hasLoadedOnceRef.current) {
+      return;
+    }
+    void fetchUsers(currentPage, 'initial');
+  }, [currentPage, fetchUsers, isFacilityLoading]);
+
+  // Debounced refetch when filters / facility selection change (after first load).
+  useEffect(() => {
+    if (isFacilityLoading || !hasLoadedOnceRef.current) {
+      return;
+    }
     const timer = setTimeout(() => {
-      setCurrentPage(1); // Reset to first page when filters change
-      fetchUsers(1, false);
+      setCurrentPage(1);
+      void fetchUsersRef.current(1, 'refresh');
     }, 300);
 
     return () => clearTimeout(timer);
-  }, [search, roleFilter, facilityFilter, sortBy, sortOrder]);
-
+  }, [search, roleFilter, selectedFacilityId, sortBy, sortOrder, isFacilityLoading]);
 
   // Handle highlighting when page loads
   useHighlight(users, (user) => user.id, (id) => generateHighlightId('user', id));
 
   const handlePageChange = (page: number) => {
     setCurrentPage(page);
-    fetchUsers(page, false);
+    void fetchUsers(page, 'refresh');
   };
 
   const formatRoleName = (role: UserRole): string => {
@@ -182,33 +193,30 @@ export default function UserManagementPage() {
   };
 
   return (
-    <div className="space-y-6">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-xl font-semibold text-gray-900 dark:text-white">User Management</h1>
-          <p className="mt-1 text-sm text-gray-600 dark:text-gray-400">
-            Manage user accounts, roles, and permissions for your BluLok system.
-          </p>
-        </div>
-        <div className="flex items-center space-x-3">
-          {searchLoading && (
-            <div className="flex items-center space-x-2 text-sm text-gray-500 dark:text-gray-400">
-              <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-primary-600"></div>
-              <span>Updating...</span>
-            </div>
-          )}
-          <button
-            type="button"
-            onClick={() => setShowCreateModal(true)}
-            className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-lg shadow-sm text-white bg-primary-600 hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500 dark:focus:ring-offset-gray-900 transition-colors"
-            disabled={loading}
-          >
-            <PlusIcon className="h-4 w-4 mr-2" />
-            Add User
-          </button>
-        </div>
-      </div>
+    <div className="space-y-4">
+      <ListPageHeader
+        title="User Management"
+        subtitle="Manage user accounts, roles, and permissions for your BluLok system."
+        actions={
+          <>
+            {searchLoading && (
+              <div className="flex items-center gap-2 text-sm text-gray-500 dark:text-gray-400">
+                <div className="h-4 w-4 animate-spin rounded-full border-b-2 border-primary-600" />
+                <span>Updating...</span>
+              </div>
+            )}
+            <button
+              type="button"
+              onClick={() => setShowCreateModal(true)}
+              className="inline-flex items-center rounded-lg border border-transparent bg-primary-600 px-4 py-2 text-sm font-medium text-white shadow-sm transition-colors hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 disabled:opacity-50 dark:focus:ring-offset-gray-900"
+              disabled={loading}
+            >
+              <PlusIcon className="mr-2 h-4 w-4" />
+              Add User
+            </button>
+          </>
+        }
+      />
 
       {error && (
         <div className="rounded-md bg-red-50 dark:bg-red-900/20 p-4 mb-6">
@@ -220,18 +228,17 @@ export default function UserManagementPage() {
       <ExpandableFilters
         searchValue={search}
         onSearchChange={setSearch}
-        searchPlaceholder="Search users, emails, or facilities..."
+        searchPlaceholder="Search users, email, phone, or facilities..."
         isExpanded={filtersExpanded}
         onToggleExpanded={() => setFiltersExpanded(!filtersExpanded)}
         onClearFilters={() => {
           setSearch('');
           setRoleFilter('');
-          setFacilityFilter('');
         }}
         sections={[
           {
             title: 'Role',
-            icon: <FunnelIcon className="h-5 w-5" />,
+            icon: <FunnelIcon className="h-4 w-4" />,
             type: 'select',
             options: [
               { key: '', label: 'All Roles' },
@@ -244,20 +251,6 @@ export default function UserManagementPage() {
             ],
             selected: roleFilter,
             onSelect: setRoleFilter
-          },
-          {
-            title: 'Facility',
-            icon: <BuildingOfficeIcon className="h-5 w-5" />,
-            type: 'select',
-            options: [
-              { key: '', label: 'All Facilities' },
-              ...facilities.map(facility => ({
-                key: facility.id,
-                label: facility.name
-              }))
-            ],
-            selected: facilityFilter,
-            onSelect: setFacilityFilter
           }
         ]}
       />
@@ -336,7 +329,9 @@ export default function UserManagementPage() {
                   <tr 
                     key={user.id} 
                     id={generateHighlightId('user', user.id)}
-                    onClick={() => navigate(`/users/${user.id}/details`)}
+                    onClick={() =>
+                      navigate(`/users/${user.id}/details`, { state: withReturnPath(location) })
+                    }
                     className="group transition-all duration-200 cursor-pointer hover:shadow-sm border-b border-gray-200 dark:border-gray-700 last:border-b-0"
                   >
                     <td className="px-6 py-4 whitespace-nowrap group-hover:bg-blue-50 dark:group-hover:bg-blue-900/20 transition-colors duration-200">
@@ -349,10 +344,22 @@ export default function UserManagementPage() {
                           </div>
                         </div>
                         <div className="ml-4">
-                          <div className="text-sm font-medium text-gray-900 dark:text-white">
-                            {user.firstName} {user.lastName}
+                          <div className="flex flex-wrap items-center gap-2">
+                            <div className="text-sm font-medium text-gray-900 dark:text-white">
+                              {user.firstName} {user.lastName}
+                            </div>
+                            {user.isPlaceholder ? <PlaceholderUserBadge /> : null}
                           </div>
-                          <div className="text-sm text-gray-500 dark:text-gray-400">{user.email}</div>
+                          <div className="text-sm text-gray-500 dark:text-gray-400">
+                            {formatUserContactSubtitle({
+                              email: user.email,
+                              phoneNumber: user.phoneNumber,
+                              isPlaceholder: user.isPlaceholder,
+                            })}
+                          </div>
+                          {!user.isPlaceholder && user.phoneNumber ? (
+                            <div className="text-xs text-gray-400 dark:text-gray-500 mt-0.5">{user.phoneNumber}</div>
+                          ) : null}
                         </div>
                       </div>
                     </td>
@@ -372,7 +379,7 @@ export default function UserManagementPage() {
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400 group-hover:bg-blue-50 dark:group-hover:bg-blue-900/20 transition-colors duration-200">
                       {user.lastLogin 
-                        ? new Date(user.lastLogin).toLocaleDateString()
+                        ? formatDate(user.lastLogin)
                         : 'Never'
                       }
                     </td>
@@ -490,7 +497,7 @@ export default function UserManagementPage() {
       <AddUserModal
         isOpen={showCreateModal}
         onClose={() => setShowCreateModal(false)}
-        onSuccess={() => fetchUsers(currentPage)}
+        onSuccess={() => void fetchUsers(currentPage, 'refresh')}
       />
     </div>
   );

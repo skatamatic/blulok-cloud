@@ -1,15 +1,43 @@
 import { Router, Response, NextFunction } from 'express';
-import Joi from 'joi';
 import { UserModel, User } from '@/models/user.model';
 import { UserFacilityAssociationModel } from '@/models/user-facility-association.model';
 import { AuthService } from '@/services/auth.service';
 import { UserRole, CreateUserRequest, UpdateUserRequest, AuthenticatedRequest } from '@/types/auth.types';
 import { asyncHandler, AppError } from '@/middleware/error.middleware';
 import { authenticateToken, requireUserManagement, requireUserManagementOrSelf } from '@/middleware/auth.middleware';
-import { DatabaseService } from '@/services/database.service';
-import { UserDeviceModel } from '@/models/user-device.model';
 import { FirstTimeUserService } from '@/services/first-time-user.service';
 import { logger } from '@/utils/logger';
+import { toE164 } from '@/utils/phone.util';
+import { UserDetailsService } from '@/services/users/user-details.service';
+import { runUserActivationSideEffects } from '@/services/user-activation-side-effects.service';
+import { runUserDeactivationSideEffects } from '@/services/user-deactivation-side-effects.service';
+import {
+  assertRequesterMayAssignRoleOnCreate,
+  assertRequesterMayAssignRoleOnUpdate,
+  FACILITY_ADMIN_CREATABLE_ROLES,
+  filterUsersForListScope,
+  userMatchesFacilityFilter,
+  validateFacilityIdsForAssignment,
+} from '@/utils/users-rbac.util';
+import { UserListScopeService } from '@/services/user-list-scope.service';
+import {
+  registerGet,
+  registerPost,
+  registerPut,
+  registerDelete,
+} from '@/openapi/register-route';
+import {
+  CREATE_PASSWORD_PATTERN,
+  usersListQuerySchema,
+  createUserSchema,
+  updateUserSchema,
+  userIdParamSchema,
+  usersResponseSchema,
+} from '@/schemas/users.schemas';
+import {
+  PASSWORD_COMPLEXITY_MESSAGE,
+  PASSWORD_MIN_LENGTH,
+} from '@/constants/password.constants';
 
 /**
  * User Management Routes
@@ -37,6 +65,7 @@ import { logger } from '@/utils/logger';
  * - Account deactivation triggers denylist updates
  */
 const router = Router();
+const MOUNT = '/api/v1/users';
 
 // All routes require authentication - no anonymous access allowed
 router.use(authenticateToken);
@@ -45,88 +74,77 @@ router.use(authenticateToken);
 // Helper function to check facility access for facility admins
 const checkFacilityAccess = async (req: AuthenticatedRequest, targetUserId: string): Promise<boolean> => {
   if (!req.user) return false;
-  
-  // Global admins can access all users
-  if (AuthService.canAccessAllFacilities(req.user.role)) {
-    return true;
-  }
-  
-  // Facility admins can only access users in their facilities
-  if (AuthService.isFacilityAdmin(req.user.role)) {
-    if (!req.user.facilityIds || req.user.facilityIds.length === 0) {
-      return false;
-    }
-    
-    // Get the target user's facility associations
-    const targetUserFacilities = await UserFacilityAssociationModel.getUserFacilityIds(targetUserId);
-    
-    // Check if any of the target user's facilities are in the admin's facilities
-    return targetUserFacilities.some(facilityId => req.user!.facilityIds!.includes(facilityId));
-  }
-  
-  // Other roles can only access their own profile
-  return req.user.userId === targetUserId;
+
+  return UserListScopeService.canRequesterViewUser(
+    req.user.userId,
+    req.user.role,
+    targetUserId,
+    req.user.facilityIds ?? []
+  );
 };
 
-// Validation schemas
-const createUserSchema = Joi.object({
-  email: Joi.string().email().required(),
-  password: Joi.string().min(8).pattern(new RegExp('^(?=.*[a-z])(?=.*[A-Z])(?=.*\\d)(?=.*[@$!%*?&])[A-Za-z\\d@$!%*?&]+$')).required()
-    .messages({
-      'string.pattern.base': 'Password must contain at least one lowercase letter, one uppercase letter, one number, and one special character'
-    }),
-  firstName: Joi.string().min(1).max(100).required(),
-  lastName: Joi.string().min(1).max(100).required(),
-  role: Joi.string().valid(...Object.values(UserRole)).required()
-});
-
-const updateUserSchema = Joi.object({
-  firstName: Joi.string().min(1).max(100).optional(),
-  lastName: Joi.string().min(1).max(100).optional(),
-  role: Joi.string().valid(...Object.values(UserRole)).optional(),
-  isActive: Joi.boolean().optional()
-});
-
-// GET /users - List all users with filtering and facility information
-router.get('/', requireUserManagement, asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
-  const { search, role, facility, sortBy = 'created_at', sortOrder = 'desc', limit, offset } = req.query;
+registerGet(
+  router,
+  '/',
+  {
+    openApiPath: MOUNT,
+    tags: ['Users'],
+    summary: 'List users with filtering',
+    security: 'bearer',
+    query: usersListQuerySchema,
+    responses: {
+      200: usersResponseSchema,
+    },
+  },
+  requireUserManagement,
+  asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  const { search, role, facility, sortBy, sortOrder, sort_by, sort_order, facility_id, limit, offset } = req.query;
+  const resolvedSortBy = (sortBy ?? sort_by ?? 'created_at') as string;
+  const resolvedSortOrder = (sortOrder ?? sort_order ?? 'desc') as string;
+  const resolvedFacility = (facility ?? facility_id) as string | undefined;
   const userId = req.user!.userId;
   const userRole = req.user!.role;
 
   // Get users with facility information
   const usersWithFacilities = await UserFacilityAssociationModel.getUsersWithFacilities();
-  
-  let filteredUsers = usersWithFacilities;
 
-  // RBAC: Facility admins can only see users from their facilities
-  if (userRole === UserRole.FACILITY_ADMIN) {
-    // Get facilities managed by this facility admin
-    const userFacilityAssociations = await UserFacilityAssociationModel.findByUserId(userId);
-    const managedFacilityIds = userFacilityAssociations.map(assoc => assoc.facility_id);
+  const managedFacilityIds =
+    userRole === UserRole.FACILITY_ADMIN
+      ? req.user!.facilityIds ?? []
+      : [];
 
-    if (managedFacilityIds.length === 0) {
-      // Facility admin with no facilities sees no users
-      filteredUsers = [];
-    } else {
-      // Filter to only users associated with managed facilities
-      filteredUsers = filteredUsers.filter(user => {
-        if (!user.facility_ids) return false;
-        const userFacilityIds = user.facility_ids.split(',').map((id: string) => id.trim());
-        // Check if any of the user's facilities match the admin's managed facilities
-        return userFacilityIds.some((facId: string) => managedFacilityIds.includes(facId));
-      });
-    }
-  }
+  const sharedAccessUserIds =
+    userRole === UserRole.TENANT || userRole === UserRole.MAINTENANCE
+      ? await UserListScopeService.getSharedAccessRecipientUserIds(userId)
+      : new Set<string>();
 
-  // Apply search filter
+  let filteredUsers = filterUsersForListScope(
+    usersWithFacilities,
+    userRole,
+    userId,
+    managedFacilityIds,
+    sharedAccessUserIds
+  );
+
+  // Apply search filter (supports full "First Last" as well as partial field matches)
   if (search) {
-    const searchTerm = String(search).toLowerCase();
-    filteredUsers = filteredUsers.filter(user => 
-      user.first_name.toLowerCase().includes(searchTerm) ||
-      user.last_name.toLowerCase().includes(searchTerm) ||
-      user.email.toLowerCase().includes(searchTerm) ||
-      (user.facility_names && user.facility_names.toLowerCase().includes(searchTerm))
-    );
+    const searchTerm = String(search).toLowerCase().trim();
+    filteredUsers = filteredUsers.filter(user => {
+      const first = (user.first_name || '').toLowerCase();
+      const last = (user.last_name || '').toLowerCase();
+      const fullName = `${first} ${last}`.trim();
+      const email = (user.email || '').toLowerCase();
+      const phone = String(user.phone_number || '').toLowerCase();
+      const facNames = (user.facility_names || '').toLowerCase();
+      return (
+        fullName.includes(searchTerm)
+        || first.includes(searchTerm)
+        || last.includes(searchTerm)
+        || email.includes(searchTerm)
+        || phone.includes(searchTerm)
+        || facNames.includes(searchTerm)
+      );
+    });
   }
 
   // Apply role filter
@@ -135,30 +153,22 @@ router.get('/', requireUserManagement, asyncHandler(async (req: AuthenticatedReq
   }
 
   // Apply facility filter
-  if (facility) {
-    filteredUsers = filteredUsers.filter(user => {
-      // Handle users with no facility associations (facility_ids is null)
-      if (!user.facility_ids) {
-        return false;
-      }
-      // Split the comma-separated facility IDs and check if the selected facility is included
-      const userFacilityIds = user.facility_ids.split(',').map((id: string) => id.trim());
-      return userFacilityIds.includes(String(facility));
-    });
+  if (resolvedFacility) {
+    filteredUsers = filteredUsers.filter((user) => userMatchesFacilityFilter(user, String(resolvedFacility)));
   }
 
   // Apply sorting
   filteredUsers.sort((a, b) => {
     let aVal, bVal;
     
-    switch (sortBy) {
+    switch (resolvedSortBy) {
       case 'name':
         aVal = `${a.first_name} ${a.last_name}`.toLowerCase();
         bVal = `${b.first_name} ${b.last_name}`.toLowerCase();
         break;
       case 'email':
-        aVal = a.email.toLowerCase();
-        bVal = b.email.toLowerCase();
+        aVal = (a.email || '').toLowerCase();
+        bVal = (b.email || '').toLowerCase();
         break;
       case 'role':
         aVal = a.role;
@@ -171,29 +181,12 @@ router.get('/', requireUserManagement, asyncHandler(async (req: AuthenticatedReq
         break;
     }
     
-    if (sortOrder === 'desc') {
+    if (resolvedSortOrder === 'desc') {
       return aVal < bVal ? 1 : -1;
     } else {
       return aVal > bVal ? 1 : -1;
     }
   });
-
-  // If requester is facility admin, filter to only show users from their facilities
-  if (AuthService.isFacilityAdmin(req.user!.role)) {
-    const requesterFacilityIds = req.user!.facilityIds || [];
-    filteredUsers = filteredUsers.filter(user => {
-      // Always show global admins
-      if (AuthService.canAccessAllFacilities(user.role as UserRole)) {
-        return true;
-      }
-      // Show users who share at least one facility
-      if (user.facility_ids) {
-        const userFacilityIds = user.facility_ids.split(',');
-        return userFacilityIds.some((id: string) => requesterFacilityIds.includes(id));
-      }
-      return false;
-    });
-  }
 
   // Apply pagination
   const total = filteredUsers.length;
@@ -202,19 +195,31 @@ router.get('/', requireUserManagement, asyncHandler(async (req: AuthenticatedReq
   
   const paginatedUsers = filteredUsers.slice(offsetNum, offsetNum + limitNum);
 
-  const sanitizedUsers = paginatedUsers.map(user => ({
-    id: user.id,
-    email: user.email,
-    firstName: user.first_name,
-    lastName: user.last_name,
-    role: user.role,
-    isActive: user.is_active,
-    lastLogin: user.last_login,
-    createdAt: user.created_at,
-    updatedAt: user.updated_at,
-    facilityNames: user.facility_names ? user.facility_names.split(',') : [],
-    facilityIds: user.facility_ids ? user.facility_ids.split(',') : []
-  }));
+  const { loadInviteStatusForUsers } = await import('@/utils/user-invite-status.utils');
+  const inviteStatusMap = await loadInviteStatusForUsers(paginatedUsers);
+
+  const sanitizedUsers = paginatedUsers.map(user => {
+    const invite = inviteStatusMap.get(user.id);
+    return {
+      id: user.id,
+      email: user.email,
+      phoneNumber: user.phone_number ?? null,
+      loginIdentifier: user.login_identifier ?? null,
+      firstName: user.first_name,
+      lastName: user.last_name,
+      role: user.role,
+      isActive: Boolean(user.is_active),
+      simplifiedUi: Boolean(user.simplified_ui),
+      isPlaceholder: Boolean(user.is_placeholder),
+      lastLogin: user.last_login,
+      createdAt: user.created_at,
+      updatedAt: user.updated_at,
+      facilityNames: user.facility_names ? user.facility_names.split(',') : [],
+      facilityIds: user.facility_ids ? user.facility_ids.split(',') : [],
+      inviteStatus: invite?.inviteStatus ?? (user.last_login ? 'active' : 'never_invited'),
+      invitedAt: invite?.invitedAt ?? null,
+    };
+  });
 
   res.json({
     success: true,
@@ -223,8 +228,21 @@ router.get('/', requireUserManagement, asyncHandler(async (req: AuthenticatedReq
   });
 }));
 
-// GET /users/:id - Get user by ID
-router.get('/:id', requireUserManagementOrSelf, asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+registerGet(
+  router,
+  '/:id',
+  {
+    openApiPath: `${MOUNT}/{id}`,
+    tags: ['Users'],
+    summary: 'Get user by ID',
+    security: 'bearer',
+    params: userIdParamSchema,
+    responses: {
+      200: usersResponseSchema,
+    },
+  },
+  requireUserManagementOrSelf,
+  asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   const { id } = req.params;
 
   if (!id) {
@@ -260,10 +278,14 @@ router.get('/:id', requireUserManagementOrSelf, asyncHandler(async (req: Authent
     user: {
       id: user.id,
       email: user.email,
+      phoneNumber: user.phone_number ?? null,
+      loginIdentifier: user.login_identifier ?? null,
       firstName: user.first_name,
       lastName: user.last_name,
       role: user.role,
-      isActive: user.is_active,
+      isActive: Boolean(user.is_active),
+      simplifiedUi: Boolean(user.simplified_ui),
+      isPlaceholder: Boolean(user.is_placeholder),
       lastLogin: user.last_login,
       createdAt: user.created_at,
       updatedAt: user.updated_at
@@ -271,201 +293,266 @@ router.get('/:id', requireUserManagementOrSelf, asyncHandler(async (req: Authent
   });
 }));
 
-// GET /users/:id/details - Get detailed user information with facilities, units, and devices
-router.get('/:id/details', requireUserManagementOrSelf, asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
-  const { id } = req.params;
-  const db = DatabaseService.getInstance().connection;
+registerGet(
+  router,
+  '/:id/details',
+  {
+    openApiPath: `${MOUNT}/{id}/details`,
+    tags: ['Users'],
+    summary: 'Get detailed user information',
+    security: 'bearer',
+    params: userIdParamSchema,
+    responses: {
+      200: usersResponseSchema,
+    },
+  },
+  requireUserManagementOrSelf,
+  asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+    const { id } = req.params;
 
-  if (!id) {
-    res.status(400).json({
-      success: false,
-      message: 'User ID is required'
+    if (!id) {
+      res.status(400).json({ success: false, message: 'User ID is required' });
+      return;
+    }
+
+    const hasAccess = await checkFacilityAccess(req, id);
+    if (!hasAccess) {
+      res.status(403).json({ success: false, message: 'Access denied to this user' });
+      return;
+    }
+
+    const user = await UserModel.findById(id) as User;
+    if (!user) {
+      res.status(404).json({ success: false, message: 'User not found' });
+      return;
+    }
+
+    const isSelfRequest = req.user!.userId === id;
+    const canLoadUserDevices = AuthService.isAdmin(req.user!.role) || isSelfRequest;
+
+    const enrichment = await UserDetailsService.getInstance().loadUserDetails(
+      id,
+      user,
+      { canLoadUserDevices },
+    );
+
+    res.json({
+      success: true,
+      user: {
+        id: user.id,
+        email: user.email,
+        phoneNumber: user.phone_number ?? null,
+        loginIdentifier: user.login_identifier ?? null,
+        firstName: user.first_name,
+        lastName: user.last_name,
+        role: user.role,
+        isActive: Boolean(user.is_active),
+        simplifiedUi: Boolean(user.simplified_ui),
+        isPlaceholder: Boolean(user.is_placeholder),
+        lastLogin: user.last_login,
+        createdAt: user.created_at,
+        updatedAt: user.updated_at,
+        facilities: enrichment.facilities,
+        devices: enrichment.devices,
+        accessControlDevices: enrichment.accessControlDevices,
+      },
     });
-    return;
-  }
+  }),
+);
 
-  // Check facility access for facility admins
-  const hasAccess = await checkFacilityAccess(req, id);
-  if (!hasAccess) {
-    res.status(403).json({
-      success: false,
-      message: 'Access denied to this user'
-    });
-    return;
-  }
-
-  const user = await UserModel.findById(id) as User;
-
-  if (!user) {
-    res.status(404).json({
-      success: false,
-      message: 'User not found'
-    });
-    return;
-  }
-
-  // Get user facilities
-  const userFacilities = await db('user_facility_associations as ufa')
-    .join('facilities as f', 'ufa.facility_id', 'f.id')
-    .select(
-      'f.id as facility_id',
-      'f.name as facility_name',
-      'f.address as facility_address'
-    )
-    .where('ufa.user_id', id)
-    .orderBy('f.name');
-
-  // Get units for each facility that the user has access to
-  const facilityIds = userFacilities.map(f => f.facility_id);
-  const facilitiesWithUnits = [];
-
-  if (facilityIds.length > 0) {
-    const unitsData = await db('unit_assignments as ua')
-      .join('units as u', 'ua.unit_id', 'u.id')
-      .leftJoin('blulok_devices as bd', 'u.id', 'bd.unit_id')
-      .select(
-        'u.facility_id',
-        'u.id as unit_id',
-        'u.unit_number',
-        'u.unit_type',
-        'ua.is_primary',
-        'bd.id as device_id',
-        'bd.device_serial',
-        'bd.lock_status',
-        'bd.device_status',
-        'bd.battery_level'
-      )
-      .where('ua.tenant_id', id)
-      .whereIn('u.facility_id', facilityIds)
-      .orderBy('u.unit_number');
-
-    // Combine facilities with their units
-    for (const facility of userFacilities) {
-      const facilityData = {
-        ...facility,
-        units: unitsData.filter(u => u.facility_id === facility.facility_id).map(u => ({
-          id: u.unit_id,
-          unitNumber: u.unit_number,
-          unitType: u.unit_type,
-          isPrimary: u.is_primary,
-          device: u.device_id ? {
-            id: u.device_id,
-            device_serial: u.device_serial,
-            lock_status: u.lock_status,
-            device_status: u.device_status,
-            battery_level: u.battery_level
-          } : undefined
-        }))
-      };
-      facilitiesWithUnits.push(facilityData);
+registerPost(
+  router,
+  '/',
+  {
+    openApiPath: MOUNT,
+    tags: ['Users'],
+    summary: 'Create a user (or reactivate an inactive user when confirmed)',
+    security: 'bearer',
+    body: createUserSchema,
+    responses: {
+      201: usersResponseSchema,
+      200: usersResponseSchema,
+      409: usersResponseSchema,
+    },
+  },
+  requireUserManagement,
+  asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+    const value = req.body;
+    const passwordTrimmed = typeof value.password === 'string' ? value.password.trim() : '';
+  if (passwordTrimmed) {
+    if (passwordTrimmed.length < PASSWORD_MIN_LENGTH || !CREATE_PASSWORD_PATTERN.test(passwordTrimmed)) {
+      res.status(400).json({
+        success: false,
+        message: PASSWORD_COMPLEXITY_MESSAGE,
+      });
+      return;
     }
   }
 
-  // facilitiesWithUnits is already properly structured
+  const userData: CreateUserRequest = {
+    email: value.email,
+    firstName: value.firstName,
+    lastName: value.lastName,
+    role: value.role,
+    ...(passwordTrimmed ? { password: passwordTrimmed } : {}),
+    ...(value.phoneNumber && String(value.phoneNumber).trim()
+      ? { phoneNumber: String(value.phoneNumber).trim() }
+      : {}),
+  };
 
-  // Get user devices (only for dev admins)
-  let userDevices: any[] = [];
-  const isDevAdmin = AuthService.isAdmin(req.user!.role) && req.user!.role === UserRole.DEV_ADMIN;
-  if (isDevAdmin) {
-    const userDeviceModel = new UserDeviceModel();
-    userDevices = await userDeviceModel.listByUser(id);
-
-    // For each device, get associated locks and recent distribution errors
-    for (const device of userDevices) {
-      const deviceLocks = await db('device_key_distributions as dkd')
-        .join('blulok_devices as bd', 'dkd.target_id', 'bd.id')
-        .join('units as u', 'bd.unit_id', 'u.id')
-        .join('facilities as f', 'u.facility_id', 'f.id')
-        .select(
-          'bd.id as lock_id',
-          'bd.device_serial',
-          'u.unit_number',
-          'f.name as facility_name',
-          'dkd.status as key_status',
-          'dkd.error as last_error',
-          'dkd.key_version as key_version',
-          'dkd.key_code as key_code'
-        )
-        .where('dkd.user_device_id', device.id)
-        .where('dkd.target_type', 'blulok');
-
-      device.associatedLocks = deviceLocks;
-
-      const distErrors = await db('device_key_distributions')
-        .where({ user_device_id: device.id })
-        .whereNotNull('error')
-        .orderBy('updated_at', 'desc')
-        .limit(10);
-      device.distributionErrors = distErrors;
-    }
+  const roleCheck = assertRequesterMayAssignRoleOnCreate(req, userData.role as UserRole);
+  if (!roleCheck.ok) {
+    res.status(roleCheck.status).json({ success: false, message: roleCheck.message });
+    return;
   }
 
-  res.json({
-    success: true,
-    user: {
-      id: user.id,
-      email: user.email,
-      firstName: user.first_name,
-      lastName: user.last_name,
-      role: user.role,
-      isActive: user.is_active,
-      lastLogin: user.last_login,
-      createdAt: user.created_at,
-      updatedAt: user.updated_at,
-      facilities: facilitiesWithUnits,
-      devices: userDevices
-    }
+  const facilityCheck = validateFacilityIdsForAssignment(
+    req,
+    value.facilityIds || [],
+    userData.role as UserRole
+  );
+  if (!facilityCheck.ok) {
+    res.status(facilityCheck.status).json({ success: false, message: facilityCheck.message });
+    return;
+  }
+
+  const result = await AuthService.createUser(userData, {
+    reactivateIfInactive: Boolean(value.reactivateIfInactive),
   });
-}));
 
-// POST /users - Create new user
-router.post('/', requireUserManagement, asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
-  const { error, value } = createUserSchema.validate(req.body);
-  if (error) {
-    logger.warn('Create user validation failed', {
-      requester: req.user?.userId,
-      role: req.user?.role,
-      message: error.details[0]?.message,
-    });
-    res.status(400).json({
-      success: false,
-      message: error.details[0]?.message || 'Validation error'
-    });
-    return;
-  }
-
-  const userData: CreateUserRequest = value;
-  
-  // Only dev_admin can create other dev_admin users
-  if (userData.role === UserRole.DEV_ADMIN && req.user!.role !== UserRole.DEV_ADMIN) {
-    res.status(403).json({
-      success: false,
-      message: 'Only dev_admin can create dev_admin users'
-    });
-    return;
-  }
-
-  const result = await AuthService.createUser(userData);
-  const statusCode = result.success ? 201 : 400;
   if (!result.success) {
+    if (result.code === 'USER_INACTIVE' && result.inactiveUser) {
+      const hasAccess = await checkFacilityAccess(req, result.inactiveUser.id);
+      const mayManageExistingRole =
+        !AuthService.isFacilityAdmin(req.user!.role) ||
+        FACILITY_ADMIN_CREATABLE_ROLES.includes(result.inactiveUser.role as UserRole);
+
+      if (!hasAccess || !mayManageExistingRole) {
+        // Avoid leaking inactive accounts outside the requester's scope.
+        const genericMessage =
+          result.message.includes('phone')
+            ? 'Phone number already in use'
+            : 'User with this email already exists';
+        logger.warn('Create user inactive collision outside requester scope', {
+          requester: req.user?.userId,
+          inactiveUserId: result.inactiveUser.id,
+        });
+        res.status(400).json({ success: false, message: genericMessage });
+        return;
+      }
+
+      logger.info('Create user blocked by inactive account; reactivation available', {
+        requester: req.user?.userId,
+        inactiveUserId: result.inactiveUser.id,
+      });
+      res.status(409).json(result);
+      return;
+    }
+
     logger.warn('Create user failed', {
       requester: req.user?.userId,
       role: req.user?.role,
       reason: result.message,
+      code: result.code,
     });
-  } else {
-    logger.info('User created', {
-      requester: req.user?.userId,
-      role: req.user?.role,
-      createdUserEmail: userData.email,
-      createdRole: userData.role,
-    });
+    res.status(400).json(result);
+    return;
   }
-  res.status(statusCode).json(result);
+
+  const newUserId = result.userId as string;
+
+  try {
+    if (facilityCheck.facilityIds.length > 0) {
+      if (result.reactivated) {
+        await UserFacilityAssociationModel.setUserFacilities(
+          newUserId,
+          facilityCheck.facilityIds,
+        );
+      } else {
+        for (const fid of facilityCheck.facilityIds) {
+          await UserFacilityAssociationModel.addUserToFacility(newUserId, fid);
+        }
+      }
+    }
+  } catch (assocErr) {
+    logger.error('Failed to associate user with facilities', assocErr);
+    if (!result.reactivated) {
+      try {
+        await UserModel.deleteById(newUserId);
+      } catch (delErr) {
+        logger.error('Failed to delete user after association error', delErr);
+      }
+    }
+    res.status(500).json({
+      success: false,
+      message: 'User could not be linked to facilities. Try again or verify facility IDs exist.',
+    });
+    return;
+  }
+
+  if (result.reactivated) {
+    void runUserActivationSideEffects(newUserId);
+  }
+
+  logger.info(result.reactivated ? 'User reactivated via create' : 'User created', {
+    requester: req.user?.userId,
+    role: req.user?.role,
+    createdUserEmail: userData.email,
+    createdRole: userData.role,
+    userId: newUserId,
+    reactivated: Boolean(result.reactivated),
+  });
+
+  const shouldSendInvite = Boolean(value.sendInvite) && !passwordTrimmed;
+  let inviteSent = false;
+  let inviteWarning: string | undefined;
+  if (shouldSendInvite) {
+    try {
+      const created = await UserModel.findById(newUserId) as User | undefined;
+      if (created) {
+        const dispatch = await FirstTimeUserService.getInstance().sendInvite(created);
+        inviteSent = dispatch.delivered.length > 0;
+        if (dispatch.warning) inviteWarning = dispatch.warning;
+        if (!inviteSent) {
+          inviteWarning =
+            'User was created but no invite was sent — the account has no reachable phone or email.';
+        }
+      }
+    } catch (e) {
+      logger.error(
+        result.reactivated
+          ? 'Failed to send invite after user reactivate'
+          : 'Failed to send invite after user create',
+        e,
+      );
+      inviteWarning = result.reactivated
+        ? 'User was reactivated but the invite could not be sent. You can resend from the user profile.'
+        : 'User was created but the invite could not be sent. You can resend from the user profile.';
+    }
+  }
+
+  res.status(result.reactivated ? 200 : 201).json({
+    ...result,
+    inviteSent,
+    ...(inviteWarning ? { inviteWarning } : {}),
+  });
 }));
 
-// POST /users/:id/resend-invite - Admin action to resend first-time invite
-router.post('/:id/resend-invite', requireUserManagement, asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+registerPost(
+  router,
+  '/:id/resend-invite',
+  {
+    openApiPath: `${MOUNT}/{id}/resend-invite`,
+    tags: ['Users'],
+    summary: 'Resend first-time user invite',
+    security: 'bearer',
+    params: userIdParamSchema,
+    responses: {
+      200: usersResponseSchema,
+    },
+  },
+  requireUserManagement,
+  asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   const { id } = req.params;
   const user = await UserModel.findById(String(id)) as User | undefined;
   if (!user) {
@@ -473,15 +560,145 @@ router.post('/:id/resend-invite', requireUserManagement, asyncHandler(async (req
     return;
   }
 
-  // Facility Admin must have access to this user's facilities; existing helper covers checks in other routes
-  // Keep simple here: only ADMIN/DEV_ADMIN or FACILITY_ADMIN with association can proceed (reuse checkFacilityAccess if required)
+  const hasAccess = await checkFacilityAccess(req, String(id));
+  if (!hasAccess) {
+    res.status(403).json({ success: false, message: 'Access denied to this user' });
+    return;
+  }
 
-  await FirstTimeUserService.getInstance().sendInvite(user);
-  res.json({ success: true, message: 'Invite resent' });
+  const { isPlaceholderUser } = await import('@/services/fms/fms-placeholder-user.utils');
+  if (isPlaceholderUser(user)) {
+    res.status(400).json({
+      success: false,
+      message: 'Cannot invite a placeholder tenant. Add an email or phone first to enable login.',
+    });
+    return;
+  }
+
+  const dispatch = await FirstTimeUserService.getInstance().sendInvite(user);
+  if (dispatch.delivered.length === 0) {
+    res.status(400).json({
+      success: false,
+      message: 'No invite was sent — this account has no reachable phone or email.',
+    });
+    return;
+  }
+  res.json({
+    success: true,
+    message: `Invite resent via ${dispatch.delivered.join(', ')}`,
+    inviteSent: true,
+    ...(dispatch.warning ? { inviteWarning: dispatch.warning } : {}),
+  });
 }));
 
-// PUT /users/:id - Update user
-router.put('/:id', requireUserManagementOrSelf, asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+registerPost(
+  router,
+  '/:id/reset-account',
+  {
+    openApiPath: `${MOUNT}/{id}/reset-account`,
+    tags: ['Users'],
+    summary: 'Reset account auth identity and re-send invite',
+    security: 'bearer',
+    params: userIdParamSchema,
+    responses: {
+      200: usersResponseSchema,
+    },
+  },
+  requireUserManagement,
+  asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+    const { id } = req.params;
+    if (!id) {
+      res.status(400).json({ success: false, message: 'User ID is required' });
+      return;
+    }
+
+    if (id === req.user!.userId) {
+      res.status(400).json({ success: false, message: 'Cannot reset your own account' });
+      return;
+    }
+
+    const user = await UserModel.findById(String(id)) as User | undefined;
+    if (!user) {
+      res.status(404).json({ success: false, message: 'User not found' });
+      return;
+    }
+
+    const hasAccess = await checkFacilityAccess(req, String(id));
+    if (!hasAccess) {
+      res.status(403).json({ success: false, message: 'Access denied to this user' });
+      return;
+    }
+
+    // Same role guards as deactivate
+    if (
+      AuthService.isFacilityAdmin(req.user!.role) &&
+      !FACILITY_ADMIN_CREATABLE_ROLES.includes(user.role as UserRole)
+    ) {
+      res.status(403).json({
+        success: false,
+        message:
+          'Facility admins can only reset tenant, maintenance, or BluLok technician accounts',
+      });
+      return;
+    }
+
+    if (user.role === UserRole.DEV_ADMIN && req.user!.role !== UserRole.DEV_ADMIN) {
+      res.status(403).json({
+        success: false,
+        message: 'Only dev_admin can reset a dev_admin account',
+      });
+      return;
+    }
+
+    const { isPlaceholderUser } = await import('@/services/fms/fms-placeholder-user.utils');
+    if (isPlaceholderUser(user)) {
+      res.status(400).json({
+        success: false,
+        message: 'Cannot reset a placeholder tenant. Add an email or phone first to enable login.',
+      });
+      return;
+    }
+
+    const { AccountResetService } = await import('@/services/account-reset.service');
+    try {
+      const result = await AccountResetService.getInstance().resetAndReinvite(String(id), {
+        performedBy: req.user!.userId,
+        sendInvite: true,
+      });
+      res.json({
+        success: true,
+        message: result.inviteSent
+          ? 'Account reset and invite sent'
+          : 'Account reset, but the invite was not delivered',
+        devicesRevoked: result.devicesRevoked,
+        inviteSent: result.inviteSent,
+        ...(result.inviteWarning ? { inviteWarning: result.inviteWarning } : {}),
+      });
+    } catch (e: any) {
+      // Preserve delivery/operational status codes instead of collapsing to 400
+      res
+        .status(typeof e?.statusCode === 'number' ? e.statusCode : 400)
+        .json({ success: false, message: e?.message || 'Account reset failed' });
+    }
+  }),
+);
+
+registerPut(
+  router,
+  '/:id',
+  {
+    openApiPath: `${MOUNT}/{id}`,
+    tags: ['Users'],
+    summary: 'Update a user',
+    security: 'bearer',
+    params: userIdParamSchema,
+    body: updateUserSchema,
+    responses: {
+      200: usersResponseSchema,
+    },
+  },
+  requireUserManagementOrSelf,
+  asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   const { id } = req.params;
   
   if (!id) {
@@ -501,18 +718,8 @@ router.put('/:id', requireUserManagementOrSelf, asyncHandler(async (req: Authent
     });
     return;
   }
-  
-  const { error, value } = updateUserSchema.validate(req.body);
-  
-  if (error) {
-    res.status(400).json({
-      success: false,
-      message: error.details[0]?.message || 'Validation error'
-    });
-    return;
-  }
 
-  const updateData: UpdateUserRequest = value;
+  const updateData: UpdateUserRequest = req.body;
 
   // Check if user exists
   const existingUser = await UserModel.findById(id) as User;
@@ -520,6 +727,21 @@ router.put('/:id', requireUserManagementOrSelf, asyncHandler(async (req: Authent
     res.status(404).json({
       success: false,
       message: 'User not found'
+    });
+    return;
+  }
+
+  // Facility admins may only manage tenant / maintenance / technician accounts (not peers or global roles).
+  // Self-service updates (same id) are still allowed for the admin's own profile.
+  if (
+    AuthService.isFacilityAdmin(req.user!.role) &&
+    id !== req.user!.userId &&
+    !FACILITY_ADMIN_CREATABLE_ROLES.includes(existingUser.role as UserRole)
+  ) {
+    res.status(403).json({
+      success: false,
+      message:
+        'Facility admins can only update tenant, maintenance, or BluLok technician users',
     });
     return;
   }
@@ -533,25 +755,202 @@ router.put('/:id', requireUserManagementOrSelf, asyncHandler(async (req: Authent
     return;
   }
 
+  const roleAssignCheck = assertRequesterMayAssignRoleOnUpdate(req, updateData.role as UserRole | undefined);
+  if (!roleAssignCheck.ok) {
+    res.status(roleAssignCheck.status).json({ success: false, message: roleAssignCheck.message });
+    return;
+  }
+
   // For self-updates, restrict what can be modified
   if (id === req.user!.userId) {
-    // Users can only update their own firstName and lastName, not role or isActive
-    if (updateData.role !== undefined || updateData.isActive !== undefined) {
+    // Users can only update their own firstName and lastName, not role, isActive, simplifiedUi, or login identity
+    if (
+      updateData.role !== undefined ||
+      updateData.isActive !== undefined ||
+      updateData.simplifiedUi !== undefined ||
+      updateData.email !== undefined ||
+      updateData.phoneNumber !== undefined
+    ) {
       res.status(400).json({
         success: false,
-        message: 'You cannot modify your own role or active status'
+        message: 'You cannot modify your own role, active status, simplified UI preference, or login identity'
       });
       return;
     }
   }
 
-  // Update user
+  // simplifiedUi is presentation-only and may only be set by global admins
+  if (updateData.simplifiedUi !== undefined && !AuthService.isAdmin(req.user!.role)) {
+    res.status(403).json({
+      success: false,
+      message: 'Only admin or dev_admin can set simplified UI preference',
+    });
+    return;
+  }
+
+  const effectiveRole = (updateData.role ?? existingUser.role) as UserRole;
+  if (updateData.simplifiedUi === true && effectiveRole !== UserRole.FACILITY_ADMIN) {
+    res.status(400).json({
+      success: false,
+      message: 'Simplified UI preference applies only to facility admins',
+    });
+    return;
+  }
+
+  const { isPlaceholderUser } = await import(
+    '@/services/fms/fms-placeholder-user.utils'
+  );
+  const { preparePlaceholderUpgrade, queueInviteAfterPlaceholderUpgrade } = await import(
+    '@/services/fms/fms-placeholder-upgrade'
+  );
+  const wasPlaceholder = isPlaceholderUser(existingUser);
+
+  let nextEmail =
+    existingUser.email != null ? String(existingUser.email).toLowerCase() : null;
+  let nextPhone = existingUser.phone_number ?? null;
+
+  if (updateData.email !== undefined) {
+    const rawEmail =
+      updateData.email === null ? '' : String(updateData.email).trim().toLowerCase();
+    if (rawEmail === '') {
+      nextEmail = null;
+    } else {
+      nextEmail = rawEmail;
+    }
+  }
+
+  if (updateData.phoneNumber !== undefined) {
+    const raw =
+      updateData.phoneNumber === null ? '' : String(updateData.phoneNumber).trim();
+    if (raw === '') {
+      nextPhone = null;
+    } else {
+      const normalized = toE164(raw, 'US');
+      const digits = normalized.replace(/\D/g, '');
+      if (!normalized || digits.length < 10) {
+        res.status(400).json({
+          success: false,
+          message: 'Invalid phone number',
+        });
+        return;
+      }
+      nextPhone = normalized;
+    }
+  }
+
+  // Placeholder upgrades require at least one contact when email/phone is being changed
+  if (
+    wasPlaceholder
+    && (updateData.email !== undefined || updateData.phoneNumber !== undefined)
+    && !nextEmail
+    && !nextPhone
+  ) {
+    res.status(400).json({
+      success: false,
+      message: 'Add an email or phone number to enable login for this placeholder tenant',
+    });
+    return;
+  }
+
+  const contactsChanged =
+    updateData.email !== undefined || updateData.phoneNumber !== undefined;
+
+  // Update user (non-phone fields)
+  const activating =
+    updateData.isActive === true && existingUser.is_active === false;
+  const deactivating =
+    updateData.isActive === false && existingUser.is_active === true;
+
+  if (deactivating) {
+    if (id === req.user!.userId) {
+      res.status(400).json({
+        success: false,
+        message: 'Cannot deactivate your own account',
+      });
+      return;
+    }
+    if (existingUser.role === UserRole.DEV_ADMIN && req.user!.role !== UserRole.DEV_ADMIN) {
+      res.status(403).json({
+        success: false,
+        message: 'Only dev_admin can deactivate dev_admin users',
+      });
+      return;
+    }
+  }
+
+  let simplifiedUiUpdate: boolean | undefined;
+  if (effectiveRole !== UserRole.FACILITY_ADMIN) {
+    // Flag only applies to facility admins; clear when role leaves that set
+    if (Boolean(existingUser.simplified_ui)) {
+      simplifiedUiUpdate = false;
+    }
+  } else if (updateData.simplifiedUi !== undefined) {
+    simplifiedUiUpdate = updateData.simplifiedUi;
+  }
+
+  const identityUpdates: Record<string, unknown> = {};
+  let identityRebalance: Array<{ id: string; loginIdentifier: string }> = [];
+  if (contactsChanged) {
+    if (wasPlaceholder && (nextEmail || nextPhone)) {
+      const prepared = await preparePlaceholderUpgrade(id, {
+        email: nextEmail,
+        phoneE164: nextPhone,
+      });
+      if (!prepared.ok) {
+        res.status(400).json({
+          success: false,
+          code: prepared.reason,
+          message: prepared.message,
+        });
+        return;
+      }
+      Object.assign(identityUpdates, prepared.updates);
+      identityRebalance = prepared.rebalance;
+    } else if (!wasPlaceholder) {
+      const { UserLoginIdentityService } = await import('@/services/user-login-identity.service');
+      const plan = await UserLoginIdentityService.planContactChange({
+        userId: id,
+        email: nextEmail,
+        phone: nextPhone,
+      });
+      if (!plan.ok) {
+        res.status(400).json({
+          success: false,
+          code: plan.code,
+          message: plan.message,
+        });
+        return;
+      }
+      identityUpdates.email = nextEmail;
+      identityUpdates.phone_number = nextPhone;
+      identityUpdates.login_identifier = plan.loginIdentifier;
+      identityRebalance = plan.rebalance;
+    }
+  }
+
   const updatedUser = await UserModel.updateById(id, {
     first_name: updateData.firstName,
     last_name: updateData.lastName,
     role: updateData.role,
-    is_active: updateData.isActive
+    is_active: updateData.isActive,
+    simplified_ui: simplifiedUiUpdate,
+    ...identityUpdates,
   }) as User;
+  if (identityRebalance.length > 0) {
+    const { UserLoginIdentityService } = await import('@/services/user-login-identity.service');
+    await UserLoginIdentityService.applyRebalance(identityRebalance);
+  }
+
+  if (activating) {
+    void runUserActivationSideEffects(id);
+  }
+  if (deactivating) {
+    void runUserDeactivationSideEffects(id, req.user!.userId);
+  }
+
+  if (wasPlaceholder && updatedUser && !isPlaceholderUser(updatedUser)) {
+    queueInviteAfterPlaceholderUpgrade(updatedUser);
+  }
 
   res.json({
     success: true,
@@ -559,10 +958,14 @@ router.put('/:id', requireUserManagementOrSelf, asyncHandler(async (req: Authent
     user: {
       id: updatedUser.id,
       email: updatedUser.email,
+      phoneNumber: updatedUser.phone_number ?? null,
+      loginIdentifier: updatedUser.login_identifier ?? null,
       firstName: updatedUser.first_name,
       lastName: updatedUser.last_name,
       role: updatedUser.role,
-      isActive: updatedUser.is_active,
+      isActive: Boolean(updatedUser.is_active),
+      simplifiedUi: Boolean(updatedUser.simplified_ui),
+      isPlaceholder: Boolean(updatedUser.is_placeholder),
       lastLogin: updatedUser.last_login,
       createdAt: updatedUser.created_at,
       updatedAt: updatedUser.updated_at
@@ -570,8 +973,21 @@ router.put('/:id', requireUserManagementOrSelf, asyncHandler(async (req: Authent
   });
 }));
 
-// DELETE /users/:id - Deactivate user (soft delete)
-router.delete('/:id', requireUserManagement, asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+registerDelete(
+  router,
+  '/:id',
+  {
+    openApiPath: `${MOUNT}/{id}`,
+    tags: ['Users'],
+    summary: 'Deactivate a user',
+    security: 'bearer',
+    params: userIdParamSchema,
+    responses: {
+      200: usersResponseSchema,
+    },
+  },
+  requireUserManagement,
+  asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   const { id } = req.params;
 
   if (!id) {
@@ -598,6 +1014,19 @@ router.delete('/:id', requireUserManagement, asyncHandler(async (req: Authentica
     res.status(404).json({
       success: false,
       message: 'User not found'
+    });
+    return;
+  }
+
+  // Facility admins may only deactivate tenant / maintenance / technician accounts.
+  if (
+    AuthService.isFacilityAdmin(req.user!.role) &&
+    !FACILITY_ADMIN_CREATABLE_ROLES.includes(existingUser.role as UserRole)
+  ) {
+    res.status(403).json({
+      success: false,
+      message:
+        'Facility admins can only deactivate tenant, maintenance, or BluLok technician users',
     });
     return;
   }
@@ -622,69 +1051,7 @@ router.delete('/:id', requireUserManagement, asyncHandler(async (req: Authentica
 
   await UserModel.deactivateUser(id);
 
-  // Push denylist update to relevant locks via gateway events (fire-and-forget)
-  // Device-targeted: determine lock device_ids from user's assigned units and unicast per facility
-  (async () => {
-    try {
-      const { DenylistService } = await import('@/services/denylist.service');
-      const { GatewayEventsService } = await import('@/services/gateway/gateway-events.service');
-      const { DatabaseService } = await import('@/services/database.service');
-      const { DenylistEntryModel } = await import('@/models/denylist-entry.model');
-      const { DenylistOptimizationService } = await import('@/services/denylist-optimization.service');
-      const { config } = await import('@/config/environment');
-      const knex = DatabaseService.getInstance().connection;
-      const denylistModel = new DenylistEntryModel();
-      
-      // Get all devices from all units the user has access to
-      const rows = await knex('blulok_devices as bd')
-        .join('units as u', 'bd.unit_id', 'u.id')
-        .leftJoin('unit_assignments as ua', 'ua.unit_id', 'u.id')
-        .where('ua.tenant_id', id)
-        .select('bd.id as device_id', 'u.facility_id');
-      
-      if (rows.length === 0) {
-        return; // No devices to deny
-      }
-
-      // Check if we should skip denylist command (user's last route pass is expired)
-      const shouldSkip = await DenylistOptimizationService.shouldSkipDenylistAdd(id);
-      
-      // Calculate expiration based on route pass TTL (for DB entry)
-      const now = new Date();
-      const ttlMs = (config.security.routePassTtlHours || 24) * 60 * 60 * 1000;
-      const expiresAt = new Date(now.getTime() + ttlMs);
-      const exp = Math.floor(expiresAt.getTime() / 1000);
-      const byFacility = new Map<string, string[]>();
-      const performedBy = req.user!.userId;
-
-      // Create database entries and group by facility (always do this for audit trail)
-      for (const r of rows) {
-        await denylistModel.create({
-          device_id: r.device_id,
-          user_id: id,
-          expires_at: expiresAt,
-          source: 'user_deactivation',
-          created_by: performedBy,
-        });
-
-        const list = byFacility.get(r.facility_id) || [];
-        list.push(r.device_id);
-        byFacility.set(r.facility_id, list);
-      }
-
-      // Send denylist commands only if user's last route pass is not expired
-      if (!shouldSkip) {
-      for (const [facilityId, deviceIds] of byFacility.entries()) {
-        const packet = await DenylistService.buildDenylistAdd([{ sub: id, exp }], deviceIds);
-        GatewayEventsService.getInstance().unicastToFacility(facilityId, packet);
-      }
-      } else {
-        logger.info(`Skipping DENYLIST_ADD for deactivated user ${id} - last route pass is expired`);
-      }
-    } catch (error) {
-      logger.error('Failed to push denylist on user deactivation:', error);
-    }
-  })();
+  void runUserDeactivationSideEffects(id, req.user!.userId);
 
   res.json({
     success: true,
@@ -692,8 +1059,21 @@ router.delete('/:id', requireUserManagement, asyncHandler(async (req: Authentica
   });
 }));
 
-// POST /users/:id/activate - Reactivate user
-router.post('/:id/activate', requireUserManagement, asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+registerPost(
+  router,
+  '/:id/activate',
+  {
+    openApiPath: `${MOUNT}/{id}/activate`,
+    tags: ['Users'],
+    summary: 'Reactivate a user',
+    security: 'bearer',
+    params: userIdParamSchema,
+    responses: {
+      200: usersResponseSchema,
+    },
+  },
+  requireUserManagement,
+  asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   const { id } = req.params;
 
   if (!id) {
@@ -724,6 +1104,19 @@ router.post('/:id/activate', requireUserManagement, asyncHandler(async (req: Aut
     return;
   }
 
+  // Facility admins may only activate tenant / maintenance / technician accounts.
+  if (
+    AuthService.isFacilityAdmin(req.user!.role) &&
+    !FACILITY_ADMIN_CREATABLE_ROLES.includes(existingUser.role as UserRole)
+  ) {
+    res.status(403).json({
+      success: false,
+      message:
+        'Facility admins can only activate tenant, maintenance, or BluLok technician users',
+    });
+    return;
+  }
+
   // Only dev_admin can activate dev_admin users
   if (existingUser.role === UserRole.DEV_ADMIN && req.user!.role !== UserRole.DEV_ADMIN) {
     res.status(403).json({
@@ -735,10 +1128,9 @@ router.post('/:id/activate', requireUserManagement, asyncHandler(async (req: Aut
 
   await UserModel.activateUser(id);
 
-  res.json({
-    success: true,
-    message: 'User activated successfully'
-  });
+  void runUserActivationSideEffects(id);
+
+  res.json({ success: true, message: 'User activated successfully' });
 }));
 
 export { router as usersRouter };

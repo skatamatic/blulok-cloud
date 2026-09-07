@@ -141,6 +141,7 @@ export class HttpGateway extends BaseGateway {
     this.pollingInterval = setInterval(async () => {
       await this.pollAndSyncDevices();
     }, this.pollFrequencyMs);
+    this.pollingInterval.unref();
 
     console.log(`Started polling for gateway ${this.id} every ${this.pollFrequencyMs}ms`);
   }
@@ -267,6 +268,8 @@ export class HttpGateway extends BaseGateway {
         {
           lockId: deviceId,
           command: apiCommand,
+          ...(_params?.expires_at != null ? { expires_at: _params.expires_at } : {}),
+          ...(_params?.open_until != null ? { open_until: _params.open_until } : {}),
         }
       );
 
@@ -568,11 +571,21 @@ export class HttpGateway extends BaseGateway {
                                error?.message?.includes('Authentication failed');
 
         if (isCriticalError && updateStatus) {
-          // For critical errors in manual syncs, mark gateway offline immediately
           try {
             const { GatewayModel } = await import('@/models/gateway.model');
             const gatewayModel = new GatewayModel();
+            const existing = await gatewayModel.findById(this.id);
+            const previousStatus = existing?.status || 'online';
             await gatewayModel.updateStatus(this.id, 'offline');
+            const { notifyGatewayStatusAfterDbUpdate } = await import('@/utils/gateway-status-notification.util');
+            void notifyGatewayStatusAfterDbUpdate({
+              facilityId: this.facilityId,
+              gatewayId: this.id,
+              previousStatus,
+              nextStatus: 'offline',
+              gatewayName: existing?.name,
+              reason: error?.message,
+            });
             const { WebSocketService } = await import('@/services/websocket.service');
             await WebSocketService.getInstance().broadcastGatewayStatusUpdate(this.facilityId, this.id);
           } catch (_e) {}

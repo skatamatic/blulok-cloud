@@ -7,24 +7,31 @@
 import { SimulatedProvider } from '@/services/fms/providers/simulated-provider';
 import { FMSProviderType } from '@/types/fms.types';
 import * as fs from 'fs';
+import * as os from 'os';
 import * as path from 'path';
 
 describe('SimulatedProvider', () => {
   let provider: SimulatedProvider;
   const facilityId = '550e8400-e29b-41d4-a716-446655440001';
-  const testDataPath = path.join(__dirname, 'test-fms-data.json');
+  let testDataPath: string;
 
   const createTestDataFile = (data: any) => {
     fs.writeFileSync(testDataPath, JSON.stringify(data, null, 2));
   };
 
   const cleanupTestFile = () => {
-    if (fs.existsSync(testDataPath)) {
+    if (testDataPath && fs.existsSync(testDataPath)) {
       fs.unlinkSync(testDataPath);
     }
   };
 
   beforeEach(() => {
+    // Unique path per test avoids races when workers/suites overlap on disk.
+    testDataPath = path.join(
+      os.tmpdir(),
+      `blulok-simulated-fms-${process.pid}-${Date.now()}-${Math.random().toString(16).slice(2)}.json`,
+    );
+
     const config = {
       providerType: FMSProviderType.SIMULATED,
       auth: { type: 'api_key' as const, credentials: {} },

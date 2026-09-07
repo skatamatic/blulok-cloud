@@ -1,19 +1,19 @@
 import { WidgetTypeDefinition } from '@/types/widget.types';
 import {
-  ChartBarIcon,
   ExclamationTriangleIcon,
   ClockIcon,
   CpuChipIcon,
   BuildingStorefrontIcon,
   UsersIcon,
-  DocumentTextIcon,
   ChartPieIcon,
   BellIcon,
   BoltIcon,
   LockOpenIcon,
   ServerIcon,
   ArrowPathIcon,
-  KeyIcon
+  KeyIcon,
+  BuildingOffice2Icon,
+  Squares2X2Icon,
 } from '@heroicons/react/24/outline';
 
 // Import the shared widget registry and add icons
@@ -41,10 +41,6 @@ export const WIDGET_REGISTRY: Record<string, WidgetTypeDefinition & { icon: Reac
     ...SHARED_WIDGET_REGISTRY['activity-monitor'],
     icon: ClockIcon
   },
-  'activity-feed': {
-    ...SHARED_WIDGET_REGISTRY['activity-feed'],
-    icon: ClockIcon
-  },
   'access-history': {
     ...SHARED_WIDGET_REGISTRY['access-history'],
     icon: ClockIcon
@@ -69,9 +65,9 @@ export const WIDGET_REGISTRY: Record<string, WidgetTypeDefinition & { icon: Reac
     ...SHARED_WIDGET_REGISTRY['shared-keys'],
     icon: KeyIcon
   },
-  'system-status': {
-    ...SHARED_WIDGET_REGISTRY['system-status'],
-    icon: CpuChipIcon
+  'daily-access-codes': {
+    ...SHARED_WIDGET_REGISTRY['daily-access-codes'],
+    icon: KeyIcon
   },
   'remote-gate': {
     ...SHARED_WIDGET_REGISTRY['remote-gate'],
@@ -81,18 +77,18 @@ export const WIDGET_REGISTRY: Record<string, WidgetTypeDefinition & { icon: Reac
     ...SHARED_WIDGET_REGISTRY['sync-fms'],
     icon: ArrowPathIcon
   },
-  'performance-stats': {
-    ...SHARED_WIDGET_REGISTRY['performance-stats'],
-    icon: ChartBarIcon
-  },
-  'test-scroll': {
-    ...SHARED_WIDGET_REGISTRY['test-scroll'],
-    icon: DocumentTextIcon
-  },
   'histogram': {
     ...SHARED_WIDGET_REGISTRY['histogram'],
     icon: ChartPieIcon
-  }
+  },
+  'facility-viewer': {
+    ...SHARED_WIDGET_REGISTRY['facility-viewer'],
+    icon: BuildingOffice2Icon
+  },
+  'units-manager': {
+    ...SHARED_WIDGET_REGISTRY['units-manager'],
+    icon: Squares2X2Icon
+  },
 };
 
 export const getWidgetType = (type: string): (WidgetTypeDefinition & { icon: React.ComponentType<{ className?: string }> }) | undefined => {

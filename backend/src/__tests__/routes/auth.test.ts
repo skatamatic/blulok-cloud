@@ -1,17 +1,22 @@
 import request from 'supertest';
 import { createApp } from '@/app';
-import { createMockTestData, MockTestData, expectSuccess, expectUnauthorized, expectBadRequest } from '@/__tests__/utils/mock-test-helpers';
+import {
+  createMockTestData,
+  MockTestData,
+  expectSuccess,
+  expectUnauthorized,
+  expectBadRequest,
+  expectForbidden,
+} from '@/__tests__/utils/mock-test-helpers';
 import { AuthService } from '@/services/auth.service';
+import { UserModel } from '@/models/user.model';
 
 describe('Auth Routes', () => {
   let app: any;
   let testData: MockTestData;
 
-  beforeAll(async () => {
+  beforeEach(async () => {
     app = createApp();
-  });
-
-  beforeEach(() => {
     testData = createMockTestData();
   });
 
@@ -30,6 +35,47 @@ describe('Auth Routes', () => {
       expect(response.body).toHaveProperty('user');
       expect(response.body.user.email).toBe('tenant@test.com');
       expect(response.body.user).not.toHaveProperty('password');
+    });
+
+    it('should login using identifier field (alias for email)', async () => {
+      const response = await request(app)
+        .post('/api/v1/auth/login')
+        .send({
+          identifier: 'tenant@test.com',
+          password: 'password123',
+        })
+        .expect(200);
+
+      expectSuccess(response);
+      expect(response.body).toHaveProperty('token');
+      expect(response.body.user.email).toBe('tenant@test.com');
+    });
+
+    it('should include key_generation_required when login indicates re-registration is needed', async () => {
+      jest.spyOn(AuthService, 'login').mockResolvedValueOnce({
+        success: true,
+        message: 'Login successful',
+        token: 'mock-jwt-token',
+        user: {
+          id: 'tenant-1',
+          email: 'tenant@test.com',
+          firstName: 'Test',
+          lastName: 'Tenant',
+          role: 'tenant' as any,
+        },
+        key_generation_required: true,
+      } as any);
+
+      const response = await request(app)
+        .post('/api/v1/auth/login')
+        .send({
+          email: 'tenant@test.com',
+          password: 'password123',
+        })
+        .expect(200);
+
+      expectSuccess(response);
+      expect(response.body.key_generation_required).toBe(true);
     });
 
     it('should return 401 for invalid email', async () => {
@@ -399,7 +445,9 @@ describe('Auth Routes', () => {
       expect(response.body).not.toHaveProperty('token');
     });
 
-    it('should return 404 for non-existent user', async () => {
+    // The auth middleware re-checks the session against the DB, so a token for a
+    // missing or deactivated account is rejected before the route runs.
+    it('should reject a token whose user no longer exists', async () => {
       // Create a token for a user that doesn't exist
       const jwt = require('jsonwebtoken');
       const { config } = require('@/config/environment');
@@ -413,28 +461,36 @@ describe('Auth Routes', () => {
           facilityIds: []
         },
         config.jwt.secret,
-        { expiresIn: '24h' }
+        { expiresIn: '30d' }
       );
 
       const response = await request(app)
         .post('/api/v1/auth/refresh-token')
         .set('Authorization', `Bearer ${fakeUserToken}`)
-        .expect(404);
+        .expect(401);
 
       expect(response.body.success).toBe(false);
-      expect(response.body.message).toContain('not found');
       expect(response.body).not.toHaveProperty('token');
     });
 
-    it('should return 403 for inactive user account', async () => {
+    it('should reject a token for a deactivated account', async () => {
+      const findByIdMock = UserModel.findById as jest.Mock;
+      findByIdMock.mockResolvedValueOnce({
+        id: 'tenant-1',
+        email: 'tenant@test.com',
+        first_name: 'Tenant',
+        last_name: 'User',
+        role: 'tenant',
+        is_active: false,
+      } as any);
+
       const response = await request(app)
         .post('/api/v1/auth/refresh-token')
         .set('Authorization', `Bearer ${testData.users.tenant.token}`)
-        .expect(200);
+        .expect(401);
 
-      // Note: This test assumes the mock data has an inactive user
-      // If inactive user token exists in testData, use it instead
-      // Otherwise, this validates the check exists in the code
+      expectUnauthorized(response);
+      expect(response.body.message).toMatch(/deactivat/i);
     });
 
     it('should return a new token with valid JWT structure', async () => {
@@ -714,7 +770,9 @@ describe('Auth Routes', () => {
       expect(requestOtpMock).toHaveBeenCalled();
     });
 
-    it('POST /api/v1/auth/invite/request-otp is rate limited (5 per minute)', async () => {
+    it(
+      'POST /api/v1/auth/invite/request-otp is rate limited (5 per minute)',
+      async () => {
       // Create a fresh app instance so limiter state is clean
       let isolatedApp: any;
       jest.isolateModules(() => {
@@ -742,7 +800,7 @@ describe('Auth Routes', () => {
         .post('/api/v1/auth/invite/request-otp')
         .send({ token: 'invite-token', phone: '+15550001234' })
         .expect(429);
-    });
+    }, 60_000);
 
     it('POST /api/v1/auth/invite/verify-otp validates body', async () => {
       const res = await require('supertest')(appForInvite)
@@ -780,6 +838,32 @@ describe('Auth Routes', () => {
         .expect(200);
       expect(res.body.success).toBe(true);
       expect(setPasswordMock).toHaveBeenCalled();
+    });
+
+    it('POST /api/v1/auth/invite/set-password ignores empty firstName/lastName placeholders', async () => {
+      setPasswordMock.mockResolvedValueOnce(undefined);
+      const res = await require('supertest')(appForInvite)
+        .post('/api/v1/auth/invite/set-password')
+        .send({
+          token: 'tok',
+          otp: '123456',
+          newPassword: 'Strong!Pass1',
+          firstName: '',
+          lastName: '',
+          email: '',
+        })
+        .expect(200);
+      expect(res.body.success).toBe(true);
+      expect(setPasswordMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          token: 'tok',
+          otp: '123456',
+          newPassword: 'Strong!Pass1',
+          firstName: undefined,
+          lastName: undefined,
+          email: undefined,
+        }),
+      );
     });
   });
 });

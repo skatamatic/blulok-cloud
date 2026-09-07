@@ -48,10 +48,14 @@
  */
 
 import { Router, Request, Response } from 'express';
+import fs from 'fs';
+import path from 'path';
 import { DatabaseService } from '@/services/database.service';
 import { asyncHandler } from '@/middleware/error.middleware';
+import { registerGet } from '@/openapi/register-route';
 
 const router = Router();
+const MOUNT = '/health';
 
 interface HealthCheckResponse {
   status: 'healthy' | 'unhealthy';
@@ -59,53 +63,111 @@ interface HealthCheckResponse {
   uptime: number;
   database: 'connected' | 'disconnected';
   version: string;
+  commitSha?: string;
+  commitShort?: string;
+  buildId?: string;
+  buildUrl?: string;
+  service?: string;
+  environment?: string;
 }
 
-router.get('/', asyncHandler(async (_req: Request, res: Response): Promise<void> => {
-  const dbService = DatabaseService.getInstance();
-  let isDatabaseHealthy = false;
-  
-  try {
-    isDatabaseHealthy = await dbService.healthCheck();
-  } catch (error) {
-    // Database connection not available, but service can still be healthy
-    isDatabaseHealthy = false;
-  }
+registerGet(
+  router,
+  '/',
+  {
+    openApiPath: MOUNT,
+    tags: ['System'],
+    summary: 'Basic health check',
+    security: 'none',
+  },
+  asyncHandler(async (_req: Request, res: Response): Promise<void> => {
+    const dbService = DatabaseService.getInstance();
+    let isDatabaseHealthy = false;
 
-  const healthCheck: HealthCheckResponse = {
-    status: 'healthy', // Service is healthy even without database in dev mode
-    timestamp: new Date().toISOString(),
-    uptime: process.uptime(),
-    database: isDatabaseHealthy ? 'connected' : 'disconnected',
-    version: process.env.npm_package_version || '1.0.0',
-  };
+    try {
+      isDatabaseHealthy = await dbService.healthCheck();
+    } catch (error) {
+      // Database connection not available, but service can still be healthy
+      isDatabaseHealthy = false;
+    }
 
-  res.status(200).json(healthCheck);
-}));
+    // Resolve version: prefer explicit APP_VERSION env, then VERSION file, then package.json
+    let resolvedVersion: string | undefined = process.env.APP_VERSION;
+    if (!resolvedVersion) {
+      try {
+        const verPath = path.resolve(process.cwd(), 'VERSION');
+        if (fs.existsSync(verPath)) {
+          resolvedVersion = fs.readFileSync(verPath, 'utf8').trim() || undefined;
+        }
+      } catch {
+        // ignore
+      }
+    }
+    if (!resolvedVersion) {
+      resolvedVersion = process.env.npm_package_version || '0.1.0';
+    }
 
-router.get('/liveness', (_req: Request, res: Response): void => {
-  res.status(200).json({
-    status: 'alive',
-    timestamp: new Date().toISOString(),
-  });
-});
+    const healthCheck: HealthCheckResponse = {
+      status: 'healthy', // Service is healthy even without database in dev mode
+      timestamp: new Date().toISOString(),
+      uptime: process.uptime(),
+      database: isDatabaseHealthy ? 'connected' : 'disconnected',
+      version: resolvedVersion,
+      commitSha: process.env.COMMIT_SHA,
+      commitShort: process.env.COMMIT_SHA ? process.env.COMMIT_SHA.substring(0, 7) : undefined,
+      buildId: process.env.BUILD_ID,
+      buildUrl: process.env.BUILD_URL,
+      service: 'backend',
+      environment: process.env.NODE_ENV || 'development',
+    };
 
-router.get('/readiness', asyncHandler(async (_req: Request, res: Response): Promise<void> => {
-  const dbService = DatabaseService.getInstance();
-  const isDatabaseReady = await dbService.healthCheck();
+    res.status(200).json(healthCheck);
+  }),
+);
 
-  if (isDatabaseReady) {
+registerGet(
+  router,
+  '/liveness',
+  {
+    openApiPath: `${MOUNT}/liveness`,
+    tags: ['System'],
+    summary: 'Liveness probe',
+    security: 'none',
+  },
+  (_req: Request, res: Response): void => {
     res.status(200).json({
-      status: 'ready',
+      status: 'alive',
       timestamp: new Date().toISOString(),
     });
-  } else {
-    res.status(503).json({
-      status: 'not ready',
-      timestamp: new Date().toISOString(),
-      reason: 'Database connection failed',
-    });
-  }
-}));
+  },
+);
+
+registerGet(
+  router,
+  '/readiness',
+  {
+    openApiPath: `${MOUNT}/readiness`,
+    tags: ['System'],
+    summary: 'Readiness probe',
+    security: 'none',
+  },
+  asyncHandler(async (_req: Request, res: Response): Promise<void> => {
+    const dbService = DatabaseService.getInstance();
+    const isDatabaseReady = await dbService.healthCheck();
+
+    if (isDatabaseReady) {
+      res.status(200).json({
+        status: 'ready',
+        timestamp: new Date().toISOString(),
+      });
+    } else {
+      res.status(503).json({
+        status: 'not ready',
+        timestamp: new Date().toISOString(),
+        reason: 'Database connection failed',
+      });
+    }
+  }),
+);
 
 export { router as healthRouter };
